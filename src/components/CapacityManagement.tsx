@@ -34,6 +34,7 @@ import {
   UserRole,
 } from '../types/database';
 import { getRoleInfo } from '../data/roles';
+import { ImportDataModal } from './ImportDataModal';
 
 interface CapacityManagementProps {
   users: UserRecord[];
@@ -79,6 +80,10 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
   const [logCount, setLogCount] = useState<number>(4);
   const [isLoggingSubmitting, setIsLoggingSubmitting] = useState(false);
+
+  // Import Modals State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importType, setImportType] = useState<'users' | 'clients'>('users');
 
   // RLS Permissions check:
   // Only executives, head of technical, and team leads have rights to modify employee capacity limits
@@ -344,6 +349,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       text: info.badgeText,
     };
   };
+
 
   return (
     <div className="space-y-6">
@@ -1092,13 +1098,38 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               </p>
             </div>
             {canModifyCapacity && (
-              <button
-                onClick={() => setIsLogModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 transition-colors flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-3.5 h-3.5" />
-                <span>إضافة قراءة جديدة</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setImportType('clients');
+                    setIsImportModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>إدارة العملاء</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setImportType('users');
+                    setIsImportModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>إدارة الموظفين</span>
+                </button>
+                <button
+                  onClick={() => setIsLogModalOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0"
+                  style={{ background: 'var(--gradient-badge)', color: 'var(--white)', border: '1px solid var(--border-strong)' }}
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Log Capacity</span>
+                </button>
+              </div>
             )}
           </div>
 
@@ -1255,6 +1286,20 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Import Modal for Users / Clients */}
+      <ImportDataModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        type={importType}
+        onImport={(data, method) => {
+          // This will be handled by passing the function up to App.tsx eventually
+          // For now, we simulate a success message since we are in a read-only prop mode here
+          console.log(`Importing ${importType} via ${method}:`, data);
+          setStatusMessage({ text: 'تم استيراد البيانات بنجاح (Simulation)', type: 'success' });
+          setTimeout(() => setStatusMessage(null), 3000);
+        }}
+      />
     </div>
   );
 };

@@ -122,7 +122,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
   // Operational task assignees: strictly exclude Executive Management and Head of Technical
   const isOperationalAssignee = (u: UserRecord) => {
-    if (!u || u.role === 'client') return false;
+    if (!u) return false;
     if (u.role === 'executive' || u.role === 'head_of_technical') return false;
     return true;
   };

@@ -34,6 +34,9 @@ import {
   UserRole,
   TaskStatus,
   TaskPriority,
+  NotificationRecord,
+  ActivityRecord,
+  ChatMessageRecord,
 } from './types/database';
 import {
   INITIAL_PACKAGES,
@@ -58,10 +61,16 @@ import { AMQueue } from './components/AMQueue';
 import { CapacityManagement } from './components/CapacityManagement';
 import { CrossTeamTaskBoard } from './components/CrossTeamTaskBoard';
 import { DailyOperationsModule } from './components/DailyOperationsModule';
+import { ImportDataModal } from './components/ImportDataModal';
 import { CampaignManagementModule } from './components/CampaignManagementModule';
 import { SalesPortalView } from './components/SalesPortalView';
 import { AccessDenied } from './components/AccessDenied';
 import { RolePortalHeader } from './components/RolePortalHeader';
+import { OnlineUsersWidget } from './components/OnlineUsersWidget';
+import { NotificationBell } from './components/NotificationBell';
+import { GlobalSearch } from './components/GlobalSearch';
+import { LiveActivityFeed } from './components/LiveActivityFeed';
+import { MiniChat } from './components/MiniChat';
 
 export type AppModule = AppModuleId;
 
@@ -72,6 +81,9 @@ export default function App() {
   // Active module tab
   const [activeTab, setActiveTab] = useState<AppModule>('onboarding');
   const [unauthorizedRoute, setUnauthorizedRoute] = useState<string | null>(null);
+  
+  // Online Users Mock State
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
 
   // Data State
   const [packages, setPackages] = useState<PackageRecord[]>(INITIAL_PACKAGES);
@@ -83,6 +95,64 @@ export default function App() {
   const [dailyLogs, setDailyLogs] = useState<DailyLogRecord[]>(INITIAL_DAILY_LOGS);
   const [extraNotes, setExtraNotes] = useState<ExtraNoteRecord[]>(INITIAL_EXTRA_NOTES);
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>(INITIAL_CAMPAIGNS);
+  const [notifications, setNotifications] = useState<NotificationRecord[]>([
+    {
+      id: 'notif-1',
+      user_id: 'user-7', // طارق (Head of Tech)
+      title: 'مهمة جديدة',
+      message: 'تم تعيين مهمة لك: تحسين أداء الموقع - من قبل سلطان الشامسي',
+      sender_id: 'user-1', // سلطان (Executive)
+      is_read: false,
+      type: 'task_assigned',
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 'notif-2',
+      user_id: 'user-1', // سلطان
+      title: 'مهمة مكتملة',
+      message: 'قام طارق عبد الرحيم بإنهاء مهمة: إعداد سيرفرات الاستضافة',
+      sender_id: 'user-7',
+      is_read: false,
+      type: 'task_updated',
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: 'notif-3',
+      user_id: 'user-1', // سلطان (Executive)
+      title: 'مهمة متأخرة ⚠️',
+      message: 'تأخر كريم المنصور في تسليم مهمة: إعداد تقرير مبيعات الربع الأول',
+      sender_id: 'user-3', // كريم
+      is_read: false,
+      type: 'task_overdue',
+      created_at: new Date(Date.now() - 86400000).toISOString(),
+    }
+  ]);
+  const [activities, setActivities] = useState<ActivityRecord[]>([
+    {
+      id: 'act-1',
+      user_id: 'user-7',
+      action_type: 'complete',
+      target_type: 'task',
+      target_id: 'task-1',
+      target_name: 'إعداد سيرفرات الاستضافة',
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: 'act-2',
+      user_id: 'user-2',
+      action_type: 'create',
+      target_type: 'client',
+      target_id: 'client-new',
+      target_name: 'شركة الأفق للتجارة',
+      created_at: new Date().toISOString(),
+    }
+  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessageRecord[]>([]);
+  const [isActivityFeedOpen, setIsActivityFeedOpen] = useState(false);
+
+  // Import Data State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importType, setImportType] = useState<'users' | 'clients'>('users');
 
   // Authenticated user state initialized from localStorage
   const [authenticatedUser, setAuthenticatedUser] = useState<UserRecord | null>(() => {
@@ -108,6 +178,14 @@ export default function App() {
   const showNotification = (text: string, type: 'success' | 'info' = 'success') => {
     setNotification({ text, type });
     setTimeout(() => setNotification(null), 4500);
+  };
+
+  const handleMarkNotificationAsRead = (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+  };
+
+  const handleMarkAllNotificationsAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
   };
 
   // 1. Session Rehydration from Supabase on mount
@@ -358,6 +436,22 @@ export default function App() {
     setSupabaseSessionUser(authenticatedUser);
     loadData();
   }, [authenticatedUser, loadData]);
+
+  // Mock online users logic
+  useEffect(() => {
+    if (authenticatedUser && users.length > 0) {
+      // Always include current user
+      const ids = [authenticatedUser.id];
+      // Add 3 other random users to look "online"
+      const others = users.filter((u) => u.id !== authenticatedUser.id);
+      
+      // We will pick the first 3 for simplicity, but shifted by the day so it looks random but stable per session
+      for (let i = 0; i < Math.min(3, others.length); i++) {
+        ids.push(others[i].id);
+      }
+      setOnlineUserIds(ids);
+    }
+  }, [authenticatedUser, users]);
 
   // 1. تسجيل عميل جديد من فريق المبيعات (مع تحويل تلقائي إلى Onboarding)
   const handleRegisterClient = async (clientData: {
@@ -820,6 +914,29 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* زر النشاط الحي للمديرين */}
+            {['executive', 'head_of_technical'].includes(currentUser.role) && (
+              <button
+                onClick={() => setIsActivityFeedOpen(!isActivityFeedOpen)}
+                className="text-xs px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
+                style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+              >
+                <div className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse border border-emerald-500" />
+                Live Activity Feed ⚡
+              </button>
+            )}
+
+            {/* Notification Bell */}
+            <NotificationBell 
+              notifications={notifications.filter(n => n.user_id === currentUser.id)}
+              users={users}
+              onMarkAsRead={handleMarkNotificationAsRead}
+              onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+            />
+
+            {/* Online Users Widget */}
+            <OnlineUsersWidget users={users} tasks={tasks} clients={clients} onlineUserIds={onlineUserIds} />
+
             {/* Supabase Status Indicator */}
             <div
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
@@ -1059,14 +1176,45 @@ export default function App() {
             )}
           </nav>
 
-          <button
-            onClick={loadData}
-            className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-            style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
-            title="Refresh data"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Import / Manage Data Buttons */}
+            {['executive', 'head_of_technical'].includes(currentUser.role) && (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setImportType('clients');
+                    setIsImportModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>إدارة وإضافة العملاء</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setImportType('users');
+                    setIsImportModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>إدارة وإضافة الموظفين</span>
+                </button>
+                <div className="h-6 w-px bg-white/10 hidden md:block mx-1" />
+              </div>
+            )}
+
+            <button
+              onClick={loadData}
+              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
+              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              title="Refresh data"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1220,6 +1368,43 @@ export default function App() {
         amTeamLeaders={users.filter((u) => u.role === 'am_team_lead')}
         onSubmit={handleRegisterClient}
       />
+
+      <ImportDataModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        type={importType}
+        onImport={(data, method) => {
+          console.log(`Importing ${importType} via ${method}:`, data);
+          alert('تم استيراد البيانات بنجاح (Simulation)');
+        }}
+      />
+
+      {/* --- New Global Features --- */}
+      <GlobalSearch users={users} tasks={tasks} clients={clients} />
+      
+      <MiniChat 
+        currentUser={currentUser} 
+        users={users} 
+        messages={chatMessages} 
+        onSendMessage={(receiverId, content) => {
+          const newMsg: ChatMessageRecord = {
+            id: `msg-${Date.now()}`,
+            sender_id: currentUser.id,
+            receiver_id: receiverId,
+            content,
+            is_read: false,
+            created_at: new Date().toISOString(),
+          };
+          setChatMessages(prev => [...prev, newMsg]);
+        }} 
+      />
+
+      {/* Activity Feed Drawer */}
+      {isActivityFeedOpen && (
+        <div className="fixed inset-y-0 left-0 w-80 z-[80] animate-in slide-in-from-left shadow-2xl border-r border-white/10 p-4 pt-[80px]" style={{ background: 'var(--gradient-card)' }}>
+          <LiveActivityFeed activities={activities} users={users} />
+        </div>
+      )}
     </div>
   );
 }

@@ -162,6 +162,51 @@ export interface DailyLogRecord {
   created_at?: string;
 }
 
+export interface KpiRecord {
+  id: string;
+  user_id?: string | null;
+  team?: string | null;
+  metric_name: string;
+  target_value: number;
+  current_value: number;
+  period: string;
+}
+
+// 17. notifications
+export interface NotificationRecord {
+  id: string;
+  user_id: string;
+  title: string;
+  message: string;
+  sender_id: string;
+  is_read: boolean;
+  type: 'task_assigned' | 'task_updated' | 'task_overdue' | 'general';
+  link_url?: string;
+  created_at: string;
+}
+
+// 18. activities
+export interface ActivityRecord {
+  id: string;
+  user_id: string; // The person who did the action
+  action_type: 'create' | 'update' | 'delete' | 'complete' | 'status_change';
+  target_type: 'task' | 'client' | 'campaign' | 'brief';
+  target_id: string;
+  target_name: string;
+  details?: string;
+  created_at: string;
+}
+
+// 19. chat_messages
+export interface ChatMessageRecord {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  content: string;
+  is_read: boolean;
+  created_at: string;
+}
+
 // 12. extra_notes
 export interface ExtraNoteRecord {
   id: string;
