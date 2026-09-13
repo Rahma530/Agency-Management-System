@@ -2211,33 +2211,6 @@ export default function App() {
               </span>
             </div>
 
-            {/* Import / Manage Data Buttons */}
-            {['executive', 'head_of_technical'].includes(currentUser.role) && (
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setImportType('clients');
-                    setIsImportModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
-                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                >
-                  <Building2 className="w-4 h-4" />
-                  <span>إدارة وإضافة العملاء</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setImportType('users');
-                    setIsImportModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
-                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                >
-                  <Users className="w-4 h-4" />
-                  <span>إدارة وإضافة الموظفين</span>
-                </button>
-              </div>
-            )}
 
             {/* Global Refresh (moved here from the old nav bar — refreshes every module's data) */}
             <button
