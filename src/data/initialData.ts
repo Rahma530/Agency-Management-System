@@ -219,6 +219,16 @@ export const INITIAL_USERS: UserRecord[] = [
     auth_id: 'auth-vid-1',
     capacity_limit: 10,
   },
+  // 14. Marketing Manager (cross-cutting Creative task/capacity oversight, not a team manager)
+  {
+    id: 'usr-mkt-mgr-1',
+    name: 'هبة نجيب',
+    email: 'heba.marketing@agency.com',
+    password: 'agency123',
+    role: 'marketing_manager',
+    team: 'Marketing',
+    auth_id: 'auth-mkt-mgr-1',
+  },
 ];
 
 export const INITIAL_CLIENTS: ClientRecord[] = [

@@ -149,6 +149,7 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
           )}
 
           {[
+            'marketing_manager',
             'media_buying_team_lead',
             'media_buying_agent',
             'seo_team_lead',

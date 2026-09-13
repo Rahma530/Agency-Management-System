@@ -80,7 +80,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
   // Filters
   const [quickFilter, setQuickFilter] = useState<QuickTaskFilter>('all');
-  const [selectedTeam, setSelectedTeam] = useState<string>('all');
+  // Marketing Manager has no clients/employees to manage, so they land directly
+  // on the Task Board pre-filtered to Creative (their only scoped visibility).
+  const [selectedTeam, setSelectedTeam] = useState<string>(
+    currentUser?.role === 'marketing_manager' ? 'creative' : 'all'
+  );
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -127,16 +131,33 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     return true;
   };
 
-  // Teams list
-  const teams = [
-    { id: 'all', label: 'All Teams' },
-    { id: 'SEO', label: 'SEO' },
-    { id: 'Social Media', label: 'Social Media' },
-    { id: 'Media Buying', label: 'Media Buying' },
-    { id: 'Creative & Design', label: 'Creative & Design' },
-    { id: 'Video Production', label: 'Video Production' },
-    { id: 'Account Management', label: 'Account Management' },
-  ];
+  // Marketing Manager may only create/assign tasks to the shared Creative pool
+  // (Graphic Designer / Video Editor) — not a manager of that team, just scoped
+  // cross-team assignment rights.
+  const isAssignableForCurrentUser = (u: UserRecord) => {
+    if (!isOperationalAssignee(u)) return false;
+    if (currentUser?.role === 'marketing_manager') {
+      return u.role === 'graphic_designer' || u.role === 'video_editor';
+    }
+    return true;
+  };
+
+  // Teams list — Marketing Manager only ever sees the "Creative" cross-team scope
+  const teams =
+    currentUser?.role === 'marketing_manager'
+      ? [
+          { id: 'all', label: 'All Teams' },
+          { id: 'creative', label: 'Creative' },
+        ]
+      : [
+          { id: 'all', label: 'All Teams' },
+          { id: 'SEO', label: 'SEO' },
+          { id: 'Social Media', label: 'Social Media' },
+          { id: 'Media Buying', label: 'Media Buying' },
+          { id: 'Creative & Design', label: 'Creative & Design' },
+          { id: 'Video Production', label: 'Video Production' },
+          { id: 'Account Management', label: 'Account Management' },
+        ];
 
   // Kanban Columns configuration
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
@@ -227,8 +248,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (quickFilter === 'unassigned' && t.assigned_to) return false;
       if (quickFilter === 'my_tasks' && t.assigned_to !== currentUserId) return false;
 
-      // Team filter
-      if (selectedTeam !== 'all' && t.team !== selectedTeam) return false;
+      // Team filter — "creative" is a virtual scope (Graphic Designer / Video Editor
+      // assignees) rather than a literal `team` value, since those two roles sit in
+      // different `team` strings ("Creative & Design" / "Video Production").
+      if (selectedTeam === 'creative') {
+        const assignee = users.find((u) => u.id === t.assigned_to);
+        if (!assignee || (assignee.role !== 'graphic_designer' && assignee.role !== 'video_editor')) {
+          return false;
+        }
+      } else if (selectedTeam !== 'all' && t.team !== selectedTeam) {
+        return false;
+      }
 
       // Client filter
       if (selectedClient !== 'all' && t.client_id !== selectedClient) return false;
@@ -1393,7 +1423,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       -- Unassigned --
                     </option>
                     {users
-                      .filter(isOperationalAssignee)
+                      .filter(isAssignableForCurrentUser)
                       .map((u) => {
                         const workload = getUserWorkload(u.id);
                         const statusNote = workload
@@ -1603,7 +1633,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       -- Unassigned --
                     </option>
                     {users
-                      .filter(isOperationalAssignee)
+                      .filter(isAssignableForCurrentUser)
                       .map((u) => {
                         const workload = getUserWorkload(u.id);
                         return (

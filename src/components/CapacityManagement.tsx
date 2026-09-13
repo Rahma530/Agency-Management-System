@@ -105,6 +105,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   const operationalRoles: UserRole[] = [
     'executive',
     'head_of_technical',
+    'marketing_manager',
     'sales',
     'am_team_lead',
     'am_agent',
@@ -143,6 +144,12 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
         (u) => u.role === 'social_media_agent' || u.role === 'graphic_designer' || u.role === 'video_editor'
       );
     }
+    // Marketing Manager: read-only oversight of Creative capacity only (not a manager of that team)
+    if (role === 'marketing_manager') {
+      return users.filter(
+        (u) => u.role === 'graphic_designer' || u.role === 'video_editor' || u.role === 'marketing_manager'
+      );
+    }
     return users.filter(
       (u) => operationalRoles.includes(u.role) || (u.capacity_limit && u.capacity_limit > 0)
     );
@@ -164,6 +171,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     if (availableTeams.has('Executive')) list.push({ id: 'Executive', label: 'الإدارة التنفيذية العليا' });
     if (availableTeams.has('Technical')) list.push({ id: 'Technical', label: 'القسم الفني والعمليات' });
     if (availableTeams.has('Sales')) list.push({ id: 'Sales', label: 'فريق المبيعات' });
+    if (availableTeams.has('Marketing')) list.push({ id: 'Marketing', label: 'التسويق' });
     if (availableTeams.has('Account Management')) list.push({ id: 'Account Management', label: 'إدارة الحسابات (AM)' });
     if (availableTeams.has('Media Buying')) list.push({ id: 'Media Buying', label: 'الميديا باينج (Media Buying)' });
     if (availableTeams.has('SEO')) list.push({ id: 'SEO', label: 'تحسين محركات البحث (SEO)' });
@@ -184,6 +192,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     const allDefs: { id: UserRole; label: string }[] = [
       { id: 'executive', label: 'Executive Management (C-level)' },
       { id: 'head_of_technical', label: 'Head of Technical' },
+      { id: 'marketing_manager', label: 'Marketing Manager' },
       { id: 'sales', label: 'Sales Team (Sales)' },
       { id: 'am_team_lead', label: 'AM Team Leader' },
       { id: 'am_agent', label: 'AM Agent' },

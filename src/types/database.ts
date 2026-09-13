@@ -6,6 +6,7 @@
 export type UserRole =
   | 'executive'                 // Executive Management (C-level)
   | 'head_of_technical'         // Head of Technical
+  | 'marketing_manager'         // Marketing Manager (cross-cutting Creative task/capacity oversight, not a team manager)
   | 'sales'                     // Sales Team (Sales)
   | 'am_team_lead'              // AM Team Leader
   | 'am_agent'                  // AM Agent

@@ -212,6 +212,11 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
     return ['graphic_designer', 'video_editor'];
   }
 
+  // Marketing Manager: cross-cutting oversight of Creative (Graphic Designer / Video Editor) only
+  if (viewerRole === 'marketing_manager') {
+    return ['marketing_manager', 'graphic_designer', 'video_editor'];
+  }
+
   // Regular agents
   if (viewerRole === 'am_agent') {
     return ['am_agent', 'am_team_lead', 'graphic_designer', 'video_editor'];
@@ -389,6 +394,14 @@ export function isTaskAccessibleUnderRLS(
   // 3. Team Leads: Full team tasks
   if (viewer.role.includes('lead')) {
     return true;
+  }
+
+  // 3b. Marketing Manager: cross-cutting visibility into Creative tasks only
+  // (Graphic Designer / Video Editor assignees) — not a manager of that team.
+  if (viewer.role === 'marketing_manager') {
+    if (task.assigned_to === viewer.id) return true;
+    const creativeAssignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
+    return !!creativeAssignee && (creativeAssignee.role === 'graphic_designer' || creativeAssignee.role === 'video_editor');
   }
 
   // 4. Directly assigned
