@@ -5,6 +5,7 @@ export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks'
 export interface RoleMetadata {
   role: UserRole;
   englishTitle: string;
+  arabicTitle?: string;
   portalTitleEn: string;
   portalSlug: string;
   team: string;

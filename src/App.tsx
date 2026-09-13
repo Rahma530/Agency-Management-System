@@ -72,6 +72,17 @@ import {
   NotificationRecord,
   ActivityRecord,
   ChatMessageRecord,
+  BriefFieldSchemaRow,
+  SocialInsightRecord,
+  ReportRecord,
+  ClientComparisonRecord,
+  ClientPortalUserRecord,
+  MeetingRecord,
+  ClientContractRecord,
+  PlatformConnectionRecord,
+  BriefFieldDef,
+  PlatformCategory,
+  PlatformConnectionStatus,
 } from './types/database';
 import {
   INITIAL_USERS,
@@ -141,6 +152,15 @@ export default function App() {
   const [extraNotes, setExtraNotes] = useState<ExtraNoteRecord[]>(INITIAL_EXTRA_NOTES);
   const [kpiScores, setKpiScores] = useState<KpiScoreRecord[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>(INITIAL_CAMPAIGNS);
+  const [assignments, setAssignments] = useState<AssignmentRecord[]>(INITIAL_ASSIGNMENTS);
+  const [socialInsights, setSocialInsights] = useState<SocialInsightRecord[]>([]);
+  const [reports, setReports] = useState<ReportRecord[]>([]);
+  const [clientComparisons, setClientComparisons] = useState<ClientComparisonRecord[]>([]);
+  const [clientPortalUsers, setClientPortalUsers] = useState<ClientPortalUserRecord[]>([]);
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
+  const [clientContracts, setClientContracts] = useState<ClientContractRecord[]>([]);
+  const [platformConnections, setPlatformConnections] = useState<PlatformConnectionRecord[]>([]);
+  const [taskBoardAssigneePrefill, setTaskBoardAssigneePrefill] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([
     {
       id: 'notif-1',
@@ -364,7 +384,11 @@ export default function App() {
     setUnauthorizedRoute(null);
     const mySlug = getPortalSlug(authenticatedUser.role);
     window.location.hash = `#/portal/${mySlug}/${newTab}`;
+    setActiveTab(newTab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  const handleNavigateToModule = handleTabChange;
 
   const handleNavigateToHomePortal = () => {
     if (!authenticatedUser) return;
