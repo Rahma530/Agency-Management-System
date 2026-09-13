@@ -2187,6 +2187,34 @@ export default function App() {
               </span>
             </div>
 
+            {/* Import / Manage Data Buttons */}
+            {['executive', 'head_of_technical'].includes(currentUser.role) && (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setImportType('clients');
+                    setIsImportModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>إدارة وإضافة العملاء</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setImportType('users');
+                    setIsImportModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>إدارة وإضافة الموظفين</span>
+                </button>
+              </div>
+            )}
+
             {/* Global Refresh (moved here from the old nav bar — refreshes every module's data) */}
             <button
               onClick={loadData}
@@ -2527,49 +2555,6 @@ export default function App() {
             )}
           </nav>
         </aside>
-
-          <div className="flex items-center gap-3">
-            {/* Import / Manage Data Buttons */}
-            {['executive', 'head_of_technical'].includes(currentUser.role) && (
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setImportType('clients');
-                    setIsImportModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
-                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                >
-                  <Building2 className="w-4 h-4" />
-                  <span>إدارة وإضافة العملاء</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setImportType('users');
-                    setIsImportModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
-                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                >
-                  <Users className="w-4 h-4" />
-                  <span>إدارة وإضافة الموظفين</span>
-                </button>
-                <div className="h-6 w-px bg-white/10 hidden md:block mx-1" />
-              </div>
-            )}
-
-            <button
-              onClick={loadData}
-              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
-              title="Refresh data"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Workspace */}
       <main className="max-w-7xl mx-auto px-6 pt-6 space-y-6">
         {/* Floating Notification */}
