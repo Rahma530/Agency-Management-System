@@ -23,7 +23,6 @@ import {
   RefreshCw,
   SlidersHorizontal,
   Building2,
-  ChevronRight,
   Info,
   ShieldCheck,
   Zap,
@@ -33,28 +32,80 @@ import {
   CampaignStatus,
   ClientRecord,
   UserRecord,
+  BriefRecord,
+  BriefRevisionRecord,
+  TaskRecord,
+  DailyLogRecord,
+  ExtraNoteRecord,
+  AssignmentRecord,
+  ReportRecord,
+  ClientComparisonRecord,
+  SocialInsightRecord,
+  ClientPortalUserRecord,
+  PlatformConnectionRecord,
+  PlatformConnectionStatus,
+  PlatformCategory,
+  ServiceType,
+  BriefFieldDef,
+  BriefFieldSchemaRow,
 } from '../types/database';
+import { isActiveEmployee } from '../lib/permissions';
+import { CLIENT_STATUS_META } from '../lib/clientStatus';
+import { matchesClientQuery } from '../lib/clientSearch';
 import { getRoleInfo } from '../data/roles';
+import { ClientDashboard } from './ClientDashboard';
+import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 
 interface CampaignManagementModuleProps {
   campaigns: CampaignRecord[];
   clients: ClientRecord[];
   users: UserRecord[];
   currentUser: UserRecord;
+  briefs: BriefRecord[];
+  briefRevisions?: BriefRevisionRecord[];
+  tasks: TaskRecord[];
+  dailyLogs: DailyLogRecord[];
+  extraNotes: ExtraNoteRecord[];
+  assignments: AssignmentRecord[];
+  reports?: ReportRecord[];
+  clientComparisons?: ClientComparisonRecord[];
+  socialInsights?: SocialInsightRecord[];
+  clientPortalUsers?: ClientPortalUserRecord[];
   onCreateCampaign: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateCampaign: (id: string, updates: Partial<CampaignRecord>) => Promise<void> | void;
+  onGenerateComparison?: (
+    scope: ReportScope,
+    mode: ReportMode,
+    granularity: ComparisonGranularity | 'custom',
+    custom?: { currentRange: DateRange; previousRange?: DateRange }
+  ) => Promise<void>;
+  onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
+  onApproveReport?: (reportId: string) => Promise<void>;
+  onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
+  platformConnections?: PlatformConnectionRecord[];
+  onSetPlatformConnectionStatus?: (
+    clientId: string,
+    platformName: string,
+    platformCategory: PlatformCategory,
+    status: PlatformConnectionStatus,
+    notes: string
+  ) => Promise<void>;
   isLoading?: boolean;
+  briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  briefFieldSchemaRows: BriefFieldSchemaRow[];
+  onDeleteClient?: (clientId: string) => Promise<void>;
 }
 
 // Helpers to extract campaign attributes safely whether stored at top-level or in results JSON
 export const getCampaignName = (c: CampaignRecord): string =>
-  c.name || c.results?.name || c.campaign_id_external || 'حملة إعلانية ممولة';
+  c.name || c.results?.name || c.campaign_id_external || 'Sponsored Ad Campaign';
 
 export const getCampaignStatus = (c: CampaignRecord): CampaignStatus =>
   c.status || c.results?.status || 'active';
 
 export const getCampaignObjective = (c: CampaignRecord): string =>
-  c.objective || c.results?.objective || 'التحويلات والمبيعات (Conversions)';
+  c.objective || c.results?.objective || 'Conversions & Sales';
 
 export const getCampaignBudget = (c: CampaignRecord): number =>
   c.budget !== undefined && c.budget !== null ? c.budget : (c.results?.budget ?? c.spend ?? 0);
@@ -77,7 +128,7 @@ const PLATFORM_CONFIG: Record<
   { label: string; enLabel: string; bg: string; text: string; border: string; iconLabel: string }
 > = {
   meta: {
-    label: 'ميتا (Meta / Facebook & Instagram)',
+    label: 'Meta (Facebook & Instagram)',
     enLabel: 'Meta Ads',
     bg: 'rgba(24, 119, 242, 0.15)',
     text: '#60a5fa',
@@ -85,7 +136,7 @@ const PLATFORM_CONFIG: Record<
     iconLabel: 'Meta',
   },
   google: {
-    label: 'جوجل (Google Ads & Search)',
+    label: 'Google (Ads & Search)',
     enLabel: 'Google Ads',
     bg: 'rgba(234, 67, 53, 0.15)',
     text: '#f87171',
@@ -93,7 +144,7 @@ const PLATFORM_CONFIG: Record<
     iconLabel: 'Google',
   },
   tiktok: {
-    label: 'تيك توك (TikTok Ads)',
+    label: 'TikTok Ads',
     enLabel: 'TikTok Ads',
     bg: 'rgba(0, 242, 234, 0.15)',
     text: '#22d3ee',
@@ -101,7 +152,7 @@ const PLATFORM_CONFIG: Record<
     iconLabel: 'TikTok',
   },
   linkedin: {
-    label: 'لينكد إن (LinkedIn Ads)',
+    label: 'LinkedIn Ads',
     enLabel: 'LinkedIn Ads',
     bg: 'rgba(10, 102, 194, 0.15)',
     text: '#38bdf8',
@@ -109,7 +160,7 @@ const PLATFORM_CONFIG: Record<
     iconLabel: 'LinkedIn',
   },
   snapchat: {
-    label: 'سناب شات (Snapchat Ads)',
+    label: 'Snapchat Ads',
     enLabel: 'Snapchat Ads',
     bg: 'rgba(255, 252, 0, 0.15)',
     text: '#fde047',
@@ -117,7 +168,7 @@ const PLATFORM_CONFIG: Record<
     iconLabel: 'Snapchat',
   },
   x: {
-    label: 'إكس (X / Twitter Ads)',
+    label: 'X / Twitter Ads',
     enLabel: 'X Ads',
     bg: 'rgba(255, 255, 255, 0.1)',
     text: '#e2e8f0',
@@ -131,35 +182,35 @@ const STATUS_CONFIG: Record<
   { label: string; bg: string; text: string; border: string; icon: React.ReactNode }
 > = {
   active: {
-    label: 'نشطة (Active)',
+    label: 'Active',
     bg: 'rgba(169, 245, 193, 0.15)',
     text: 'var(--roas-good)',
     border: 'rgba(169, 245, 193, 0.3)',
     icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />,
   },
   paused: {
-    label: 'متوقفة مؤقتاً (Paused)',
+    label: 'Paused',
     bg: 'rgba(245, 226, 154, 0.15)',
     text: 'var(--roas-mid)',
     border: 'rgba(245, 226, 154, 0.3)',
     icon: <PauseCircle className="w-3.5 h-3.5 text-amber-400" />,
   },
   completed: {
-    label: 'مكتملة (Completed)',
+    label: 'Completed',
     bg: 'rgba(168, 155, 184, 0.15)',
     text: 'var(--lilac)',
     border: 'rgba(168, 155, 184, 0.3)',
     icon: <Clock className="w-3.5 h-3.5 text-purple-300" />,
   },
   draft: {
-    label: 'مسودة (Draft)',
+    label: 'Draft',
     bg: 'rgba(120, 113, 108, 0.15)',
     text: '#d6d3d1',
     border: 'rgba(120, 113, 108, 0.3)',
     icon: <Layers className="w-3.5 h-3.5 text-stone-400" />,
   },
   archived: {
-    label: 'مؤرشفة (Archived)',
+    label: 'Archived',
     bg: 'rgba(100, 116, 139, 0.15)',
     text: '#94a3b8',
     border: 'rgba(100, 116, 139, 0.3)',
@@ -172,9 +223,29 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   clients,
   users,
   currentUser,
+  briefs,
+  briefRevisions = [],
+  tasks,
+  dailyLogs,
+  extraNotes,
+  assignments,
+  reports = [],
+  clientComparisons = [],
+  socialInsights = [],
+  clientPortalUsers = [],
   onCreateCampaign,
   onUpdateCampaign,
+  onGenerateComparison,
+  onGenerateReport,
+  onGenerateMonthlyReportDraft,
+  onApproveReport,
+  onCreatePortalLogin,
+  platformConnections = [],
+  onSetPlatformConnectionStatus,
   isLoading = false,
+  briefFieldSchemas,
+  briefFieldSchemaRows,
+  onDeleteClient,
 }) => {
   const roleInfo = getRoleInfo(currentUser.role);
 
@@ -188,7 +259,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // UI Modal States
-  const [selectedCampaignForDetails, setSelectedCampaignForDetails] = useState<CampaignRecord | null>(null);
+  const [dashboardClientId, setDashboardClientId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [campaignToEdit, setCampaignToEdit] = useState<CampaignRecord | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -199,7 +270,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     clientId: '',
     name: '',
     platform: 'meta',
-    objective: 'التحويلات والمبيعات (Conversions / Purchases)',
+    objective: 'Conversions / Purchases',
     status: 'active' as CampaignStatus,
     budget: 5000,
     spend: 0,
@@ -230,16 +301,28 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') {
       return false;
     }
-    // Media Buying Team Lead has full management permissions
+    // Media Buying Team Lead has full management permissions across all campaigns
     if (currentUser.role === 'media_buying_team_lead') {
       return true;
     }
-    // Media Buying Agent can only edit their own campaigns
+    // Media Buying Agent: edit access is based on client assignment, not who created/owns
+    // the campaign — an assigned agent can edit every campaign for their client, even ones
+    // their team lead created.
     if (currentUser.role === 'media_buying_agent') {
-      const ownerId = getCampaignOwnerId(campaign);
-      return ownerId === currentUser.id || (campaign.results as any)?.owner_id === currentUser.id;
+      return assignments.some(
+        (a) =>
+          a.client_id === campaign.client_id &&
+          a.service_type === 'media_buying' &&
+          a.agent_id === currentUser.id
+      );
     }
-    // AM Team Lead and AM Agent are view-only
+    // AM Agent: same client-assignment rule (client.am_agent_id), not ownership/creator —
+    // can edit any campaign for a client formally assigned to them.
+    if (currentUser.role === 'am_agent') {
+      const client = clients.find((c) => c.id === campaign.client_id);
+      return client?.am_agent_id === currentUser.id;
+    }
+    // AM Team Lead remains view-only
     return false;
   };
 
@@ -257,13 +340,15 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     if (currentUser.role === 'media_buying_team_lead') {
       return campaigns;
     }
-    // 4. Media Buying Agent: ONLY see their assigned campaigns (cannot see other agents' private campaign data)
+    // 4. Media Buying Agent: ONLY campaigns for clients they're personally assigned to —
+    //    strict client-based exclusivity, not campaign ownership.
     if (currentUser.role === 'media_buying_agent') {
-      return campaigns.filter(
-        (c) =>
-          getCampaignOwnerId(c) === currentUser.id ||
-          (c.results as any)?.owner_id === currentUser.id
+      const myClientIds = new Set(
+        assignments
+          .filter((a) => a.service_type === 'media_buying' && a.agent_id === currentUser.id)
+          .map((a) => a.client_id)
       );
+      return campaigns.filter((c) => myClientIds.has(c.client_id));
     }
     // 5. AM Team Lead: all campaigns for clients in agency
     if (currentUser.role === 'am_team_lead') {
@@ -277,12 +362,20 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       return campaigns.filter((c) => myClientIds.has(c.client_id));
     }
     return [];
-  }, [campaigns, clients, currentUser]);
+  }, [campaigns, clients, currentUser, assignments]);
 
   // Clients accessible to current user for campaign linking
   const accessibleClients = useMemo(() => {
     if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'media_buying_team_lead') {
       return clients;
+    }
+    if (currentUser.role === 'media_buying_agent') {
+      const myClientIds = new Set(
+        assignments
+          .filter((a) => a.service_type === 'media_buying' && a.agent_id === currentUser.id)
+          .map((a) => a.client_id)
+      );
+      return clients.filter((c) => myClientIds.has(c.id));
     }
     if (currentUser.role === 'am_agent') {
       return clients.filter((c) => c.am_agent_id === currentUser.id);
@@ -291,7 +384,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       return clients.filter((c) => c.sales_owner_id === currentUser.id);
     }
     return clients;
-  }, [clients, currentUser]);
+  }, [clients, currentUser, assignments]);
 
   // -------------------------------------------------------------
   // 2. DASHBOARD KPI SUMMARY COMPUTATION
@@ -381,8 +474,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
         const name = getCampaignName(c).toLowerCase();
         const extId = (c.campaign_id_external || '').toLowerCase();
         const client = clients.find((cl) => cl.id === c.client_id);
-        const clientName = (client?.name || '').toLowerCase();
-        if (!name.includes(query) && !extId.includes(query) && !clientName.includes(query)) {
+        // Module 14: client half of the match (name or phone) via the shared predicate.
+        const clientMatches = !!client && matchesClientQuery(client, searchQuery);
+        if (!name.includes(query) && !extId.includes(query) && !clientMatches) {
           return false;
         }
       }
@@ -420,7 +514,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       clientId: accessibleClients[0]?.id || '',
       name: '',
       platform: 'meta',
-      objective: 'التحويلات والمبيعات (Conversions / Purchases)',
+      objective: 'Conversions / Purchases',
       status: 'active',
       budget: 5000,
       spend: 0,
@@ -444,7 +538,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   // Handle open edit modal
   const handleOpenEditModal = (campaign: CampaignRecord) => {
     if (!canEdit(campaign)) {
-      setActionError('ليس لديك صلاحية لتعديل هذه الحملة وفق قواعد أمان RLS');
+      setActionError('You do not have permission to edit this campaign under RLS security rules');
       return;
     }
     setActionError(null);
@@ -477,11 +571,11 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   const handleSubmitCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.clientId) {
-      setActionError('يرجى اختيار العميل المرتبط بالحملة');
+      setActionError('Please select the client linked to this campaign');
       return;
     }
     if (!formData.name.trim()) {
-      setActionError('يرجى إدخال اسم الحملة الإعلانية');
+      setActionError('Please enter the campaign name');
       return;
     }
 
@@ -530,14 +624,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
 
       if (campaignToEdit) {
         await onUpdateCampaign(campaignToEdit.id, payload);
-        // If details modal is open for this campaign, refresh it
-        if (selectedCampaignForDetails?.id === campaignToEdit.id) {
-          setSelectedCampaignForDetails({
-            ...campaignToEdit,
-            ...payload,
-            results: newResults,
-          } as CampaignRecord);
-        }
       } else {
         await onCreateCampaign(payload);
       }
@@ -545,7 +631,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       setIsCreateModalOpen(false);
       setCampaignToEdit(null);
     } catch (err: any) {
-      setActionError(err?.message || 'حدث خطأ أثناء حفظ بيانات الحملة');
+      setActionError(err?.message || 'An error occurred while saving the campaign data');
     } finally {
       setIsSubmitting(false);
     }
@@ -565,13 +651,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           status: newSt,
         },
       });
-      if (selectedCampaignForDetails?.id === campaign.id) {
-        setSelectedCampaignForDetails({
-          ...selectedCampaignForDetails,
-          status: newSt,
-          results: { ...(selectedCampaignForDetails.results || {}), status: newSt },
-        });
-      }
     } catch (err: any) {
       console.error(err);
     }
@@ -597,8 +676,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     selectedDateRange !== 'all' ||
     searchQuery.trim() !== '';
 
+  const activeDashboardClient = clients.find((c) => c.id === dashboardClientId) || null;
+
   return (
-    <div className="space-y-6 animate-fadeIn" dir="rtl">
+    <div className="space-y-6 animate-fadeIn">
       {/* ------------------------------------------------------------- */}
       {/* MODULE HEADER & RLS SCOPE BANNER */}
       {/* ------------------------------------------------------------- */}
@@ -622,7 +703,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 }}
               >
                 <Target className="w-3.5 h-3.5 text-purple-300" />
-                <span>وحدة إدارة الحملات الإعلانية (Campaign Management)</span>
+                <span>Campaign Management</span>
               </span>
 
               <span
@@ -635,15 +716,15 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 }}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>حماية RLS نشطة • {roleInfo.arabicTitle}</span>
+                <span>RLS Protection Active • {roleInfo.englishTitle}</span>
               </span>
             </div>
 
             <h2 className="text-xl font-bold" style={{ color: 'var(--white)' }}>
-              إدارة ومتابعة الحملات الإعلانية الممولة (Paid Advertising Hub)
+              Paid Advertising Hub
             </h2>
             <p className="text-xs leading-relaxed max-w-3xl" style={{ color: 'var(--lilac)' }}>
-              ربط مباشر بين العميل، والخدمة التسويقية، والموظف المسؤول، مع تحكم دقيق بمؤشرات الأداء، والميزانيات، ونسب الاستهلاك، ومتابعة العائد الإعلاني الفعلي عبر مختلف المنصات (Meta, Google, TikTok, LinkedIn).
+              Direct linkage between client, marketing service, and responsible employee — with precise control over performance metrics, budgets, utilization rates, and real ad ROI across platforms (Meta, Google, TikTok, LinkedIn).
             </p>
           </div>
 
@@ -660,7 +741,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 }}
               >
                 <Plus className="w-4 h-4 text-white" />
-                <span>إنشاء حملة إعلانية جديدة</span>
+                <span>Create New Campaign</span>
               </button>
             ) : (
               <div
@@ -670,10 +751,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                   color: 'var(--lilac)',
                   border: '1px solid var(--border-subtle)',
                 }}
-                title="إنشاء الحملات مخصص لفريق الميديا باينج والإدارة الفنية وحسابات العملاء"
+                title="Campaign creation is reserved for Media Buying, Technical leadership, and Account Management"
               >
                 <Info className="w-3.5 h-3.5 text-stone-400" />
-                <span>صلاحية العرض والتحليل (Read-Only)</span>
+                <span>View & Analysis Only (Read-Only)</span>
               </div>
             )}
           </div>
@@ -693,14 +774,14 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           }}
         >
           <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--lilac)' }}>
-            <span>إجمالي الحملات</span>
+            <span>Total Campaigns</span>
             <Target className="w-4 h-4 text-purple-400" />
           </div>
           <div className="text-xl font-bold font-mono" style={{ color: 'var(--white)' }}>
             {dashboardStats.total}
           </div>
           <div className="text-[10px] mt-1 text-stone-400">
-            {dashboardStats.active} نشطة • {dashboardStats.paused} متوقفة
+            {dashboardStats.active} active • {dashboardStats.paused} paused
           </div>
         </div>
 
@@ -713,14 +794,14 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           }}
         >
           <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--lilac)' }}>
-            <span>الإنفاق الفعلي</span>
+            <span>Actual Spend</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-xl font-bold font-mono" style={{ color: 'var(--roas-good)' }}>
             ${dashboardStats.totalSpend.toLocaleString()}
           </div>
           <div className="text-[10px] mt-1 text-stone-400">
-            من إجمالي ${dashboardStats.totalBudget.toLocaleString()}
+            of ${dashboardStats.totalBudget.toLocaleString()} total
           </div>
         </div>
 
@@ -733,7 +814,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           }}
         >
           <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--lilac)' }}>
-            <span>نسبة استهلاك الميزانية</span>
+            <span>Budget Utilization</span>
             <BarChart3 className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold font-mono" style={{ color: 'var(--roas-mid)' }}>
@@ -764,14 +845,14 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           }}
         >
           <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--lilac)' }}>
-            <span>متوسط العائد ROAS</span>
+            <span>Average ROAS</span>
             <TrendingUp className="w-4 h-4 text-purple-300" />
           </div>
           <div className="text-xl font-bold font-mono" style={{ color: 'var(--white)' }}>
             {dashboardStats.avgRoas !== null ? `${dashboardStats.avgRoas.toFixed(2)}x` : '—'}
           </div>
           <div className="text-[10px] mt-1 text-stone-400">
-            {dashboardStats.avgRoas !== null ? 'محسوب من النتائج المسجلة' : 'لا توجد بيانات ROAS'}
+            {dashboardStats.avgRoas !== null ? 'Calculated from recorded results' : 'No ROAS data'}
           </div>
         </div>
 
@@ -784,14 +865,14 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           }}
         >
           <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--lilac)' }}>
-            <span>إجمالي التحويلات</span>
+            <span>Total Conversions</span>
             <Zap className="w-4 h-4 text-cyan-400" />
           </div>
           <div className="text-xl font-bold font-mono text-cyan-300">
             {dashboardStats.totalConversions !== null ? dashboardStats.totalConversions.toLocaleString() : '—'}
           </div>
           <div className="text-[10px] mt-1 text-stone-400">
-            {dashboardStats.totalConversions !== null ? 'تحويل / صفقة محققة' : 'لا توجد بيانات'}
+            {dashboardStats.totalConversions !== null ? 'Conversions / deals recorded' : 'No data'}
           </div>
         </div>
 
@@ -804,14 +885,14 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           }}
         >
           <div className="flex items-center justify-between text-xs mb-2" style={{ color: 'var(--lilac)' }}>
-            <span>المنصات المستخدمة</span>
+            <span>Platforms Used</span>
             <Layers className="w-4 h-4 text-purple-400" />
           </div>
           <div className="text-xl font-bold font-mono" style={{ color: 'var(--white)' }}>
             {Object.keys(dashboardStats.platformsMap).length}
           </div>
           <div className="text-[10px] mt-1 text-stone-400 truncate">
-            {Object.keys(dashboardStats.platformsMap).join(', ') || 'لا توجد'}
+            {Object.keys(dashboardStats.platformsMap).join(', ') || 'None'}
           </div>
         </div>
       </div>
@@ -829,7 +910,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
         >
           <span className="text-xs font-bold text-stone-300 flex items-center gap-1.5 ml-2">
             <Layers className="w-3.5 h-3.5 text-purple-400" />
-            <span>توزيع المنصات:</span>
+            <span>Platform Breakdown:</span>
           </span>
 
           {Object.entries(dashboardStats.platformsMap).map(([plat, rawData]) => {
@@ -856,7 +937,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               >
                 <span className="font-bold">{cfg.enLabel}</span>
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30 font-mono">
-                  {data.count} حملات • ${data.spend.toLocaleString()}
+                  {data.count} campaigns • ${data.spend.toLocaleString()}
                 </span>
               </button>
             );
@@ -882,7 +963,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="البحث باسم الحملة، معرف المنصة، أو اسم العميل..."
+              placeholder="Search by campaign name, platform ID, client name, or phone..."
               className="w-full pl-4 pr-9 py-2 rounded-xl text-xs outline-none transition-all"
               style={{
                 background: 'rgba(255, 255, 255, 0.05)',
@@ -912,7 +993,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>إعادة تعيين الفلاتر</span>
+              <span>Reset Filters</span>
             </button>
           )}
         </div>
@@ -923,7 +1004,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="space-y-1">
             <label className="text-[10px] text-stone-400 font-bold flex items-center gap-1">
               <Building2 className="w-3 h-3 text-purple-400" />
-              <span>العميل:</span>
+              <span>Client:</span>
             </label>
             <select
               value={selectedClientId}
@@ -936,9 +1017,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <option value="all" className="bg-stone-900 text-white">
-                جميع العملاء ({clients.length})
+                All Clients ({accessibleClients.length})
               </option>
-              {clients.map((c) => (
+              {accessibleClients.map((c) => (
                 <option key={c.id} value={c.id} className="bg-stone-900 text-white">
                   {c.name}
                 </option>
@@ -950,7 +1031,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="space-y-1">
             <label className="text-[10px] text-stone-400 font-bold flex items-center gap-1">
               <Layers className="w-3 h-3 text-purple-400" />
-              <span>المنصة:</span>
+              <span>Platform:</span>
             </label>
             <select
               value={selectedPlatform}
@@ -963,7 +1044,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <option value="all" className="bg-stone-900 text-white">
-                جميع المنصات
+                All Platforms
               </option>
               <option value="meta" className="bg-stone-900 text-white">
                 Meta Ads (FB/Insta)
@@ -990,7 +1071,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="space-y-1">
             <label className="text-[10px] text-stone-400 font-bold flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3 text-purple-400" />
-              <span>الحالة:</span>
+              <span>Status:</span>
             </label>
             <select
               value={selectedStatus}
@@ -1003,22 +1084,22 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <option value="all" className="bg-stone-900 text-white">
-                جميع الحالات
+                All Statuses
               </option>
               <option value="active" className="bg-stone-900 text-white">
-                نشطة (Active)
+                Active
               </option>
               <option value="paused" className="bg-stone-900 text-white">
-                متوقفة (Paused)
+                Paused
               </option>
               <option value="completed" className="bg-stone-900 text-white">
-                مكتملة (Completed)
+                Completed
               </option>
               <option value="draft" className="bg-stone-900 text-white">
-                مسودة (Draft)
+                Draft
               </option>
               <option value="archived" className="bg-stone-900 text-white">
-                مؤرشفة (Archived)
+                Archived
               </option>
             </select>
           </div>
@@ -1027,7 +1108,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="space-y-1">
             <label className="text-[10px] text-stone-400 font-bold flex items-center gap-1">
               <Calendar className="w-3 h-3 text-purple-400" />
-              <span>التاريخ / الفترة:</span>
+              <span>Date / Period:</span>
             </label>
             <select
               value={selectedDateRange}
@@ -1040,16 +1121,16 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <option value="all" className="bg-stone-900 text-white">
-                جميع الفترات
+                All Periods
               </option>
               <option value="today" className="bg-stone-900 text-white">
-                اليوم
+                Today
               </option>
               <option value="7d" className="bg-stone-900 text-white">
-                آخر 7 أيام
+                Last 7 Days
               </option>
               <option value="30d" className="bg-stone-900 text-white">
-                آخر 30 يوماً
+                Last 30 Days
               </option>
             </select>
           </div>
@@ -1058,7 +1139,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="space-y-1">
             <label className="text-[10px] text-stone-400 font-bold flex items-center gap-1">
               <Users className="w-3 h-3 text-purple-400" />
-              <span>الفريق المسؤول:</span>
+              <span>Responsible Team:</span>
             </label>
             <select
               value={selectedTeam}
@@ -1071,7 +1152,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <option value="all" className="bg-stone-900 text-white">
-                جميع الفرق
+                All Teams
               </option>
               <option value="Media Buying" className="bg-stone-900 text-white">
                 Media Buying
@@ -1089,7 +1170,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="space-y-1">
             <label className="text-[10px] text-stone-400 font-bold flex items-center gap-1">
               <User className="w-3 h-3 text-purple-400" />
-              <span>الموظف المسؤول:</span>
+              <span>Responsible Employee:</span>
             </label>
             <select
               value={selectedOwnerId}
@@ -1102,10 +1183,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <option value="all" className="bg-stone-900 text-white">
-                جميع المسؤولين
+                All Owners
               </option>
               {users
-                .filter((u) => u.team === 'Media Buying' || u.role.includes('lead') || u.id === currentUser.id)
+                .filter((u) => (u.team === 'Media Buying' || u.role.includes('lead') || u.id === currentUser.id) && isActiveEmployee(u))
                 .map((u) => (
                   <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                     {u.name} ({u.team || u.role})
@@ -1122,7 +1203,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       {isLoading ? (
         <div className="p-12 text-center rounded-2xl bg-black/20 border border-white/5 space-y-3">
           <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-stone-400">جاري تحميل بيانات الحملات الإعلانية وتطبيق سياسات RLS...</p>
+          <p className="text-xs text-stone-400">Loading campaign data and applying RLS policies...</p>
         </div>
       ) : filteredCampaigns.length === 0 ? (
         <div
@@ -1134,12 +1215,12 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
         >
           <Target className="w-10 h-10 text-stone-500 mx-auto" />
           <h3 className="text-sm font-bold" style={{ color: 'var(--white)' }}>
-            لا توجد حملات إعلانية مطابقة للبحث أو الصلاحيات
+            No campaigns match your search or permissions
           </h3>
           <p className="text-xs text-stone-400 max-w-md mx-auto">
             {isFiltered
-              ? 'لم يتم العثور على أي حملة تطابق الفلاتر المحددة أعلاه. جرب تغيير الفلاتر أو إعادة تعيينها.'
-              : 'لم يتم تسجيل أي حملات إعلانية مرئية لهذا الحساب حتى الآن.'}
+              ? 'No campaign matches the filters selected above. Try changing or resetting the filters.'
+              : 'No visible campaigns have been recorded for this account yet.'}
           </p>
           {isFiltered && (
             <button
@@ -1152,7 +1233,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               }}
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>إعادة تعيين جميع الفلاتر</span>
+              <span>Reset All Filters</span>
             </button>
           )}
         </div>
@@ -1160,25 +1241,17 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
         <div className="space-y-3">
           <div className="flex items-center justify-between text-xs text-stone-400 px-1">
             <span>
-              عرض <strong className="text-white font-mono">{filteredCampaigns.length}</strong> من أصل{' '}
-              <strong className="text-white font-mono">{visibleCampaigns.length}</strong> حملة مرئية
+              Showing <strong className="text-white font-mono">{filteredCampaigns.length}</strong> of{' '}
+              <strong className="text-white font-mono">{visibleCampaigns.length}</strong> visible campaigns
             </span>
-            <span className="text-[11px]">انقر على أي حملة لعرض صفحة التفاصيل الكاملة</span>
+            <span className="text-[11px]">Click any campaign to view its full details page</span>
           </div>
 
           <div className="grid grid-cols-1 gap-3">
             {filteredCampaigns.map((campaign) => {
               const client = clients.find((c) => c.id === campaign.client_id);
-              const owner = users.find((u) => u.id === getCampaignOwnerId(campaign));
               const name = getCampaignName(campaign);
               const status = getCampaignStatus(campaign);
-              const objective = getCampaignObjective(campaign);
-              const budget = getCampaignBudget(campaign);
-              const startDate = getCampaignStartDate(campaign);
-              const endDate = getCampaignEndDate(campaign);
-              const team = getCampaignTeam(campaign);
-              const spend = campaign.spend || 0;
-              const spendPct = budget > 0 ? (spend / budget) * 100 : 0;
 
               const platformCfg = PLATFORM_CONFIG[campaign.platform] || {
                 label: campaign.platform,
@@ -1191,25 +1264,18 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               const statusCfg = STATUS_CONFIG[status] || STATUS_CONFIG.active;
               const userCanEdit = canEdit(campaign);
 
-              // Results performance summary
-              const results = campaign.results || {};
-              const hasPerformanceMetrics = Object.keys(results).some(
-                (k) => !['name', 'objective', 'status', 'budget', 'start_date', 'end_date', 'owner_id', 'team'].includes(k)
-              );
-
               return (
                 <div
                   key={campaign.id}
                   id={`campaign-card-${campaign.id}`}
-                  onClick={() => setSelectedCampaignForDetails(campaign)}
-                  className="rounded-2xl p-4 transition-all duration-200 cursor-pointer hover:border-purple-500/40 hover:shadow-lg group"
+                  className="rounded-2xl p-4 transition-all duration-200 hover:border-purple-500/40 hover:shadow-lg group"
                   style={{
                     background: 'var(--surface)',
                     border: '1px solid var(--border-subtle)',
                   }}
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    {/* Left: Identity, Platform, Client & Objective */}
+                    {/* Left: Identity, Platform, Client */}
                     <div className="space-y-2 flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         {/* Platform Badge */}
@@ -1239,7 +1305,11 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
 
                         {/* Client Relation Badge */}
                         <span
-                          className="px-2.5 py-0.5 rounded-full text-[11px] font-medium flex items-center gap-1"
+                          onClick={() => {
+                            if (client) setDashboardClientId(client.id);
+                          }}
+                          title={client ? `View ${client.name}'s dashboard` : undefined}
+                          className="px-2.5 py-0.5 rounded-full text-[11px] font-medium flex items-center gap-1 cursor-pointer hover:bg-purple-900/40 hover:text-purple-200"
                           style={{
                             background: 'rgba(255, 255, 255, 0.05)',
                             color: 'var(--white)',
@@ -1247,8 +1317,22 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                           }}
                         >
                           <Building2 className="w-3 h-3 text-purple-400" />
-                          <span>{client?.name || 'عميل غير محدد'}</span>
+                          <span>{client?.name || 'Unassigned client'}</span>
                         </span>
+
+                        {/* Client Status Badge */}
+                        {client && (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full text-[11px] font-bold"
+                            style={{
+                              background: CLIENT_STATUS_META[client.status].bg,
+                              color: CLIENT_STATUS_META[client.status].color,
+                              border: `1px solid ${CLIENT_STATUS_META[client.status].border}`,
+                            }}
+                          >
+                            {CLIENT_STATUS_META[client.status].label}
+                          </span>
+                        )}
 
                         {campaign.campaign_id_external && (
                           <span className="text-[10px] font-mono text-stone-400">
@@ -1264,129 +1348,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                       >
                         {name}
                       </h4>
-
-                      {/* Marketing Objective */}
-                      <div className="flex flex-wrap items-center gap-3 text-xs" style={{ color: 'var(--lilac)' }}>
-                        <span className="flex items-center gap-1">
-                          <Target className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                          <span>الهدف: {objective}</span>
-                        </span>
-
-                        <span className="text-stone-500">•</span>
-
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5 text-stone-400 shrink-0" />
-                          <span>
-                            {startDate || 'غير محدد'} {endDate ? `إلى ${endDate}` : '(مستمرة)'}
-                          </span>
-                        </span>
-
-                        <span className="text-stone-500">•</span>
-
-                        <span className="flex items-center gap-1">
-                          <User className="w-3.5 h-3.5 text-stone-400 shrink-0" />
-                          <span>المسؤول: {owner?.name || 'غير محدد'} ({team})</span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Middle: Budget vs Spend */}
-                    <div className="w-full lg:w-56 shrink-0 space-y-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span style={{ color: 'var(--lilac)' }}>الإنفاق / الميزانية:</span>
-                        <span className="font-mono font-bold" style={{ color: 'var(--white)' }}>
-                          ${spend.toLocaleString()} / ${budget.toLocaleString()}
-                        </span>
-                      </div>
-
-                      <div className="w-full bg-stone-800 rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-300"
-                          style={{
-                            width: `${Math.min(spendPct, 100)}%`,
-                            background:
-                              spendPct > 100
-                                ? 'var(--roas-bad)'
-                                : spendPct > 80
-                                ? 'var(--roas-mid)'
-                                : 'var(--roas-good)',
-                          }}
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-stone-400 font-mono">
-                        <span>معدل الاستهلاك</span>
-                        <span>{spendPct.toFixed(1)}%</span>
-                      </div>
-                    </div>
-
-                    {/* Right: Performance Summary Chips (Only existing metrics) */}
-                    <div className="w-full lg:w-72 shrink-0 space-y-2">
-                      <div className="text-[10px] font-bold text-stone-400">
-                        مؤشرات الأداء الفعلية (Performance Summary):
-                      </div>
-
-                      {hasPerformanceMetrics ? (
-                        <div className="grid grid-cols-3 gap-1.5">
-                          {results.roas !== undefined && (
-                            <div className="p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/20 text-center">
-                              <div className="text-[9px] text-emerald-400">ROAS</div>
-                              <div className="text-xs font-bold font-mono text-emerald-300">
-                                {results.roas}x
-                              </div>
-                            </div>
-                          )}
-
-                          {results.conversions !== undefined && (
-                            <div className="p-1.5 rounded-lg bg-cyan-950/40 border border-cyan-500/20 text-center">
-                              <div className="text-[9px] text-cyan-400">تحويلات</div>
-                              <div className="text-xs font-bold font-mono text-cyan-300">
-                                {Number(results.conversions).toLocaleString()}
-                              </div>
-                            </div>
-                          )}
-
-                          {results.clicks !== undefined && (
-                            <div className="p-1.5 rounded-lg bg-purple-950/40 border border-purple-500/20 text-center">
-                              <div className="text-[9px] text-purple-300">نقرات</div>
-                              <div className="text-xs font-bold font-mono text-purple-200">
-                                {Number(results.clicks).toLocaleString()}
-                              </div>
-                            </div>
-                          )}
-
-                          {results.impressions !== undefined && !results.roas && (
-                            <div className="p-1.5 rounded-lg bg-blue-950/40 border border-blue-500/20 text-center">
-                              <div className="text-[9px] text-blue-300">ظهور</div>
-                              <div className="text-xs font-bold font-mono text-blue-200">
-                                {Number(results.impressions).toLocaleString()}
-                              </div>
-                            </div>
-                          )}
-
-                          {results.ctr !== undefined && !results.conversions && (
-                            <div className="p-1.5 rounded-lg bg-amber-950/40 border border-amber-500/20 text-center">
-                              <div className="text-[9px] text-amber-300">CTR</div>
-                              <div className="text-xs font-bold font-mono text-amber-200">
-                                {results.ctr}%
-                              </div>
-                            </div>
-                          )}
-
-                          {results.cpa !== undefined && (
-                            <div className="p-1.5 rounded-lg bg-stone-800/60 border border-stone-700 text-center">
-                              <div className="text-[9px] text-stone-300">CPA</div>
-                              <div className="text-xs font-bold font-mono text-white">
-                                ${results.cpa}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="p-2 rounded-xl bg-white/[0.02] border border-white/5 text-center text-[11px] text-stone-400">
-                          لا توجد مقاييس أداء إضافية مسجلة بعد
-                        </div>
-                      )}
                     </div>
 
                     {/* Actions */}
@@ -1394,7 +1355,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                       {userCanEdit && (
                         <>
                           <button
-                            title={status === 'active' ? 'إيقاف الحملة مؤقتاً' : 'تفعيل الحملة'}
+                            title={status === 'active' ? 'Pause campaign' : 'Activate campaign'}
                             onClick={(e) => handleQuickToggleStatus(campaign, e)}
                             className="p-2 rounded-xl text-xs transition-all hover:scale-105"
                             style={{
@@ -1407,7 +1368,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                           </button>
 
                           <button
-                            title="تعديل بيانات الحملة"
+                            title="Edit campaign data"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleOpenEditModal(campaign);
@@ -1423,23 +1384,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                           </button>
                         </>
                       )}
-
-                      <button
-                        title="عرض تفاصيل الحملة"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedCampaignForDetails(campaign);
-                        }}
-                        className="px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
-                        style={{
-                          background: 'rgba(123, 47, 247, 0.25)',
-                          color: 'var(--purple-light)',
-                          border: '1px solid var(--border-strong)',
-                        }}
-                      >
-                        <span>التفاصيل</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -1450,287 +1394,11 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* MODAL 1: CAMPAIGN DETAILS VIEW */}
-      {/* ------------------------------------------------------------- */}
-      {selectedCampaignForDetails && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto animate-fadeIn"
-          dir="rtl"
-          onClick={() => setSelectedCampaignForDetails(null)}
-        >
-          <div
-            className="w-full max-w-3xl rounded-3xl p-6 shadow-2xl relative space-y-6 max-h-[90vh] overflow-y-auto"
-            style={{
-              background: 'var(--surface-modal)',
-              border: '1px solid var(--border-strong)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Platform */}
-                  {(() => {
-                    const cfg =
-                      PLATFORM_CONFIG[selectedCampaignForDetails.platform] || {
-                        label: selectedCampaignForDetails.platform,
-                        enLabel: selectedCampaignForDetails.platform,
-                        bg: 'rgba(255, 255, 255, 0.1)',
-                        text: '#ffffff',
-                        border: 'rgba(255, 255, 255, 0.2)',
-                      };
-                    return (
-                      <span
-                        className="px-2.5 py-0.5 rounded-full text-xs font-bold"
-                        style={{
-                          background: cfg.bg,
-                          color: cfg.text,
-                          border: `1px solid ${cfg.border}`,
-                        }}
-                      >
-                        {cfg.enLabel}
-                      </span>
-                    );
-                  })()}
-
-                  {/* Status */}
-                  {(() => {
-                    const st = getCampaignStatus(selectedCampaignForDetails);
-                    const cfg = STATUS_CONFIG[st] || STATUS_CONFIG.active;
-                    return (
-                      <span
-                        className="px-2.5 py-0.5 rounded-full text-xs font-bold flex items-center gap-1"
-                        style={{
-                          background: cfg.bg,
-                          color: cfg.text,
-                          border: `1px solid ${cfg.border}`,
-                        }}
-                      >
-                        {cfg.icon}
-                        <span>{cfg.label}</span>
-                      </span>
-                    );
-                  })()}
-
-                  {selectedCampaignForDetails.campaign_id_external && (
-                    <span className="text-xs font-mono text-stone-400">
-                      معرف الحملة: {selectedCampaignForDetails.campaign_id_external}
-                    </span>
-                  )}
-                </div>
-
-                <h3 className="text-lg md:text-xl font-bold" style={{ color: 'var(--white)' }}>
-                  {getCampaignName(selectedCampaignForDetails)}
-                </h3>
-              </div>
-
-              <button
-                onClick={() => setSelectedCampaignForDetails(null)}
-                className="p-2 rounded-xl text-stone-400 hover:text-white transition-all"
-                style={{ background: 'rgba(255, 255, 255, 0.05)' }}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Client & Service Relation Box */}
-            {(() => {
-              const client = clients.find((c) => c.id === selectedCampaignForDetails.client_id);
-              const owner = users.find((u) => u.id === getCampaignOwnerId(selectedCampaignForDetails));
-              const amAgent = users.find((u) => u.id === client?.am_agent_id);
-
-              return (
-                <div
-                  className="p-4 rounded-2xl space-y-3"
-                  style={{
-                    background: 'rgba(123, 47, 247, 0.1)',
-                    border: '1px solid var(--border-medium)',
-                  }}
-                >
-                  <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                    <Building2 className="w-4 h-4" />
-                    <span>الربط المؤسسي بالعميل والخدمة (Client & Service Relation):</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <span className="text-stone-400 block text-[11px]">اسم العميل:</span>
-                      <strong className="text-white text-sm">{client?.name || 'غير محدد'}</strong>
-                      <span className="text-[10px] text-stone-400 block">{client?.industry || ''}</span>
-                    </div>
-
-                    <div>
-                      <span className="text-stone-400 block text-[11px]">مدير الحسابات (AM):</span>
-                      <strong className="text-purple-200">{amAgent?.name || 'قيد الإسناد'}</strong>
-                      <span className="text-[10px] text-stone-400 block">
-                        حالة العميل: {client?.status || 'active'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="text-stone-400 block text-[11px]">الموظف/الفريق المسؤول عن الإعلانات:</span>
-                      <strong className="text-cyan-300">{owner?.name || 'فريق الميديا باينج'}</strong>
-                      <span className="text-[10px] text-stone-400 block">
-                        {getCampaignTeam(selectedCampaignForDetails)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Campaign Core Details Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-              <div
-                className="p-3 rounded-xl"
-                style={{ background: 'var(--surface)', border: '1px solid var(--border-subtle)' }}
-              >
-                <span className="text-[11px] text-stone-400 block">هدف الحملة (Objective):</span>
-                <strong className="text-white text-xs mt-1 block">
-                  {getCampaignObjective(selectedCampaignForDetails)}
-                </strong>
-              </div>
-
-              <div
-                className="p-3 rounded-xl"
-                style={{ background: 'var(--surface)', border: '1px solid var(--border-subtle)' }}
-              >
-                <span className="text-[11px] text-stone-400 block">تاريخ البدء والانتهاء:</span>
-                <strong className="text-white text-xs mt-1 block font-mono">
-                  {getCampaignStartDate(selectedCampaignForDetails)}
-                  {getCampaignEndDate(selectedCampaignForDetails) ? ` ← ${getCampaignEndDate(selectedCampaignForDetails)}` : ' (مفتوحة)'}
-                </strong>
-              </div>
-
-              <div
-                className="p-3 rounded-xl"
-                style={{ background: 'var(--surface)', border: '1px solid var(--border-subtle)' }}
-              >
-                <span className="text-[11px] text-stone-400 block">الميزانية المرصودة:</span>
-                <strong className="text-white text-xs mt-1 block font-mono">
-                  ${getCampaignBudget(selectedCampaignForDetails).toLocaleString()}
-                </strong>
-              </div>
-
-              <div
-                className="p-3 rounded-xl"
-                style={{ background: 'var(--surface)', border: '1px solid var(--border-subtle)' }}
-              >
-                <span className="text-[11px] text-stone-400 block">الإنفاق الفعلي:</span>
-                <strong className="text-emerald-400 text-xs mt-1 block font-mono">
-                  ${(selectedCampaignForDetails.spend || 0).toLocaleString()}
-                </strong>
-              </div>
-            </div>
-
-            {/* Performance Metrics Section (Strictly existing metrics) */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold text-stone-300 flex items-center gap-1.5">
-                <BarChart3 className="w-4 h-4 text-purple-400" />
-                <span>نتائج ومؤشرات الأداء المسجلة في قاعدة البيانات (Campaign Performance):</span>
-              </h4>
-
-              {(() => {
-                const results = selectedCampaignForDetails.results || {};
-                const metricEntries = Object.entries(results).filter(
-                  ([k]) => !['name', 'objective', 'status', 'budget', 'start_date', 'end_date', 'owner_id', 'team'].includes(k)
-                );
-
-                if (metricEntries.length === 0) {
-                  return (
-                    <div className="p-4 rounded-xl text-center text-xs text-stone-400 bg-white/[0.02] border border-white/5">
-                      لا توجد مقاييس أداء إضافية مسجلة في سجل هذه الحملة.
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {metricEntries.map(([key, val]) => {
-                      const displayKey: Record<string, string> = {
-                        roas: 'العائد الإعلاني ROAS',
-                        impressions: 'مرات الظهور (Impressions)',
-                        clicks: 'النقرات (Clicks)',
-                        conversions: 'التحويلات (Conversions)',
-                        ctr: 'نسبة النقر للظهور (CTR %)',
-                        cpc: 'تكلفة النقرة (CPC $)',
-                        cpa: 'تكلفة التحويل (CPA $)',
-                        spend: 'الإنفاق الإعلاني (Spend)',
-                        reach: 'الوصول (Reach)',
-                      };
-
-                      return (
-                        <div
-                          key={key}
-                          className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-center space-y-1"
-                        >
-                          <span className="text-[11px] text-stone-400 block">
-                            {displayKey[key] || key}
-                          </span>
-                          <strong className="text-base font-bold font-mono text-purple-200">
-                            {typeof val === 'number'
-                              ? key === 'roas'
-                                ? `${val}x`
-                                : key === 'ctr'
-                                ? `${val}%`
-                                : key.startsWith('cp') || key === 'spend'
-                                ? `$${val}`
-                                : val.toLocaleString()
-                              : String(val)}
-                          </strong>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
-              {canEdit(selectedCampaignForDetails) && (
-                <button
-                  onClick={() => {
-                    const c = selectedCampaignForDetails;
-                    setSelectedCampaignForDetails(null);
-                    handleOpenEditModal(c);
-                  }}
-                  className="px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md"
-                  style={{
-                    background: 'var(--gradient-badge)',
-                    color: 'var(--white)',
-                    border: '1px solid var(--border-strong)',
-                  }}
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>تعديل الحملة</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => setSelectedCampaignForDetails(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold transition-all"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  color: 'var(--white)',
-                  border: '1px solid var(--border-medium)',
-                }}
-              >
-                إغلاق
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ------------------------------------------------------------- */}
-      {/* MODAL 2: CAMPAIGN CREATION & EDITING */}
+      {/* MODAL: CAMPAIGN CREATION & EDITING */}
       {/* ------------------------------------------------------------- */}
       {isCreateModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm overflow-y-auto animate-fadeIn"
-          dir="rtl"
           onClick={() => !isSubmitting && setIsCreateModalOpen(false)}
         >
           <div
@@ -1751,10 +1419,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 </div>
                 <div>
                   <h3 className="text-base font-bold" style={{ color: 'var(--white)' }}>
-                    {campaignToEdit ? 'تعديل بيانات الحملة الإعلانية' : 'إنشاء حملة إعلانية ممولة جديدة'}
+                    {campaignToEdit ? 'Edit Campaign Data' : 'Create New Ad Campaign'}
                   </h3>
                   <p className="text-[11px] text-stone-400">
-                    ربط الحملة بالعميل، والمنصة، والميزانية، ومؤشرات الأداء الفعلية
+                    Link the campaign to a client, platform, budget, and actual performance metrics
                   </p>
                 </div>
               </div>
@@ -1781,7 +1449,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               <div className="space-y-1">
                 <label className="text-xs font-bold text-stone-300 flex items-center gap-1">
                   <Building2 className="w-3.5 h-3.5 text-purple-400" />
-                  <span>العميل المرتبط بالحملة (مطلوب):</span>
+                  <span>Client Linked to Campaign (required):</span>
                 </label>
                 <select
                   required
@@ -1795,11 +1463,11 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                   }}
                 >
                   <option value="" disabled className="bg-stone-900 text-white">
-                    اختر العميل...
+                    Select client...
                   </option>
                   {accessibleClients.map((c) => (
                     <option key={c.id} value={c.id} className="bg-stone-900 text-white">
-                      {c.name} ({c.industry || 'بدون تصنيف'})
+                      {c.name} ({c.industry || 'Uncategorized'})
                     </option>
                   ))}
                 </select>
@@ -1807,13 +1475,13 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
 
               {/* Campaign Name */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-stone-300">اسم الحملة الإعلانية (مطلوب):</label>
+                <label className="text-xs font-bold text-stone-300">Campaign Name (required):</label>
                 <input
                   type="text"
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="مثال: حملة عروض اليوم الوطني - مبيعات المتجر الإلكتروني"
+                  placeholder="Example: National Day Offers Campaign — Online Store Sales"
                   className="w-full px-3 py-2 rounded-xl text-xs outline-none"
                   style={{
                     background: 'rgba(255, 255, 255, 0.05)',
@@ -1826,7 +1494,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               {/* Platform & Objective */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">المنصة الإعلانية:</label>
+                  <label className="text-xs font-bold text-stone-300">Ad Platform:</label>
                   <select
                     value={formData.platform}
                     onChange={(e) => setFormData({ ...formData, platform: e.target.value })}
@@ -1859,12 +1527,12 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">الهدف الإعلاني (Objective):</label>
+                  <label className="text-xs font-bold text-stone-300">Objective:</label>
                   <input
                     type="text"
                     value={formData.objective}
                     onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-                    placeholder="مثال: التحويلات والمبيعات، أو توليد العملاء المحتملين"
+                    placeholder="Example: Conversions & sales, or lead generation"
                     className="w-full px-3 py-2 rounded-xl text-xs outline-none"
                     style={{
                       background: 'rgba(255, 255, 255, 0.05)',
@@ -1878,7 +1546,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               {/* Status & External ID */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">حالة الحملة:</label>
+                  <label className="text-xs font-bold text-stone-300">Campaign Status:</label>
                   <select
                     value={formData.status}
                     onChange={(e) => setFormData({ ...formData, status: e.target.value as CampaignStatus })}
@@ -1890,30 +1558,30 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                     }}
                   >
                     <option value="active" className="bg-stone-900 text-white">
-                      نشطة (Active)
+                      Active
                     </option>
                     <option value="paused" className="bg-stone-900 text-white">
-                      متوقفة مؤقتاً (Paused)
+                      Paused
                     </option>
                     <option value="completed" className="bg-stone-900 text-white">
-                      مكتملة (Completed)
+                      Completed
                     </option>
                     <option value="draft" className="bg-stone-900 text-white">
-                      مسودة (Draft)
+                      Draft
                     </option>
                     <option value="archived" className="bg-stone-900 text-white">
-                      مؤرشفة (Archived)
+                      Archived
                     </option>
                   </select>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">معرف الحملة في المنصة (اختياري):</label>
+                  <label className="text-xs font-bold text-stone-300">Platform Campaign ID (optional):</label>
                   <input
                     type="text"
                     value={formData.externalId}
                     onChange={(e) => setFormData({ ...formData, externalId: e.target.value })}
-                    placeholder="مثال: act_682940284_cmp01"
+                    placeholder="Example: act_682940284_cmp01"
                     className="w-full px-3 py-2 rounded-xl text-xs font-mono outline-none"
                     style={{
                       background: 'rgba(255, 255, 255, 0.05)',
@@ -1927,7 +1595,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               {/* Budget & Spend */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">الميزانية المرصودة ($ USD):</label>
+                  <label className="text-xs font-bold text-stone-300">Allocated Budget ($ USD):</label>
                   <input
                     type="number"
                     min="0"
@@ -1944,7 +1612,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">الإنفاق الفعلي الحالي ($ USD):</label>
+                  <label className="text-xs font-bold text-stone-300">Current Actual Spend ($ USD):</label>
                   <input
                     type="number"
                     min="0"
@@ -1964,7 +1632,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               {/* Dates */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">تاريخ بدء الحملة:</label>
+                  <label className="text-xs font-bold text-stone-300">Campaign Start Date:</label>
                   <input
                     type="date"
                     required
@@ -1980,7 +1648,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">تاريخ الانتهاء (اختياري):</label>
+                  <label className="text-xs font-bold text-stone-300">End Date (optional):</label>
                   <input
                     type="date"
                     value={formData.endDate}
@@ -1998,7 +1666,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               {/* Owner & Team */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">الموظف المسؤول:</label>
+                  <label className="text-xs font-bold text-stone-300">Responsible Employee:</label>
                   <select
                     value={formData.ownerId}
                     onChange={(e) => setFormData({ ...formData, ownerId: e.target.value })}
@@ -2010,7 +1678,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                     }}
                   >
                     {users
-                      .filter((u) => u.team === 'Media Buying' || u.role.includes('lead') || u.id === currentUser.id)
+                      .filter((u) => (u.team === 'Media Buying' || u.role.includes('lead') || u.id === currentUser.id) && isActiveEmployee(u))
                       .map((u) => (
                         <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                           {u.name} ({u.team || u.role})
@@ -2020,7 +1688,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-stone-300">الفريق المسؤول:</label>
+                  <label className="text-xs font-bold text-stone-300">Responsible Team:</label>
                   <select
                     value={formData.team}
                     onChange={(e) => setFormData({ ...formData, team: e.target.value })}
@@ -2047,58 +1715,58 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               {/* Existing Performance Metrics Inputs (Only existing metrics) */}
               <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2.5">
                 <div className="text-xs font-bold text-stone-300 flex items-center justify-between">
-                  <span>مؤشرات أداء الحملة (اختياري - تُخزن في نتائج الحملة):</span>
-                  <span className="text-[10px] text-stone-400">تحديث مؤشرات المنصة</span>
+                  <span>Campaign Performance Metrics (optional — stored in campaign results):</span>
+                  <span className="text-[10px] text-stone-400">Update Platform Metrics</span>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                   <div>
-                    <label className="text-[10px] text-stone-400 block mb-0.5">ROAS (العائد):</label>
+                    <label className="text-[10px] text-stone-400 block mb-0.5">ROAS:</label>
                     <input
                       type="number"
                       step="0.01"
                       value={formData.roas}
                       onChange={(e) => setFormData({ ...formData, roas: e.target.value })}
-                      placeholder="مثال: 3.25"
+                      placeholder="Example: 3.25"
                       className="w-full px-2.5 py-1.5 rounded-lg text-xs font-mono outline-none"
                       style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'white' }}
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-stone-400 block mb-0.5">التحويلات (Conversions):</label>
+                    <label className="text-[10px] text-stone-400 block mb-0.5">Conversions:</label>
                     <input
                       type="number"
                       step="1"
                       value={formData.conversions}
                       onChange={(e) => setFormData({ ...formData, conversions: e.target.value })}
-                      placeholder="مثال: 120"
+                      placeholder="Example: 120"
                       className="w-full px-2.5 py-1.5 rounded-lg text-xs font-mono outline-none"
                       style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'white' }}
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-stone-400 block mb-0.5">النقرات (Clicks):</label>
+                    <label className="text-[10px] text-stone-400 block mb-0.5">Clicks:</label>
                     <input
                       type="number"
                       step="1"
                       value={formData.clicks}
                       onChange={(e) => setFormData({ ...formData, clicks: e.target.value })}
-                      placeholder="مثال: 3500"
+                      placeholder="Example: 3500"
                       className="w-full px-2.5 py-1.5 rounded-lg text-xs font-mono outline-none"
                       style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'white' }}
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-stone-400 block mb-0.5">مرات الظهور (Impressions):</label>
+                    <label className="text-[10px] text-stone-400 block mb-0.5">Impressions:</label>
                     <input
                       type="number"
                       step="100"
                       value={formData.impressions}
                       onChange={(e) => setFormData({ ...formData, impressions: e.target.value })}
-                      placeholder="مثال: 85000"
+                      placeholder="Example: 85000"
                       className="w-full px-2.5 py-1.5 rounded-lg text-xs font-mono outline-none"
                       style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'white' }}
                     />
@@ -2119,7 +1787,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                     border: '1px solid var(--border-medium)',
                   }}
                 >
-                  إلغاء
+                  Cancel
                 </button>
 
                 <button
@@ -2135,12 +1803,12 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                   {isSubmitting ? (
                     <>
                       <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>جاري الحفظ في قاعدة البيانات...</span>
+                      <span>Saving to database...</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4 text-white" />
-                      <span>{campaignToEdit ? 'حفظ التعديلات' : 'إنشاء الحملة وتفعيلها'}</span>
+                      <span>{campaignToEdit ? 'Save Changes' : 'Create & Activate Campaign'}</span>
                     </>
                   )}
                 </button>
@@ -2148,6 +1816,37 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
             </form>
           </div>
         </div>
+      )}
+
+      {activeDashboardClient && (
+        <ClientDashboard
+          client={activeDashboardClient}
+          users={users}
+          currentUser={currentUser}
+          briefs={briefs}
+          briefRevisions={briefRevisions}
+          campaigns={campaigns}
+          tasks={tasks}
+          dailyLogs={dailyLogs}
+          extraNotes={extraNotes}
+          assignments={assignments}
+          reports={reports}
+          clientComparisons={clientComparisons}
+          socialInsights={socialInsights}
+          clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
+          initialTab="campaigns"
+          onClose={() => setDashboardClientId(null)}
+          briefFieldSchemas={briefFieldSchemas}
+          briefFieldSchemaRows={briefFieldSchemaRows}
+          onDeleteClient={onDeleteClient}
+          onGenerateComparison={onGenerateComparison}
+          onGenerateReport={onGenerateReport}
+          onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
+          onApproveReport={onApproveReport}
+          onCreatePortalLogin={onCreatePortalLogin}
+          platformConnections={platformConnections}
+          onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+        />
       )}
     </div>
   );

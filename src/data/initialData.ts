@@ -1,5 +1,4 @@
 import {
-  PackageRecord,
   UserRecord,
   ClientRecord,
   BriefRecord,
@@ -10,34 +9,6 @@ import {
   ExtraNoteRecord,
   AssignmentRecord,
 } from '../types/database';
-
-export const INITIAL_PACKAGES: PackageRecord[] = [
-  {
-    id: 'pkg-1',
-    name: 'باقة النمو المتكاملة (SEO + سوشيال ميديا + ميديا باينج)',
-    services: ['seo', 'social_media', 'media_buying'],
-  },
-  {
-    id: 'pkg-2',
-    name: 'باقة الأداء الرقمي (سوشيال ميديا + ميديا باينج)',
-    services: ['social_media', 'media_buying'],
-  },
-  {
-    id: 'pkg-3',
-    name: 'باقة تحسين محركات البحث المتقدمة (SEO)',
-    services: ['seo'],
-  },
-  {
-    id: 'pkg-4',
-    name: 'باقة الحملات الإعلانية الممولة (Media Buying)',
-    services: ['media_buying'],
-  },
-  {
-    id: 'pkg-5',
-    name: 'باقة إدارة وتنمية السوشيال ميديا (Social Media)',
-    services: ['social_media'],
-  },
-];
 
 export const INITIAL_USERS: UserRecord[] = [
   // 1. Executive Management (C-level)
@@ -219,15 +190,27 @@ export const INITIAL_USERS: UserRecord[] = [
     auth_id: 'auth-vid-1',
     capacity_limit: 10,
   },
-  // 14. Marketing Manager (cross-cutting Creative task/capacity oversight, not a team manager)
+  // 14. AI Engineer
+  {
+    id: 'usr-ai-eng-1',
+    name: 'كريم النجار',
+    email: 'karim.ai@agency.com',
+    password: 'agency123',
+    role: 'ai_engineer',
+    team: 'AI Engineering',
+    auth_id: 'auth-ai-eng-1',
+    capacity_limit: 10,
+  },
+  // 15. Marketing Manager
   {
     id: 'usr-mkt-mgr-1',
-    name: 'هبة نجيب',
-    email: 'heba.marketing@agency.com',
+    name: 'ياسمين العبدالله',
+    email: 'yasmine.marketing@agency.com',
     password: 'agency123',
     role: 'marketing_manager',
     team: 'Marketing',
     auth_id: 'auth-mkt-mgr-1',
+    capacity_limit: 10,
   },
 ];
 
@@ -236,7 +219,8 @@ export const INITIAL_CLIENTS: ClientRecord[] = [
     id: 'cl-101',
     name: 'مجموعة الفطيم للحلول الذكية',
     industry: 'تقنية وتجارة إلكترونية',
-    package_id: 'pkg-1',
+    services: ['seo', 'social_media', 'media_buying'],
+    phone_number: '+966 50 123 4567',
     status: 'onboarding',
     sales_owner_id: 'usr-sales-1',
     am_team_lead_id: 'usr-am-lead',
@@ -249,7 +233,8 @@ export const INITIAL_CLIENTS: ClientRecord[] = [
     id: 'cl-102',
     name: 'سلسلة عيادات النخبة الطبية',
     industry: 'رعاية صحية وتجميل',
-    package_id: 'pkg-2',
+    services: ['social_media', 'media_buying'],
+    phone_number: '+966 55 987 6543',
     status: 'onboarding',
     sales_owner_id: 'usr-sales-1',
     am_team_lead_id: 'usr-am-lead',
@@ -262,7 +247,8 @@ export const INITIAL_CLIENTS: ClientRecord[] = [
     id: 'cl-103',
     name: 'منصة عقارات كابيتال',
     industry: 'عقارات واستثمار',
-    package_id: 'pkg-3',
+    services: ['seo'],
+    phone_number: '+966 54 222 1198',
     status: 'onboarding',
     sales_owner_id: 'usr-sales-1',
     am_team_lead_id: 'usr-am-lead',
@@ -275,7 +261,7 @@ export const INITIAL_CLIENTS: ClientRecord[] = [
     id: 'cl-104',
     name: 'شركة الأفق للحلول السحابية',
     industry: 'تقنية وتجارة إلكترونية',
-    package_id: 'pkg-1',
+    services: ['seo', 'social_media', 'media_buying'],
     status: 'onboarding',
     sales_owner_id: 'usr-sales-2',
     am_team_lead_id: 'usr-am-lead',
@@ -293,6 +279,7 @@ export const INITIAL_BRIEFS: BriefRecord[] = [
     service_type: 'seo',
     version: 1,
     submitted_by: 'usr-am-agent-1',
+    custom_field_defs: [],
     fields: {
       website_url: 'https://alfuttaim-smart.example.com',
       target_keywords: 'حلول ذكية للمنازل, أتمتة الشركات, أنظمة الحماية الذكية',
@@ -311,6 +298,7 @@ export const INITIAL_BRIEFS: BriefRecord[] = [
     service_type: 'social_media',
     version: 1,
     submitted_by: 'usr-am-agent-1',
+    custom_field_defs: [],
     fields: {
       social_channels: ['Instagram', 'LinkedIn', 'X'],
       brand_tone: 'احترافي، مبتكر، ملهم، موثوق',
@@ -328,6 +316,7 @@ export const INITIAL_BRIEFS: BriefRecord[] = [
     service_type: 'media_buying',
     version: 1,
     submitted_by: 'usr-am-agent-1',
+    custom_field_defs: [],
     fields: {
       ad_platforms: ['Meta Ads (Instagram & Facebook)', 'Google Search & Performance Max', 'TikTok Ads'],
       monthly_ad_budget: '50,000 ريال سعودي',

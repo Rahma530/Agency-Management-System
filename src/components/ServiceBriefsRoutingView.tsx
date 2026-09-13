@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   FileText,
   UserCheck,
-  Building2,
   Calendar,
   CheckCircle2,
   Clock,
@@ -20,12 +19,14 @@ import {
   Sparkles,
   Info,
   Eye,
+  Gauge,
+  ClipboardCheck,
 } from 'lucide-react';
 import {
   ClientRecord,
-  PackageRecord,
   UserRecord,
   BriefRecord,
+  BriefRevisionRecord,
   AssignmentRecord,
   CampaignRecord,
   TaskRecord,
@@ -33,43 +34,376 @@ import {
   ExtraNoteRecord,
   ServiceType,
   UserRole,
+  ReportRecord,
+  ClientComparisonRecord,
+  SocialInsightRecord,
+  ClientPortalUserRecord,
+  PlatformConnectionRecord,
+  PlatformConnectionStatus,
+  PlatformCategory,
 } from '../types/database';
+import { AppModuleId } from '../data/roles';
+import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
+import { CLIENT_STATUS_META } from '../lib/clientStatus';
+import { matchesClientQuery } from '../lib/clientSearch';
 import { ClientDashboard } from './ClientDashboard';
+import { BriefRepositoryView } from './BriefRepositoryView';
+import { DynamicBriefForm } from './DynamicBriefForm';
+import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
+import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
+import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema } from '../lib/permissions';
+import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
+import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
 
 interface ServiceBriefsRoutingViewProps {
   currentUser: UserRecord;
   clients: ClientRecord[];
-  packages: PackageRecord[];
   briefs: BriefRecord[];
+  briefRevisions?: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
   users: UserRecord[];
   campaigns?: CampaignRecord[];
   tasks?: TaskRecord[];
   dailyLogs?: DailyLogRecord[];
   extraNotes?: ExtraNoteRecord[];
+  reports?: ReportRecord[];
+  clientComparisons?: ClientComparisonRecord[];
+  socialInsights?: SocialInsightRecord[];
+  clientPortalUsers?: ClientPortalUserRecord[];
   onAssignServiceAgent: (
     clientId: string,
     serviceType: ServiceType,
     agentId: string,
     reasonNotes?: string
   ) => Promise<void>;
-  onNavigateToModule?: (module: string) => void;
+  onMarkBriefViewed?: (briefId: string) => Promise<void> | void;
+  onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
+  onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
+  onGenerateComparison?: (
+    scope: ReportScope,
+    mode: ReportMode,
+    granularity: ComparisonGranularity | 'custom',
+    custom?: { currentRange: DateRange; previousRange?: DateRange }
+  ) => Promise<void>;
+  onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
+  onApproveReport?: (reportId: string) => Promise<void>;
+  onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
+  platformConnections?: PlatformConnectionRecord[];
+  onSetPlatformConnectionStatus?: (
+    clientId: string,
+    platformName: string,
+    platformCategory: PlatformCategory,
+    status: PlatformConnectionStatus,
+    notes: string
+  ) => Promise<void>;
+  onSaveBrief?: (briefData: {
+    client_id: string;
+    service_type: ServiceType;
+    fields: Record<string, any>;
+    version: number;
+    submitted_by: string;
+    custom_field_defs: BriefFieldDef[];
+  }) => Promise<void>;
+  briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  briefFieldSchemaRows: BriefFieldSchemaRow[];
+  onCreateBriefFieldSchema?: (row: Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
+  onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
+  onDeleteClient?: (clientId: string) => Promise<void>;
 }
+
+// AM roles (am_team_lead, am_agent) don't work a single service — they need visibility into
+// every service brief for the clients they manage, since AM owns the overall client relationship.
+// This is a genuine read-only aggregated Brief Repository (BriefRepositoryView below) rather than
+// a mode of the single-service workflow further down this file; "Open Full Dashboard" per client
+// is the escape hatch into ClientDashboard's editable Briefs tab when that's actually needed.
+const AMServiceBriefsPanel: React.FC<{
+  currentUser: UserRecord;
+  clients: ClientRecord[];
+  briefs: BriefRecord[];
+  briefRevisions: BriefRevisionRecord[];
+  assignments: AssignmentRecord[];
+  users: UserRecord[];
+  campaigns: CampaignRecord[];
+  tasks: TaskRecord[];
+  dailyLogs: DailyLogRecord[];
+  extraNotes: ExtraNoteRecord[];
+  reports: ReportRecord[];
+  clientComparisons: ClientComparisonRecord[];
+  socialInsights: SocialInsightRecord[];
+  clientPortalUsers: ClientPortalUserRecord[];
+  onGenerateComparison?: (
+    scope: ReportScope,
+    mode: ReportMode,
+    granularity: ComparisonGranularity | 'custom',
+    custom?: { currentRange: DateRange; previousRange?: DateRange }
+  ) => Promise<void>;
+  onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
+  onApproveReport?: (reportId: string) => Promise<void>;
+  onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
+  platformConnections: PlatformConnectionRecord[];
+  onSetPlatformConnectionStatus?: (
+    clientId: string,
+    platformName: string,
+    platformCategory: PlatformCategory,
+    status: PlatformConnectionStatus,
+    notes: string
+  ) => Promise<void>;
+  onSaveBrief?: (briefData: {
+    client_id: string;
+    service_type: ServiceType;
+    fields: Record<string, any>;
+    version: number;
+    submitted_by: string;
+    custom_field_defs: BriefFieldDef[];
+  }) => Promise<void>;
+  briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  briefFieldSchemaRows: BriefFieldSchemaRow[];
+  onCreateBriefFieldSchema?: (row: Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
+  onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
+  onDeleteClient?: (clientId: string) => Promise<void>;
+}> = ({
+  currentUser,
+  clients,
+  briefs,
+  briefRevisions,
+  assignments,
+  users,
+  campaigns,
+  tasks,
+  dailyLogs,
+  extraNotes,
+  reports,
+  clientComparisons,
+  socialInsights,
+  clientPortalUsers,
+  onGenerateComparison,
+  onGenerateReport,
+  onGenerateMonthlyReportDraft,
+  onApproveReport,
+  onCreatePortalLogin,
+  platformConnections,
+  onSetPlatformConnectionStatus,
+  onSaveBrief,
+  briefFieldSchemas,
+  briefFieldSchemaRows,
+  onCreateBriefFieldSchema,
+  onUpdateBriefFieldSchema,
+  onDeleteBriefFieldSchema,
+  onDeleteClient,
+}) => {
+  const isTeamLead = currentUser.role === 'am_team_lead';
+
+  // AM visibility: team lead sees every client; agent sees only clients personally assigned to them
+  // (same rule as AMQueue.tsx's visibleClients — kept consistent rather than reinvented here).
+  const authorizedClients = useMemo(
+    () => (isTeamLead ? clients : clients.filter((c) => c.am_agent_id === currentUser.id)),
+    [clients, isTeamLead, currentUser.id]
+  );
+
+  const [dashboardClientId, setDashboardClientId] = useState<string | null>(null);
+
+  const clientServices = (client: ClientRecord): ServiceType[] => client.services || [];
+
+  const clientBriefsDocumented = (client: ClientRecord) => {
+    const services = clientServices(client);
+    const documented = services.filter((s) => briefs.some((b) => b.client_id === client.id && b.service_type === s && b.version > 0));
+    return { documented: documented.length, total: services.length };
+  };
+
+  const totalBriefsDocumented = briefs.filter((b) => authorizedClients.some((c) => c.id === b.client_id) && b.version > 0).length;
+  const clientsMissingBriefs = authorizedClients.filter((c) => {
+    const { documented, total } = clientBriefsDocumented(c);
+    return total > 0 && documented < total;
+  }).length;
+
+  const activeDashboardClient = clients.find((c) => c.id === dashboardClientId) || null;
+
+  return (
+    <div className="space-y-6">
+      {/* Header Banner */}
+      <div
+        className="p-5 rounded-2xl border relative overflow-hidden backdrop-blur-md flex flex-col md:flex-row md:items-center justify-between gap-4"
+        style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}
+      >
+        <div className="flex items-center gap-3.5">
+          <div
+            className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-lg"
+            style={{ background: 'rgba(123, 47, 247, 0.25)', border: '1px solid var(--border-soft)', color: 'var(--purple-light)' }}
+          >
+            <Layers className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-white">Service Briefs — Cross-Team Overview</h2>
+              <span
+                className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border"
+                style={{ background: 'rgba(123, 47, 247, 0.2)', color: 'var(--purple-light)', borderColor: 'var(--border-soft)' }}
+              >
+                {isTeamLead ? 'AM Team Lead' : 'AM Specialist'}
+              </span>
+            </div>
+            <p className="text-xs text-stone-400 mt-0.5">
+              {isTeamLead
+                ? 'Review every service brief across all clients managed by Account Management.'
+                : 'Review every service brief — SEO, Social Media, Media Buying — for your assigned client portfolio.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200 self-start md:self-center">
+          <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+          <span>Read-only across all services — assignment stays with each service team lead</span>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
+          <div className="text-[11px] text-stone-400 font-semibold">{isTeamLead ? 'Total Clients' : 'My Assigned Clients'}</div>
+          <div className="text-2xl font-bold text-white mt-1 font-mono">{authorizedClients.length}</div>
+        </div>
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
+          <div className="text-[11px] text-stone-400 font-semibold">Briefs Documented</div>
+          <div className="text-2xl font-bold text-emerald-400 mt-1 font-mono">{totalBriefsDocumented}</div>
+        </div>
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
+          <div className="text-[11px] text-stone-400 font-semibold">Clients Missing a Brief</div>
+          <div className="text-2xl font-bold text-amber-300 mt-1 font-mono">{clientsMissingBriefs}</div>
+        </div>
+      </div>
+
+      {/* Brief Repository — genuine read-only, grouped-by-client, all services on one page */}
+      {authorizedClients.length === 0 ? (
+        <div className="p-8 text-center rounded-2xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <p className="text-xs text-stone-400">
+            {isTeamLead ? 'No clients found.' : 'No clients currently assigned to your account.'}
+          </p>
+        </div>
+      ) : (
+        <BriefRepositoryView
+          clients={authorizedClients}
+          briefs={briefs}
+          briefRevisions={briefRevisions}
+          users={users}
+          briefFieldSchemas={briefFieldSchemas}
+          onOpenFullDashboard={(clientId) => setDashboardClientId(clientId)}
+        />
+      )}
+
+      {/* DEDICATED CLIENT DASHBOARD MODAL, opened straight to the Briefs tab */}
+      {activeDashboardClient && (
+        <ClientDashboard
+          client={activeDashboardClient}
+          users={users}
+          currentUser={currentUser}
+          briefs={briefs}
+          briefRevisions={briefRevisions}
+          campaigns={campaigns}
+          tasks={tasks}
+          dailyLogs={dailyLogs}
+          extraNotes={extraNotes}
+          assignments={assignments}
+          reports={reports}
+          clientComparisons={clientComparisons}
+          socialInsights={socialInsights}
+          clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
+          initialTab="briefs"
+          onClose={() => setDashboardClientId(null)}
+          onSaveBrief={onSaveBrief}
+          briefFieldSchemas={briefFieldSchemas}
+          briefFieldSchemaRows={briefFieldSchemaRows}
+          onCreateBriefFieldSchema={onCreateBriefFieldSchema}
+          onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
+          onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
+          onDeleteClient={onDeleteClient}
+          onGenerateComparison={onGenerateComparison}
+          onGenerateReport={onGenerateReport}
+          onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
+          onApproveReport={onApproveReport}
+          onCreatePortalLogin={onCreatePortalLogin}
+          platformConnections={platformConnections}
+          onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+        />
+      )}
+    </div>
+  );
+};
 
 export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> = ({
   currentUser,
   clients,
-  packages,
   briefs,
+  briefRevisions = [],
   assignments,
   users,
   campaigns = [],
   tasks = [],
   dailyLogs = [],
   extraNotes = [],
+  reports = [],
+  clientComparisons = [],
+  socialInsights = [],
+  clientPortalUsers = [],
   onAssignServiceAgent,
+  onMarkBriefViewed,
+  onMarkAssignmentViewed,
   onNavigateToModule,
+  onGenerateComparison,
+  onGenerateReport,
+  onGenerateMonthlyReportDraft,
+  onApproveReport,
+  onCreatePortalLogin,
+  platformConnections = [],
+  onSetPlatformConnectionStatus,
+  onSaveBrief,
+  briefFieldSchemas,
+  briefFieldSchemaRows,
+  onCreateBriefFieldSchema,
+  onUpdateBriefFieldSchema,
+  onDeleteBriefFieldSchema,
+  onDeleteClient,
 }) => {
+  // AM roles get a dedicated cross-service overview instead of the single-service specialist
+  // workflow below (they manage the overall client relationship, not one department's queue).
+  if (currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent') {
+    return (
+      <AMServiceBriefsPanel
+        currentUser={currentUser}
+        clients={clients}
+        briefs={briefs}
+        briefRevisions={briefRevisions}
+        assignments={assignments}
+        users={users}
+        campaigns={campaigns}
+        tasks={tasks}
+        dailyLogs={dailyLogs}
+        extraNotes={extraNotes}
+        reports={reports}
+        clientComparisons={clientComparisons}
+        socialInsights={socialInsights}
+        clientPortalUsers={clientPortalUsers}
+        onGenerateComparison={onGenerateComparison}
+        onGenerateReport={onGenerateReport}
+        onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
+        onApproveReport={onApproveReport}
+        onCreatePortalLogin={onCreatePortalLogin}
+        platformConnections={platformConnections}
+        onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+        onSaveBrief={onSaveBrief}
+        briefFieldSchemas={briefFieldSchemas}
+        briefFieldSchemaRows={briefFieldSchemaRows}
+        onCreateBriefFieldSchema={onCreateBriefFieldSchema}
+        onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
+        onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
+        onDeleteClient={onDeleteClient}
+      />
+    );
+  }
+
   // Determine service and role context
   const getServiceContext = (role: UserRole) => {
     if (role === 'seo_team_lead' || role === 'seo_agent') {
@@ -147,17 +481,21 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
 
   // Filter clients based on role and assignment rules:
   // - Team Leader: All clients whose package includes this service
-  // - Service Agent: ONLY clients where assignment.agent_id === currentUser.id AND service_type === serviceType
+  // - Service Agent: ONLY clients where assignment.agent_id === currentUser.id, in ANY
+  //   service — being formally assigned to a client for one service is enough to unlock
+  //   that client here too, since once inside ClientDashboard the agent can see that
+  //   client's briefs across every service, not only serviceType (see ClientDashboard's
+  //   clientBriefs, which is never filtered by service_type). This queue itself still
+  //   only lists clients subscribed to serviceType, via the hasService check below.
   const authorizedClients = clients.filter((c) => {
-    const pkg = packages.find((p) => p.id === c.package_id);
-    const hasService = pkg?.services.includes(serviceType);
+    const hasService = (c.services || []).includes(serviceType);
     if (!hasService) return false;
 
     if (isTeamLead) {
       return true;
     } else {
       const myAssignment = assignments.find(
-        (a) => a.client_id === c.id && a.service_type === serviceType && a.agent_id === currentUser.id
+        (a) => a.client_id === c.id && a.agent_id === currentUser.id
       );
       return !!myAssignment;
     }
@@ -175,16 +513,24 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   const [assignmentNotes, setAssignmentNotes] = useState<string>('');
   const [isSubmittingAssignment, setIsSubmittingAssignment] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isSchemaEditorOpen, setIsSchemaEditorOpen] = useState(false);
 
-  const eligibleAgents = users.filter((u) => u.role === agentRole);
+  const eligibleAgents = users.filter((u) => u.role === agentRole && isActiveEmployee(u));
 
   const selectedClient =
     authorizedClients.find((c) => c.id === selectedClientId) || authorizedClients[0] || null;
-  const selectedClientPackage = packages.find((p) => p.id === selectedClient?.package_id);
 
   const serviceBrief = briefs.find(
     (b) => b.client_id === selectedClient?.id && b.service_type === serviceType
   );
+
+  // Clear the "New" indicator on the currently-open brief once the relevant Team Lead sees it.
+  React.useEffect(() => {
+    if (isTeamLead && onMarkBriefViewed && serviceBrief && !serviceBrief.team_lead_viewed_at) {
+      onMarkBriefViewed(serviceBrief.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTeamLead, serviceBrief?.id, serviceBrief?.team_lead_viewed_at]);
 
   const currentAssignment = assignments.find(
     (a) => a.client_id === selectedClient?.id && a.service_type === serviceType
@@ -223,9 +569,10 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   };
 
   const displayedClients = authorizedClients.filter((c) => {
+    // Module 14: name-or-phone via the shared predicate, industry kept as this screen's own
+    // pre-existing extra match dimension.
     const matchesSearch =
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (c.industry || '').toLowerCase().includes(searchQuery.toLowerCase());
+      matchesClientQuery(c, searchQuery) || (c.industry || '').toLowerCase().includes(searchQuery.toLowerCase());
     if (!matchesSearch) return false;
 
     if (statusFilter === 'all') return true;
@@ -252,154 +599,28 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
     }
   };
 
+  // Broadened per the final brief-editing decision: a department team lead can edit their own
+  // service's brief for any of their clients; an agent only for a client they're formally
+  // assigned to for this service (mirrors briefs_update_rls's agent branch, which requires
+  // agent_assigned()) — matches currentAssignment computed above.
+  const canEditThisBrief = isTeamLead || currentAssignment?.agent_id === currentUser.id;
+
   const renderBriefContent = (brief: BriefRecord | undefined) => {
-    if (!brief || !brief.fields || Object.keys(brief.fields).length === 0) {
-      return (
-        <div className="p-6 rounded-xl bg-amber-950/20 border border-amber-900/30 text-center space-y-2">
-          <Clock className="w-8 h-8 text-amber-400 mx-auto" />
-          <h4 className="text-sm font-bold text-amber-300">Brief Pending Submission</h4>
-          <p className="text-xs text-stone-300 max-w-md mx-auto">
-            The Account Management team is currently collecting requirements with the client. Full brief details will render once submitted.
-          </p>
-        </div>
-      );
-    }
-
-    const f = brief.fields;
-
-    if (serviceType === 'seo') {
-      return (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Target Website URL</span>
-              <a
-                href={f.website_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-bold text-emerald-300 hover:underline flex items-center gap-1 break-all"
-              >
-                <span>{f.website_url || 'Not specified'}</span>
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </a>
-            </div>
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">CMS Platform</span>
-              <p className="text-xs font-bold text-white">{f.cms_platform || 'Not specified'}</p>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30 space-y-1">
-            <span className="text-[11px] text-stone-400 block">Target Keywords</span>
-            <p className="text-xs text-stone-200 leading-relaxed font-mono whitespace-pre-line">
-              {f.target_keywords || 'Not specified'}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Geographic Target</span>
-              <p className="text-xs text-white">{f.target_locations || 'Not specified'}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Current Organic Traffic</span>
-              <p className="text-xs font-bold text-purple-300">{f.current_organic_traffic || 'N/A'}</p>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30 space-y-1">
-            <span className="text-[11px] text-stone-400 block">Primary Campaign Goals</span>
-            <p className="text-xs text-stone-200 leading-relaxed">{f.primary_goals || 'Not specified'}</p>
-          </div>
-        </div>
-      );
-    }
-
-    if (serviceType === 'media_buying') {
-      return (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Monthly Ad Spend Budget</span>
-              <p className="text-sm font-bold text-sky-400 font-mono">
-                {f.monthly_ad_budget || 'Custom'}
-              </p>
-            </div>
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Target ROAS</span>
-              <p className="text-sm font-bold text-emerald-400 font-mono">
-                {f.target_roas || 'N/A'}
-              </p>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30 space-y-1">
-            <span className="text-[11px] text-stone-400 block">Target Platforms</span>
-            <div className="flex flex-wrap gap-1.5">
-              {Array.isArray(f.ad_platforms) ? (
-                f.ad_platforms.map((plt: string, idx: number) => (
-                  <span
-                    key={idx}
-                    className="px-2.5 py-0.5 rounded text-xs font-semibold bg-sky-950/60 text-sky-300 border border-sky-800/40 uppercase"
-                  >
-                    {plt}
-                  </span>
-                ))
-              ) : (
-                <span className="text-xs text-white">{f.ad_platforms || 'Not specified'}</span>
-              )}
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30 space-y-1">
-            <span className="text-[11px] text-stone-400 block">Primary Conversion Goal</span>
-            <p className="text-xs text-stone-200 font-bold">{f.primary_conversion_goal || 'Not specified'}</p>
-          </div>
-        </div>
-      );
-    }
-
-    if (serviceType === 'social_media') {
-      return (
-        <div className="space-y-3">
-          <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30 space-y-1">
-            <span className="text-[11px] text-stone-400 block">Channels</span>
-            <div className="flex flex-wrap gap-1.5">
-              {Array.isArray(f.social_channels) ? (
-                f.social_channels.map((chn: string, idx: number) => (
-                  <span
-                    key={idx}
-                    className="px-2 py-0.5 rounded text-xs font-semibold bg-pink-950/60 text-pink-300 border border-pink-800/40 uppercase"
-                  >
-                    {chn}
-                  </span>
-                ))
-              ) : (
-                <span className="text-xs text-white">{f.social_channels || 'Not specified'}</span>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Brand Voice & Tone</span>
-              <p className="text-xs font-bold text-white">{f.brand_tone || 'Not specified'}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30">
-              <span className="text-[11px] text-stone-400 block mb-1">Posting Frequency</span>
-              <p className="text-xs font-bold text-purple-300">{f.posting_frequency || 'Weekly'}</p>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-900/30 space-y-1">
-            <span className="text-[11px] text-stone-400 block">Content Pillars</span>
-            <p className="text-xs text-stone-200 leading-relaxed">{f.content_pillars || 'Not specified'}</p>
-          </div>
-        </div>
-      );
-    }
-
-    return null;
+    if (!selectedClient) return null;
+    return (
+      <DynamicBriefForm
+        clientId={selectedClient.id}
+        clientName={selectedClient.name}
+        serviceType={serviceType}
+        fieldDefs={briefFieldSchemas[serviceType] || []}
+        existingBrief={brief}
+        allBriefs={briefs}
+        revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
+        onSaveBrief={onSaveBrief || (async () => {})}
+        currentUserId={currentUser.id}
+        canEdit={canEditThisBrief && typeof onSaveBrief === 'function'}
+      />
+    );
   };
 
   const activeDashboardClient = clients.find((c) => c.id === dashboardClientId) || null;
@@ -446,9 +667,20 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           </div>
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200 self-start md:self-center">
-          <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-          <span>Multi-Service Workflow: {serviceNameEn}</span>
+        <div className="flex items-center gap-2 self-start md:self-center">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200">
+            <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+            <span>Multi-Service Workflow: {serviceNameEn}</span>
+          </div>
+          {isTeamLead && onNavigateToModule && (
+            <button
+              onClick={() => onNavigateToModule('capacity')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-purple-200 bg-purple-900/30 hover:bg-purple-800/50 hover:text-white border border-purple-700/40 transition-all"
+            >
+              <Gauge className="w-3.5 h-3.5" />
+              <span>View Team Capacity</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -551,7 +783,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
             <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search clients or industry..."
+              placeholder="Search name, phone, or industry..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-stone-900/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400"
@@ -569,6 +801,11 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                 const status = getLifecycleStatus(client);
                 const asg = assignments.find((a) => a.client_id === client.id && a.service_type === serviceType);
                 const assignedPerson = users.find((u) => u.id === asg?.agent_id);
+                const clientBrief = briefs.find((b) => b.client_id === client.id && b.service_type === serviceType);
+                const isNewBrief = isTeamLead && !!clientBrief && !clientBrief.team_lead_viewed_at;
+                // Module 12 Phase 5: "New" badge for the agent's own freshly (re)assigned client.
+                const isNewAssignment = !isTeamLead && !!asg && asg.agent_id === currentUser.id && !asg.viewed_at;
+                const briefIssueCount = clientBrief ? reviewBrief(clientBrief, briefs, briefFieldSchemas[serviceType] || []).length : 0;
 
                 return (
                   <div
@@ -595,23 +832,57 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                           {client.name.charAt(0)}
                         </div>
                         <div>
-                          <h4 className="font-bold text-xs text-white">{client.name}</h4>
+                          <h4 className="font-bold text-xs text-white inline-flex items-center gap-1.5">
+                            {client.name}
+                            {(isNewBrief || isNewAssignment) && (
+                              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-purple-600 text-white">
+                                New
+                              </span>
+                            )}
+                            {clientBrief && (
+                              <span
+                                className="px-1.5 py-0.2 rounded-full text-[9px] font-bold"
+                                style={
+                                  briefIssueCount > 0
+                                    ? { background: 'rgba(245, 226, 154, 0.15)', color: 'var(--roas-mid)' }
+                                    : { background: 'rgba(169, 245, 193, 0.15)', color: 'var(--roas-good)' }
+                                }
+                                title={briefIssueCount > 0 ? `${briefIssueCount} review issue(s)` : 'No review issues'}
+                              >
+                                {briefCompletenessScore(clientBrief, briefFieldSchemas[serviceType] || [])}%
+                              </span>
+                            )}
+                          </h4>
                           <span className="text-[11px] text-stone-400">
-                            {client.industry || 'General'} • {client.contract_value?.toLocaleString()} SAR
+                            {client.industry || 'General'}
+                            {canSeeContractValue(currentUser.role, client.sales_owner_id === currentUser.id) &&
+                              ` • ${client.contract_value?.toLocaleString()} SAR`}
                           </span>
                         </div>
                       </div>
 
-                      <span
-                        className="text-[9px] px-2 py-0.5 rounded-full font-semibold"
-                        style={{
-                          background: status.bg,
-                          color: status.color,
-                          border: `1px solid ${status.border}`,
-                        }}
-                      >
-                        {status.label}
-                      </span>
+                      <div className="flex flex-col items-end gap-1">
+                        <span
+                          className="text-[9px] px-2 py-0.5 rounded-full font-semibold"
+                          style={{
+                            background: CLIENT_STATUS_META[client.status].bg,
+                            color: CLIENT_STATUS_META[client.status].color,
+                            border: `1px solid ${CLIENT_STATUS_META[client.status].border}`,
+                          }}
+                        >
+                          {CLIENT_STATUS_META[client.status].label}
+                        </span>
+                        <span
+                          className="text-[9px] px-2 py-0.5 rounded-full font-semibold"
+                          style={{
+                            background: status.bg,
+                            color: status.color,
+                            border: `1px solid ${status.border}`,
+                          }}
+                        >
+                          {status.label}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="mt-2.5 pt-2 flex items-center justify-between border-t border-stone-800/60 text-[11px]">
@@ -650,6 +921,15 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                       <span
                         className="text-[10px] px-2 py-0.5 rounded-full font-bold"
                         style={{
+                          background: CLIENT_STATUS_META[selectedClient.status].bg,
+                          color: CLIENT_STATUS_META[selectedClient.status].color,
+                        }}
+                      >
+                        {CLIENT_STATUS_META[selectedClient.status].label}
+                      </span>
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full font-bold"
+                        style={{
                           background: getLifecycleStatus(selectedClient).bg,
                           color: getLifecycleStatus(selectedClient).color,
                         }}
@@ -657,9 +937,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                         {getLifecycleStatus(selectedClient).label}
                       </span>
                     </div>
-                    <p className="text-xs text-stone-400 mt-0.5">
-                      {selectedClient.industry || 'General'} • Package: <strong className="text-purple-300">{selectedClientPackage?.name}</strong>
-                    </p>
+                    <p className="text-xs text-stone-400 mt-0.5">{selectedClient.industry || 'General'}</p>
                   </div>
 
                   <button
@@ -686,11 +964,14 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                         className="flex-1 px-3 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
                       >
                         <option value="" disabled>Select {serviceNameEn} Specialist...</option>
-                        {eligibleAgents.map((ag) => (
-                          <option key={ag.id} value={ag.id}>
-                            {ag.name} ({ag.email})
-                          </option>
-                        ))}
+                        {eligibleAgents.map((ag) => {
+                          const capacityData = getUserCapacityData(ag, clients, tasks);
+                          return (
+                            <option key={ag.id} value={ag.id}>
+                              {ag.name} ({ag.email}) {getCapacityIndicator(capacityData)}
+                            </option>
+                          );
+                        })}
                       </select>
 
                       <button
@@ -723,9 +1004,20 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                     {icon}
                     <span>{serviceNameEn} Brief Details</span>
                   </h4>
-                  <span className="text-xs text-stone-400">
-                    Version: v{serviceBrief?.version || 1}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {canEditBriefFieldSchema(currentUser.role, serviceType) && (
+                      <button
+                        onClick={() => setIsSchemaEditorOpen(true)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all"
+                      >
+                        <ClipboardCheck className="w-3.5 h-3.5" />
+                        Manage Questions
+                      </button>
+                    )}
+                    <span className="text-xs text-stone-400">
+                      Version: v{serviceBrief?.version || 1}
+                    </span>
+                  </div>
                 </div>
                 {renderBriefContent(serviceBrief)}
               </div>
@@ -744,17 +1036,35 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
-          packageRecord={packages.find((p) => p.id === activeDashboardClient.package_id)}
-          allPackages={packages}
           users={users}
           currentUser={currentUser}
           briefs={briefs}
+          briefRevisions={briefRevisions}
           campaigns={campaigns}
           tasks={tasks}
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          onMarkAssignmentViewed={onMarkAssignmentViewed}
           onClose={() => setDashboardClientId(null)}
+          onSaveBrief={onSaveBrief}
+          briefFieldSchemas={briefFieldSchemas}
+          briefFieldSchemaRows={briefFieldSchemaRows}
+          onCreateBriefFieldSchema={onCreateBriefFieldSchema}
+          onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
+          onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
+          onDeleteClient={onDeleteClient}
+        />
+      )}
+
+      {isSchemaEditorOpen && (
+        <BriefFieldSchemaEditor
+          serviceType={serviceType}
+          rows={briefFieldSchemaRows.filter((r) => r.service_type === serviceType)}
+          onCreate={onCreateBriefFieldSchema}
+          onUpdate={onUpdateBriefFieldSchema}
+          onDelete={onDeleteBriefFieldSchema}
+          onClose={() => setIsSchemaEditorOpen(false)}
         />
       )}
     </div>

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { UserRecord, TaskRecord, ClientRecord } from '../types/database';
 import { getRoleInfo } from '../data/roles';
+import { isCurrentlyActiveClient } from '../lib/clientStatus';
 
 interface RolePortalHeaderProps {
   currentUser: UserRecord;
@@ -136,7 +137,7 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
               <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
                 <div className="text-[10px] text-stone-400">Active Clients</div>
                 <div className="text-sm font-bold text-emerald-400 font-mono">
-                  {clients.filter((c) => c.status === 'active').length} Clients
+                  {clients.filter(isCurrentlyActiveClient).length} Clients
                 </div>
               </div>
               <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">

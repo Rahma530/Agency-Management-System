@@ -212,11 +212,6 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
     return ['graphic_designer', 'video_editor'];
   }
 
-  // Marketing Manager: cross-cutting oversight of Creative (Graphic Designer / Video Editor) only
-  if (viewerRole === 'marketing_manager') {
-    return ['marketing_manager', 'graphic_designer', 'video_editor'];
-  }
-
   // Regular agents
   if (viewerRole === 'am_agent') {
     return ['am_agent', 'am_team_lead', 'graphic_designer', 'video_editor'];
@@ -281,16 +276,10 @@ export function isClientAccessibleUnderRLS(
 
   // 6. Media Buying Agent: ONLY clients assigned to them
   if (viewer.role === 'media_buying_agent') {
-    const isAssigned = inMemoryAssignments.some(
-      (a) => a.client_id === client.id && a.agent_id === viewer.id
+    // Strict client-based exclusivity: formal assignment only, no ownership/task fallback
+    return inMemoryAssignments.some(
+      (a) => a.client_id === client.id && a.service_type === 'media_buying' && a.agent_id === viewer.id
     );
-    const hasCampaign = inMemoryCampaigns.some(
-      (c) => c.client_id === client.id && (c.owner_id === viewer.id || (c.results as any)?.owner_id === viewer.id)
-    );
-    const hasTask = inMemoryTasks.some(
-      (t) => t.client_id === client.id && t.assigned_to === viewer.id
-    );
-    return isAssigned || hasCampaign || hasTask;
   }
 
   // 7. SEO & Social Leads: Full visibility in their department
@@ -356,13 +345,12 @@ export function isCampaignAccessibleUnderRLS(
     return true;
   }
 
-  // 7. Media Buying Agent: ONLY assigned campaigns (cannot see other agents' private campaign data)
+  // 7. Media Buying Agent: ONLY campaigns for clients formally assigned to them —
+  //    ownership/creator no longer grants access on its own.
   if (viewer.role === 'media_buying_agent') {
-    const isOwner = campaign.owner_id === viewer.id || (campaign.results as any)?.owner_id === viewer.id;
-    const isAssignedClient = inMemoryAssignments.some(
-      (a) => a.client_id === campaign.client_id && a.agent_id === viewer.id
+    return inMemoryAssignments.some(
+      (a) => a.client_id === campaign.client_id && a.service_type === 'media_buying' && a.agent_id === viewer.id
     );
-    return isOwner || isAssignedClient;
   }
 
   return false;
@@ -372,12 +360,29 @@ export function isCampaignAccessibleUnderRLS(
  * RLS Authorization Policy for Tasks:
  * - Sales: Strictly FORBIDDEN (returns false)
  * - Executive & Head of Technical: All tasks (cross-team monitoring)
- * - Team Leads: Team tasks and client tasks
- * - Agents: Assigned tasks and team tasks
+ * - Team Leads: Full team tasks
+ * - marketing_manager: NOT a team lead — narrow, cross-cutting visibility into ONLY
+ *   graphic_designer/video_editor's tasks (by assignee role). No broader access.
+ * - graphic_designer / video_editor: Directly assigned ONLY — these are shared
+ *   creative resources pooled across every requesting team, not a single
+ *   department's own board, so the usual "same team as the assignee"
+ *   fallback would leak every other designer/editor's tasks to them too.
+ * - Every other agent role: Assigned tasks, or any task assigned to a
+ *   teammate on the same team.
+ * - Subtasks (task.parent_task_id set): visible via EITHER the rules above
+ *   applied to the subtask's own assignee, OR by being able to see its
+ *   parent task (recursing up to 2 more hops — task nesting is capped at 3
+ *   levels by a DB trigger, mirrored client-side by the `depth` guard below,
+ *   so this always terminates). Without this OR, a subtask could be visible
+ *   to its own assignee while its parent (different assignee, different
+ *   team) stays invisible to them — an orphaned, context-less row. And
+ *   without it the other direction, a team lead who can see a parent
+ *   task couldn't see subtasks assigned to someone outside their own team.
  */
 export function isTaskAccessibleUnderRLS(
   viewer: UserRecord | null,
-  task: TaskRecord
+  task: TaskRecord,
+  depth: number = 0
 ): boolean {
   if (!viewer) return true;
 
@@ -396,28 +401,125 @@ export function isTaskAccessibleUnderRLS(
     return true;
   }
 
-  // 3b. Marketing Manager: cross-cutting visibility into Creative tasks only
-  // (Graphic Designer / Video Editor assignees) — not a manager of that team.
+  // 3.5. marketing_manager: NOT a team lead of graphic_designer/video_editor — narrow,
+  // cross-cutting visibility into ONLY those two roles' tasks (by assignee role, not team,
+  // since they have different team values). No broader access anywhere else in this function.
   if (viewer.role === 'marketing_manager') {
-    if (task.assigned_to === viewer.id) return true;
-    const creativeAssignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
-    return !!creativeAssignee && (creativeAssignee.role === 'graphic_designer' || creativeAssignee.role === 'video_editor');
+    const assignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
+    if (assignee && (assignee.role === 'graphic_designer' || assignee.role === 'video_editor')) {
+      return true;
+    }
   }
 
-  // 4. Directly assigned
-  if (task.assigned_to === viewer.id) {
-    return true;
+  // 4. Shared creative resources: assigned-to-them only, no team fallback
+  if (viewer.role === 'graphic_designer' || viewer.role === 'video_editor') {
+    if (task.assigned_to === viewer.id) {
+      return true;
+    }
+  } else {
+    // 5. Directly assigned
+    if (task.assigned_to === viewer.id) {
+      return true;
+    }
+
+    const assignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
+    if (assignee && assignee.team === viewer.team) {
+      return true;
+    }
   }
 
-  const assignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
-  if (assignee && assignee.team === viewer.team) {
-    return true;
+  // 6. Subtask visibility inherited from an ancestor task (bounded by the
+  // same 3-level nesting cap the DB trigger enforces).
+  if (task.parent_task_id && depth < 3) {
+    const parent = inMemoryTasks.find((t) => t.id === task.parent_task_id);
+    if (parent) {
+      return isTaskAccessibleUnderRLS(viewer, parent, depth + 1);
+    }
   }
 
   return false;
 }
 
+/**
+ * Builds the Storage object key for a task attachment upload:
+ * "{task_id}/{attachment_id}-{sanitized filename}". The original filename is
+ * never used as-is — this strips path separators, leading dots (blocks
+ * traversal attempts and hidden-file tricks), and anything outside a safe
+ * charset, then truncates length. storage.objects RLS relies on the task_id
+ * being the first path segment (via storage.foldername()), and the
+ * app-generated attachment_id prefix guarantees uniqueness independent of
+ * whatever the uploader named the file.
+ */
+export function sanitizeAttachmentFilename(rawFilename: string): string {
+  const base = rawFilename.split(/[/\\]/).pop() || 'file';
+  const sanitized = base
+    .replace(/^\.+/, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 100);
+  return sanitized || 'file';
+}
+
+export function buildAttachmentStoragePath(
+  taskId: string,
+  attachmentId: string,
+  rawFilename: string
+): string {
+  return `${taskId}/${attachmentId}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
+// Same convention as buildAttachmentStoragePath, for the 'meeting-recordings' bucket — keyed by
+// client_id (not meeting_id) as the first path segment, since that's what the storage.objects
+// RLS policies join against (see 20260914110000_meetings_write_and_recordings.sql).
+export function buildMeetingRecordingStoragePath(
+  clientId: string,
+  meetingId: string,
+  rawFilename: string
+): string {
+  return `${clientId}/${meetingId}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
+// Same convention as buildMeetingRecordingStoragePath, for the 'client-contracts' bucket
+// (Module 12 Phase 6).
+export function buildClientContractStoragePath(
+  clientId: string,
+  contractId: string,
+  rawFilename: string
+): string {
+  return `${clientId}/${contractId}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
 let rawClientInstance: SupabaseClient | null = null;
+
+/**
+ * New-format Supabase API keys (sb_publishable_..., sb_secret_...) are not JWTs.
+ * When there is no active Supabase Auth session, @supabase/supabase-js (as of the
+ * installed 2.115.0) falls back to sending the raw key itself as the
+ * `Authorization: Bearer <key>` header on REST/database requests — the same fallback
+ * was already fixed for realtime (2.88.0) and Edge Functions (2.110.4, via an internal
+ * `omitApiKeyAsBearer` flag scoped only to that client), but not yet for the main
+ * `.from()` REST client. PostgREST then tries to parse that non-JWT string as a JWT
+ * and rejects the request with 401 — this is what breaks every unauthenticated (or
+ * demo-login, which never creates a real Supabase Auth session) request against a
+ * table that isn't wrapped by the RLS-emulation proxy below (packages, briefs,
+ * assignments, daily_logs, extra_notes, etc.).
+ *
+ * Fix: wrap fetch and strip the Authorization header in exactly that one case — when
+ * it's carrying the anon/publishable key back as its own bearer token — so the
+ * request falls back to being authenticated by the `apikey` header alone, which is
+ * the correct behavior for an anonymous/no-session request. A real signed-in
+ * session's JWT is never equal to the raw key, so this never touches genuine
+ * authenticated requests.
+ */
+function createSanitizedFetch(apiKey: string): typeof fetch {
+  const selfBearer = `Bearer ${apiKey}`;
+  return (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (headers.get('Authorization') === selfBearer) {
+      headers.delete('Authorization');
+    }
+    return fetch(input, { ...init, headers });
+  };
+}
 
 function getRawSupabase(): SupabaseClient {
   if (!rawClientInstance) {
@@ -433,6 +535,9 @@ function getRawSupabase(): SupabaseClient {
           persistSession: true,
           autoRefreshToken: true,
         },
+        global: {
+          fetch: createSanitizedFetch(targetKey),
+        },
       });
     } catch (err) {
       console.warn('Supabase initialization fallback:', err);
@@ -440,6 +545,9 @@ function getRawSupabase(): SupabaseClient {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
+        },
+        global: {
+          fetch: createSanitizedFetch(DEFAULT_KEY),
         },
       });
     }
@@ -452,7 +560,14 @@ function getRawSupabase(): SupabaseClient {
  * Direct queries from browser console, URL param manipulation, or UI state
  * cannot bypass this query layer.
  */
-function createUsersRLSQueryBuilder(rawBuilder?: any) {
+function createUsersRLSQueryBuilder(initialRawBuilder?: any) {
+  // postgrest-js's PostgrestQueryBuilder.select()/insert()/update()/upsert()/delete()
+  // each construct and return a NEW PostgrestFilterBuilder instance rather than
+  // mutating themselves — the .eq()/.in()/etc. filter methods only exist on that
+  // returned object, not on the original query builder. rawBuilder must be
+  // reassigned on every call below, or every subsequent filter call throws
+  // "rawBuilder.<method> is not a function".
+  let rawBuilder: any = initialRawBuilder;
   let isSingle = false;
   let isMaybeSingle = false;
   let eqFilters: { column: string; value: any }[] = [];
@@ -462,57 +577,57 @@ function createUsersRLSQueryBuilder(rawBuilder?: any) {
 
   const builder: any = {
     select: (_columns?: string) => {
-      if (rawBuilder) rawBuilder.select(_columns || '*');
+      if (rawBuilder) rawBuilder = rawBuilder.select(_columns || '*');
       return builder;
     },
     eq: (column: string, value: any) => {
       eqFilters.push({ column, value });
-      if (rawBuilder) rawBuilder.eq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.eq(column, value);
       return builder;
     },
     neq: (column: string, value: any) => {
-      if (rawBuilder) rawBuilder.neq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.neq(column, value);
       return builder;
     },
     in: (column: string, values: any[]) => {
       inFilters.push({ column, values });
-      if (rawBuilder) rawBuilder.in(column, values);
+      if (rawBuilder) rawBuilder = rawBuilder.in(column, values);
       return builder;
     },
     or: (filter: string) => {
       orFilter = filter;
-      if (rawBuilder) rawBuilder.or(filter);
+      if (rawBuilder) rawBuilder = rawBuilder.or(filter);
       return builder;
     },
     order: (column: string, options?: any) => {
-      if (rawBuilder) rawBuilder.order(column, options);
+      if (rawBuilder) rawBuilder = rawBuilder.order(column, options);
       return builder;
     },
     limit: (count: number) => {
-      if (rawBuilder) rawBuilder.limit(count);
+      if (rawBuilder) rawBuilder = rawBuilder.limit(count);
       return builder;
     },
     single: () => {
       isSingle = true;
-      if (rawBuilder) rawBuilder.single();
+      if (rawBuilder) rawBuilder = rawBuilder.single();
       return builder;
     },
     maybeSingle: () => {
       isMaybeSingle = true;
-      if (rawBuilder) rawBuilder.maybeSingle();
+      if (rawBuilder) rawBuilder = rawBuilder.maybeSingle();
       return builder;
     },
     update: (values: any) => {
       updatePayload = values;
-      if (rawBuilder) rawBuilder.update(values);
+      if (rawBuilder) rawBuilder = rawBuilder.update(values);
       return builder;
     },
     insert: (values: any) => {
-      if (rawBuilder) rawBuilder.insert(values);
+      if (rawBuilder) rawBuilder = rawBuilder.insert(values);
       return builder;
     },
     delete: () => {
-      if (rawBuilder) rawBuilder.delete();
+      if (rawBuilder) rawBuilder = rawBuilder.delete();
       return builder;
     },
 
@@ -635,7 +750,12 @@ function createUsersRLSQueryBuilder(rawBuilder?: any) {
 /**
  * Creates an RLS-enforced Query Builder for the 'clients' table.
  */
-function createClientsRLSQueryBuilder(rawBuilder?: any) {
+function createClientsRLSQueryBuilder(initialRawBuilder?: any) {
+  // See the comment in createUsersRLSQueryBuilder: rawBuilder must be
+  // reassigned on every forwarded call, since postgrest-js returns a new
+  // builder object from select()/insert()/update()/delete() rather than
+  // mutating itself in place.
+  let rawBuilder: any = initialRawBuilder;
   let isSingle = false;
   let isMaybeSingle = false;
   let eqFilters: { column: string; value: any }[] = [];
@@ -644,52 +764,52 @@ function createClientsRLSQueryBuilder(rawBuilder?: any) {
 
   const builder: any = {
     select: (_columns?: string) => {
-      if (rawBuilder) rawBuilder.select(_columns || '*');
+      if (rawBuilder) rawBuilder = rawBuilder.select(_columns || '*');
       return builder;
     },
     eq: (column: string, value: any) => {
       eqFilters.push({ column, value });
-      if (rawBuilder) rawBuilder.eq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.eq(column, value);
       return builder;
     },
     neq: (column: string, value: any) => {
-      if (rawBuilder) rawBuilder.neq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.neq(column, value);
       return builder;
     },
     in: (column: string, values: any[]) => {
-      if (rawBuilder) rawBuilder.in(column, values);
+      if (rawBuilder) rawBuilder = rawBuilder.in(column, values);
       return builder;
     },
     order: (column: string, options?: any) => {
-      if (rawBuilder) rawBuilder.order(column, options);
+      if (rawBuilder) rawBuilder = rawBuilder.order(column, options);
       return builder;
     },
     limit: (count: number) => {
-      if (rawBuilder) rawBuilder.limit(count);
+      if (rawBuilder) rawBuilder = rawBuilder.limit(count);
       return builder;
     },
     single: () => {
       isSingle = true;
-      if (rawBuilder) rawBuilder.single();
+      if (rawBuilder) rawBuilder = rawBuilder.single();
       return builder;
     },
     maybeSingle: () => {
       isMaybeSingle = true;
-      if (rawBuilder) rawBuilder.maybeSingle();
+      if (rawBuilder) rawBuilder = rawBuilder.maybeSingle();
       return builder;
     },
     update: (values: any) => {
       updatePayload = values;
-      if (rawBuilder) rawBuilder.update(values);
+      if (rawBuilder) rawBuilder = rawBuilder.update(values);
       return builder;
     },
     insert: (values: any) => {
       insertPayload = values;
-      if (rawBuilder) rawBuilder.insert(values);
+      if (rawBuilder) rawBuilder = rawBuilder.insert(values);
       return builder;
     },
     delete: () => {
-      if (rawBuilder) rawBuilder.delete();
+      if (rawBuilder) rawBuilder = rawBuilder.delete();
       return builder;
     },
     then: async (onfulfilled?: (value: any) => any, onrejected?: (reason: any) => any) => {
@@ -743,7 +863,12 @@ function createClientsRLSQueryBuilder(rawBuilder?: any) {
 /**
  * Creates an RLS-enforced Query Builder for the 'campaigns' table.
  */
-function createCampaignsRLSQueryBuilder(rawBuilder?: any) {
+function createCampaignsRLSQueryBuilder(initialRawBuilder?: any) {
+  // See the comment in createUsersRLSQueryBuilder: rawBuilder must be
+  // reassigned on every forwarded call, since postgrest-js returns a new
+  // builder object from select()/insert()/update()/delete() rather than
+  // mutating itself in place.
+  let rawBuilder: any = initialRawBuilder;
   let isSingle = false;
   let isMaybeSingle = false;
   let eqFilters: { column: string; value: any }[] = [];
@@ -752,52 +877,52 @@ function createCampaignsRLSQueryBuilder(rawBuilder?: any) {
 
   const builder: any = {
     select: (_columns?: string) => {
-      if (rawBuilder) rawBuilder.select(_columns || '*');
+      if (rawBuilder) rawBuilder = rawBuilder.select(_columns || '*');
       return builder;
     },
     eq: (column: string, value: any) => {
       eqFilters.push({ column, value });
-      if (rawBuilder) rawBuilder.eq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.eq(column, value);
       return builder;
     },
     neq: (column: string, value: any) => {
-      if (rawBuilder) rawBuilder.neq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.neq(column, value);
       return builder;
     },
     in: (column: string, values: any[]) => {
-      if (rawBuilder) rawBuilder.in(column, values);
+      if (rawBuilder) rawBuilder = rawBuilder.in(column, values);
       return builder;
     },
     order: (column: string, options?: any) => {
-      if (rawBuilder) rawBuilder.order(column, options);
+      if (rawBuilder) rawBuilder = rawBuilder.order(column, options);
       return builder;
     },
     limit: (count: number) => {
-      if (rawBuilder) rawBuilder.limit(count);
+      if (rawBuilder) rawBuilder = rawBuilder.limit(count);
       return builder;
     },
     single: () => {
       isSingle = true;
-      if (rawBuilder) rawBuilder.single();
+      if (rawBuilder) rawBuilder = rawBuilder.single();
       return builder;
     },
     maybeSingle: () => {
       isMaybeSingle = true;
-      if (rawBuilder) rawBuilder.maybeSingle();
+      if (rawBuilder) rawBuilder = rawBuilder.maybeSingle();
       return builder;
     },
     update: (values: any) => {
       updatePayload = values;
-      if (rawBuilder) rawBuilder.update(values);
+      if (rawBuilder) rawBuilder = rawBuilder.update(values);
       return builder;
     },
     insert: (values: any) => {
       insertPayload = values;
-      if (rawBuilder) rawBuilder.insert(values);
+      if (rawBuilder) rawBuilder = rawBuilder.insert(values);
       return builder;
     },
     delete: () => {
-      if (rawBuilder) rawBuilder.delete();
+      if (rawBuilder) rawBuilder = rawBuilder.delete();
       return builder;
     },
     then: async (onfulfilled?: (value: any) => any, onrejected?: (reason: any) => any) => {
@@ -833,9 +958,17 @@ function createCampaignsRLSQueryBuilder(rawBuilder?: any) {
           if (idFilter) {
             const target = inMemoryCampaigns.find((c) => c.id === idFilter.value);
             if (target) {
-              // Check edit permission
+              // Check edit permission — client assignment, not campaign ownership/creator
               const canEdit = viewer?.role === 'media_buying_team_lead' ||
-                (viewer?.role === 'media_buying_agent' && (target.owner_id === viewer?.id || !target.owner_id));
+                (viewer?.role === 'media_buying_agent' &&
+                  inMemoryAssignments.some(
+                    (a) =>
+                      a.client_id === target.client_id &&
+                      a.service_type === 'media_buying' &&
+                      a.agent_id === viewer.id
+                  )) ||
+                (viewer?.role === 'am_agent' &&
+                  inMemoryClients.find((c) => c.id === target.client_id)?.am_agent_id === viewer.id);
               if (!canEdit) {
                 const errResp = {
                   data: null,
@@ -877,7 +1010,12 @@ function createCampaignsRLSQueryBuilder(rawBuilder?: any) {
 /**
  * Creates an RLS-enforced Query Builder for the 'tasks' table.
  */
-function createTasksRLSQueryBuilder(rawBuilder?: any) {
+function createTasksRLSQueryBuilder(initialRawBuilder?: any) {
+  // See the comment in createUsersRLSQueryBuilder: rawBuilder must be
+  // reassigned on every forwarded call, since postgrest-js returns a new
+  // builder object from select()/insert()/update()/delete() rather than
+  // mutating itself in place.
+  let rawBuilder: any = initialRawBuilder;
   let isSingle = false;
   let isMaybeSingle = false;
   let eqFilters: { column: string; value: any }[] = [];
@@ -886,52 +1024,52 @@ function createTasksRLSQueryBuilder(rawBuilder?: any) {
 
   const builder: any = {
     select: (_columns?: string) => {
-      if (rawBuilder) rawBuilder.select(_columns || '*');
+      if (rawBuilder) rawBuilder = rawBuilder.select(_columns || '*');
       return builder;
     },
     eq: (column: string, value: any) => {
       eqFilters.push({ column, value });
-      if (rawBuilder) rawBuilder.eq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.eq(column, value);
       return builder;
     },
     neq: (column: string, value: any) => {
-      if (rawBuilder) rawBuilder.neq(column, value);
+      if (rawBuilder) rawBuilder = rawBuilder.neq(column, value);
       return builder;
     },
     in: (column: string, values: any[]) => {
-      if (rawBuilder) rawBuilder.in(column, values);
+      if (rawBuilder) rawBuilder = rawBuilder.in(column, values);
       return builder;
     },
     order: (column: string, options?: any) => {
-      if (rawBuilder) rawBuilder.order(column, options);
+      if (rawBuilder) rawBuilder = rawBuilder.order(column, options);
       return builder;
     },
     limit: (count: number) => {
-      if (rawBuilder) rawBuilder.limit(count);
+      if (rawBuilder) rawBuilder = rawBuilder.limit(count);
       return builder;
     },
     single: () => {
       isSingle = true;
-      if (rawBuilder) rawBuilder.single();
+      if (rawBuilder) rawBuilder = rawBuilder.single();
       return builder;
     },
     maybeSingle: () => {
       isMaybeSingle = true;
-      if (rawBuilder) rawBuilder.maybeSingle();
+      if (rawBuilder) rawBuilder = rawBuilder.maybeSingle();
       return builder;
     },
     update: (values: any) => {
       updatePayload = values;
-      if (rawBuilder) rawBuilder.update(values);
+      if (rawBuilder) rawBuilder = rawBuilder.update(values);
       return builder;
     },
     insert: (values: any) => {
       insertPayload = values;
-      if (rawBuilder) rawBuilder.insert(values);
+      if (rawBuilder) rawBuilder = rawBuilder.insert(values);
       return builder;
     },
     delete: () => {
-      if (rawBuilder) rawBuilder.delete();
+      if (rawBuilder) rawBuilder = rawBuilder.delete();
       return builder;
     },
     then: async (onfulfilled?: (value: any) => any, onrejected?: (reason: any) => any) => {
@@ -1015,8 +1153,18 @@ export const getSupabase = (): SupabaseClient => {
 
 export const supabase = getSupabase();
 
-// Expose supabase globally for browser verification and direct security testing
-if (typeof window !== 'undefined') {
+// Unwrapped client, bypassing the legacy client-side RLS-emulation proxy above (users/clients/
+// campaigns/tasks) for callers that aren't an employee session — that proxy is built entirely
+// around getSupabaseSessionUser() returning an employee-shaped UserRecord (via
+// setSupabaseSessionUser, called only from App.tsx's employee auth flow) and was superseded as
+// the actual security boundary by real Postgres RLS several migrations ago (see
+// 20260906120000_rls_policies.sql's header). The Client Portal (ClientPortalApp.tsx) never calls
+// setSupabaseSessionUser, so its `clients` table read goes through this instead, relying purely
+// on Postgres RLS (clients_select_portal_rls) the same way every unwrapped table already does.
+export const supabaseRaw: SupabaseClient = getRawSupabase();
+
+// Dev-only: expose supabase globally for browser verification and direct security testing
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   (window as any).supabase = supabase;
 }
 

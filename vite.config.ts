@@ -17,6 +17,9 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Local dev tunneling only (e.g. `ngrok http`); free-tier ngrok issues a new
+      // random subdomain per session, so allow any subdomain under these hosts.
+      allowedHosts: ['.ngrok-free.dev', '.ngrok-free.app'],
     },
   };
 });

@@ -1,34 +1,51 @@
 import React, { useState } from 'react';
-import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users } from 'lucide-react';
-import { PackageRecord, UserRecord } from '../types/database';
+import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers } from 'lucide-react';
+import { ServiceType, UserRecord } from '../types/database';
+
+const SERVICE_OPTIONS: { value: ServiceType; label: string }[] = [
+  { value: 'seo', label: 'SEO' },
+  { value: 'social_media', label: 'Social Media' },
+  { value: 'media_buying', label: 'Media Buying' },
+  { value: 'creative', label: 'Creative' },
+];
 
 interface ClientRegistrationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  packages: PackageRecord[];
   amTeamLeaders?: UserRecord[];
   onSubmit: (clientData: {
     name: string;
     industry: string;
-    package_id: string;
+    services: ServiceType[];
+    phone_number?: string;
     contract_value: number;
     start_date: string;
+    renewal_date: string;
     am_team_lead_id?: string;
   }) => Promise<void>;
 }
 
+const addOneYear = (dateStr: string): string => {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  d.setFullYear(d.getFullYear() + 1);
+  return d.toISOString().split('T')[0];
+};
+
 export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = ({
   isOpen,
   onClose,
-  packages,
   amTeamLeaders = [],
   onSubmit,
 }) => {
   const [name, setName] = useState('');
   const [industry, setIndustry] = useState('');
-  const [packageId, setPackageId] = useState(packages[0]?.id || '');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
   const [contractValue, setContractValue] = useState<number | ''>('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
+  const [renewalDateTouched, setRenewalDateTouched] = useState(false);
   const [amTeamLeadId, setAmTeamLeadId] = useState(amTeamLeaders[0]?.id || 'usr-am-lead');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -41,8 +58,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setErrorMsg('Please enter the client / company name.');
       return;
     }
-    if (!packageId) {
-      setErrorMsg('Please select a service package.');
+    if (selectedServices.length === 0) {
+      setErrorMsg('Please select at least one service.');
       return;
     }
 
@@ -52,15 +69,20 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       await onSubmit({
         name: name.trim(),
         industry: industry.trim() || 'General',
-        package_id: packageId,
+        services: selectedServices,
+        phone_number: phoneNumber.trim() || undefined,
         contract_value: contractValue ? Number(contractValue) : 0,
         start_date: startDate,
+        renewal_date: renewalDate,
         am_team_lead_id: amTeamLeadId,
       });
       // reset
       setName('');
       setIndustry('');
+      setPhoneNumber('');
+      setSelectedServices([]);
       setContractValue('');
+      setRenewalDateTouched(false);
       onClose();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Error registering client');
@@ -69,7 +91,11 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
     }
   };
 
-  const selectedPkg = packages.find((p) => p.id === packageId);
+  const toggleService = (service: ServiceType) => {
+    setSelectedServices((prev) =>
+      prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" dir="ltr">
@@ -99,7 +125,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 Register New Client
               </h3>
               <p className="text-xs" style={{ color: 'var(--grey)' }}>
-                Client will automatically route to Account Management onboarding queue
+                Client will be created and routed to Account Management to begin onboarding
               </p>
             </div>
           </div>
@@ -168,6 +194,29 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Phone Number
+              </label>
+              <div className="relative">
+                <Phone className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="e.g. +966 5X XXX XXXX"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Monthly Retainer (USD/SAR)
               </label>
               <div className="relative">
@@ -186,30 +235,6 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 />
               </div>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Service Package <span className="text-red-400">*</span>
-              </label>
-              <select
-                value={packageId}
-                onChange={(e) => setPackageId(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
-                style={{
-                  background: 'rgba(10, 10, 13, 0.9)',
-                  border: '1px solid var(--border-soft)',
-                  color: 'var(--white)',
-                }}
-              >
-                {packages.map((pkg) => (
-                  <option key={pkg.id} value={pkg.id} className="bg-stone-900 text-white">
-                    {pkg.name}
-                  </option>
-                ))}
-              </select>
-            </div>
 
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
@@ -220,7 +245,13 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 <input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    const newStart = e.target.value;
+                    setStartDate(newStart);
+                    if (!renewalDateTouched) {
+                      setRenewalDate(addOneYear(newStart));
+                    }
+                  }}
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
                   style={{
                     background: 'rgba(10, 10, 13, 0.8)',
@@ -232,29 +263,58 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          {selectedPkg && (
-            <div
-              className="p-3 rounded-xl text-xs flex items-center justify-between"
-              style={{ background: 'rgba(59, 21, 96, 0.3)', border: '1px solid var(--border-soft)' }}
-            >
-              <span style={{ color: 'var(--lilac)' }}>Included Services:</span>
-              <div className="flex gap-1.5">
-                {selectedPkg.services.map((srv) => (
-                  <span
-                    key={srv}
-                    className="px-2 py-0.5 rounded-full text-[11px] font-medium uppercase"
-                    style={{
-                      background: 'rgba(123, 47, 247, 0.3)',
-                      color: 'var(--purple-light)',
-                      border: '1px solid var(--border-soft)',
-                    }}
-                  >
-                    {srv.replace('_', ' ')}
-                  </span>
-                ))}
-              </div>
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Renewal Date
+            </label>
+            <div className="relative">
+              <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+              <input
+                type="date"
+                value={renewalDate}
+                onChange={(e) => {
+                  setRenewalDate(e.target.value);
+                  setRenewalDateTouched(true);
+                }}
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                style={{
+                  background: 'rgba(10, 10, 13, 0.8)',
+                  border: '1px solid var(--border-soft)',
+                  color: 'var(--white)',
+                }}
+              />
             </div>
-          )}
+            <p className="text-[11px] text-stone-400 mt-1">
+              Defaults to one year from the contract start date. Adjust if needed.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Services <span className="text-red-400">*</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {SERVICE_OPTIONS.map((opt) => {
+                const isSelected = selectedServices.includes(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => toggleService(opt.value)}
+                    className="px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 justify-center"
+                    style={
+                      isSelected
+                        ? { background: 'rgba(123, 47, 247, 0.3)', color: 'var(--purple-light)', border: '1px solid var(--purple)' }
+                        : { background: 'rgba(10, 10, 13, 0.8)', color: 'var(--grey)', border: '1px solid var(--border-soft)' }
+                    }
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {/* Assign / Transfer to AM Team Leader */}
           <div>

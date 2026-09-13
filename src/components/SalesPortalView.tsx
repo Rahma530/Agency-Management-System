@@ -6,7 +6,6 @@ import {
   Calendar,
   DollarSign,
   Layers,
-  ArrowUpRight,
   ShieldCheck,
   Search,
   CheckCircle2,
@@ -16,7 +15,7 @@ import {
 } from 'lucide-react';
 import {
   ClientRecord,
-  PackageRecord,
+  ClientStatus,
   UserRecord,
   BriefRecord,
   CampaignRecord,
@@ -24,13 +23,18 @@ import {
   DailyLogRecord,
   ExtraNoteRecord,
   AssignmentRecord,
+  ClientContractRecord,
+  ServiceType,
+  BriefFieldDef,
+  BriefFieldSchemaRow,
 } from '../types/database';
 import { ClientDashboard } from './ClientDashboard';
+import { CLIENT_STATUS_META } from '../lib/clientStatus';
+import { matchesClientQuery } from '../lib/clientSearch';
 
 interface SalesPortalViewProps {
   currentUser: UserRecord;
   clients: ClientRecord[];
-  packages: PackageRecord[];
   users: UserRecord[];
   briefs?: BriefRecord[];
   campaigns?: CampaignRecord[];
@@ -39,12 +43,21 @@ interface SalesPortalViewProps {
   extraNotes?: ExtraNoteRecord[];
   assignments?: AssignmentRecord[];
   onOpenRegisterModal: () => void;
+  onUpdateClientStatus?: (
+    clientId: string,
+    newStatus: ClientStatus,
+    options?: { churn_reason?: string; renewal_date?: string }
+  ) => Promise<void>;
+  clientContracts?: ClientContractRecord[];
+  onUploadClientContract?: (clientId: string, file: File) => Promise<void>;
+  onDeleteClientContract?: (contractId: string) => Promise<void>;
+  briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  briefFieldSchemaRows: BriefFieldSchemaRow[];
 }
 
 export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   currentUser,
   clients,
-  packages,
   users,
   briefs = [],
   campaigns = [],
@@ -53,6 +66,12 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   extraNotes = [],
   assignments = [],
   onOpenRegisterModal,
+  onUpdateClientStatus,
+  clientContracts = [],
+  onUploadClientContract,
+  onDeleteClientContract,
+  briefFieldSchemas,
+  briefFieldSchemaRows,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [dashboardClientId, setDashboardClientId] = useState<string | null>(null);
@@ -65,9 +84,11 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   const filteredClients = useMemo(() => {
     if (!searchQuery.trim()) return personalClients;
     const q = searchQuery.toLowerCase().trim();
+    // Module 14: name-or-phone via the shared predicate, industry/id kept as this screen's own
+    // pre-existing extra match dimensions.
     return personalClients.filter(
       (c) =>
-        c.name.toLowerCase().includes(q) ||
+        matchesClientQuery(c, searchQuery) ||
         (c.industry && c.industry.toLowerCase().includes(q)) ||
         c.id.toLowerCase().includes(q)
     );
@@ -154,9 +175,9 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           </div>
           <div className="text-sm font-bold text-purple-200 mt-1 flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-purple-400" />
-            <span>Auto-routed to AM</span>
+            <span>Auto-Routed to AM</span>
           </div>
-          <span className="text-[11px] text-stone-400 block">Managed by AM Team Lead</span>
+          <span className="text-[11px] text-stone-400 block">Registered clients go straight to the AM Team Lead</span>
         </div>
       </div>
 
@@ -182,7 +203,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search clients or industry..."
+              placeholder="Search name, phone, industry, or ID..."
               className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs bg-black/30 border border-purple-900/40 text-white outline-none focus:border-purple-400"
             />
           </div>
@@ -203,7 +224,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
                 <tr className="border-b border-purple-900/30 text-[11px] font-semibold text-stone-400 uppercase tracking-wider bg-black/20">
                   <th className="py-3 px-4">Client Name</th>
                   <th className="py-3 px-4">Industry</th>
-                  <th className="py-3 px-4">Package & Services</th>
+                  <th className="py-3 px-4">Services</th>
                   <th className="py-3 px-4">Contract Value</th>
                   <th className="py-3 px-4">Start Date</th>
                   <th className="py-3 px-4">Status</th>
@@ -212,7 +233,6 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
               </thead>
               <tbody className="divide-y divide-purple-900/20 text-xs">
                 {filteredClients.map((client) => {
-                  const pkg = packages.find((p) => p.id === client.package_id);
                   return (
                     <tr
                       key={client.id}
@@ -240,12 +260,9 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <span className="text-purple-300 font-medium block">
-                          {pkg?.name || 'Custom Plan'}
-                        </span>
-                        {pkg?.services && (
-                          <div className="flex flex-wrap gap-1 mt-0.5">
-                            {pkg.services.map((s) => (
+                        {client.services && client.services.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {client.services.map((s) => (
                               <span
                                 key={s}
                                 className="text-[9px] px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-800/40 uppercase"
@@ -254,6 +271,8 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
                               </span>
                             ))}
                           </div>
+                        ) : (
+                          <span className="text-stone-500">Custom Plan</span>
                         )}
                       </td>
 
@@ -266,23 +285,32 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-purple-950/60 text-purple-300 border border-purple-800/40 inline-flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3 text-purple-400" />
-                          <span>Routed to AM</span>
+                        <span
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold border inline-flex items-center gap-1"
+                          style={{
+                            background: (CLIENT_STATUS_META[client.status] || CLIENT_STATUS_META.onboarding).bg,
+                            color: (CLIENT_STATUS_META[client.status] || CLIENT_STATUS_META.onboarding).color,
+                            borderColor: (CLIENT_STATUS_META[client.status] || CLIENT_STATUS_META.onboarding).border,
+                          }}
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>{(CLIENT_STATUS_META[client.status] || CLIENT_STATUS_META.onboarding).label}</span>
                         </span>
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDashboardClientId(client.id);
-                          }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all inline-flex items-center gap-1.5"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>View Dashboard</span>
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDashboardClientId(client.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all inline-flex items-center gap-1.5"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View Dashboard</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -297,8 +325,6 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
-          packageRecord={packages.find((p) => p.id === activeDashboardClient.package_id)}
-          allPackages={packages}
           users={users}
           currentUser={currentUser}
           briefs={briefs}
@@ -307,6 +333,12 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          onUpdateClientStatus={onUpdateClientStatus}
+          clientContracts={clientContracts}
+          onUploadClientContract={onUploadClientContract}
+          onDeleteClientContract={onDeleteClientContract}
+          briefFieldSchemas={briefFieldSchemas}
+          briefFieldSchemaRows={briefFieldSchemaRows}
           onClose={() => setDashboardClientId(null)}
         />
       )}

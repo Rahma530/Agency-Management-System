@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { UserRecord } from '../types/database';
+import { isActiveEmployee } from '../lib/permissions';
 import { getRoleInfo } from '../data/roles';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
@@ -34,6 +35,9 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showDemoModal, setShowDemoModal] = useState(false);
+
+  // Demo login (no-password instant sign-in) is opt-in via env flag, off by default
+  const isDemoLoginEnabled = import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 
   // Email format validation helper
   const isValidEmail = (val: string) => {
@@ -66,70 +70,37 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
     setIsLoading(true);
 
     try {
-      // 2. Authenticate against Supabase Auth if configured
-      if (isSupabaseConfigured()) {
-        try {
-          const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
-            email: trimmedEmail,
-            password: trimmedPassword,
-          });
+      // Authenticate exclusively against Supabase Auth
+      const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password: trimmedPassword,
+      });
 
-          if (authErr) {
-            console.warn('Supabase Auth error:', authErr.message);
-          } else if (authData?.user) {
-            // Retrieve the employee's profile from the database 'users' table by auth_id or email
-            const { data: dbUser, error: dbErr } = await supabase
-              .from('users')
-              .select('*')
-              .or(`auth_id.eq.${authData.user.id},email.eq.${trimmedEmail}`)
-              .single();
-
-            if (!dbErr && dbUser) {
-              if (rememberMe) {
-                try {
-                  localStorage.setItem('agency_auth_user_id', dbUser.id);
-                } catch {}
-              }
-              onLoginSuccess(dbUser as UserRecord);
-              return;
-            }
-          }
-        } catch (supabaseException) {
-          console.warn('Supabase authentication check fallback:', supabaseException);
-        }
-      }
-
-      // 3. Fallback / Synchronized verification against pre-registered agency users
-      const matchedUser = users.find(
-        (u) => u.email?.toLowerCase() === trimmedEmail
-      );
-
-      if (!matchedUser) {
-        setErrorMessage('This email is not registered in the agency system. Please verify your credentials.');
+      if (authErr || !authData?.user) {
+        setErrorMessage(authErr?.message || 'Incorrect email or password.');
         setIsLoading(false);
         return;
       }
 
-      // Password verification
-      const expectedPassword = matchedUser.password || 'agency123';
-      if (
-        trimmedPassword !== expectedPassword &&
-        trimmedPassword !== 'agency123' &&
-        trimmedPassword !== 'admin123'
-      ) {
-        setErrorMessage('Incorrect password. Please verify your password and try again.');
+      // Retrieve the employee's profile from the database 'users' table by auth_id or email
+      const { data: dbUser, error: dbErr } = await supabase
+        .from('users')
+        .select('*')
+        .or(`auth_id.eq.${authData.user.id},email.eq.${trimmedEmail}`)
+        .single();
+
+      if (dbErr || !dbUser) {
+        setErrorMessage('No employee profile found for this account. Please contact your administrator.');
         setIsLoading(false);
         return;
       }
 
-      // Successful login
       if (rememberMe) {
         try {
-          localStorage.setItem('agency_auth_user_id', matchedUser.id);
+          localStorage.setItem('agency_auth_user_id', dbUser.id);
         } catch {}
       }
-
-      onLoginSuccess(matchedUser);
+      onLoginSuccess(dbUser as UserRecord);
     } catch (err: any) {
       setErrorMessage(
         err?.message || 'An unexpected error occurred during login. Please try again.'
@@ -137,6 +108,17 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Demo mode only: sign in instantly as the chosen role, no password required
+  const handleDemoLogin = (user: UserRecord) => {
+    if (rememberMe) {
+      try {
+        localStorage.setItem('agency_auth_user_id', user.id);
+      } catch {}
+    }
+    setShowDemoModal(false);
+    onLoginSuccess(user);
   };
 
   return (
@@ -323,20 +305,22 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
               <Lock className="w-3 h-3 text-purple-400" />
               Role permissions are automatically enforced
             </span>
-            <button
-              type="button"
-              onClick={() => setShowDemoModal(true)}
-              className="text-purple-300 hover:text-purple-100 flex items-center gap-1 underline underline-offset-2 transition-colors"
-            >
-              <HelpCircle className="w-3 h-3" />
-              <span>Demo Accounts</span>
-            </button>
+            {isDemoLoginEnabled && (
+              <button
+                type="button"
+                onClick={() => setShowDemoModal(true)}
+                className="text-purple-300 hover:text-purple-100 flex items-center gap-1 underline underline-offset-2 transition-colors"
+              >
+                <HelpCircle className="w-3 h-3" />
+                <span>Demo Accounts</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
 
       {/* Demo Credentials Reference Modal */}
-      {showDemoModal && (
+      {isDemoLoginEnabled && showDemoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
           <div
             className="w-full max-w-lg rounded-2xl p-6 shadow-2xl border max-h-[85vh] flex flex-col"
@@ -352,7 +336,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
                   <span>Demo Accounts</span>
                 </h3>
                 <p className="text-[11px] text-[#a89bb8] mt-0.5">
-                  Default password for all accounts: <code className="text-purple-300 font-mono bg-purple-950/60 px-1 py-0.5 rounded">agency123</code>
+                  Demo mode: click an account to sign in instantly, no password needed.
                 </p>
               </div>
               <button
@@ -364,16 +348,12 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
             </div>
 
             <div className="overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-              {users.map((u) => {
+              {users.filter((u) => isActiveEmployee(u)).map((u) => {
                 const info = getRoleInfo(u.role);
                 return (
                   <div
                     key={u.id}
-                    onClick={() => {
-                      if (u.email) setEmail(u.email);
-                      setPassword('agency123');
-                      setShowDemoModal(false);
-                    }}
+                    onClick={() => handleDemoLogin(u)}
                     className="p-2.5 rounded-xl border border-purple-900/30 bg-[#161122] hover:bg-purple-950/40 hover:border-purple-600/50 cursor-pointer transition-all flex items-center justify-between group"
                   >
                     <div>
