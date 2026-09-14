@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Database,
-  PlusCircle,
   UserCheck,
   Layers,
   FileSpreadsheet,
@@ -2322,22 +2321,6 @@ export default function App() {
               <LogOut className="w-3.5 h-3.5 text-red-400" />
               <span className="hidden sm:inline">Sign Out</span>
             </button>
-
-            {/* Sales Action Button: Add Client (Role Permission Check) */}
-            {userRoleInfo.canRegisterClients && (
-              <button
-                onClick={() => setIsRegisterModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:opacity-90 active:scale-98"
-                style={{
-                  background: 'var(--gradient-badge)',
-                  color: 'var(--white)',
-                  border: '1px solid var(--border-strong)',
-                }}
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>New Client</span>
-              </button>
-            )}
           </div>
         </div>
       </header>
@@ -2658,7 +2641,6 @@ export default function App() {
               currentUser={currentUser}
               tasks={tasks}
               clients={clients}
-              onOpenRegisterModal={userRoleInfo.canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
             />
 
             {/* Tab 0: Leadership Dashboard */}

@@ -7,7 +7,6 @@ import {
   Users,
   CheckCircle2,
   Clock,
-  PlusCircle,
 } from 'lucide-react';
 import { UserRecord, TaskRecord, ClientRecord } from '../types/database';
 import { getRoleInfo } from '../data/roles';
@@ -17,14 +16,12 @@ interface RolePortalHeaderProps {
   currentUser: UserRecord;
   tasks: TaskRecord[];
   clients: ClientRecord[];
-  onOpenRegisterModal?: () => void;
 }
 
 export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
   currentUser,
   tasks,
   clients,
-  onOpenRegisterModal,
 }) => {
   const role = currentUser?.role || 'executive';
   const roleInfo = getRoleInfo(role);
@@ -96,19 +93,6 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
                 <div className="text-[10px] text-stone-400">Sales Clients</div>
                 <div className="text-sm font-bold text-white">{myClients.length} Clients</div>
               </div>
-              {onOpenRegisterModal && (
-                <button
-                  onClick={onOpenRegisterModal}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:opacity-90 active:scale-98"
-                  style={{
-                    background: 'var(--gradient-badge)',
-                    border: '1px solid var(--border-strong)',
-                  }}
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>Register Client</span>
-                </button>
-              )}
             </div>
           )}
 
