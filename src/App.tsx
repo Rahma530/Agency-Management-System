@@ -101,6 +101,7 @@ import {
   AppModuleId,
 } from './data/roles';
 import { EmployeeLogin } from './components/EmployeeLogin';
+import { SetPasswordScreen } from './components/SetPasswordScreen';
 import { ClientRegistrationModal } from './components/ClientRegistrationModal';
 import { BulkClientUploadModal } from './components/BulkClientUploadModal';
 import { AMQueue } from './components/AMQueue';
@@ -234,6 +235,12 @@ export default function App() {
     return null;
   });
 
+  // True while the current session is a Supabase PASSWORD_RECOVERY session
+  // (a provisioning or password-reset link was just clicked) — gates
+  // rendering to SetPasswordScreen instead of logging straight into the
+  // app on a session that has no durable password behind it yet.
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isBulkClientUploadOpen, setIsBulkClientUploadOpen] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
@@ -257,7 +264,18 @@ export default function App() {
 
   // 1. Session Rehydration from Supabase on mount
   useEffect(() => {
+    // A provisioning/password-reset link lands back here with a recovery
+    // marker in the URL before supabase-js has parsed it into a session.
+    // restoreSession()'s plain getSession() call below can't distinguish a
+    // recovery session from a normal one, so it must not auto-login here —
+    // the onAuthStateChange listener's PASSWORD_RECOVERY branch is what
+    // routes this case to SetPasswordScreen instead.
+    const isRecoveryRedirect =
+      window.location.hash.includes('type=recovery') || window.location.search.includes('type=recovery');
+
     const restoreSession = async () => {
+      if (isRecoveryRedirect) return;
+
       if (isSupabaseConfigured()) {
         try {
           const { data: { session } } = await supabase.auth.getSession();
@@ -294,6 +312,10 @@ export default function App() {
 
     if (isSupabaseConfigured()) {
       const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          setIsPasswordRecovery(true);
+          return;
+        }
         if (session?.user) {
           const { data: dbUser } = await supabase
             .from('users')
@@ -407,6 +429,33 @@ export default function App() {
     setActiveTab(roleMeta.defaultModule);
     window.location.hash = `#/portal/${roleMeta.portalSlug}/${roleMeta.defaultModule}`;
     showNotification(`Welcome, ${user.name} (${roleMeta.portalTitleEn})`);
+  };
+
+  // SetPasswordScreen's onComplete: supabase.auth.updateUser({ password })
+  // already succeeded, so this is now a normal session — resolve it to the
+  // matching employee row and finish login exactly like a real sign-in,
+  // same as restoreSession()/onAuthStateChange do elsewhere in this file.
+  const handlePasswordRecoveryComplete = async () => {
+    setIsPasswordRecovery(false);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('*')
+          .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
+          .single();
+        if (dbUser) {
+          handleLoginSuccess(dbUser as UserRecord);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Post-recovery session lookup warning:', err);
+    }
+    // Couldn't resolve the matching employee row — sign out rather than
+    // leaving them stuck on a blank/broken screen.
+    await supabase.auth.signOut();
   };
 
   const handleLogout = async () => {
@@ -2177,6 +2226,14 @@ export default function App() {
   const activeTasksCount = tasks.filter((t) => t.status !== 'completed').length;
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
+
+  // A PASSWORD_RECOVERY session takes precedence over everything else below
+  // — including an already-authenticatedUser, which shouldn't be possible
+  // at the same time, but this ordering keeps that invariant explicit
+  // rather than relied upon.
+  if (isPasswordRecovery) {
+    return <SetPasswordScreen onComplete={handlePasswordRecoveryComplete} />;
+  }
 
   // If no authenticated employee, render the dedicated Employee Portal Login
   if (!authenticatedUser) {
