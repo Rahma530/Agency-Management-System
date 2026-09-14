@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Database,
-  PlusCircle,
   UserCheck,
   Layers,
   FileSpreadsheet,
@@ -670,9 +669,23 @@ export default function App() {
   // error instead of swallowing it and falling back to local state, the same re-throw-on-error
   // contract handleAddEmployee already gives EmployeeAdminHub's bulk uploader, so the modal can
   // catch and report per-row failures (e.g. a constraint violation) individually instead of every
-  // row silently "succeeding" locally. sales_owner_id is always the uploading sales user, exactly
-  // like the single-client form — never resolved from a column — matching this app's sales-only,
-  // self-attributed clients_insert_sales_rls policy (no bulk-upload-specific RLS change needed).
+  // row silently "succeeding" locally.
+  //
+  // Branches on the uploading user's role — the modal itself doesn't know or care which path it's
+  // on, it just resolves the same columns (including am_team_lead_id, required for every path) and
+  // hands them here:
+  //   - sales: new-pipeline lead, sales_owner_id = self, status starts at 'onboarding' — matches
+  //     clients_insert_sales_rls exactly.
+  //   - am_agent: an already-active client of their own, am_agent_id = self (agents only manage
+  //     their own book), sales_owner_id stays null, status starts at 'active', and
+  //     am_agent_assigned_at is stamped now so it isn't invisible to MyWorkHub's gained/lost
+  //     metrics from creation.
+  //   - am_team_lead: an already-active client, am_team_lead_id comes from the resolved column
+  //     (may be themselves or a peer lead), am_agent_id stays null (awaiting individual AM
+  //     assignment, same "unassigned at creation" convention the sales path already uses), status
+  //     starts at 'active'.
+  // Matches the additive clients_insert_am_rls policy (20260929100000_client_bulk_upload_am_rls.sql)
+  // for the am_agent/am_team_lead branches; clients_insert_sales_rls is untouched for sales.
   const handleBulkAddClient = async (clientData: {
     name: string;
     industry: string;
@@ -683,15 +696,17 @@ export default function App() {
     renewal_date: string;
     am_team_lead_id: string;
   }) => {
+    const isAmUpload = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       name: clientData.name,
       industry: clientData.industry,
       services: clientData.services,
       phone_number: clientData.phone_number || null,
-      status: 'onboarding',
-      sales_owner_id: currentUser.id,
-      am_agent_id: null,
+      status: isAmUpload ? 'active' : 'onboarding',
+      sales_owner_id: isAmUpload ? null : currentUser.id,
+      am_agent_id: currentUser.role === 'am_agent' ? currentUser.id : null,
+      am_agent_assigned_at: currentUser.role === 'am_agent' ? new Date().toISOString() : null,
       am_team_lead_id: clientData.am_team_lead_id,
       contract_value: clientData.contract_value,
       start_date: clientData.start_date,
@@ -2306,22 +2321,6 @@ export default function App() {
               <LogOut className="w-3.5 h-3.5 text-red-400" />
               <span className="hidden sm:inline">Sign Out</span>
             </button>
-
-            {/* Sales Action Button: Add Client (Role Permission Check) */}
-            {userRoleInfo.canRegisterClients && (
-              <button
-                onClick={() => setIsRegisterModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:opacity-90 active:scale-98"
-                style={{
-                  background: 'var(--gradient-badge)',
-                  color: 'var(--white)',
-                  border: '1px solid var(--border-strong)',
-                }}
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>New Client</span>
-              </button>
-            )}
           </div>
         </div>
       </header>
@@ -2642,7 +2641,6 @@ export default function App() {
               currentUser={currentUser}
               tasks={tasks}
               clients={clients}
-              onOpenRegisterModal={userRoleInfo.canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
             />
 
             {/* Tab 0: Leadership Dashboard */}
@@ -2725,6 +2723,7 @@ export default function App() {
                     onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
                     onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                     onDeleteClient={handleDeleteClient}
+                    onOpenBulkUploadModal={() => setIsBulkClientUploadOpen(true)}
                     onUpdateClientStatus={handleUpdateClientStatus}
                     onMarkClientViewed={handleMarkClientViewedByAMLead}
                     onNavigateToModule={handleNavigateToModule}
@@ -2931,6 +2930,7 @@ export default function App() {
       <BulkClientUploadModal
         isOpen={isBulkClientUploadOpen}
         onClose={() => setIsBulkClientUploadOpen(false)}
+        currentUser={currentUser}
         users={users}
         clients={clients}
         onAddClientRow={handleBulkAddClient}
