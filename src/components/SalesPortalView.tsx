@@ -12,6 +12,7 @@ import {
   Clock,
   Sparkles,
   Eye,
+  UploadCloud,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -43,6 +44,7 @@ interface SalesPortalViewProps {
   extraNotes?: ExtraNoteRecord[];
   assignments?: AssignmentRecord[];
   onOpenRegisterModal: () => void;
+  onOpenBulkUploadModal: () => void;
   onUpdateClientStatus?: (
     clientId: string,
     newStatus: ClientStatus,
@@ -66,6 +68,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   extraNotes = [],
   assignments = [],
   onOpenRegisterModal,
+  onOpenBulkUploadModal,
   onUpdateClientStatus,
   clientContracts = [],
   onUploadClientContract,
@@ -133,14 +136,24 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
             </p>
           </div>
 
-          <button
-            id="btn-sales-register-client"
-            onClick={onOpenRegisterModal}
-            className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg active:scale-98 shrink-0 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Register New Client</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="btn-sales-register-client"
+              onClick={onOpenRegisterModal}
+              className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg active:scale-98 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Register New Client</span>
+            </button>
+            <button
+              id="btn-sales-bulk-upload-clients"
+              onClick={onOpenBulkUploadModal}
+              className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-98 text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-700/40"
+            >
+              <UploadCloud className="w-4 h-4" />
+              <span>Bulk Upload</span>
+            </button>
+          </div>
         </div>
       </div>
 
