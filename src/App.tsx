@@ -2915,7 +2915,7 @@ export default function App() {
       {/* Activity Feed Drawer */}
       {isActivityFeedOpen && (
         <div className="fixed inset-y-0 left-0 w-80 z-[80] animate-in slide-in-from-left shadow-2xl border-r border-white/10 p-4 pt-[80px]" style={{ background: 'var(--gradient-card)' }}>
-          <LiveActivityFeed activities={activities} users={users} />
+          <LiveActivityFeed activities={activities} users={users} onClose={() => setIsActivityFeedOpen(false)} />
         </div>
       )}
     </div>

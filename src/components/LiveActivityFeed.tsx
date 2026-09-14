@@ -1,14 +1,15 @@
 import React from 'react';
 import { ActivityRecord, UserRecord } from '../types/database';
-import { Clock, CheckCircle2, AlertCircle, PlayCircle, PlusCircle, Trash2 } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, PlayCircle, PlusCircle, Trash2, X } from 'lucide-react';
 import { getRoleInfo } from '../data/roles';
 
 interface LiveActivityFeedProps {
   activities: ActivityRecord[];
   users: UserRecord[];
+  onClose: () => void;
 }
 
-export const LiveActivityFeed: React.FC<LiveActivityFeedProps> = ({ activities, users }) => {
+export const LiveActivityFeed: React.FC<LiveActivityFeedProps> = ({ activities, users, onClose }) => {
   const getActionIcon = (type: ActivityRecord['action_type']) => {
     switch (type) {
       case 'create': return <PlusCircle className="w-4 h-4 text-blue-400" />;
@@ -36,10 +37,19 @@ export const LiveActivityFeed: React.FC<LiveActivityFeedProps> = ({ activities, 
           <Clock className="w-4 h-4 text-purple-400" />
           Live Activity Feed ⚡
         </h3>
-        <span className="flex h-2 w-2 relative">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="flex h-2 w-2 relative">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <button
+            onClick={onClose}
+            className="text-stone-400 hover:text-white transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
       
       <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
