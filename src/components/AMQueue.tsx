@@ -20,6 +20,7 @@ import {
   Eye,
   Gauge,
   Search,
+  UploadCloud,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -85,6 +86,7 @@ interface AMQueueProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onOpenBulkUploadModal?: () => void;
   onUpdateTaskStatus?: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onUpdateClientStatus?: (
     clientId: string,
@@ -150,6 +152,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onOpenBulkUploadModal,
   onUpdateTaskStatus,
   onUpdateClientStatus,
   onMarkClientViewed,
@@ -343,6 +346,15 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             >
               <Gauge className="w-3.5 h-3.5" />
               <span>View Team Capacity</span>
+            </button>
+          )}
+          {onOpenBulkUploadModal && (
+            <button
+              onClick={onOpenBulkUploadModal}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/40 hover:bg-amber-900/60 hover:text-white border border-amber-700/40 transition-all"
+            >
+              <UploadCloud className="w-3.5 h-3.5" />
+              <span>Bulk Upload</span>
             </button>
           )}
         </div>

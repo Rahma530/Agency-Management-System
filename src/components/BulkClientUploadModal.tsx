@@ -8,6 +8,7 @@ import { isActiveEmployee } from '../lib/permissions';
 interface BulkClientUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUser: UserRecord;
   users: UserRecord[];
   clients: ClientRecord[];
   onAddClientRow: (client: {
@@ -96,6 +97,7 @@ const parseFile = (file: File): Promise<Record<string, string>[]> => {
 export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   isOpen,
   onClose,
+  currentUser,
   users,
   clients,
   onAddClientRow,
@@ -104,6 +106,14 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [results, setResults] = useState<RowResult[] | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+
+  // Column/validation logic is identical for every uploading role (sales, am_team_lead,
+  // am_agent) — am_team_lead_name is always required and always resolves am_team_lead_id, even
+  // for an am_agent's own upload, so every client keeps a real accountable lead. Only the
+  // resulting status/sales_owner_id/am_agent_id attribution differs, and that's entirely handled
+  // by the onAddClientRow handler the caller supplies — this component doesn't branch on role at
+  // all except for this one line of descriptive copy.
+  const isSalesUpload = currentUser.role === 'sales';
 
   const amTeamLeads = useMemo(
     () => users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u)),
@@ -287,7 +297,9 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
                 Bulk Upload Clients
               </h3>
               <p className="text-xs" style={{ color: 'var(--grey)' }}>
-                Every row is registered under your name and routed to Account Management, same as a single registration.
+                {isSalesUpload
+                  ? 'Every row is registered under your name and routed to Account Management, same as a single registration.'
+                  : 'Every row is added as an already-active client under your management — no sales handoff, no onboarding stage.'}
               </p>
             </div>
           </div>
