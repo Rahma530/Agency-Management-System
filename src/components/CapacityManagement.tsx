@@ -47,6 +47,7 @@ interface CapacityManagementProps {
   capacityLogs: CapacityLogRecord[];
   currentUser?: UserRecord;
   onUpdateUserCapacity: (userId: string, newLimit: number) => Promise<void>;
+  onImportEmployees: (data: Array<Record<string, unknown>>) => Promise<void>;
   onLogCapacity?: (agentId: string, date: string, count: number) => Promise<void>;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   kpiScores?: KpiScoreRecord[];
@@ -83,6 +84,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   capacityLogs,
   currentUser,
   onUpdateUserCapacity,
+  onImportEmployees,
   onLogCapacity,
   onNavigateToModule,
   kpiScores = [],
@@ -1386,11 +1388,12 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         type={importType}
-        onImport={(data, method) => {
-          // This will be handled by passing the function up to App.tsx eventually
-          // For now, we simulate a success message since we are in a read-only prop mode here
-          console.log(`Importing ${importType} via ${method}:`, data);
-          setStatusMessage({ text: 'تم استيراد البيانات بنجاح (Simulation)', type: 'success' });
+        onImport={async (data) => {
+          if (importType !== 'users') {
+            throw new Error('Client imports are not supported from Capacity Management.');
+          }
+          await onImportEmployees(data as Array<Record<string, unknown>>);
+          setStatusMessage({ text: 'Employee data saved to Supabase.', type: 'success' });
           setTimeout(() => setStatusMessage(null), 3000);
         }}
       />

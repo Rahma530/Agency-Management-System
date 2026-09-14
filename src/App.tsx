@@ -95,6 +95,7 @@ import {
   INITIAL_ASSIGNMENTS,
 } from './data/initialData';
 import {
+  AGENCY_ROLES,
   getRoleInfo,
   isModuleAllowed,
   getPortalSlug,
@@ -107,7 +108,6 @@ import { AMQueue } from './components/AMQueue';
 import { CapacityManagement } from './components/CapacityManagement';
 import { CrossTeamTaskBoard } from './components/CrossTeamTaskBoard';
 import { DailyOperationsModule } from './components/DailyOperationsModule';
-import { ImportDataModal } from './components/ImportDataModal';
 import { CampaignManagementModule } from './components/CampaignManagementModule';
 import { ServiceBriefsRoutingView } from './components/ServiceBriefsRoutingView';
 import { MyWorkHub } from './components/MyWorkHub';
@@ -160,6 +160,7 @@ export default function App() {
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [clientContracts, setClientContracts] = useState<ClientContractRecord[]>([]);
   const [platformConnections, setPlatformConnections] = useState<PlatformConnectionRecord[]>([]);
+  const [employeeDataError, setEmployeeDataError] = useState<string | null>(null);
   const [taskBoardAssigneePrefill, setTaskBoardAssigneePrefill] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([
     {
@@ -216,10 +217,6 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessageRecord[]>([]);
   const [isActivityFeedOpen, setIsActivityFeedOpen] = useState(false);
 
-  // Import Data State
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importType, setImportType] = useState<'users' | 'clients'>('users');
-
   // Authenticated user state initialized from localStorage
   const [authenticatedUser, setAuthenticatedUser] = useState<UserRecord | null>(() => {
     try {
@@ -246,6 +243,17 @@ export default function App() {
     setNotification({ text, type });
     setTimeout(() => setNotification(null), 4500);
   };
+
+  const refreshEmployeesFromSupabase = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Supabase is not configured, so employee data cannot be persisted or reloaded.');
+    }
+    const { data, error } = await supabase.from('users').select('*');
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error('Supabase returned no employee data.');
+    setUsers(data as UserRecord[]);
+    setEmployeeDataError(null);
+  }, []);
 
   const handleMarkNotificationAsRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
@@ -433,18 +441,19 @@ export default function App() {
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
 
-    // 1. Fetch users strictly through RLS-enforced Supabase query layer
-    try {
-      if (authenticatedUser) {
-        const { data: userData, error: userErr } = await supabase.from('users').select('*');
-        if (!userErr && userData && userData.length > 0) {
-          setUsers(userData as UserRecord[]);
-        }
-      } else {
-        setUsers(INITIAL_USERS);
+    // 1. Fetch users strictly through the RLS-enforced Supabase query layer. Never replace a
+    // failed live fetch with seeded data: doing so makes stale INITIAL_USERS look persisted.
+    if (authenticatedUser) {
+      try {
+        await refreshEmployeesFromSupabase();
+      } catch (err: any) {
+        const message = `Unable to load employee data from Supabase: ${err?.message || 'Unknown error'}`;
+        console.error(message, err);
+        setEmployeeDataError(message);
       }
-    } catch (err) {
-      console.warn('Error fetching users under RLS:', err);
+    } else {
+      setEmployeeDataError(null);
+      setUsers(INITIAL_USERS);
     }
 
     if (configured) {
@@ -589,7 +598,7 @@ export default function App() {
       }
     }
     setLoading(false);
-  }, []);
+  }, [authenticatedUser, refreshEmployeesFromSupabase]);
 
   useEffect(() => {
     setSupabaseSessionUser(authenticatedUser);
@@ -754,13 +763,13 @@ export default function App() {
       created_at: new Date().toISOString(),
     };
 
-    if (supabaseActive) {
-      const { data, error } = await supabase.from('users').insert([newUserPayload]).select();
-      if (error) throw error;
-      setUsers((prev) => [...prev, (data?.[0] as UserRecord) || newUserPayload]);
-    } else {
-      setUsers((prev) => [...prev, newUserPayload]);
+    if (!supabaseActive) {
+      throw new Error('Supabase is not active. Employee imports cannot be saved locally only.');
     }
+    const { data, error } = await supabase.from('users').insert([newUserPayload]).select();
+    if (error) throw error;
+    if (!data?.[0]) throw new Error('Supabase did not return the inserted employee record.');
+    setUsers((prev) => [...prev, data[0] as UserRecord]);
   };
 
   // 2. Assign the client to an Account Manager (AM Agent)
@@ -1247,19 +1256,67 @@ export default function App() {
     userId: string,
     updates: { name?: string; email?: string; role?: UserRole; team?: string | null; capacity_limit?: number | null }
   ) => {
-    if (supabaseActive) {
+    if (!supabaseActive) {
+      throw new Error('Supabase is not active. Employee updates cannot be saved locally only.');
+    }
+    const { data, error } = await supabase.from('users').update(updates).eq('id', userId).select();
+    if (error) {
+      console.error('Supabase error updating employee:', error);
+      throw error;
+    }
+    if (!data?.[0]) throw new Error('Supabase did not return the updated employee record.');
+    setUsers((prev) => prev.map((u) => (u.id === userId ? data[0] as UserRecord : u)));
+    showNotification('Employee updated successfully.');
+  };
+
+  // Capacity Management's legacy import modal only provides name/email/role. It now uses the
+  // same email-based source-of-truth behavior as the full CSV/XLSX uploader: update a matching
+  // employee or create a pending one, never touch manager_id/auth_id, then reload persisted rows.
+  const handleCapacityEmployeeImport = async (records: Array<Record<string, unknown>>) => {
+    if (!supabaseActive) {
+      throw new Error('Supabase is not active. Employee imports cannot be saved locally only.');
+    }
+
+    const failures: string[] = [];
+    let persistedCount = 0;
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      const name = String(record.name || '').trim();
+      const email = String(record.email || '').trim().toLowerCase();
+      const role = String(record.role || '').trim() as UserRole;
+      const row = index + 1;
+      if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !Object.prototype.hasOwnProperty.call(AGENCY_ROLES, role)) {
+        failures.push(`Row ${row}: name, valid email, and role are required.`);
+        continue;
+      }
+
+      const existingEmployee = users.find((user) => (user.email || '').toLowerCase() === email);
       try {
-        const { error } = await supabase.from('users').update(updates).eq('id', userId);
-        if (error) throw error;
+        if (existingEmployee) {
+          await handleUpdateEmployee(existingEmployee.id, {
+            name,
+            email,
+            role,
+            team: getRoleInfo(role).team,
+            capacity_limit: existingEmployee.capacity_limit ?? null,
+          });
+        } else {
+          await handleAddEmployee({
+            name,
+            email,
+            role,
+            team: getRoleInfo(role).team,
+            capacity_limit: null,
+          });
+        }
+        persistedCount += 1;
       } catch (err: any) {
-        console.error('Supabase error updating employee:', err);
-        showNotification('Unable to save employee changes.', 'info');
-        return;
+        failures.push(`Row ${row} (${email}): ${err?.message || 'Supabase mutation failed.'}`);
       }
     }
 
-    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, ...updates } : u)));
-    showNotification('Employee updated successfully.');
+    if (persistedCount > 0) await refreshEmployeesFromSupabase();
+    if (failures.length > 0) throw new Error(failures.join(' '));
   };
 
   // Deactivate an employee (permanent, but not a hard delete — the row stays so their name still
@@ -2631,6 +2688,14 @@ export default function App() {
             </button>
           </div>
         )}
+        {employeeDataError && (
+          <div
+            role="alert"
+            className="p-3.5 rounded-xl text-xs text-red-200 bg-red-950/30 border border-red-800/50"
+          >
+            {employeeDataError}
+          </div>
+        )}
 
         {/* Security & Access Protection: Unauthorized State Check */}
         {unauthorizedRoute ? (
@@ -2808,6 +2873,7 @@ export default function App() {
                   capacityLogs={capacityLogs}
                   currentUser={currentUser}
                   onUpdateUserCapacity={handleUpdateUserCapacity}
+                  onImportEmployees={handleCapacityEmployeeImport}
                   onLogCapacity={handleLogCapacity}
                   onNavigateToModule={handleNavigateToModule}
                   kpiScores={kpiScores}
@@ -2923,6 +2989,7 @@ export default function App() {
                   onAddEmployee={handleAddEmployee}
                   onUpdateEmployee={handleUpdateEmployee}
                   onDeactivateEmployee={handleDeactivateEmployee}
+                  onRefreshEmployees={refreshEmployeesFromSupabase}
                 />
               </div>
             )}
@@ -2947,16 +3014,6 @@ export default function App() {
         users={users}
         clients={clients}
         onAddClientRow={handleBulkAddClient}
-      />
-
-      <ImportDataModal
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        type={importType}
-        onImport={(data, method) => {
-          console.log(`Importing ${importType} via ${method}:`, data);
-          alert('تم استيراد البيانات بنجاح (Simulation)');
-        }}
       />
 
       {/* --- New Global Features --- */}
