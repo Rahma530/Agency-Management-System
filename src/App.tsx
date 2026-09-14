@@ -612,7 +612,14 @@ export default function App() {
     }
   }, [authenticatedUser, users]);
 
-  // 1. تسجيل عميل جديد من فريق المبيعات (مع تحويل تلقائي إلى Onboarding)
+  // 1. Single-client registration (ClientRegistrationModal.tsx) — shared by sales, am_team_lead,
+  // and am_agent now, branching on currentUser.role exactly like handleBulkAddClient's three-way
+  // split below: sales still creates a new-pipeline lead (status 'onboarding', sales_owner_id =
+  // self, that creation IS the Sales -> AM Team Lead handoff); am_team_lead/am_agent register an
+  // already-active client they manage (status 'active', sales_owner_id null, am_agent_id = self
+  // for an am_agent with am_agent_assigned_at stamped, am_team_lead_id resolved from the form's
+  // picker either way). Same clients_insert_am_rls policy already covers this — it's the same
+  // clients INSERT regardless of whether it came from this single form or the bulk uploader.
   const handleRegisterClient = async (clientData: {
     name: string;
     industry: string;
@@ -623,17 +630,17 @@ export default function App() {
     renewal_date: string;
     am_team_lead_id?: string;
   }) => {
-    // Module 13: a ClientRecord is now only ever created at 'onboarding' — that creation IS the
-    // Sales -> AM Team Lead handoff, no separate 'lead' stage or handoff action before it.
+    const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}`,
       name: clientData.name,
       industry: clientData.industry,
       services: clientData.services,
       phone_number: clientData.phone_number || null,
-      status: 'onboarding',
-      sales_owner_id: currentUser.id,
-      am_agent_id: null, // Awaiting Account Manager assignment
+      status: isAmRegistration ? 'active' : 'onboarding',
+      sales_owner_id: isAmRegistration ? null : currentUser.id,
+      am_agent_id: currentUser.role === 'am_agent' ? currentUser.id : null,
+      am_agent_assigned_at: currentUser.role === 'am_agent' ? new Date().toISOString() : null,
       am_team_lead_id: clientData.am_team_lead_id || 'usr-am-lead',
       contract_value: clientData.contract_value,
       start_date: clientData.start_date,
@@ -661,7 +668,11 @@ export default function App() {
       setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
     }
 
-    showNotification(`Client "${clientData.name}" registered and routed to Account Management.`);
+    showNotification(
+      isAmRegistration
+        ? `Client "${clientData.name}" added as an active account under your management.`
+        : `Client "${clientData.name}" registered and routed to Account Management.`
+    );
   };
 
   // 1a2. Bulk-upload client insert (BulkClientUploadModal.tsx), one row at a time. Deliberately
@@ -2723,6 +2734,7 @@ export default function App() {
                     onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
                     onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                     onDeleteClient={handleDeleteClient}
+                    onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
                     onOpenBulkUploadModal={() => setIsBulkClientUploadOpen(true)}
                     onUpdateClientStatus={handleUpdateClientStatus}
                     onMarkClientViewed={handleMarkClientViewedByAMLead}
@@ -2923,6 +2935,7 @@ export default function App() {
       <ClientRegistrationModal
         isOpen={isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
+        currentUser={currentUser}
         amTeamLeaders={users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u))}
         onSubmit={handleRegisterClient}
       />

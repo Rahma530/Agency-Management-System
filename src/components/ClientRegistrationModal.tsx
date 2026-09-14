@@ -12,6 +12,7 @@ const SERVICE_OPTIONS: { value: ServiceType; label: string }[] = [
 interface ClientRegistrationModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUser: UserRecord;
   amTeamLeaders?: UserRecord[];
   onSubmit: (clientData: {
     name: string;
@@ -35,9 +36,16 @@ const addOneYear = (dateStr: string): string => {
 export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = ({
   isOpen,
   onClose,
+  currentUser,
   amTeamLeaders = [],
   onSubmit,
 }) => {
+  // Same component, two behaviors — derived from currentUser.role directly rather than a
+  // separate mode prop, matching BulkClientUploadModal's pattern. Attribution/status differ
+  // entirely in the App.tsx handler; this component only adjusts its own copy and which AM lead
+  // the dropdown defaults to.
+  const isAmForm = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
+
   const [name, setName] = useState('');
   const [industry, setIndustry] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -46,7 +54,19 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
-  const [amTeamLeadId, setAmTeamLeadId] = useState(amTeamLeaders[0]?.id || 'usr-am-lead');
+  // Defaults the AM lead picker sensibly per role: an am_team_lead registering a client is almost
+  // always registering their own, so default to self; an am_agent's own manager_id points at
+  // their team lead. Both stay full dropdowns (not locked), since either role may occasionally
+  // register on behalf of a peer lead's book, same as the bulk uploader allows.
+  const [amTeamLeadId, setAmTeamLeadId] = useState(() => {
+    if (currentUser.role === 'am_team_lead' && amTeamLeaders.some((u) => u.id === currentUser.id)) {
+      return currentUser.id;
+    }
+    if (currentUser.role === 'am_agent' && amTeamLeaders.some((u) => u.id === currentUser.manager_id)) {
+      return currentUser.manager_id as string;
+    }
+    return amTeamLeaders[0]?.id || 'usr-am-lead';
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -125,7 +145,9 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 Register New Client
               </h3>
               <p className="text-xs" style={{ color: 'var(--grey)' }}>
-                Client will be created and routed to Account Management to begin onboarding
+                {isAmForm
+                  ? 'Client will be created as an already-active account under your management.'
+                  : 'Client will be created and routed to Account Management to begin onboarding'}
               </p>
             </div>
           </div>
@@ -319,7 +341,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           {/* Assign / Transfer to AM Team Leader */}
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              Route to Account Management Lead <span className="text-red-400">*</span>
+              {isAmForm ? 'Account Management Lead' : 'Route to Account Management Lead'} <span className="text-red-400">*</span>
             </label>
             <div className="relative">
               <Users className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
@@ -347,7 +369,9 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
               </select>
             </div>
             <p className="text-[11px] text-stone-400 mt-1">
-              Client record will be routed to AM lead for account assignment and service kickoff.
+              {isAmForm
+                ? 'The team lead of record for this client.'
+                : 'Client record will be routed to AM lead for account assignment and service kickoff.'}
             </p>
           </div>
 

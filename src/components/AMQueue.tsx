@@ -21,6 +21,7 @@ import {
   Gauge,
   Search,
   UploadCloud,
+  PlusCircle,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -86,6 +87,7 @@ interface AMQueueProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onOpenRegisterModal?: () => void;
   onOpenBulkUploadModal?: () => void;
   onUpdateTaskStatus?: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onUpdateClientStatus?: (
@@ -152,6 +154,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onOpenRegisterModal,
   onOpenBulkUploadModal,
   onUpdateTaskStatus,
   onUpdateClientStatus,
@@ -346,6 +349,16 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             >
               <Gauge className="w-3.5 h-3.5" />
               <span>View Team Capacity</span>
+            </button>
+          )}
+          {onOpenRegisterModal && (
+            <button
+              onClick={onOpenRegisterModal}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-purple-700/60 hover:bg-purple-600/70 transition-all"
+              style={{ border: '1px solid var(--border-strong)' }}
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Register Client</span>
             </button>
           )}
           {onOpenBulkUploadModal && (
