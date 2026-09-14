@@ -103,6 +103,7 @@ import {
 } from './data/roles';
 import { EmployeeLogin } from './components/EmployeeLogin';
 import { ClientRegistrationModal } from './components/ClientRegistrationModal';
+import { BulkClientUploadModal } from './components/BulkClientUploadModal';
 import { AMQueue } from './components/AMQueue';
 import { CapacityManagement } from './components/CapacityManagement';
 import { CrossTeamTaskBoard } from './components/CrossTeamTaskBoard';
@@ -235,6 +236,7 @@ export default function App() {
   });
 
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isBulkClientUploadOpen, setIsBulkClientUploadOpen] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
 
   // Current active user based on authenticated session
@@ -661,6 +663,49 @@ export default function App() {
     }
 
     showNotification(`Client "${clientData.name}" registered and routed to Account Management.`);
+  };
+
+  // 1a2. Bulk-upload client insert (BulkClientUploadModal.tsx), one row at a time. Deliberately
+  // separate from handleRegisterClient rather than reused by it: this re-throws a real Supabase
+  // error instead of swallowing it and falling back to local state, the same re-throw-on-error
+  // contract handleAddEmployee already gives EmployeeAdminHub's bulk uploader, so the modal can
+  // catch and report per-row failures (e.g. a constraint violation) individually instead of every
+  // row silently "succeeding" locally. sales_owner_id is always the uploading sales user, exactly
+  // like the single-client form — never resolved from a column — matching this app's sales-only,
+  // self-attributed clients_insert_sales_rls policy (no bulk-upload-specific RLS change needed).
+  const handleBulkAddClient = async (clientData: {
+    name: string;
+    industry: string;
+    services: ServiceType[];
+    phone_number?: string;
+    contract_value: number;
+    start_date: string;
+    renewal_date: string;
+    am_team_lead_id: string;
+  }) => {
+    const newClientPayload: Partial<ClientRecord> = {
+      id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
+      name: clientData.name,
+      industry: clientData.industry,
+      services: clientData.services,
+      phone_number: clientData.phone_number || null,
+      status: 'onboarding',
+      sales_owner_id: currentUser.id,
+      am_agent_id: null,
+      am_team_lead_id: clientData.am_team_lead_id,
+      contract_value: clientData.contract_value,
+      start_date: clientData.start_date,
+      renewal_date: clientData.renewal_date,
+      created_at: new Date().toISOString(),
+    };
+
+    if (supabaseActive) {
+      const { data, error } = await supabase.from('clients').insert([newClientPayload]).select();
+      if (error) throw error;
+      setClients((prev) => [(data?.[0] as ClientRecord) || (newClientPayload as ClientRecord), ...prev]);
+    } else {
+      setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
+    }
   };
 
   // 1b. Add a new employee (Add Employee admin screen: single form or bulk CSV/Excel upload) —
@@ -2650,6 +2695,7 @@ export default function App() {
                     clients={clients}
                     users={users}
                     onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
+                    onOpenBulkUploadModal={() => setIsBulkClientUploadOpen(true)}
                     onUpdateClientStatus={handleUpdateClientStatus}
                     clientContracts={clientContracts}
                     onUploadClientContract={handleUploadClientContract}
@@ -2880,6 +2926,14 @@ export default function App() {
         onClose={() => setIsRegisterModalOpen(false)}
         amTeamLeaders={users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u))}
         onSubmit={handleRegisterClient}
+      />
+
+      <BulkClientUploadModal
+        isOpen={isBulkClientUploadOpen}
+        onClose={() => setIsBulkClientUploadOpen(false)}
+        users={users}
+        clients={clients}
+        onAddClientRow={handleBulkAddClient}
       />
 
       <ImportDataModal
