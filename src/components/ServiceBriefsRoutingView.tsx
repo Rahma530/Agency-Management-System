@@ -406,11 +406,11 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
 
   // Determine service and role context
   const getServiceContext = (role: UserRole) => {
-    if (role === 'seo_team_lead' || role === 'seo_agent') {
+    if (role === 'seo_team_lead' || role === 'seo_agent' || role === 'seo_content_agent' || role === 'seo_backlink_agent') {
       return {
         serviceType: 'seo' as ServiceType,
         isTeamLead: role === 'seo_team_lead',
-        agentRole: 'seo_agent' as UserRole,
+        agentRole: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'] as UserRole[],
         serviceNameEn: 'Search Engine Optimization (SEO)',
         departmentName: 'SEO & Organic Growth Department',
         leadRoleTitle: 'SEO Team Leader',
@@ -425,7 +425,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       return {
         serviceType: 'media_buying' as ServiceType,
         isTeamLead: role === 'media_buying_team_lead',
-        agentRole: 'media_buying_agent' as UserRole,
+        agentRole: ['media_buying_agent'] as UserRole[],
         serviceNameEn: 'Paid Advertising (Media Buying)',
         departmentName: 'Digital Media Buying Department',
         leadRoleTitle: 'Media Buying Team Leader',
@@ -440,7 +440,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       return {
         serviceType: 'social_media' as ServiceType,
         isTeamLead: role === 'social_media_team_lead',
-        agentRole: 'social_media_agent' as UserRole,
+        agentRole: ['social_media_agent'] as UserRole[],
         serviceNameEn: 'Social Media Management',
         departmentName: 'Social Media & Community Department',
         leadRoleTitle: 'Social Media Team Leader',
@@ -515,7 +515,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSchemaEditorOpen, setIsSchemaEditorOpen] = useState(false);
 
-  const eligibleAgents = users.filter((u) => u.role === agentRole && isActiveEmployee(u));
+  const eligibleAgents = users.filter((u) => agentRole.includes(u.role) && isActiveEmployee(u));
 
   const selectedClient =
     authorizedClients.find((c) => c.id === selectedClientId) || authorizedClients[0] || null;

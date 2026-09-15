@@ -22,11 +22,11 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import { ComparisonCard, FiledReportsList, describeComparisonScope } from './reporting/ComparisonDisplay';
 
-const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRecord['role'], UserRecord['role']>> = {
-  am_team_lead: 'am_agent',
-  media_buying_team_lead: 'media_buying_agent',
-  seo_team_lead: 'seo_agent',
-  social_media_team_lead: 'social_media_agent',
+const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRecord['role'], UserRecord['role'][]>> = {
+  am_team_lead: ['am_agent'],
+  media_buying_team_lead: ['media_buying_agent'],
+  seo_team_lead: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
+  social_media_team_lead: ['social_media_agent'],
 };
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
@@ -95,7 +95,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   );
 
   const directReports = useMemo(
-    () => (agentRoleForLead ? users.filter((u) => u.role === agentRoleForLead && isActiveEmployee(u)) : []),
+    () => (agentRoleForLead ? users.filter((u) => agentRoleForLead.includes(u.role) && isActiveEmployee(u)) : []),
     [users, agentRoleForLead]
   );
 

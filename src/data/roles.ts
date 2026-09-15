@@ -165,6 +165,42 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     canAssignAM: false,
     description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
   },
+  // Identical treatment to seo_agent everywhere (task visibility/assignment, capacity tracking,
+  // brief access, seo_team_lead oversight, allowedModules) — see the migration adding this role
+  // alongside every RLS function/policy that previously hardcoded 'seo_agent'.
+  seo_content_agent: {
+    role: 'seo_content_agent',
+    englishTitle: 'SEO Content Specialist',
+    portalTitleEn: 'SEO Content Specialist Portal',
+    portalSlug: 'seo-content-agent',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'rgba(168, 185, 129, 0.15)',
+    badgeText: '#6ee7b7',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
+  },
+  // Identical treatment to seo_agent everywhere — see seo_content_agent's comment above.
+  seo_backlink_agent: {
+    role: 'seo_backlink_agent',
+    englishTitle: 'SEO Backlink Specialist',
+    portalTitleEn: 'SEO Backlink Specialist Portal',
+    portalSlug: 'seo-backlink-agent',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'rgba(168, 185, 129, 0.15)',
+    badgeText: '#6ee7b7',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
+  },
   // Structurally like graphic_designer/video_editor (no dedicated team lead, task-based work
   // with no service_type/assignments relationship to clients) — but exclusively owned by
   // seo_team_lead's oversight rather than shared across every team lead the way the creative

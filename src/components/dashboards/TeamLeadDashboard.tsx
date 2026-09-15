@@ -19,17 +19,17 @@ import { isPausedClient } from '../../lib/clientStatus';
 
 interface DeptConfig {
   team: string;
-  agentRole: UserRole;
+  agentRole: UserRole[];
   service: ServiceType | null; // null = spans every service (Account Management)
   label: string;
   clientsModule: AppModuleId;
 }
 
 const TEAM_LEAD_DEPT_CONFIG: Partial<Record<UserRole, DeptConfig>> = {
-  am_team_lead: { team: 'Account Management', agentRole: 'am_agent', service: null, label: 'Account Management', clientsModule: 'onboarding' },
-  media_buying_team_lead: { team: 'Media Buying', agentRole: 'media_buying_agent', service: 'media_buying', label: 'Media Buying', clientsModule: 'service_briefs' },
-  seo_team_lead: { team: 'SEO', agentRole: 'seo_agent', service: 'seo', label: 'SEO', clientsModule: 'service_briefs' },
-  social_media_team_lead: { team: 'Social Media', agentRole: 'social_media_agent', service: 'social_media', label: 'Social Media', clientsModule: 'service_briefs' },
+  am_team_lead: { team: 'Account Management', agentRole: ['am_agent'], service: null, label: 'Account Management', clientsModule: 'onboarding' },
+  media_buying_team_lead: { team: 'Media Buying', agentRole: ['media_buying_agent'], service: 'media_buying', label: 'Media Buying', clientsModule: 'service_briefs' },
+  seo_team_lead: { team: 'SEO', agentRole: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'], service: 'seo', label: 'SEO', clientsModule: 'service_briefs' },
+  social_media_team_lead: { team: 'Social Media', agentRole: ['social_media_agent'], service: 'social_media', label: 'Social Media', clientsModule: 'service_briefs' },
 };
 
 const isRenewalApproaching = (client: ClientRecord): boolean => {
@@ -114,7 +114,7 @@ export const TeamLeadDashboard: React.FC<{
   );
 
   const deptAgents = useMemo(
-    () => (config ? users.filter((u) => u.role === config.agentRole && isActiveEmployee(u)) : []),
+    () => (config ? users.filter((u) => config.agentRole.includes(u.role) && isActiveEmployee(u)) : []),
     [users, config]
   );
 
