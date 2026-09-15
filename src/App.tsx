@@ -424,7 +424,7 @@ export default function App() {
   }, [authenticatedUser]);
 
   // Switch tab and keep URL hash synchronized
-  const handleTabChange = (newTab: AppModule) => {
+  const handleTabChange = (newTab: AppModule, prefillAssigneeName?: string) => {
     if (!authenticatedUser) return;
     if (!isModuleAllowed(authenticatedUser.role, newTab)) {
       setUnauthorizedRoute(`#/${newTab}`);
@@ -432,6 +432,9 @@ export default function App() {
     }
     setActiveTab(newTab);
     setUnauthorizedRoute(null);
+    // Clears any stale prefill from a previous Capacity-button visit on a
+    // plain nav-bar click (no second argument), not just when setting a new one.
+    setTaskBoardAssigneePrefill(prefillAssigneeName ?? null);
     const mySlug = getPortalSlug(authenticatedUser.role);
     window.location.hash = `#/portal/${mySlug}/${newTab}`;
     setActiveTab(newTab);
