@@ -36,7 +36,11 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [showDemoModal, setShowDemoModal] = useState(false);
 
-  const isDemoLoginEnabled = true;
+  // Demo login (no-password instant sign-in as any role) is opt-in via env
+  // flag, off by default. Never enable this on a public deployment — it was
+  // accidentally hardcoded to true as collateral from an unrelated cleanup
+  // (commit 8a04641), which left it live and unrestricted in production.
+  const isDemoLoginEnabled = import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 
   // Email format validation helper
   const isValidEmail = (val: string) => {
