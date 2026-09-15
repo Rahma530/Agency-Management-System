@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Database,
   UserCheck,
@@ -263,16 +263,38 @@ export default function App() {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
   };
 
+  // Kept in sync below so the session-rehydration effect can read the latest
+  // `users` without depending on it directly — that dependency previously
+  // made the whole effect (including tearing down and re-subscribing the
+  // auth listener) re-run on every users fetch, which is what caused the
+  // repeated reload loop: each re-subscribe re-ran restoreSession(), which
+  // set a freshly-fetched authenticatedUser object, whose new reference fed
+  // straight back into loadData's own dependency, triggering another users
+  // fetch, and so on indefinitely.
+  const usersRef = useRef(users);
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
+
   // 1. Session Rehydration from Supabase on mount
   useEffect(() => {
     // A provisioning/password-reset link lands back here with a recovery
     // marker in the URL before supabase-js has parsed it into a session.
     // restoreSession()'s plain getSession() call below can't distinguish a
     // recovery session from a normal one, so it must not auto-login here —
-    // the onAuthStateChange listener's PASSWORD_RECOVERY branch is what
-    // routes this case to SetPasswordScreen instead.
+    // isPasswordRecovery is set synchronously from this check right below,
+    // rather than waiting on the onAuthStateChange listener's PASSWORD_RECOVERY
+    // event, since that's a one-shot event that can be lost if the listener
+    // isn't attached yet when it fires (e.g. React StrictMode's mount ->
+    // cleanup -> re-mount cycle tearing down the very listener that would
+    // have caught it). The event-based branch below stays as a secondary,
+    // defensive path only.
     const isRecoveryRedirect =
       window.location.hash.includes('type=recovery') || window.location.search.includes('type=recovery');
+
+    if (isRecoveryRedirect) {
+      setIsPasswordRecovery(true);
+    }
 
     const restoreSession = async () => {
       if (isRecoveryRedirect) return;
@@ -302,7 +324,7 @@ export default function App() {
       try {
         const savedUserId = localStorage.getItem('agency_auth_user_id');
         if (savedUserId) {
-          const matched = users.find((u) => u.id === savedUserId);
+          const matched = usersRef.current.find((u) => u.id === savedUserId);
           if (matched) {
             setAuthenticatedUser(matched);
             return;
@@ -338,7 +360,7 @@ export default function App() {
         authListener?.subscription?.unsubscribe();
       };
     }
-  }, [users]);
+  }, []);
 
   // 2. Hash routing & unauthorized route protection
   useEffect(() => {
