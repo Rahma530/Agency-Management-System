@@ -281,7 +281,9 @@ export default function App() {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
-            const { data: dbUser } = await supabase
+            // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or()
+            // lookup only matches the hardcoded demo seed array, never a real Postgres row.
+            const { data: dbUser } = await supabaseRaw
               .from('users')
               .select('*')
               .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
@@ -318,7 +320,9 @@ export default function App() {
           return;
         }
         if (session?.user) {
-          const { data: dbUser } = await supabase
+          // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or()
+          // lookup only matches the hardcoded demo seed array, never a real Postgres row.
+          const { data: dbUser } = await supabaseRaw
             .from('users')
             .select('*')
             .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
