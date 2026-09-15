@@ -1364,7 +1364,10 @@ export default function App() {
   ) => {
     if (supabaseActive) {
       try {
-        const { error } = await supabase.from('users').update(updates).eq('id', userId);
+        // supabaseRaw bypasses the legacy client-side users proxy — that proxy's update
+        // branch unconditionally mutates the in-memory demo array (or no-ops for a real
+        // employee) and always returns error: null, never touching real Postgres.
+        const { error } = await supabaseRaw.from('users').update(updates).eq('id', userId);
         if (error) throw error;
       } catch (err: any) {
         console.error('Supabase error updating employee:', err);
@@ -1391,9 +1394,12 @@ export default function App() {
 
     if (supabaseActive) {
       try {
-        const { error } = await supabase.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
+        // supabaseRaw bypasses the legacy client-side tasks/users proxies — their update
+        // branches unconditionally mutate in-memory demo data (or no-op for real rows) and
+        // always return error: null, never touching real Postgres.
+        const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
         if (error) throw error;
-        const { error: userErr } = await supabase.from('users').update({ deactivated_at: deactivatedAt }).eq('id', userId);
+        const { error: userErr } = await supabaseRaw.from('users').update({ deactivated_at: deactivatedAt }).eq('id', userId);
         if (userErr) throw userErr;
       } catch (err: any) {
         console.error('Supabase error deactivating employee:', err);
