@@ -14,8 +14,8 @@ import {
 } from 'lucide-react';
 import { UserRecord } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
-import { getRoleInfo } from '../data/roles';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
+import { supabase, supabaseRaw } from '../lib/supabase';
 
 interface EmployeeLoginProps {
   users: UserRecord[];
@@ -82,7 +82,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
       }
 
       // Retrieve the employee's profile from the database 'users' table by auth_id or email
-      const { data: dbUser, error: dbErr } = await supabase
+      const { data: dbUser, error: dbErr } = await supabaseRaw
         .from('users')
         .select('*')
         .or(`auth_id.eq.${authData.user.id},email.eq.${trimmedEmail}`)
@@ -90,6 +90,13 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
 
       if (dbErr || !dbUser) {
         setErrorMessage('No employee profile found for this account. Please contact your administrator.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(AGENCY_ROLES, dbUser.role)) {
+        setErrorMessage('This employee profile has an unrecognized role. Please contact your administrator.');
+        await supabase.auth.signOut();
         setIsLoading(false);
         return;
       }

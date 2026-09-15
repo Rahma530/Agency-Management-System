@@ -5,7 +5,7 @@ interface ImportDataModalProps {
   isOpen: boolean;
   onClose: () => void;
   type: 'users' | 'clients';
-  onImport: (data: any[], method: 'manual' | 'csv') => void;
+  onImport: (data: any[], method: 'manual' | 'csv') => Promise<void> | void;
 }
 
 export const ImportDataModal: React.FC<ImportDataModalProps> = ({
@@ -19,6 +19,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
   const [manualName, setManualName] = useState('');
   const [manualEmail, setManualEmail] = useState('');
   const [manualRole, setManualRole] = useState(''); // Used for both role (users) and package (clients)
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -26,19 +28,31 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
   const title = isUsers ? 'إضافة موظفين' : 'إضافة عملاء';
   const icon = isUsers ? <UserPlus className="w-5 h-5 text-emerald-400" /> : <Building2 className="w-5 h-5 text-blue-400" />;
 
-  const handleManualSubmit = (e: React.FormEvent) => {
+  const submitImport = async (records: any[], method: 'manual' | 'csv') => {
+    setSubmitError(null);
+    setIsSubmitting(true);
+    try {
+      await onImport(records, method);
+      onClose();
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Unable to save imported data.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualName.trim()) return;
     
     const record = isUsers 
-      ? { name: manualName, email: manualEmail, role: manualRole || 'designer' }
+      ? { name: manualName, email: manualEmail, role: manualRole || 'am_agent' }
       : { name: manualName, email: manualEmail, packageId: manualRole || 'basic_social' };
       
-    onImport([record], 'manual');
-    onClose();
+    await submitImport([record], 'manual');
   };
 
-  const handleCsvSubmit = () => {
+  const handleCsvSubmit = async () => {
     if (!csvData.trim()) return;
     
     // Basic CSV parsing
@@ -49,7 +63,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         return {
           name: parts[0]?.trim() || 'موظف جديد',
           email: parts[1]?.trim() || '',
-          role: parts[2]?.trim() || 'designer'
+          role: parts[2]?.trim() || 'am_agent'
         };
       } else {
         return {
@@ -60,8 +74,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
       }
     });
 
-    onImport(records, 'csv');
-    onClose();
+    await submitImport(records, 'csv');
   };
 
   return (
@@ -110,6 +123,11 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
         </div>
 
         <div className="p-6">
+          {submitError && (
+            <div className="mb-4 p-3 rounded-xl text-xs text-red-300 bg-red-950/30 border border-red-800/40">
+              {submitError}
+            </div>
+          )}
           {activeTab === 'csv' ? (
             <div className="space-y-4">
               <div className="p-4 rounded-xl border border-dashed border-white/20 bg-black/20 text-center space-y-3">
@@ -118,7 +136,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
                   <p className="text-stone-300 font-bold text-sm">قم بلصق محتوى ملف CSV هنا</p>
                   <p className="text-stone-500 text-xs mt-1">
                     {isUsers 
-                      ? 'الترتيب: الاسم، الإيميل، الدور (مثال: أحمد, ahmed@test.com, designer)' 
+                      ? 'الترتيب: الاسم، الإيميل، الدور (مثال: أحمد, ahmed@test.com, graphic_designer)'
                       : 'الترتيب: اسم الشركة، الإيميل، الباقة (مثال: شركة الأمل, info@alamal.com, premium)'}
                   </p>
                 </div>
@@ -126,7 +144,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
                   value={csvData}
                   onChange={(e) => setCsvData(e.target.value)}
                   className="w-full h-32 bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white placeholder:text-stone-600 focus:outline-none focus:border-purple-500/50 mt-4"
-                  placeholder="أحمد, ahmed@test.com, designer&#10;محمد, mohamed@test.com, copywriter"
+                  placeholder="أحمد, ahmed@test.com, graphic_designer&#10;محمد, mohamed@test.com, seo_agent"
                   dir="ltr"
                 />
               </div>
@@ -134,7 +152,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               <div className="flex justify-end pt-2">
                 <button
                   onClick={handleCsvSubmit}
-                  disabled={!csvData.trim()}
+                  disabled={!csvData.trim() || isSubmitting}
                   className="px-6 py-2 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-0.5"
                   style={{ background: 'var(--gradient-badge)' }}
                 >
@@ -182,9 +200,9 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
                     onChange={(e) => setManualRole(e.target.value)}
                     className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500/50"
                   >
-                    <option value="designer">مصمم (Designer)</option>
-                    <option value="copywriter">كاتب محتوى (Copywriter)</option>
-                    <option value="media_buyer">ميديا باير (Media Buyer)</option>
+                    <option value="graphic_designer">مصمم (Designer)</option>
+                    <option value="seo_agent">SEO</option>
+                    <option value="media_buying_agent">ميديا باير (Media Buyer)</option>
                     <option value="am_team_lead">مدير حسابات (Account Manager)</option>
                   </select>
                 ) : (
@@ -204,7 +222,7 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               <div className="flex justify-end pt-4">
                 <button
                   type="submit"
-                  disabled={!manualName.trim()}
+                  disabled={!manualName.trim() || isSubmitting}
                   className="px-6 py-2 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-0.5"
                   style={{ background: 'var(--gradient-badge)' }}
                 >

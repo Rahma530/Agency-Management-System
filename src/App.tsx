@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   supabase,
+  supabaseRaw,
   isSupabaseConfigured,
   setSupabaseSessionUser,
   buildAttachmentStoragePath,
@@ -95,6 +96,7 @@ import {
   INITIAL_ASSIGNMENTS,
 } from './data/initialData';
 import {
+  AGENCY_ROLES,
   getRoleInfo,
   isModuleAllowed,
   getPortalSlug,
@@ -280,13 +282,13 @@ export default function App() {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
-            const { data: dbUser } = await supabase
+            const { data: dbUser } = await supabaseRaw
               .from('users')
               .select('*')
               .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
               .single();
             if (dbUser) {
-              setAuthenticatedUser(dbUser as UserRecord);
+              handleLoginSuccess(dbUser as UserRecord);
               return;
             }
           }
@@ -317,13 +319,13 @@ export default function App() {
           return;
         }
         if (session?.user) {
-          const { data: dbUser } = await supabase
+          const { data: dbUser } = await supabaseRaw
             .from('users')
             .select('*')
             .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
             .single();
           if (dbUser) {
-            setAuthenticatedUser(dbUser as UserRecord);
+            handleLoginSuccess(dbUser as UserRecord);
           }
         } else if (event === 'SIGNED_OUT') {
           setAuthenticatedUser(null);
@@ -422,6 +424,11 @@ export default function App() {
   };
 
   const handleLoginSuccess = (user: UserRecord) => {
+    if (!Object.prototype.hasOwnProperty.call(AGENCY_ROLES, user.role)) {
+      console.error('Authenticated employee has an unrecognized role:', user.role);
+      void supabase.auth.signOut();
+      return;
+    }
     setAuthenticatedUser(user);
     setSupabaseSessionUser(user);
     setUnauthorizedRoute(null);
@@ -440,7 +447,7 @@ export default function App() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data: dbUser } = await supabase
+        const { data: dbUser } = await supabaseRaw
           .from('users')
           .select('*')
           .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
