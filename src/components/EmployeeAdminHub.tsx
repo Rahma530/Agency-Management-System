@@ -46,6 +46,7 @@ interface EmployeeAdminHubProps {
   onAddEmployee: (employee: NewEmployeeInput) => Promise<void>;
   onUpdateEmployee: (userId: string, updates: EmployeeUpdateInput) => Promise<void>;
   onDeactivateEmployee: (userId: string) => Promise<void>;
+  onRefreshEmployees: () => Promise<void>;
 }
 
 const VALID_ROLES = Object.keys(AGENCY_ROLES) as UserRole[];
@@ -62,7 +63,7 @@ const CSV_TEMPLATE_EXAMPLE = [
   '6',
 ];
 
-type RowStatus = 'added' | 'skipped' | 'failed';
+type RowStatus = 'added' | 'updated' | 'skipped' | 'failed';
 interface RowResult {
   row: number;
   name: string;
@@ -83,6 +84,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onAddEmployee,
   onUpdateEmployee,
   onDeactivateEmployee,
+  onRefreshEmployees,
 }) => {
   // Add Employee (single + bulk) stays executive/head_of_technical only — matches
   // users_insert_admin_rls exactly, unchanged by this feature. Manage Employees (edit/deactivate)
@@ -242,9 +244,9 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       const seenEmailsThisFile = new Set<string>();
       const results: RowResult[] = [];
 
-      // Row-by-row, not batched: one bad/duplicate row is skipped and reported without
-      // aborting the rest of the file, and each insert is its own real DB round-trip so a
-      // duplicate the client-side check missed still gets caught (and reported) individually.
+      // Row-by-row, not batched: one bad row is reported without aborting the rest of the file.
+      // Email is the source-of-truth match key: an existing row is updated, never duplicated.
+      let persistedRowCount = 0;
       for (let i = 0; i < rows.length; i++) {
         const rowNum = i + 2; // +1 for 1-indexing, +1 for the header row
         const raw = rows[i];
@@ -267,8 +269,8 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: `Invalid role "${rowRole}"` });
           continue;
         }
-        if (existingEmailsLower.has(rowEmail) || seenEmailsThisFile.has(rowEmail)) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Duplicate email' });
+        if (seenEmailsThisFile.has(rowEmail)) {
+          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Duplicate email within this file' });
           continue;
         }
         if (rowCapacity && Number.isNaN(Number(rowCapacity))) {
@@ -278,20 +280,41 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
         seenEmailsThisFile.add(rowEmail);
         try {
-          await onAddEmployee({
-            name: rowName,
-            email: rowEmail,
-            role: rowRole,
-            team: rowTeam || getRoleInfo(rowRole).team,
-            manager_id: rowManagerId || null,
-            capacity_limit: rowCapacity ? Number(rowCapacity) : null,
-          });
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'added' });
+          const existingEmployee = users.find((u) => (u.email || '').toLowerCase() === rowEmail);
+          if (existingEmployee) {
+            // manager_id and auth_id are intentionally excluded from browser-side updates.
+            await onUpdateEmployee(existingEmployee.id, {
+              name: rowName,
+              email: rowEmail,
+              role: rowRole,
+              team: rowTeam || getRoleInfo(rowRole).team,
+              capacity_limit: rowCapacity ? Number(rowCapacity) : null,
+            });
+            results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'updated' });
+          } else {
+            await onAddEmployee({
+              name: rowName,
+              email: rowEmail,
+              role: rowRole,
+              team: rowTeam || getRoleInfo(rowRole).team,
+              manager_id: rowManagerId || null,
+              capacity_limit: rowCapacity ? Number(rowCapacity) : null,
+            });
+            results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'added' });
+          }
+          persistedRowCount += 1;
         } catch (err: any) {
           results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'failed', reason: err?.message || 'Insert failed' });
         }
       }
 
+      if (persistedRowCount > 0) {
+        try {
+          await onRefreshEmployees();
+        } catch (err: any) {
+          results.push({ row: 0, name: '', email: '', status: 'failed', reason: `Saved rows could not be reloaded: ${err?.message || 'Unknown error'}` });
+        }
+      }
       setBulkResults(results);
     } catch (err: any) {
       setBulkFileError(err?.message || 'Unable to parse this file. Confirm it\'s a valid .csv or .xlsx file.');
@@ -538,7 +561,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
               {isProcessingFile ? 'Processing...' : 'Click to select a .csv or .xlsx file'}
             </span>
             <span className="text-[11px] text-stone-500 flex items-center gap-1">
-              <Upload className="w-3 h-3" /> Rows are inserted one at a time — a bad row is skipped and reported, not fatal.
+              <Upload className="w-3 h-3" /> Existing emails are updated; new emails are added. Bad rows are reported without stopping the file.
             </span>
           </button>
 
@@ -553,6 +576,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             <div className="space-y-2">
               <div className="flex gap-3 text-[11px]">
                 <span className="text-emerald-400 font-bold">{bulkResults.filter((r) => r.status === 'added').length} added</span>
+                <span className="text-sky-400 font-bold">{bulkResults.filter((r) => r.status === 'updated').length} updated</span>
                 <span className="text-amber-400 font-bold">{bulkResults.filter((r) => r.status === 'skipped').length} skipped</span>
                 <span className="text-red-400 font-bold">{bulkResults.filter((r) => r.status === 'failed').length} failed</span>
               </div>
@@ -576,7 +600,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                         <td className="px-3 py-1.5">
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              r.status === 'added' ? 'text-emerald-400 bg-emerald-500/10' : r.status === 'skipped' ? 'text-amber-400 bg-amber-500/10' : 'text-red-400 bg-red-500/10'
+                              r.status === 'added' ? 'text-emerald-400 bg-emerald-500/10' : r.status === 'updated' ? 'text-sky-400 bg-sky-500/10' : r.status === 'skipped' ? 'text-amber-400 bg-amber-500/10' : 'text-red-400 bg-red-500/10'
                             }`}
                           >
                             {r.status}
