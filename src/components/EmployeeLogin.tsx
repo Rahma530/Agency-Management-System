@@ -15,7 +15,7 @@ import {
 import { UserRecord } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
 import { getRoleInfo } from '../data/roles';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, supabaseRaw, isSupabaseConfigured } from '../lib/supabase';
 
 interface EmployeeLoginProps {
   users: UserRecord[];
@@ -81,8 +81,10 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
         return;
       }
 
-      // Retrieve the employee's profile from the database 'users' table by auth_id or email
-      const { data: dbUser, error: dbErr } = await supabase
+      // Retrieve the employee's profile from the database 'users' table by auth_id or email.
+      // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or() lookup
+      // only matches the hardcoded demo seed array, never a real Postgres row.
+      const { data: dbUser, error: dbErr } = await supabaseRaw
         .from('users')
         .select('*')
         .or(`auth_id.eq.${authData.user.id},email.eq.${trimmedEmail}`)
