@@ -37,7 +37,7 @@ import {
   PerformancePeriodType,
   UserRole,
 } from '../types/database';
-import { getRoleInfo, AppModuleId } from '../data/roles';
+import { getRoleInfo, AppModuleId, TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { isActiveEmployee } from '../lib/permissions';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { ImportDataModal } from './ImportDataModal';
@@ -65,17 +65,10 @@ export type ViewMode = 'cards' | 'matrix' | 'logs';
 // lead's card (cross-department) or a shared graphic_designer/video_editor
 // card isn't that person's manager, and the RLS would reject the read/write
 // even if this button let them try.
-const DIRECT_LEAD_PAIRS: Partial<Record<UserRole, UserRole[]>> = {
-  am_team_lead: ['am_agent'],
-  media_buying_team_lead: ['media_buying_agent'],
-  seo_team_lead: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
-  social_media_team_lead: ['social_media_agent'],
-};
-
 const canViewPerformance = (viewerRole: UserRole | undefined, employee: UserRecord): boolean => {
   if (!viewerRole) return false;
   if (viewerRole === 'executive' || viewerRole === 'head_of_technical') return true;
-  return !!DIRECT_LEAD_PAIRS[viewerRole]?.includes(employee.role);
+  return !!TEAM_LEAD_TO_AGENT_ROLE[viewerRole]?.includes(employee.role);
 };
 
 // Reverse link (point 4): always points to the Tasks module, prefilled with
