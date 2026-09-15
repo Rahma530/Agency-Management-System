@@ -293,10 +293,22 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
 };
 
 export const getRoleInfo = (role?: UserRole): RoleMetadata => {
-  if (!role || !AGENCY_ROLES[role]) {
+  // Employee role values are compared against AGENCY_ROLES' exact keys below.
+  // Normalize whitespace/casing first so drift in the stored value (e.g. a
+  // trailing space or different case from how it was entered) doesn't get
+  // silently misrouted to the Executive portal.
+  const normalizedRole = typeof role === 'string' ? (role.trim().toLowerCase() as UserRole) : role;
+
+  if (!normalizedRole || !AGENCY_ROLES[normalizedRole]) {
+    if (normalizedRole) {
+      console.warn(
+        `getRoleInfo: unrecognized role "${role}" — falling back to the Executive portal. ` +
+          `This is not an intentional mapping; check the role value on the employee record.`
+      );
+    }
     return AGENCY_ROLES.executive;
   }
-  return AGENCY_ROLES[role];
+  return AGENCY_ROLES[normalizedRole];
 };
 
 export const isModuleAllowed = (role?: UserRole, moduleId?: AppModuleId): boolean => {
