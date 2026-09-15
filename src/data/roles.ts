@@ -328,6 +328,18 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
   },
 };
 
+// A team lead's own department agents ONLY — not the team lead role itself, not the shared
+// graphic_designer/video_editor pool, not other departments' leads. Used wherever a team lead's
+// direct-report relationship needs to be checked (capacity edit rights, report scoping, task
+// board employee filtering) — keep this as the single source of truth rather than redefining it
+// per-component.
+export const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRole, UserRole[]>> = {
+  am_team_lead: ['am_agent'],
+  media_buying_team_lead: ['media_buying_agent'],
+  seo_team_lead: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
+  social_media_team_lead: ['social_media_agent'],
+};
+
 export const getRoleInfo = (role?: UserRole): RoleMetadata => {
   // Employee role values are compared against AGENCY_ROLES' exact keys below.
   // Normalize whitespace/casing first so drift in the stored value (e.g. a

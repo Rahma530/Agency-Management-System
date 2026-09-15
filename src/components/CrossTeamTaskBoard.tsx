@@ -52,6 +52,8 @@ import {
 } from '@dnd-kit/core';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
+import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
+import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
@@ -128,6 +130,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // Employee-name filter: a discrete "view exactly what one person is working on" picker,
+  // separate from the free-text search box above. Its option list is role-scoped (see
+  // assigneeFilterOptions below) so a viewer can only ever select someone whose tasks
+  // task_visible()/isTaskAccessibleUnderRLS already lets them see.
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('all');
 
   // Pre-fill the assignee search when navigated here from a specific
   // employee's "Assign via Task Board" link.
@@ -236,6 +243,36 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     { id: 'Account Management', label: 'Account Management' },
   ];
 
+  // Employee-name filter options: a role-scoped list of employees the viewer may pick from to
+  // see exactly what one person is working on.
+  // - executive/head_of_technical: everyone org-wide, any role (same as getAllowedEmployeeRolesUnderRLS).
+  // - Team leads: ONLY their own department's agents (TEAM_LEAD_TO_AGENT_ROLE) — not themselves,
+  //   not the shared graphic_designer/video_editor pool, not other teams' leads.
+  // - marketing_manager: ONLY graphic_designer/video_editor, matching its existing narrow
+  //   Creative-pool scope (see isAssignableForCurrentUser above).
+  // - Everyone else gets no dropdown at all — they only ever see their own tasks anyway
+  //   (task_visible() scoping), so a picker would offer nothing beyond themselves.
+  const assigneeFilterRoles: string[] = useMemo(() => {
+    const role = currentUser?.role;
+    if (!role) return [];
+    if (role === 'executive' || role === 'head_of_technical') {
+      return getAllowedEmployeeRolesUnderRLS(role);
+    }
+    if (role === 'marketing_manager') {
+      return ['graphic_designer', 'video_editor'];
+    }
+    return TEAM_LEAD_TO_AGENT_ROLE[role] || [];
+  }, [currentUser?.role]);
+
+  const showAssigneeFilter = assigneeFilterRoles.length > 0;
+
+  const assigneeFilterOptions = useMemo(() => {
+    if (!showAssigneeFilter) return [];
+    return users
+      .filter((u) => assigneeFilterRoles.includes(u.role) && isActiveEmployee(u))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [users, assigneeFilterRoles, showAssigneeFilter]);
+
   // Kanban Columns configuration
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
     { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'rgba(168, 155, 184, 0.2)' },
@@ -334,6 +371,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       // Status filter
       if (selectedStatus !== 'all' && t.status !== selectedStatus) return false;
 
+      // Employee-name filter (role-scoped dropdown, distinct from the free-text search below)
+      if (selectedAssigneeId !== 'all' && t.assigned_to !== selectedAssigneeId) return false;
+
       // Search query
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
@@ -357,6 +397,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     selectedClient,
     selectedPriority,
     selectedStatus,
+    selectedAssigneeId,
     searchQuery,
     clients,
     users,
@@ -887,7 +928,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-2">
+        <div
+          className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 ${
+            showAssigneeFilter ? 'md:grid-cols-6' : 'md:grid-cols-5'
+          }`}
+        >
           {/* Team Filter */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Team:</label>
@@ -953,6 +998,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
             </select>
           </div>
+
+          {/* Employee Filter — role-scoped, see assigneeFilterOptions above */}
+          {showAssigneeFilter && (
+            <div>
+              <label className="text-[11px] font-semibold block mb-1 text-stone-400">Employee:</label>
+              <select
+                value={selectedAssigneeId}
+                onChange={(e) => setSelectedAssigneeId(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+              >
+                <option value="all" className="bg-stone-900 text-white">All Employees</option>
+                {assigneeFilterOptions.map((u) => (
+                  <option key={u.id} value={u.id} className="bg-stone-900 text-white">
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Search Input */}
           <div>

@@ -19,15 +19,9 @@ import {
 } from '../lib/reportingEngine';
 import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
+import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import { ComparisonCard, FiledReportsList, describeComparisonScope } from './reporting/ComparisonDisplay';
-
-const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRecord['role'], UserRecord['role'][]>> = {
-  am_team_lead: ['am_agent'],
-  media_buying_team_lead: ['media_buying_agent'],
-  seo_team_lead: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
-  social_media_team_lead: ['social_media_agent'],
-};
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
 

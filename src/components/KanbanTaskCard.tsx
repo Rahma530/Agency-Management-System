@@ -3,6 +3,7 @@ import { useDraggable } from '@dnd-kit/core';
 import {
   Building2,
   Calendar,
+  Clock,
   UserX,
   AlertTriangle,
   Timer,
@@ -211,6 +212,14 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
           </div>
         )}
       </div>
+
+      {/* Created Date — visible directly on the card, not just Table view/Task Details */}
+      {task.created_at && (
+        <div className="flex items-center gap-1 text-[9px] text-stone-500 -mt-1">
+          <Clock className="w-2.5 h-2.5" />
+          <span>Created {task.created_at.split('T')[0]}</span>
+        </div>
+      )}
 
       {/* Quick Advance Status Arrow Buttons — kept alongside drag-and-drop as
           the click-only fallback (touch/keyboard/anyone who'd rather not
