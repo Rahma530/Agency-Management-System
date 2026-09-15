@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   supabase,
+  supabaseRaw,
   isSupabaseConfigured,
   setSupabaseSessionUser,
   buildAttachmentStoragePath,
@@ -280,7 +281,9 @@ export default function App() {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
-            const { data: dbUser } = await supabase
+            // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or()
+            // lookup only matches the hardcoded demo seed array, never a real Postgres row.
+            const { data: dbUser } = await supabaseRaw
               .from('users')
               .select('*')
               .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
@@ -317,7 +320,9 @@ export default function App() {
           return;
         }
         if (session?.user) {
-          const { data: dbUser } = await supabase
+          // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or()
+          // lookup only matches the hardcoded demo seed array, never a real Postgres row.
+          const { data: dbUser } = await supabaseRaw
             .from('users')
             .select('*')
             .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
@@ -482,18 +487,25 @@ export default function App() {
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
 
-    // 1. Fetch users strictly through RLS-enforced Supabase query layer
+    // 1. Fetch employees directly from Postgres (bypassing the legacy client-side
+    // users proxy in lib/supabase.ts — real RLS on public.users is the actual
+    // security boundary, and that proxy's own fallback path can mask a real
+    // Supabase error as a false success backed by mock data).
     try {
       if (authenticatedUser) {
-        const { data: userData, error: userErr } = await supabase.from('users').select('*');
-        if (!userErr && userData && userData.length > 0) {
-          setUsers(userData as UserRecord[]);
+        const { data: userData, error: userErr } = await supabaseRaw.from('users').select('*');
+        if (userErr) {
+          console.error('Failed to load employees from Supabase:', userErr);
+          showNotification(`Failed to load employees from the server: ${userErr.message}`, 'info');
+        } else {
+          setUsers((userData as UserRecord[]) || []);
         }
       } else {
         setUsers(INITIAL_USERS);
       }
-    } catch (err) {
-      console.warn('Error fetching users under RLS:', err);
+    } catch (err: any) {
+      console.error('Error fetching employees from Supabase:', err);
+      showNotification(`Failed to load employees from the server: ${err?.message || 'Unknown error'}`, 'info');
     }
 
     if (configured) {
@@ -638,7 +650,7 @@ export default function App() {
       }
     }
     setLoading(false);
-  }, []);
+  }, [authenticatedUser]);
 
   useEffect(() => {
     setSupabaseSessionUser(authenticatedUser);
@@ -804,9 +816,38 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      const { data, error } = await supabase.from('users').insert([newUserPayload]).select();
-      if (error) throw error;
-      setUsers((prev) => [...prev, (data?.[0] as UserRecord) || newUserPayload]);
+      // TEMPORARY DIAGNOSTIC LOGGING — remove once the 409 conflict is root-caused.
+      console.log('[IMPORT-PAYLOAD] insert payload (safe fields)', {
+        id: newUserPayload.id,
+        email: newUserPayload.email,
+        auth_id: newUserPayload.auth_id,
+        name: newUserPayload.name,
+        role: newUserPayload.role,
+        team: newUserPayload.team,
+        manager_id: newUserPayload.manager_id,
+        capacity_limit: newUserPayload.capacity_limit,
+      });
+      // supabaseRaw bypasses the legacy client-side users proxy — that proxy's
+      // fallback path can swallow a real Postgres error (e.g. an RLS rejection)
+      // and report a false success backed by mock data instead. Real RLS on
+      // public.users is what actually enforces this insert.
+      const { data, error } = await supabaseRaw.from('users').insert([newUserPayload]).select();
+      if (error) {
+        // TEMPORARY DIAGNOSTIC LOGGING — remove once the 409 conflict is root-caused.
+        console.log('[IMPORT-PGERR] Postgres/PostgREST error on insert', {
+          code: (error as any).code,
+          message: error.message,
+          details: (error as any).details,
+          hint: (error as any).hint,
+          email: newUserPayload.email,
+          id: newUserPayload.id,
+        });
+        throw error;
+      }
+      if (!data || data.length === 0) {
+        throw new Error('Supabase did not return the inserted employee — the record may not have been saved.');
+      }
+      setUsers((prev) => [...prev, data[0] as UserRecord]);
     } else {
       setUsers((prev) => [...prev, newUserPayload]);
     }

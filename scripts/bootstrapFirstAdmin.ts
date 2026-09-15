@@ -94,11 +94,25 @@ const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 async function main() {
-  const { count, error: countErr } = await supabaseAdmin
+  const { count, error: countErr, status, statusText } = await supabaseAdmin
     .from('users')
     .select('*', { count: 'exact', head: true });
   if (countErr) {
-    console.error('Unable to check public.users:', countErr.message);
+    console.error('Unable to check public.users — full error details:');
+    console.error(
+      JSON.stringify(
+        {
+          message: countErr.message,
+          details: countErr.details,
+          hint: countErr.hint,
+          code: countErr.code,
+          status,
+          statusText,
+        },
+        null,
+        2
+      )
+    );
     process.exit(1);
   }
   if (count && count > 0) {

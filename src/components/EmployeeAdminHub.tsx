@@ -71,6 +71,27 @@ interface RowResult {
   reason?: string;
 }
 
+// One row's persistence request shouldn't be able to hang the whole bulk import forever —
+// races the real request against a timeout and rejects (never resolves as a fake success) if
+// the request hasn't settled in time. The underlying request isn't cancelled, just stopped
+// waiting on, so the loop can move on to the next row.
+const ROW_TIMEOUT_MS = 15000;
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 const inputClass =
   'w-full px-3 py-2.5 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500 outline-none focus:border-purple-400 disabled:opacity-50';
 const labelClass = 'block text-xs font-semibold mb-1.5 text-lilac';
@@ -204,29 +225,53 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     });
 
   const parseFile = (file: File): Promise<Record<string, string>[]> => {
+    // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
+    console.log('[IMPORT-3] file read started');
     const isCsv = file.name.toLowerCase().endsWith('.csv');
     if (isCsv) {
       return new Promise((resolve, reject) => {
         Papa.parse<Record<string, any>>(file, {
           header: true,
           skipEmptyLines: true,
-          complete: (results) => resolve(normalizeRows(results.data)),
-          error: (err) => reject(err),
+          complete: (results) => {
+            console.log('[IMPORT-4] file read completed (csv)', { rawRowCount: results.data?.length });
+            console.log('[IMPORT-5] parsing started');
+            const normalized = normalizeRows(results.data);
+            console.log('[IMPORT-6] parsing completed', { normalizedRowCount: normalized.length });
+            resolve(normalized);
+          },
+          error: (err) => {
+            console.log('[IMPORT-EXC] Papa.parse error (csv):', err);
+            reject(err);
+          },
         });
       });
     }
     return file.arrayBuffer().then((buffer) => {
+      console.log('[IMPORT-4] file read completed (xlsx)', { byteLength: buffer.byteLength });
+      console.log('[IMPORT-5] parsing started');
       const workbook = XLSX.read(buffer, { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, any>>(firstSheet, { defval: '' });
-      return normalizeRows(rows);
+      const normalized = normalizeRows(rows);
+      console.log('[IMPORT-6] parsing completed', { normalizedRowCount: normalized.length });
+      return normalized;
+    }).catch((err) => {
+      console.log('[IMPORT-EXC] file.arrayBuffer()/XLSX.read error:', err);
+      throw err;
     });
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
+    console.log('[IMPORT-2] handleFileSelect started');
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file) {
+      console.log('[IMPORT-EXC] handleFileSelect returned early — no file on the change event');
+      return;
+    }
+    console.log('[IMPORT-1] file selected', { name: file.name, size: file.size, type: file.type });
 
     setBulkFileError(null);
     setBulkResults(null);
@@ -234,6 +279,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
     try {
       const rows = await parseFile(file);
+      console.log('[IMPORT-7] rows prepared:', rows.length);
       if (rows.length === 0) {
         setBulkFileError('That file has no data rows.');
         return;
@@ -241,6 +287,20 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
       const seenEmailsThisFile = new Set<string>();
       const results: RowResult[] = [];
+      // Updates both the accumulator and the visible state after every row (skip, add, or
+      // failure) so the results table fills in live during the import instead of appearing
+      // frozen until the whole file finishes.
+      const pushResult = (result: RowResult) => {
+        // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
+        if (results.length === 0) {
+          console.log('[IMPORT-10] first pushResult', result);
+        }
+        results.push(result);
+        setBulkResults([...results]);
+      };
+
+      // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
+      console.log('[IMPORT-8] entering loop', { rowCount: rows.length });
 
       // Row-by-row, not batched: one bad/duplicate row is skipped and reported without
       // aborting the rest of the file, and each insert is its own real DB round-trip so a
@@ -248,6 +308,9 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       for (let i = 0; i < rows.length; i++) {
         const rowNum = i + 2; // +1 for 1-indexing, +1 for the header row
         const raw = rows[i];
+        if (i === 0) {
+          console.log('[IMPORT-9] first row about to process', raw);
+        }
         const rowName = (raw.name || '').trim();
         const rowEmail = (raw.email || '').trim().toLowerCase();
         const rowRole = (raw.role || '').trim();
@@ -256,44 +319,51 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
         const rowCapacity = (raw.capacity_limit || '').trim();
 
         if (!rowName) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Missing name' });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Missing name' });
           continue;
         }
         if (!isValidEmail(rowEmail)) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Missing or invalid email' });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Missing or invalid email' });
           continue;
         }
         if (!isValidRole(rowRole)) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: `Invalid role "${rowRole}"` });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: `Invalid role "${rowRole}"` });
           continue;
         }
         if (existingEmailsLower.has(rowEmail) || seenEmailsThisFile.has(rowEmail)) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Duplicate email' });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'Duplicate email' });
           continue;
         }
         if (rowCapacity && Number.isNaN(Number(rowCapacity))) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'capacity_limit is not a number' });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'skipped', reason: 'capacity_limit is not a number' });
           continue;
         }
 
         seenEmailsThisFile.add(rowEmail);
+        // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
+        console.log('[IMPORT-11] before onAddEmployee', { rowNum, rowEmail });
         try {
-          await onAddEmployee({
-            name: rowName,
-            email: rowEmail,
-            role: rowRole,
-            team: rowTeam || getRoleInfo(rowRole).team,
-            manager_id: rowManagerId || null,
-            capacity_limit: rowCapacity ? Number(rowCapacity) : null,
-          });
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'added' });
+          await withTimeout(
+            onAddEmployee({
+              name: rowName,
+              email: rowEmail,
+              role: rowRole,
+              team: rowTeam || getRoleInfo(rowRole).team,
+              manager_id: rowManagerId || null,
+              capacity_limit: rowCapacity ? Number(rowCapacity) : null,
+            }),
+            ROW_TIMEOUT_MS,
+            `Timed out after ${ROW_TIMEOUT_MS / 1000}s waiting for the server — the row was not saved.`
+          );
+          console.log('[IMPORT-12] onAddEmployee resolved', { rowNum, rowEmail });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'added' });
         } catch (err: any) {
-          results.push({ row: rowNum, name: rowName, email: rowEmail, status: 'failed', reason: err?.message || 'Insert failed' });
+          console.log('[IMPORT-EXC] caught error in row loop before existing handling:', { rowNum, rowEmail, err });
+          pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'failed', reason: err?.message || 'Insert failed' });
         }
       }
-
-      setBulkResults(results);
     } catch (err: any) {
+      console.log('[IMPORT-EXC] caught in outer try/catch before existing error handling:', err);
       setBulkFileError(err?.message || 'Unable to parse this file. Confirm it\'s a valid .csv or .xlsx file.');
     } finally {
       setIsProcessingFile(false);
@@ -303,13 +373,42 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const pendingEmployees = useMemo(() => users.filter(isPendingEmployee), [users]);
   const deactivatedEmployees = useMemo(() => users.filter(isDeactivatedEmployee), [users]);
 
+  // TEMPORARY DIAGNOSTIC LOGGING — remove once the duplicate-key warning is root-caused.
+  // Checks the raw `users` prop itself (the single common source for every derived list
+  // below) so we can tell whether the duplicate id is already present before any
+  // filtering, rather than introduced by one of the useMemo derivations.
+  useMemo(() => {
+    const byId = new Map<string, UserRecord[]>();
+    for (const u of users) {
+      byId.set(u.id, [...(byId.get(u.id) || []), u]);
+    }
+    for (const [id, group] of byId) {
+      if (group.length > 1) {
+        console.log('[IMPORT-DUPKEY] duplicate id in users prop', id, group);
+      }
+    }
+  }, [users]);
+
   // Team leads see only their own department here (a client-side approximation of what
   // employee_visible() already enforces server-side on every actual read/write) — exec/HoT see
   // everyone. Not a security boundary (RLS is), just keeping the list relevant to who's viewing.
   const manageableEmployees = useMemo(() => {
     const active = users.filter(isActiveEmployee);
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') return active;
-    return active.filter((u) => u.team === currentUser.team || u.manager_id === currentUser.id || u.id === currentUser.id);
+    const scoped =
+      currentUser.role === 'executive' || currentUser.role === 'head_of_technical'
+        ? active
+        : active.filter((u) => u.team === currentUser.team || u.manager_id === currentUser.id || u.id === currentUser.id);
+    // TEMPORARY DIAGNOSTIC LOGGING — remove once the duplicate-key warning is root-caused.
+    const byId = new Map<string, UserRecord[]>();
+    for (const u of scoped) {
+      byId.set(u.id, [...(byId.get(u.id) || []), u]);
+    }
+    for (const [id, group] of byId) {
+      if (group.length > 1) {
+        console.log('[IMPORT-DUPKEY] duplicate id in manageableEmployees', id, group);
+      }
+    }
+    return scoped;
   }, [users, currentUser]);
 
   // Live-assignment counts for the role-change warning (point 4) — checked whenever the draft's
