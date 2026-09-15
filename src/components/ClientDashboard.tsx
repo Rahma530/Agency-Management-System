@@ -253,7 +253,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   React.useEffect(() => {
     if (!onMarkAssignmentViewed) return;
     const service =
-      currentUser.role === 'seo_agent'
+      currentUser.role === 'seo_agent' || currentUser.role === 'seo_content_agent' || currentUser.role === 'seo_backlink_agent'
         ? 'seo'
         : currentUser.role === 'media_buying_agent'
         ? 'media_buying'
@@ -386,6 +386,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'seo_team_lead' ||
     currentUser.role === 'seo_agent' ||
+    currentUser.role === 'seo_content_agent' ||
+    currentUser.role === 'seo_backlink_agent' ||
     currentUser.role === 'media_buying_team_lead' ||
     currentUser.role === 'media_buying_agent' ||
     currentUser.role === 'social_media_team_lead' ||

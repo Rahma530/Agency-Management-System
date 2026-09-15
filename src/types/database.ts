@@ -13,6 +13,8 @@ export type UserRole =
   | 'media_buying_agent'        // Media Buying Agent
   | 'seo_team_lead'             // SEO Team Leader
   | 'seo_agent'                 // SEO Agent
+  | 'seo_content_agent'         // SEO Content Specialist — identical treatment to seo_agent everywhere
+  | 'seo_backlink_agent'        // SEO Backlink Specialist — identical treatment to seo_agent everywhere
   // No dedicated team lead of its own — folded under seo_team_lead's oversight, the same way
   // graphic_designer/video_editor have no dedicated lead, but exclusively owned by seo_team_lead
   // rather than shared across every team lead the way the creative pool is.

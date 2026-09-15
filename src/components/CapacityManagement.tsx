@@ -65,17 +65,17 @@ export type ViewMode = 'cards' | 'matrix' | 'logs';
 // lead's card (cross-department) or a shared graphic_designer/video_editor
 // card isn't that person's manager, and the RLS would reject the read/write
 // even if this button let them try.
-const DIRECT_LEAD_PAIRS: Partial<Record<UserRole, UserRole>> = {
-  am_team_lead: 'am_agent',
-  media_buying_team_lead: 'media_buying_agent',
-  seo_team_lead: 'seo_agent',
-  social_media_team_lead: 'social_media_agent',
+const DIRECT_LEAD_PAIRS: Partial<Record<UserRole, UserRole[]>> = {
+  am_team_lead: ['am_agent'],
+  media_buying_team_lead: ['media_buying_agent'],
+  seo_team_lead: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
+  social_media_team_lead: ['social_media_agent'],
 };
 
 const canViewPerformance = (viewerRole: UserRole | undefined, employee: UserRecord): boolean => {
   if (!viewerRole) return false;
   if (viewerRole === 'executive' || viewerRole === 'head_of_technical') return true;
-  return DIRECT_LEAD_PAIRS[viewerRole] === employee.role;
+  return !!DIRECT_LEAD_PAIRS[viewerRole]?.includes(employee.role);
 };
 
 // Reverse link (point 4): always points to the Tasks module, prefilled with
@@ -156,6 +156,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     'media_buying_agent',
     'seo_team_lead',
     'seo_agent',
+    'seo_content_agent',
+    'seo_backlink_agent',
     'social_media_team_lead',
     'social_media_agent',
     'graphic_designer',
@@ -199,6 +201,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       result = users.filter(
         (u) =>
           u.role === 'seo_agent' ||
+          u.role === 'seo_content_agent' ||
+          u.role === 'seo_backlink_agent' ||
           // programming_agent has no dedicated team lead of its own — exclusively managed by
           // seo_team_lead (not a shared pool like graphic_designer/video_editor below).
           u.role === 'programming_agent' ||
@@ -282,6 +286,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       { id: 'media_buying_agent', label: 'Media Buying Agent' },
       { id: 'seo_team_lead', label: 'SEO Team Leader' },
       { id: 'seo_agent', label: 'SEO Agent' },
+      { id: 'seo_content_agent', label: 'SEO Content Specialist' },
+      { id: 'seo_backlink_agent', label: 'SEO Backlink Specialist' },
       { id: 'social_media_team_lead', label: 'Social Media Team Leader' },
       { id: 'social_media_agent', label: 'Social Media Agent' },
       { id: 'graphic_designer', label: 'Graphic Designer (shared resource)' },
