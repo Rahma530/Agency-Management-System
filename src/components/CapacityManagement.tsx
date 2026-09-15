@@ -37,7 +37,9 @@ import {
   PerformancePeriodType,
   UserRole,
 } from '../types/database';
-import { getRoleInfo } from '../data/roles';
+import { getRoleInfo, AppModuleId } from '../data/roles';
+import { isActiveEmployee } from '../lib/permissions';
+import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { ImportDataModal } from './ImportDataModal';
 
 interface CapacityManagementProps {
@@ -74,6 +76,15 @@ const canViewPerformance = (viewerRole: UserRole | undefined, employee: UserReco
   if (!viewerRole) return false;
   if (viewerRole === 'executive' || viewerRole === 'head_of_technical') return true;
   return DIRECT_LEAD_PAIRS[viewerRole] === employee.role;
+};
+
+// Reverse link (point 4): always points to the Tasks module, prefilled with
+// this employee's name — the one place their assigned work is visible
+// regardless of role, without guessing at a per-role destination.
+const getAssignmentLink = (
+  user: UserRecord
+): { moduleId: AppModuleId; prefill?: string; label: string } | null => {
+  return { moduleId: 'tasks', prefill: user.name, label: `View ${user.name}'s assigned tasks` };
 };
 
 export const CapacityManagement: React.FC<CapacityManagementProps> = ({
