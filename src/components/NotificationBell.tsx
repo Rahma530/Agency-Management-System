@@ -27,6 +27,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
+  const visibleNotifications = notifications.filter((n) => !n.is_read);
 
   // تأثير الصوت والحركة عند وصول إشعار جديد
   useEffect(() => {
@@ -111,25 +112,25 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         >
           <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/20">
             <h3 className="font-bold text-white text-sm">الإشعارات ({unreadCount})</h3>
-            {unreadCount > 0 && (
+            {visibleNotifications.length > 0 && (
               <button 
                 onClick={onMarkAllAsRead}
                 className="text-[10px] text-purple-400 hover:text-purple-300 font-medium transition-colors"
               >
-                تحديد الكل كمقروء
+                مسح الإشعارات
               </button>
             )}
           </div>
 
           <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
-            {notifications.length === 0 ? (
+            {visibleNotifications.length === 0 ? (
               <div className="p-8 text-center text-stone-500 text-sm">
                 <Bell className="w-8 h-8 mx-auto mb-2 opacity-20" />
                 لا توجد إشعارات حالياً
               </div>
             ) : (
               <div className="flex flex-col">
-                {notifications.map((notification) => {
+                {visibleNotifications.map((notification) => {
                   const sender = getSenderInfo(notification.sender_id);
                   return (
                     <div

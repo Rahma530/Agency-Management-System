@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, X, Send, User, Search } from 'lucide-react';
-import { ChatDirectoryEntry, ChatMessageRecord, UserRecord } from '../types/database';
+import { MessageSquare, X, Send, Search, Pencil, Trash2, Eraser, Check } from 'lucide-react';
+import { ChatConversationClearRecord, ChatDirectoryEntry, ChatMessageRecord, UserRecord } from '../types/database';
 
 interface MiniChatProps {
   currentUser: UserRecord;
@@ -9,10 +9,14 @@ interface MiniChatProps {
   // unlike the employee_visible()-scoped `users` array used everywhere else in the app.
   users: ChatDirectoryEntry[];
   messages: ChatMessageRecord[];
+  conversationClears: ChatConversationClearRecord[];
   // Resolves to whether the send actually succeeded, so the input text can be preserved
   // (not cleared) on failure — the caller persists first, so this only resolves once that's
   // known.
   onSendMessage: (receiverId: string, content: string) => Promise<boolean>;
+  onEditMessage: (messageId: string, content: string) => Promise<boolean>;
+  onDeleteMessage: (messageId: string) => Promise<boolean>;
+  onClearConversation: (otherUserId: string) => Promise<boolean>;
   // Fired when a conversation is opened, so the caller can mark that thread's unread
   // messages read. Optional so existing callers/tests that don't need read-tracking
   // aren't forced to pass a no-op.
@@ -27,7 +31,11 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   currentUser,
   users,
   messages,
+  conversationClears,
   onSendMessage,
+  onEditMessage,
+  onDeleteMessage,
+  onClearConversation,
   onOpenConversation,
   openConversationRequest,
 }) => {
@@ -35,6 +43,8 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [colleagueSearch, setColleagueSearch] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto scroll to bottom when new messages arrive
@@ -85,11 +95,48 @@ export const MiniChat: React.FC<MiniChatProps> = ({
     }
   };
 
+  const handleSaveEdit = async () => {
+    if (!editingMessageId || !editingText.trim()) return;
+    const success = await onEditMessage(editingMessageId, editingText);
+    if (success) {
+      setEditingMessageId(null);
+      setEditingText('');
+    }
+  };
+
+  const handleDelete = async (messageId: string) => {
+    if (!window.confirm('Delete this message?')) return;
+    const success = await onDeleteMessage(messageId);
+    if (success && editingMessageId === messageId) {
+      setEditingMessageId(null);
+      setEditingText('');
+    }
+  };
+
+  const handleClearConversation = async () => {
+    if (!selectedUserId || !window.confirm('Clear this conversation for you? Existing messages will remain available to the other participant.')) return;
+    const success = await onClearConversation(selectedUserId);
+    if (success) {
+      setSelectedUserId(null);
+      setEditingMessageId(null);
+      setEditingText('');
+    }
+  };
+
+  const isMessageVisible = (message: ChatMessageRecord) => {
+    const otherUserId = message.sender_id === currentUser.id ? message.receiver_id : message.sender_id;
+    const clearedAt = conversationClears.find(
+      (clear) => clear.user_id === currentUser.id && clear.other_user_id === otherUserId
+    )?.cleared_at;
+    return !clearedAt || new Date(message.created_at).getTime() > new Date(clearedAt).getTime();
+  };
+
   // Filter messages between current user and selected user
   const chatHistory = messages.filter(
     (m) =>
-      (m.sender_id === currentUser.id && m.receiver_id === selectedUserId) ||
-      (m.sender_id === selectedUserId && m.receiver_id === currentUser.id)
+      ((m.sender_id === currentUser.id && m.receiver_id === selectedUserId) ||
+        (m.sender_id === selectedUserId && m.receiver_id === currentUser.id)) &&
+      isMessageVisible(m)
   ).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
   // Colleagues (everyone except current user), optionally narrowed by the search box below —
@@ -103,12 +150,14 @@ export const MiniChat: React.FC<MiniChatProps> = ({
 
   // Unread count for the FAB badge — messages is already scoped to conversations involving
   // currentUser (sender or receiver), so this only needs the receiver/is_read check.
-  const unreadCount = messages.filter((m) => m.receiver_id === currentUser.id && !m.is_read).length;
+  const unreadCount = messages.filter(
+    (m) => m.receiver_id === currentUser.id && !m.is_read && isMessageVisible(m)
+  ).length;
 
   // Per-colleague unread count, so the sender is identifiable at a glance in the list instead
   // of having to open every thread to find out who messaged.
   const unreadCountByColleague = messages.reduce((acc, m) => {
-    if (m.receiver_id === currentUser.id && !m.is_read) {
+    if (m.receiver_id === currentUser.id && !m.is_read && isMessageVisible(m)) {
       acc[m.sender_id] = (acc[m.sender_id] || 0) + 1;
     }
     return acc;
@@ -142,12 +191,23 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                 المحادثة الداخلية
               </h3>
             )}
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-stone-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              {selectedUserId && (
+                <button
+                  onClick={handleClearConversation}
+                  className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors text-stone-400 hover:text-red-300"
+                  title="مسح المحادثة"
+                >
+                  <Eraser className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={() => setIsOpen(false)}
+                className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-stone-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Body */}
@@ -218,7 +278,50 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                                 : 'bg-white/10 text-stone-200 rounded-tl-sm border border-white/5'
                             }`}
                           >
-                            {msg.content}
+                            {editingMessageId === msg.id ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  autoFocus
+                                  value={editingText}
+                                  onChange={(event) => setEditingText(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                      event.preventDefault();
+                                      handleSaveEdit();
+                                    }
+                                  }}
+                                  className="min-w-0 flex-1 bg-black/20 border border-white/20 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-white/50"
+                                />
+                                <button onClick={handleSaveEdit} className="p-1 text-white hover:bg-white/10 rounded" title="حفظ">
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => { setEditingMessageId(null); setEditingText(''); }} className="p-1 text-white hover:bg-white/10 rounded" title="إلغاء">
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <p>{msg.content}</p>
+                                {isMe && (
+                                  <div className="mt-2 flex items-center gap-1 opacity-70">
+                                    <button
+                                      onClick={() => { setEditingMessageId(msg.id); setEditingText(msg.content); }}
+                                      className="p-0.5 hover:bg-white/10 rounded"
+                                      title="تعديل"
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDelete(msg.id)}
+                                      className="p-0.5 hover:bg-white/10 rounded hover:text-red-200"
+                                      title="حذف"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
                             <div className={`text-[9px] mt-1 opacity-60 ${isMe ? 'text-right' : 'text-left'}`}>
                               {new Date(msg.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                             </div>

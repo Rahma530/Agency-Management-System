@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import type { RealtimePostgresDeletePayload } from '@supabase/realtime-js';
 import {
   Database,
   UserCheck,
@@ -72,6 +73,7 @@ import {
   NotificationRecord,
   ActivityRecord,
   ChatMessageRecord,
+  ChatConversationClearRecord,
   ChatDirectoryEntry,
   BriefFieldSchemaRow,
   SocialInsightRecord,
@@ -217,6 +219,7 @@ export default function App() {
     }
   ]);
   const [chatMessages, setChatMessages] = useState<ChatMessageRecord[]>([]);
+  const [chatConversationClears, setChatConversationClears] = useState<ChatConversationClearRecord[]>([]);
   // Org-wide, id/name/role-only employee directory for MiniChat — deliberately NOT the
   // employee_visible()-scoped `users` array. See chat_directory() RPC: messaging has no
   // role/team restriction by design, unlike every other consumer of `users`.
@@ -226,6 +229,10 @@ export default function App() {
   // a notification from the same sender, since a plain string dependency wouldn't change.
   const [chatOpenRequest, setChatOpenRequest] = useState<{ userId: string } | null>(null);
   const [isActivityFeedOpen, setIsActivityFeedOpen] = useState(false);
+  // A Postgres UPDATE can reach this client before the corresponding INSERT/fetch payload.
+  // Keep the local acknowledgement separate from the rendered list so a stale unread payload
+  // cannot resurrect a notification the user has already cleared.
+  const locallyReadNotificationIds = useRef(new Set<string>());
 
   // Import Data State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -264,6 +271,23 @@ export default function App() {
     setTimeout(() => setNotification(null), 4500);
   };
 
+  const mergeNotificationsPreservingLocalReads = (
+    previous: NotificationRecord[],
+    incoming: NotificationRecord[]
+  ): NotificationRecord[] => {
+    const previousById = new Map(previous.map((notification) => [notification.id, notification]));
+    const incomingIds = new Set(incoming.map((notification) => notification.id));
+    return [
+      ...incoming.map((notification) => {
+        const existing = previousById.get(notification.id);
+        return !notification.is_read && (existing?.is_read || locallyReadNotificationIds.current.has(notification.id))
+          ? { ...notification, is_read: true }
+          : notification;
+      }),
+      ...previous.filter((notification) => !incomingIds.has(notification.id)),
+    ];
+  };
+
   // Optimistic-first: update local state immediately, then fire the Postgres write in the
   // background (error logged, not gated on). is_read is low-stakes and self-healing (worst
   // case, a brief UI/DB mismatch corrected on the next fetch/poll) — unlike chat send, where
@@ -274,6 +298,7 @@ export default function App() {
   // of that session despite the database being correct (confirmed by a fresh login showing the
   // right read state all along).
   const handleMarkNotificationAsRead = (id: string) => {
+    locallyReadNotificationIds.current.add(id);
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
     if (supabaseActive) {
       supabaseRaw
@@ -287,7 +312,10 @@ export default function App() {
   };
 
   const handleMarkAllNotificationsAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    setNotifications(prev => {
+      prev.forEach((notification) => locallyReadNotificationIds.current.add(notification.id));
+      return prev.map(n => ({ ...n, is_read: true }));
+    });
     if (supabaseActive) {
       supabaseRaw
         .from('notifications')
@@ -309,13 +337,18 @@ export default function App() {
       const otherUserId = notification.link_url.slice('chat:'.length);
       if (otherUserId) {
         const conversationLink = `chat:${otherUserId}`;
-        setNotifications((prev) =>
-          prev.map((item) =>
+        setNotifications((prev) => {
+          prev.forEach((item) => {
+            if (item.user_id === currentUser.id && !item.is_read && item.link_url === conversationLink) {
+              locallyReadNotificationIds.current.add(item.id);
+            }
+          });
+          return prev.map((item) =>
             item.user_id === currentUser.id && !item.is_read && item.link_url === conversationLink
               ? { ...item, is_read: true }
               : item
-          )
-        );
+          );
+        });
         if (supabaseActive) {
           supabaseRaw
             .from('notifications')
@@ -783,6 +816,20 @@ export default function App() {
 
     (async () => {
       try {
+        const { data: clearData, error: clearErr } = await supabaseRaw
+          .from('chat_conversation_clears')
+          .select('*')
+          .eq('user_id', userId);
+        if (!cancelled && !clearErr && clearData) {
+          setChatConversationClears(clearData as ChatConversationClearRecord[]);
+        }
+      } catch (err) {
+        console.warn('Failed to load chat conversation clears:', err);
+      }
+    })();
+
+    (async () => {
+      try {
         // Org-wide chat directory (id/name/role only) via the chat_directory() RPC —
         // deliberately bypasses users_select_rls's employee_visible() scoping, since messaging
         // has no role/team restriction. Real-world testing (Toqa/Shahd) confirmed MiniChat's
@@ -809,7 +856,9 @@ export default function App() {
           .eq('user_id', userId)
           .order('created_at', { ascending: false });
         if (!cancelled && !notificationErr && notificationData) {
-          setNotifications(notificationData as NotificationRecord[]);
+          setNotifications((prev) =>
+            mergeNotificationsPreservingLocalReads(prev, notificationData as NotificationRecord[])
+          );
         }
       } catch (err) {
         console.warn('Failed to load notifications:', err);
@@ -890,9 +939,18 @@ export default function App() {
       // directions subscribed. That means my own sent message can echo back to me via the
       // sender_id listener; the id-dedup guard below prevents a double-entry against the
       // optimistic local append onSendMessage already does.
-      const appendIfNew = (payload: { new: ChatMessageRecord }) => {
+      const upsertChatMessage = (payload: { new: ChatMessageRecord }) => {
         const row = payload.new;
-        setChatMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        setChatMessages((prev) => {
+          const existingIndex = prev.findIndex((message) => message.id === row.id);
+          if (existingIndex === -1) return [...prev, row];
+          return prev.map((message) => (message.id === row.id ? row : message));
+        });
+      };
+      const removeChatMessage = (payload: RealtimePostgresDeletePayload<ChatMessageRecord>) => {
+        const messageId = payload.old.id;
+        if (!messageId) return;
+        setChatMessages((prev) => prev.filter((message) => message.id !== messageId));
       };
 
       channel = supabaseRaw
@@ -900,12 +958,32 @@ export default function App() {
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `receiver_id=eq.${userId}` },
-          appendIfNew
+          upsertChatMessage
         )
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `sender_id=eq.${userId}` },
-          appendIfNew
+          upsertChatMessage
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'chat_messages', filter: `receiver_id=eq.${userId}` },
+          upsertChatMessage
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'chat_messages', filter: `sender_id=eq.${userId}` },
+          upsertChatMessage
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'chat_messages', filter: `receiver_id=eq.${userId}` },
+          removeChatMessage
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'chat_messages', filter: `sender_id=eq.${userId}` },
+          removeChatMessage
         )
         .subscribe((status, err) => {
           if (cancelled) return;
@@ -952,7 +1030,9 @@ export default function App() {
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
       if (!cancelled && !error) {
-        setNotifications((data as NotificationRecord[]) || []);
+        setNotifications((prev) =>
+          mergeNotificationsPreservingLocalReads(prev, (data as NotificationRecord[]) || [])
+        );
       }
     };
 
@@ -978,9 +1058,20 @@ export default function App() {
         return;
       }
 
-      const prependIfNew = (payload: { new: NotificationRecord }) => {
+      const upsertNotification = (payload: { new: NotificationRecord }) => {
         const row = payload.new;
-        setNotifications((prev) => (prev.some((n) => n.id === row.id) ? prev : [row, ...prev]));
+        setNotifications((prev) => {
+          const existingIndex = prev.findIndex((notification) => notification.id === row.id);
+          if (existingIndex === -1) {
+            return mergeNotificationsPreservingLocalReads(prev, [row]);
+          }
+          return prev.map((notification) =>
+            notification.id === row.id && !row.is_read &&
+            (notification.is_read || locallyReadNotificationIds.current.has(row.id))
+              ? { ...row, is_read: true }
+              : notification.id === row.id ? row : notification
+          );
+        });
       };
 
       channel = supabaseRaw
@@ -988,7 +1079,12 @@ export default function App() {
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
-          prependIfNew
+          upsertNotification
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+          upsertNotification
         )
         .subscribe((status, err) => {
           if (cancelled) return;
@@ -2653,11 +2749,128 @@ export default function App() {
     return true;
   };
 
+  const handleEditChatMessage = async (messageId: string, content: string): Promise<boolean> => {
+    const message = chatMessages.find((item) => item.id === messageId);
+    const trimmedContent = content.trim();
+    if (!message || message.sender_id !== currentUser.id || !trimmedContent) return false;
+    if (message.content === trimmedContent) return true;
+
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw
+          .from('chat_messages')
+          .update({ content: trimmedContent })
+          .eq('id', messageId);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to edit chat message:', err);
+        showNotification('Unable to edit message.', 'info');
+        return false;
+      }
+    }
+
+    setChatMessages((prev) =>
+      prev.map((item) => (item.id === messageId ? { ...item, content: trimmedContent } : item))
+    );
+    return true;
+  };
+
+  const handleDeleteChatMessage = async (messageId: string): Promise<boolean> => {
+    const message = chatMessages.find((item) => item.id === messageId);
+    if (!message || message.sender_id !== currentUser.id) return false;
+
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw.from('chat_messages').delete().eq('id', messageId);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to delete chat message:', err);
+        showNotification('Unable to delete message.', 'info');
+        return false;
+      }
+    }
+
+    setChatMessages((prev) => prev.filter((item) => item.id !== messageId));
+    return true;
+  };
+
+  const handleClearChatConversation = async (otherUserId: string): Promise<boolean> => {
+    const clearRecord: ChatConversationClearRecord = {
+      user_id: currentUser.id,
+      other_user_id: otherUserId,
+      cleared_at: new Date().toISOString(),
+    };
+
+    if (supabaseActive) {
+      try {
+        const { data, error } = await supabaseRaw
+          .from('chat_conversation_clears')
+          .upsert(clearRecord, { onConflict: 'user_id,other_user_id' })
+          .select()
+          .single();
+        if (error) throw error;
+        if (data) Object.assign(clearRecord, data as ChatConversationClearRecord);
+      } catch (err) {
+        console.error('Failed to clear chat conversation:', err);
+        showNotification('Unable to clear conversation.', 'info');
+        return false;
+      }
+    }
+
+    setChatConversationClears((prev) => [
+      ...prev.filter(
+        (item) => item.user_id !== currentUser.id || item.other_user_id !== otherUserId
+      ),
+      clearRecord,
+    ]);
+
+    const conversationLink = `chat:${otherUserId}`;
+    setNotifications((prev) => {
+      prev.forEach((notification) => {
+        if (
+          notification.user_id === currentUser.id &&
+          !notification.is_read &&
+          notification.link_url === conversationLink
+        ) {
+          locallyReadNotificationIds.current.add(notification.id);
+        }
+      });
+      return prev.map((notification) =>
+        notification.user_id === currentUser.id &&
+        !notification.is_read &&
+        notification.link_url === conversationLink
+          ? { ...notification, is_read: true }
+          : notification
+      );
+    });
+    if (supabaseActive) {
+      supabaseRaw
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', currentUser.id)
+        .eq('is_read', false)
+        .eq('link_url', conversationLink)
+        .then(({ error }) => {
+          if (error) console.error('Failed to dismiss cleared-conversation notifications:', error);
+        });
+    }
+    return true;
+  };
+
   // MiniChat conversation open: mark that thread's unread messages (where I'm the receiver)
   // read — matches chat_messages_update_rls's receiver_id = app_user_id() exactly.
   const handleOpenChatConversation = async (otherUserId: string) => {
+    const clearedAt = chatConversationClears.find(
+      (item) => item.user_id === currentUser.id && item.other_user_id === otherUserId
+    )?.cleared_at;
     const unreadIds = chatMessages
-      .filter((m) => m.sender_id === otherUserId && m.receiver_id === currentUser.id && !m.is_read)
+      .filter(
+        (m) =>
+          m.sender_id === otherUserId &&
+          m.receiver_id === currentUser.id &&
+          !m.is_read &&
+          (!clearedAt || new Date(m.created_at).getTime() > new Date(clearedAt).getTime())
+      )
       .map((m) => m.id);
     const conversationLink = `chat:${otherUserId}`;
     const hasUnreadChatNotifications = notifications.some(
@@ -2665,18 +2878,32 @@ export default function App() {
         notification.user_id === currentUser.id &&
         !notification.is_read &&
         notification.link_url === conversationLink
-    );
+      );
 
-    if (hasUnreadChatNotifications) {
-      setNotifications((prev) =>
-        prev.map((notification) =>
+    // The notification trigger writes notif-chat-<message-id> atomically with the message.
+    // Recording these IDs before its Realtime INSERT arrives preserves this acknowledgement even
+    // if that INSERT payload is delivered after the notification UPDATE.
+    unreadIds.forEach((messageId) => locallyReadNotificationIds.current.add(`notif-chat-${messageId}`));
+
+    if (hasUnreadChatNotifications || unreadIds.length > 0) {
+      setNotifications((prev) => {
+        prev.forEach((notification) => {
+          if (
+            notification.user_id === currentUser.id &&
+            !notification.is_read &&
+            notification.link_url === conversationLink
+          ) {
+            locallyReadNotificationIds.current.add(notification.id);
+          }
+        });
+        return prev.map((notification) =>
           notification.user_id === currentUser.id &&
           !notification.is_read &&
           notification.link_url === conversationLink
             ? { ...notification, is_read: true }
             : notification
-        )
-      );
+        );
+      });
       if (supabaseActive) {
         supabaseRaw
           .from('notifications')
@@ -3503,7 +3730,11 @@ export default function App() {
         currentUser={currentUser}
         users={chatDirectory}
         messages={chatMessages}
+        conversationClears={chatConversationClears}
         onSendMessage={handleSendChatMessage}
+        onEditMessage={handleEditChatMessage}
+        onDeleteMessage={handleDeleteChatMessage}
+        onClearConversation={handleClearChatConversation}
         onOpenConversation={handleOpenChatConversation}
         openConversationRequest={chatOpenRequest}
       />

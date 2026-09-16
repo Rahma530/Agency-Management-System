@@ -455,6 +455,12 @@ export interface ChatMessageRecord {
   created_at: string;
 }
 
+export interface ChatConversationClearRecord {
+  user_id: string;
+  other_user_id: string;
+  cleared_at: string;
+}
+
 // Minimal org-wide employee directory for MiniChat's colleague list, from the
 // chat_directory() RPC — deliberately NOT the RLS-scoped UserRecord shape:
 // messaging is unrestricted by design (any employee can message any employee),
