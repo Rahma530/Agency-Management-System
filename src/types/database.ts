@@ -424,10 +424,12 @@ export interface NotificationRecord {
   user_id: string;
   title: string;
   message: string;
-  sender_id: string;
+  // null = system-generated (no human sender to attribute it to) — see
+  // notifications_insert_rls in the Phase 1 real-time migration.
+  sender_id?: string | null;
   is_read: boolean;
   type: 'task_assigned' | 'task_updated' | 'task_overdue' | 'general';
-  link_url?: string;
+  link_url?: string | null;
   created_at: string;
 }
 
@@ -439,7 +441,7 @@ export interface ActivityRecord {
   target_type: 'task' | 'client' | 'campaign' | 'brief';
   target_id: string;
   target_name: string;
-  details?: string;
+  details?: string | null;
   created_at: string;
 }
 
