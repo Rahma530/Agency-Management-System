@@ -69,7 +69,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const getSenderInfo = (senderId: string) => {
+  const getSenderInfo = (senderId?: string | null) => {
     const user = users.find((u) => u.id === senderId);
     if (!user) return { name: 'نظام الإدارة', role: '' };
     const roleInfo = getRoleInfo(user.role);
