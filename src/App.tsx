@@ -124,6 +124,7 @@ import { NotificationBell } from './components/NotificationBell';
 import { GlobalSearch } from './components/GlobalSearch';
 import { LiveActivityFeed } from './components/LiveActivityFeed';
 import { MiniChat } from './components/MiniChat';
+import { AIAssistantWidget } from './components/AIAssistantWidget';
 
 export type AppModule = AppModuleId;
 
@@ -3864,6 +3865,7 @@ export default function App() {
 
       {/* --- New Global Features --- */}
       <GlobalSearch users={users} tasks={tasks} clients={clients} />
+      <AIAssistantWidget />
       
       <MiniChat
         currentUser={currentUser}
