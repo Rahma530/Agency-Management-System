@@ -72,6 +72,7 @@ import {
   NotificationRecord,
   ActivityRecord,
   ChatMessageRecord,
+  ChatDirectoryEntry,
   BriefFieldSchemaRow,
   SocialInsightRecord,
   ReportRecord,
@@ -216,6 +217,10 @@ export default function App() {
     }
   ]);
   const [chatMessages, setChatMessages] = useState<ChatMessageRecord[]>([]);
+  // Org-wide, id/name/role-only employee directory for MiniChat — deliberately NOT the
+  // employee_visible()-scoped `users` array. See chat_directory() RPC: messaging has no
+  // role/team restriction by design, unlike every other consumer of `users`.
+  const [chatDirectory, setChatDirectory] = useState<ChatDirectoryEntry[]>([]);
   const [isActivityFeedOpen, setIsActivityFeedOpen] = useState(false);
 
   // Import Data State
@@ -671,28 +676,68 @@ export default function App() {
           setPlatformConnections(platformConnectionData as PlatformConnectionRecord[]);
         }
 
-        // Fetch chat_messages (Real-time Phase 2: MiniChat). supabaseRaw, not the wrapped
-        // client — chat_messages isn't one of the 4 tables the legacy proxy wraps, but every
-        // real-data table access goes through the same explicit, unambiguous client. Unlike
-        // most fetches above, this sets state even on an empty result (no ">0" guard) since
-        // chat has no demo seed data to protect — a real employee with zero messages should
-        // see zero, not a stale local echo, same as the `users` fetch earlier in this function.
-        if (authenticatedUser) {
-          const { data: chatData, error: chatErr } = await supabaseRaw
-            .from('chat_messages')
-            .select('*')
-            .or(`sender_id.eq.${authenticatedUser.id},receiver_id.eq.${authenticatedUser.id}`)
-            .order('created_at', { ascending: true });
-          if (!chatErr && chatData) {
-            setChatMessages(chatData as ChatMessageRecord[]);
-          }
-        }
       } catch (err) {
         console.warn('Supabase query error, relying on local cached state:', err);
       }
     }
     setLoading(false);
   }, [authenticatedUser]);
+
+  // chat_messages and chat_directory load independently of loadData's big sequential fetch
+  // batch above — deliberately not awaited inside it. That batch runs ~20 fetches one after
+  // another in a single try block, so if any one of them hangs or throws at the network layer
+  // (rather than resolving with a clean {error}), everything sequenced after it never runs —
+  // chat data would then silently depend on its position in an entirely unrelated fetch list.
+  // Firing these as their own effect means they load — and the poll/Realtime effect below has
+  // something to refresh — regardless of what happens in that other batch.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // supabaseRaw, not the wrapped client — chat_messages isn't one of the 4 tables the
+        // legacy proxy wraps, but every real-data table access goes through the same explicit,
+        // unambiguous client. Sets state even on an empty result (no ">0" guard, unlike most of
+        // loadData's fetches) since chat has no demo seed data to protect — a real employee
+        // with zero messages should see zero, not a stale local echo.
+        const { data: chatData, error: chatErr } = await supabaseRaw
+          .from('chat_messages')
+          .select('*')
+          .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+          .order('created_at', { ascending: true });
+        if (!cancelled && !chatErr && chatData) {
+          setChatMessages(chatData as ChatMessageRecord[]);
+        }
+      } catch (err) {
+        console.warn('Failed to load chat_messages:', err);
+      }
+    })();
+
+    (async () => {
+      try {
+        // Org-wide chat directory (id/name/role only) via the chat_directory() RPC —
+        // deliberately bypasses users_select_rls's employee_visible() scoping, since messaging
+        // has no role/team restriction. Real-world testing (Toqa/Shahd) confirmed MiniChat's
+        // colleague list was silently narrowed to whatever `users` itself was scoped to; this
+        // RPC is the fix, not a change to `users` or employee_visible().
+        const { data: directoryData, error: directoryErr } = await supabaseRaw.rpc('chat_directory');
+        if (!cancelled && !directoryErr && directoryData) {
+          setChatDirectory(directoryData as ChatDirectoryEntry[]);
+        }
+      } catch (err) {
+        console.warn('Failed to load chat_directory:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // authenticatedUser?.id (not the whole object) — same reasoning as the realtime effect
+    // below: this only needs to refire on an actual login/logout, not on every reference change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedUser?.id, supabaseActive]);
 
   useEffect(() => {
     setSupabaseSessionUser(authenticatedUser);
@@ -707,6 +752,13 @@ export default function App() {
   // instance method (unlike `.auth`, a plain nested property the legacy proxy passes through
   // safely), so calling it through the wrapped client risks `this` binding to the Proxy
   // instead of the real client instance — supabaseRaw sidesteps that entirely.
+  //
+  // Real-world testing (Toqa -> Shahd) found a message that persisted correctly but never
+  // arrived in Shahd's already-open session — a silent Realtime delivery failure with zero
+  // client-side visibility, since subscribe() was called with no status callback at all. Fixed
+  // by adding that callback and treating anything other than 'SUBSCRIBED' as a signal to poll:
+  // this applies to every session now, not just the demo/no-session case, so a Realtime failure
+  // degrades to a worst-case ~9s delay instead of a message that never arrives.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -726,6 +778,17 @@ export default function App() {
       }
     };
 
+    const startPollFallback = () => {
+      if (intervalId) return; // already polling
+      intervalId = setInterval(refetchChatMessages, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
     (async () => {
       const {
         data: { session },
@@ -733,7 +796,7 @@ export default function App() {
       if (cancelled) return;
 
       if (!session) {
-        intervalId = setInterval(refetchChatMessages, 9000);
+        startPollFallback();
         return;
       }
 
@@ -759,12 +822,23 @@ export default function App() {
           { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `sender_id=eq.${userId}` },
           appendIfNew
         )
-        .subscribe();
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+          } else {
+            // TIMED_OUT | CLOSED | CHANNEL_ERROR — realtime isn't confirmed working right now;
+            // poll as a resilience fallback rather than going silent. Also covers a connection
+            // that drops after initially subscribing successfully.
+            console.warn(`Chat realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
     })();
 
     return () => {
       cancelled = true;
-      if (intervalId) clearInterval(intervalId);
+      stopPollFallback();
       if (channel) supabaseRaw.removeChannel(channel);
     };
     // authenticatedUser?.id (not the whole object) — loadData's own refresh cycle produces a
@@ -3234,7 +3308,7 @@ export default function App() {
       
       <MiniChat
         currentUser={currentUser}
-        users={users}
+        users={chatDirectory}
         messages={chatMessages}
         onSendMessage={handleSendChatMessage}
         onOpenConversation={handleOpenChatConversation}
