@@ -2395,7 +2395,7 @@ export default function App() {
   // same "persist, then sync local state" pattern as handleUpdateEmployee/
   // handleDeactivateEmployee. Not appending optimistically-then-rolling-back on failure avoids
   // ever showing a message that didn't actually reach the other person.
-  const handleSendChatMessage = async (receiverId: string, content: string) => {
+  const handleSendChatMessage = async (receiverId: string, content: string): Promise<boolean> => {
     const newMsg: ChatMessageRecord = {
       id: `msg-${Date.now()}`,
       sender_id: currentUser.id,
@@ -2411,10 +2411,11 @@ export default function App() {
       } catch (err: any) {
         console.error('Failed to send chat message:', err);
         showNotification('Unable to send message.', 'info');
-        return;
+        return false;
       }
     }
     setChatMessages((prev) => [...prev, newMsg]);
+    return true;
   };
 
   // MiniChat conversation open: mark that thread's unread messages (where I'm the receiver)

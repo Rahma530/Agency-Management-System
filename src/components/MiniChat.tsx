@@ -6,7 +6,10 @@ interface MiniChatProps {
   currentUser: UserRecord;
   users: UserRecord[];
   messages: ChatMessageRecord[];
-  onSendMessage: (receiverId: string, content: string) => void;
+  // Resolves to whether the send actually succeeded, so the input text can be preserved
+  // (not cleared) on failure — the caller persists first, so this only resolves once that's
+  // known.
+  onSendMessage: (receiverId: string, content: string) => Promise<boolean>;
   // Fired when a conversation is opened, so the caller can mark that thread's unread
   // messages read. Optional so existing callers/tests that don't need read-tracking
   // aren't forced to pass a no-op.
@@ -32,10 +35,14 @@ export const MiniChat: React.FC<MiniChatProps> = ({
     }
   }, [messages, isOpen, selectedUserId]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputText.trim() || !selectedUserId) return;
-    onSendMessage(selectedUserId, inputText.trim());
-    setInputText('');
+    const success = await onSendMessage(selectedUserId, inputText.trim());
+    // Only clear on confirmed success — a failed send leaves the typed text in place so it
+    // isn't lost, rather than silently discarding it with only a notification as feedback.
+    if (success) {
+      setInputText('');
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
