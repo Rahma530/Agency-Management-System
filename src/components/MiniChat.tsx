@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, X, Send, User } from 'lucide-react';
-import { ChatMessageRecord, UserRecord } from '../types/database';
+import { MessageSquare, X, Send, User, Search } from 'lucide-react';
+import { ChatDirectoryEntry, ChatMessageRecord, UserRecord } from '../types/database';
 
 interface MiniChatProps {
   currentUser: UserRecord;
-  users: UserRecord[];
+  // The org-wide chat directory (id/name/role only, from chat_directory()) — deliberately not
+  // UserRecord: this list is unrestricted by design (any employee can message any employee),
+  // unlike the employee_visible()-scoped `users` array used everywhere else in the app.
+  users: ChatDirectoryEntry[];
   messages: ChatMessageRecord[];
   // Resolves to whether the send actually succeeded, so the input text can be preserved
   // (not cleared) on failure — the caller persists first, so this only resolves once that's
@@ -26,6 +29,7 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
+  const [colleagueSearch, setColleagueSearch] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto scroll to bottom when new messages arrive
@@ -59,8 +63,13 @@ export const MiniChat: React.FC<MiniChatProps> = ({
       (m.sender_id === selectedUserId && m.receiver_id === currentUser.id)
   ).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-  // Colleagues (everyone except current user)
-  const colleagues = users.filter(u => u.id !== currentUser.id);
+  // Colleagues (everyone except current user), optionally narrowed by the search box below —
+  // case-insensitive substring match on name, same predicate shape as matchesClientQuery
+  // (lib/clientSearch.ts), kept local since this is currently the only employee-name search
+  // in the codebase.
+  const colleagues = users
+    .filter(u => u.id !== currentUser.id)
+    .filter(u => u.name.toLowerCase().includes(colleagueSearch.trim().toLowerCase()));
   const selectedUser = users.find(u => u.id === selectedUserId);
 
   return (
@@ -104,6 +113,19 @@ export const MiniChat: React.FC<MiniChatProps> = ({
             {!selectedUserId ? (
               // Users List
               <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                <div className="relative px-1 pb-1 sticky top-0 bg-inherit z-10">
+                  <Search className="w-3.5 h-3.5 absolute right-4 top-2.5 text-stone-500 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={colleagueSearch}
+                    onChange={(e) => setColleagueSearch(e.target.value)}
+                    placeholder="ابحث عن زميل..."
+                    className="w-full bg-white/5 border border-white/10 rounded-xl pr-9 pl-3 py-2 text-xs text-white placeholder:text-stone-500 focus:outline-none focus:border-purple-500/50"
+                  />
+                </div>
+                {colleagues.length === 0 && (
+                  <p className="text-center text-xs text-stone-500 py-4">لا يوجد نتائج</p>
+                )}
                 {colleagues.map(user => (
                   <button
                     key={user.id}

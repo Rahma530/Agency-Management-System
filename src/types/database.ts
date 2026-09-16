@@ -455,6 +455,16 @@ export interface ChatMessageRecord {
   created_at: string;
 }
 
+// Minimal org-wide employee directory for MiniChat's colleague list, from the
+// chat_directory() RPC — deliberately NOT the RLS-scoped UserRecord shape:
+// messaging is unrestricted by design (any employee can message any employee),
+// while everything else that reads `users` stays scoped by employee_visible().
+export interface ChatDirectoryEntry {
+  id: string;
+  name: string;
+  role: UserRole;
+}
+
 // 12. extra_notes
 export interface ExtraNoteRecord {
   id: string;
