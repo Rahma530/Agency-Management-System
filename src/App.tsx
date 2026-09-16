@@ -2659,6 +2659,37 @@ export default function App() {
     const unreadIds = chatMessages
       .filter((m) => m.sender_id === otherUserId && m.receiver_id === currentUser.id && !m.is_read)
       .map((m) => m.id);
+    const conversationLink = `chat:${otherUserId}`;
+    const hasUnreadChatNotifications = notifications.some(
+      (notification) =>
+        notification.user_id === currentUser.id &&
+        !notification.is_read &&
+        notification.link_url === conversationLink
+    );
+
+    if (hasUnreadChatNotifications) {
+      setNotifications((prev) =>
+        prev.map((notification) =>
+          notification.user_id === currentUser.id &&
+          !notification.is_read &&
+          notification.link_url === conversationLink
+            ? { ...notification, is_read: true }
+            : notification
+        )
+      );
+      if (supabaseActive) {
+        supabaseRaw
+          .from('notifications')
+          .update({ is_read: true })
+          .eq('user_id', currentUser.id)
+          .eq('is_read', false)
+          .eq('link_url', conversationLink)
+          .then(({ error }) => {
+            if (error) console.error('Failed to persist chat notification read status:', error);
+          });
+      }
+    }
+
     if (unreadIds.length === 0) return;
 
     if (supabaseActive) {
