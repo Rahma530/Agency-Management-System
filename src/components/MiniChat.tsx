@@ -56,6 +56,18 @@ export const MiniChat: React.FC<MiniChatProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openConversationRequest]);
 
+  // onOpenConversation only fires once, at the moment a conversation is first selected — it
+  // never re-fires for a message that arrives WHILE that conversation is already open, so the
+  // FAB badge kept counting those as unread even while the user was actively looking at the
+  // thread. Re-invoking it (idempotent — a no-op once there's nothing left unread) whenever the
+  // open conversation's messages change closes that gap.
+  useEffect(() => {
+    if (isOpen && selectedUserId) {
+      onOpenConversation?.(selectedUserId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, isOpen, selectedUserId]);
+
   const handleSend = async () => {
     if (!inputText.trim() || !selectedUserId) return;
     const success = await onSendMessage(selectedUserId, inputText.trim());
@@ -92,6 +104,15 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   // Unread count for the FAB badge — messages is already scoped to conversations involving
   // currentUser (sender or receiver), so this only needs the receiver/is_read check.
   const unreadCount = messages.filter((m) => m.receiver_id === currentUser.id && !m.is_read).length;
+
+  // Per-colleague unread count, so the sender is identifiable at a glance in the list instead
+  // of having to open every thread to find out who messaged.
+  const unreadCountByColleague = messages.reduce((acc, m) => {
+    if (m.receiver_id === currentUser.id && !m.is_read) {
+      acc[m.sender_id] = (acc[m.sender_id] || 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
 
   return (
     <div className="fixed bottom-6 right-6 z-[90] flex flex-col items-end" dir="rtl">
@@ -147,26 +168,34 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                 {colleagues.length === 0 && (
                   <p className="text-center text-xs text-stone-500 py-4">لا يوجد نتائج</p>
                 )}
-                {colleagues.map(user => (
-                  <button
-                    key={user.id}
-                    onClick={() => {
-                      setSelectedUserId(user.id);
-                      onOpenConversation?.(user.id);
-                    }}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors text-right"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold text-white relative shrink-0">
-                      {user.name.charAt(0)}
-                      {/* Fake online status for demo */}
-                      <div className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#1c1626]" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-bold text-white truncate">{user.name}</h4>
-                      <p className="text-xs text-stone-400 truncate">{user.role.replace(/_/g, ' ')}</p>
-                    </div>
-                  </button>
-                ))}
+                {colleagues.map(user => {
+                  const unreadFromUser = unreadCountByColleague[user.id] || 0;
+                  return (
+                    <button
+                      key={user.id}
+                      onClick={() => {
+                        setSelectedUserId(user.id);
+                        onOpenConversation?.(user.id);
+                      }}
+                      className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors text-right"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold text-white relative shrink-0">
+                        {user.name.charAt(0)}
+                        {/* Fake online status for demo */}
+                        <div className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#1c1626]" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-bold text-white truncate">{user.name}</h4>
+                        <p className="text-xs text-stone-400 truncate">{user.role.replace(/_/g, ' ')}</p>
+                      </div>
+                      {unreadFromUser > 0 && (
+                        <div className="w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                          {unreadFromUser > 9 ? '9+' : unreadFromUser}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               // Chat Interface
