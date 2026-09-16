@@ -308,6 +308,25 @@ export default function App() {
     if (notification.link_url?.startsWith('chat:')) {
       const otherUserId = notification.link_url.slice('chat:'.length);
       if (otherUserId) {
+        const conversationLink = `chat:${otherUserId}`;
+        setNotifications((prev) =>
+          prev.map((item) =>
+            item.user_id === currentUser.id && !item.is_read && item.link_url === conversationLink
+              ? { ...item, is_read: true }
+              : item
+          )
+        );
+        if (supabaseActive) {
+          supabaseRaw
+            .from('notifications')
+            .update({ is_read: true })
+            .eq('user_id', currentUser.id)
+            .eq('is_read', false)
+            .eq('link_url', conversationLink)
+            .then(({ error }) => {
+              if (error) console.error('Failed to persist chat notification read status:', error);
+            });
+        }
         setChatOpenRequest({ userId: otherUserId });
       }
     }
