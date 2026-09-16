@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   Mail,
@@ -35,6 +35,23 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showDemoModal, setShowDemoModal] = useState(false);
+
+  // Self-service password reset. A separate view swapped in for the login form rather than a
+  // modal — it needs its own header/back-navigation, and reuses the same card chrome.
+  const [authView, setAuthView] = useState<'login' | 'forgot-password'>('login');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState<string | null>(null);
+  // Basic client-side rate-limit awareness: Supabase's built-in email service enforces its own
+  // server-side limit regardless, but disabling the button for a cooldown window discourages
+  // accidental repeated submissions (e.g. impatient double-clicks) from hitting it.
+  const [forgotCooldown, setForgotCooldown] = useState(0);
+
+  useEffect(() => {
+    if (forgotCooldown <= 0) return;
+    const timer = setTimeout(() => setForgotCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [forgotCooldown]);
 
   // Demo login (no-password instant sign-in as any role) is opt-in via env
   // flag, off by default. Never enable this on a public deployment — it was
@@ -115,6 +132,47 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
     }
   };
 
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedEmail = forgotEmail.trim().toLowerCase();
+
+    if (!isValidEmail(trimmedEmail)) {
+      setForgotMessage('Please enter a valid email address.');
+      return;
+    }
+
+    setForgotSubmitting(true);
+    setForgotMessage(null);
+
+    try {
+      // resetPasswordForEmail never reveals whether the email belongs to a real account (it
+      // returns success either way) — the recovery link it sends lands back on this same app
+      // with a `type=recovery` hash, which App.tsx already routes to SetPasswordScreen.
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: window.location.origin,
+      });
+
+      // A rate-limit response is safe to surface as-is — unlike "email not found", it carries
+      // no information about whether the account exists.
+      if (error && /rate limit|only request this/i.test(error.message)) {
+        setForgotMessage('Too many requests. Please wait a bit before trying again.');
+      } else {
+        setForgotMessage('If an account exists with this email, a reset link has been sent.');
+      }
+    } catch {
+      setForgotMessage('If an account exists with this email, a reset link has been sent.');
+    } finally {
+      setForgotSubmitting(false);
+      setForgotCooldown(60);
+    }
+  };
+
+  const handleBackToLogin = () => {
+    setAuthView('login');
+    setForgotEmail('');
+    setForgotMessage(null);
+  };
+
   // Demo mode only: sign in instantly as the chosen role, no password required
   const handleDemoLogin = (user: UserRecord) => {
     if (rememberMe) {
@@ -184,6 +242,86 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
             borderColor: 'var(--border-strong)',
           }}
         >
+          {authView === 'forgot-password' ? (
+            <>
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <KeyRound className="w-5 h-5 text-purple-400" />
+                  <span>Reset Password</span>
+                </h2>
+                <p className="text-xs text-[#a89bb8] mt-1">
+                  Enter your work email and we'll send you a password reset link
+                </p>
+              </div>
+
+              {forgotMessage && (
+                <div
+                  className="mb-5 p-3.5 rounded-xl text-xs flex items-start gap-2.5 border animate-fadeIn"
+                  style={{
+                    background: 'rgba(169, 245, 193, 0.12)',
+                    borderColor: 'var(--roas-good)',
+                    color: 'var(--roas-good)',
+                  }}
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{forgotMessage}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 mb-1.5">
+                    Work Email
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="employee@agency.com"
+                      dir="ltr"
+                      autoComplete="email"
+                      disabled={forgotSubmitting}
+                      className="w-full bg-[#110d1c] border border-purple-900/50 rounded-xl px-4 py-3 pl-10 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400 transition-all font-mono disabled:opacity-50"
+                      required
+                    />
+                    <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-purple-400/70 pointer-events-none" />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={forgotSubmitting || forgotCooldown > 0}
+                  className="w-full mt-3 py-3 px-4 rounded-xl text-sm font-bold text-white shadow-xl transition-all flex items-center justify-center gap-2 hover:opacity-95 active:scale-[0.99] disabled:opacity-50"
+                  style={{
+                    background: 'var(--gradient-badge)',
+                    border: '1px solid var(--border-strong)',
+                  }}
+                >
+                  {forgotSubmitting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : forgotCooldown > 0 ? (
+                    <span>Resend available in {forgotCooldown}s</span>
+                  ) : (
+                    <span>Send Reset Link</span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleBackToLogin}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs text-purple-300 hover:text-purple-100 transition-colors pt-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Sign In</span>
+                </button>
+              </form>
+            </>
+          ) : (
+          <>
           <div className="mb-6">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <KeyRound className="w-5 h-5 text-purple-400" />
@@ -266,6 +404,18 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              <div className="flex justify-end mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthView('forgot-password');
+                    setErrorMessage(null);
+                  }}
+                  className="text-[11px] text-purple-300 hover:text-purple-100 underline underline-offset-2 transition-colors"
+                >
+                  Forgot Password?
+                </button>
+              </div>
             </div>
 
             {/* Remember Me Checkbox */}
@@ -321,6 +471,8 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
               </button>
             )}
           </div>
+          </>
+          )}
         </div>
       </div>
 
