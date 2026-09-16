@@ -221,6 +221,10 @@ export default function App() {
   // employee_visible()-scoped `users` array. See chat_directory() RPC: messaging has no
   // role/team restriction by design, unlike every other consumer of `users`.
   const [chatDirectory, setChatDirectory] = useState<ChatDirectoryEntry[]>([]);
+  // Set when a notification's link_url ('chat:<senderId>') is clicked — a fresh object each
+  // time (not just the userId string) so MiniChat's effect refires even for a second click on
+  // a notification from the same sender, since a plain string dependency wouldn't change.
+  const [chatOpenRequest, setChatOpenRequest] = useState<{ userId: string } | null>(null);
   const [isActivityFeedOpen, setIsActivityFeedOpen] = useState(false);
 
   // Import Data State
@@ -260,12 +264,50 @@ export default function App() {
     setTimeout(() => setNotification(null), 4500);
   };
 
-  const handleMarkNotificationAsRead = (id: string) => {
+  // Persists via supabaseRaw first, matching notifications_update_rls (user_id = app_user_id()
+  // — this user is always the recipient, so this is always allowed), only syncing local state
+  // on success so a failed write doesn't optimistically show read status that didn't persist.
+  const handleMarkNotificationAsRead = async (id: string) => {
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw.from('notifications').update({ is_read: true }).eq('id', id);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to mark notification as read:', err);
+        return;
+      }
+    }
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
   };
 
-  const handleMarkAllNotificationsAsRead = () => {
+  const handleMarkAllNotificationsAsRead = async () => {
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw
+          .from('notifications')
+          .update({ is_read: true })
+          .eq('user_id', currentUser.id)
+          .eq('is_read', false);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to mark all notifications as read:', err);
+        return;
+      }
+    }
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+  };
+
+  // Notification click-through: link_url uses a 'chat:<senderId>' scheme (set by the
+  // notify_new_chat_message() trigger) — parse it and hand the target user id to MiniChat via
+  // chatOpenRequest. Any other/missing link_url is a no-op for now (only chat notifications
+  // link anywhere today).
+  const handleNotificationClick = (notification: NotificationRecord) => {
+    if (notification.link_url?.startsWith('chat:')) {
+      const otherUserId = notification.link_url.slice('chat:'.length);
+      if (otherUserId) {
+        setChatOpenRequest({ userId: otherUserId });
+      }
+    }
   };
 
   // Kept in sync below so the session-rehydration effect can read the latest
@@ -683,13 +725,15 @@ export default function App() {
     setLoading(false);
   }, [authenticatedUser]);
 
-  // chat_messages and chat_directory load independently of loadData's big sequential fetch
-  // batch above — deliberately not awaited inside it. That batch runs ~20 fetches one after
-  // another in a single try block, so if any one of them hangs or throws at the network layer
-  // (rather than resolving with a clean {error}), everything sequenced after it never runs —
-  // chat data would then silently depend on its position in an entirely unrelated fetch list.
-  // Firing these as their own effect means they load — and the poll/Realtime effect below has
-  // something to refresh — regardless of what happens in that other batch.
+  // chat_messages, chat_directory, and notifications load independently of loadData's big
+  // sequential fetch batch above — deliberately not awaited inside it. That batch runs ~20
+  // fetches one after another in a single try block, so if any one of them hangs or throws at
+  // the network layer (rather than resolving with a clean {error}), everything sequenced after
+  // it never runs — chat/notification data would then silently depend on its position in an
+  // entirely unrelated fetch list. Firing these as their own effect means they load — and the
+  // poll/Realtime effects below have something to refresh — regardless of what happens in that
+  // other batch. notifications was never wired to real Postgres before this (it had neither a
+  // fetch nor real mark-as-read) — this is that missing piece, matching the pattern chat got.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -728,6 +772,25 @@ export default function App() {
         }
       } catch (err) {
         console.warn('Failed to load chat_directory:', err);
+      }
+    })();
+
+    (async () => {
+      try {
+        // supabaseRaw — notifications isn't one of the 4 tables the legacy proxy wraps either.
+        // Newest-first, matching the order the demo seed data was already constructed in (and
+        // what a notification dropdown should show). Sets state even on an empty result, same
+        // reasoning as chat_messages above.
+        const { data: notificationData, error: notificationErr } = await supabaseRaw
+          .from('notifications')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
+        if (!cancelled && !notificationErr && notificationData) {
+          setNotifications(notificationData as NotificationRecord[]);
+        }
+      } catch (err) {
+        console.warn('Failed to load notifications:', err);
       }
     })();
 
@@ -845,6 +908,82 @@ export default function App() {
     // new authenticatedUser reference on every reload even when the id is unchanged, and using
     // the full object here would tear down and reopen the channel on every one of those, not
     // just on an actual login/logout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedUser?.id, supabaseActive]);
+
+  // Real-time notification delivery, mirroring the chat effect above exactly (same subscribe
+  // status callback + poll fallback resilience, same demo-session detection via getSession()).
+  // A separate channel from chat's — a distinct concern — but the same reasoning throughout:
+  // notifications only ever needs one filter (user_id = me), unlike chat_messages' two.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+
+    const refetchNotifications = async () => {
+      const { data, error } = await supabaseRaw
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (!cancelled && !error) {
+        setNotifications((data as NotificationRecord[]) || []);
+      }
+    };
+
+    const startPollFallback = () => {
+      if (intervalId) return;
+      intervalId = setInterval(refetchNotifications, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        startPollFallback();
+        return;
+      }
+
+      const prependIfNew = (payload: { new: NotificationRecord }) => {
+        const row = payload.new;
+        setNotifications((prev) => (prev.some((n) => n.id === row.id) ? prev : [row, ...prev]));
+      };
+
+      channel = supabaseRaw
+        .channel(`notifications:${userId}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+          prependIfNew
+        )
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+          } else {
+            console.warn(`Notifications realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
+    })();
+
+    return () => {
+      cancelled = true;
+      stopPollFallback();
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
@@ -2598,11 +2737,12 @@ export default function App() {
             )}
 
             {/* Notification Bell */}
-            <NotificationBell 
+            <NotificationBell
               notifications={notifications.filter(n => n.user_id === currentUser.id)}
               users={users}
               onMarkAsRead={handleMarkNotificationAsRead}
               onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+              onNotificationClick={handleNotificationClick}
             />
 
             {/* Online Users Widget */}
@@ -3312,6 +3452,7 @@ export default function App() {
         messages={chatMessages}
         onSendMessage={handleSendChatMessage}
         onOpenConversation={handleOpenChatConversation}
+        openConversationRequest={chatOpenRequest}
       />
 
       {/* Activity Feed Drawer */}

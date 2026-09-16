@@ -8,6 +8,10 @@ interface NotificationBellProps {
   users: UserRecord[];
   onMarkAsRead: (id: string) => void;
   onMarkAllAsRead: () => void;
+  // Fired alongside onMarkAsRead when a notification is clicked, so the caller can act on its
+  // link_url (e.g. open a chat conversation). Optional — a notification with no actionable
+  // link_url is still fine to just mark read.
+  onNotificationClick?: (notification: NotificationRecord) => void;
 }
 
 export const NotificationBell: React.FC<NotificationBellProps> = ({
@@ -15,6 +19,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   users,
   onMarkAsRead,
   onMarkAllAsRead,
+  onNotificationClick,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
@@ -127,9 +132,12 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                 {notifications.map((notification) => {
                   const sender = getSenderInfo(notification.sender_id);
                   return (
-                    <div 
+                    <div
                       key={notification.id}
-                      onClick={() => onMarkAsRead(notification.id)}
+                      onClick={() => {
+                        onMarkAsRead(notification.id);
+                        onNotificationClick?.(notification);
+                      }}
                       className={`p-4 border-b border-white/5 cursor-pointer transition-colors flex gap-3
                         ${notification.is_read ? 'hover:bg-white/5 opacity-70' : 'bg-purple-900/10 hover:bg-purple-900/20'}`}
                     >
