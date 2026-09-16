@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, X, Send, Search, Pencil, Trash2, Eraser, Check } from 'lucide-react';
+import { MessageSquare, X, Send, Search, Pencil, Trash2, Eraser, Check, CheckCheck } from 'lucide-react';
 import { ChatConversationClearRecord, ChatDirectoryEntry, ChatMessageRecord, UserRecord } from '../types/database';
 
 interface MiniChatProps {
@@ -322,8 +322,11 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                                 )}
                               </>
                             )}
-                            <div className={`text-[9px] mt-1 opacity-60 ${isMe ? 'text-right' : 'text-left'}`}>
+                            <div className={`text-[9px] mt-1 flex items-center gap-1 ${isMe ? 'justify-end' : 'justify-start'} opacity-60`}>
                               {new Date(msg.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                              {isMe && (
+                                <CheckCheck className={`w-3 h-3 ${msg.is_read ? 'text-blue-300 opacity-100' : ''}`} />
+                              )}
                             </div>
                           </div>
                         </div>

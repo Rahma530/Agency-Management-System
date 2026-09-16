@@ -865,6 +865,21 @@ export default function App() {
       }
     })();
 
+    (async () => {
+      try {
+        const { data: activityData, error: activityErr } = await supabaseRaw
+          .from('activities')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (!cancelled && !activityErr && activityData) {
+          setActivities(activityData as ActivityRecord[]);
+        }
+      } catch (err) {
+        console.warn('Failed to load activities:', err);
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
@@ -1105,6 +1120,84 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
+  // Real-time activities delivery, mirroring the chat/notifications effects above.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+
+    const refetchActivities = async () => {
+      const { data, error } = await supabaseRaw
+        .from('activities')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (!cancelled && !error) {
+        setActivities((data as ActivityRecord[]) || []);
+      }
+    };
+
+    const startPollFallback = () => {
+      if (intervalId) return;
+      intervalId = setInterval(refetchActivities, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        startPollFallback();
+        return;
+      }
+
+      const insertActivity = (payload: { new: ActivityRecord }) => {
+        const row = payload.new;
+        setActivities((prev) => {
+          const existingIndex = prev.findIndex((activity) => activity.id === row.id);
+          if (existingIndex === -1) {
+            return [row, ...prev].slice(0, 50); // Keep only latest 50
+          }
+          return prev;
+        });
+      };
+
+      channel = supabaseRaw
+        .channel(`activities_global`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'activities' },
+          insertActivity
+        )
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+          } else {
+            console.warn(`Activities realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
+    })();
+
+    return () => {
+      cancelled = true;
+      stopPollFallback();
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
+  }, [authenticatedUser?.id, supabaseActive]);
+
   // Mock online users logic
   useEffect(() => {
     if (authenticatedUser && users.length > 0) {
@@ -1177,6 +1270,8 @@ export default function App() {
       setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
     }
 
+    await logActivity('create', 'client', newClientPayload.id!, newClientPayload.name!, `Registered new client in ${newClientPayload.industry}`);
+
     showNotification(
       isAmRegistration
         ? `Client "${clientData.name}" added as an active account under your management.`
@@ -1240,6 +1335,40 @@ export default function App() {
       setClients((prev) => [(data?.[0] as ClientRecord) || (newClientPayload as ClientRecord), ...prev]);
     } else {
       setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
+    }
+  };
+
+
+  // Unified helper for logging real-time activities across all departments
+  const logActivity = async (
+    action_type: ActivityRecord['action_type'],
+    target_type: ActivityRecord['target_type'],
+    target_id: string,
+    target_name: string,
+    details?: string
+  ) => {
+    if (!authenticatedUser) return;
+    
+    const newActivity = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      user_id: authenticatedUser.id,
+      action_type,
+      target_type,
+      target_id,
+      target_name,
+      details: details || null,
+      created_at: new Date().toISOString()
+    };
+
+    // Optimistic local update
+    setActivities((prev) => [newActivity as ActivityRecord, ...prev].slice(0, 50));
+
+    if (isSupabaseConfigured()) {
+      try {
+        await supabaseRaw.from('activities').insert(newActivity);
+      } catch (err) {
+        console.warn('Failed to insert activity to Supabase:', err);
+      }
     }
   };
 
@@ -1364,6 +1493,8 @@ export default function App() {
     );
 
     const client = clients.find((c) => c.id === clientId);
+    await logActivity('status_change', 'client', clientId, client?.name || 'Client', `Status updated to ${newStatus}`);
+
     showNotification(`Client "${client?.name || clientId}" status updated to ${newStatus}.`);
   };
 
@@ -1873,6 +2004,9 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
     );
+    
+    const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
+    await logActivity('status_change', 'task', taskId, taskTitle, `Status updated to ${newStatus}`);
 
     showNotification('Task status moved and the shared board updated.');
   };
@@ -1909,6 +2043,9 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, ...finalUpdates } : t))
     );
+    
+    const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
+    await logActivity('update', 'task', taskId, taskTitle, 'Task details updated');
 
     showNotification('Task data updated successfully.');
   };
@@ -1960,6 +2097,8 @@ export default function App() {
     } else {
       setTasks((prev) => [newTaskPayload, ...prev]);
     }
+
+    await logActivity('create', 'task', newTaskPayload.id, newTaskPayload.title, `Created task for team: ${newTaskPayload.team}`);
 
     showNotification(`Task "${taskData.title}" added to the shared task board successfully!`);
   };
