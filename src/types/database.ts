@@ -58,6 +58,7 @@ export interface UserRecord {
   // the browser, so it happens out-of-band via scripts/provisionAuthUsers.ts. Use
   // lib/permissions.ts's isPendingEmployee() rather than checking this directly everywhere.
   auth_id: string | null;
+  last_seen_at?: string | null;
   // Null while active. Set the moment an executive/head_of_technical/team-lead deactivates this
   // employee — the row is never deleted (so their name still displays correctly on every
   // historical task/brief/daily-log/report they're referenced from), but they lose all
@@ -452,6 +453,10 @@ export interface ChatMessageRecord {
   receiver_id: string;
   content: string;
   is_read: boolean;
+  reply_to_id?: string | null;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  attachment_type?: string | null;
   created_at: string;
 }
 
@@ -469,6 +474,7 @@ export interface ChatDirectoryEntry {
   id: string;
   name: string;
   role: UserRole;
+  last_seen_at?: string | null;
 }
 
 // 12. extra_notes

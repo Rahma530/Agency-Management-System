@@ -1199,21 +1199,47 @@ export default function App() {
     };
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Mock online users logic
+  // Real-time online users (Presence) & heartbeat
   useEffect(() => {
-    if (authenticatedUser && users.length > 0) {
-      // Always include current user
-      const ids = [authenticatedUser.id];
-      // Add 3 other random users to look "online"
-      const others = users.filter((u) => u.id !== authenticatedUser.id);
-      
-      // We will pick the first 3 for simplicity, but shifted by the day so it looks random but stable per session
-      for (let i = 0; i < Math.min(3, others.length); i++) {
-        ids.push(others[i].id);
+    if (!authenticatedUser || !supabaseActive) return;
+
+    // 1. Setup Presence Channel
+    const channel = supabaseRaw.channel('online-users', {
+      config: {
+        presence: { key: authenticatedUser.id },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const newState = channel.presenceState();
+        const onlineIds = Object.keys(newState);
+        setOnlineUserIds(onlineIds);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({ online_at: new Date().toISOString() });
+        }
+      });
+
+    // 2. Heartbeat to update last_seen_at in DB
+    const updateLastSeen = async () => {
+      try {
+        await supabaseRaw.from('users').update({ last_seen_at: new Date().toISOString() }).eq('id', authenticatedUser.id);
+      } catch (err) {
+        console.warn('Failed to update last_seen_at heartbeat', err);
       }
-      setOnlineUserIds(ids);
-    }
-  }, [authenticatedUser, users]);
+    };
+
+    // Update immediately on mount, then every 3 minutes
+    updateLastSeen();
+    const heartbeatInterval = setInterval(updateLastSeen, 3 * 60 * 1000);
+
+    return () => {
+      clearInterval(heartbeatInterval);
+      supabaseRaw.removeChannel(channel);
+    };
+  }, [authenticatedUser, supabaseActive]);
 
   // 1. Single-client registration (ClientRegistrationModal.tsx) — shared by sales, am_team_lead,
   // and am_agent now, branching on currentUser.role exactly like handleBulkAddClient's three-way
@@ -2864,29 +2890,81 @@ export default function App() {
 
   // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
   // same "persist, then sync local state" pattern as handleUpdateEmployee/
+  // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
+  // same "persist, then sync local state" pattern as handleUpdateEmployee/
   // handleDeactivateEmployee. Not appending optimistically-then-rolling-back on failure avoids
   // ever showing a message that didn't actually reach the other person.
-  const handleSendChatMessage = async (receiverId: string, content: string): Promise<boolean> => {
-    const newMsg: ChatMessageRecord = {
+  const handleSendChatMessage = async (
+    receiverId: string, 
+    content: string, 
+    replyToId?: string,
+    attachmentUrl?: string,
+    attachmentName?: string,
+    attachmentType?: string
+  ): Promise<boolean> => {
+    const newMsg: any = {
       id: `msg-${Date.now()}`,
       sender_id: currentUser.id,
       receiver_id: receiverId,
       content,
       is_read: false,
+      reply_to_id: replyToId,
       created_at: new Date().toISOString(),
     };
+    
+    if (attachmentUrl) newMsg.attachment_url = attachmentUrl;
+    if (attachmentName) newMsg.attachment_name = attachmentName;
+    if (attachmentType) newMsg.attachment_type = attachmentType;
     if (supabaseActive) {
       try {
         const { error } = await supabaseRaw.from('chat_messages').insert(newMsg);
         if (error) throw error;
       } catch (err: any) {
         console.error('Failed to send chat message:', err);
+        window.alert(`DB Insert Error: ${err.message || JSON.stringify(err)}`);
         showNotification('Unable to send message.', 'info');
         return false;
       }
     }
     setChatMessages((prev) => [...prev, newMsg]);
     return true;
+  };
+
+  const handleUploadChatAttachment = async (file: File): Promise<{ url: string; name: string; type: string } | null> => {
+    if (!supabaseActive) {
+      showNotification('Chat attachments require a connected Supabase backend.', 'info');
+      return null;
+    }
+    
+    // Ensure the folder structure organizes by sender ID and date to avoid collisions
+    const folderDate = new Date().toISOString().split('T')[0];
+    const timestamp = Date.now();
+    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const storagePath = `${currentUser.id}/${folderDate}/${timestamp}_${safeName}`;
+
+    try {
+      const { error: uploadError } = await supabaseRaw.storage
+        .from('chat-attachments')
+        .upload(storagePath, file, { contentType: file.type });
+        
+      if (uploadError) {
+        console.error('Supabase chat attachment upload error:', uploadError);
+        throw uploadError;
+      }
+      
+      const { data } = supabaseRaw.storage.from('chat-attachments').getPublicUrl(storagePath);
+      
+      return {
+        url: data.publicUrl,
+        name: file.name,
+        type: file.type.startsWith('image/') ? 'image' : 'file'
+      };
+    } catch (err: any) {
+      console.error('Failed to upload chat attachment:', err);
+      window.alert(`Upload Error: ${err.message || JSON.stringify(err)}`);
+      showNotification('Failed to upload attachment.', 'info');
+      return null;
+    }
   };
 
   const handleEditChatMessage = async (messageId: string, content: string): Promise<boolean> => {
@@ -3873,11 +3951,13 @@ export default function App() {
         messages={chatMessages}
         conversationClears={chatConversationClears}
         onSendMessage={handleSendChatMessage}
+        onUploadChatAttachment={handleUploadChatAttachment}
         onEditMessage={handleEditChatMessage}
         onDeleteMessage={handleDeleteChatMessage}
         onClearConversation={handleClearChatConversation}
         onOpenConversation={handleOpenChatConversation}
         openConversationRequest={chatOpenRequest}
+        onlineUserIds={onlineUserIds}
       />
 
       {/* Activity Feed Drawer */}
