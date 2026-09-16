@@ -670,6 +670,23 @@ export default function App() {
         if (!platformConnectionErr && platformConnectionData && platformConnectionData.length > 0) {
           setPlatformConnections(platformConnectionData as PlatformConnectionRecord[]);
         }
+
+        // Fetch chat_messages (Real-time Phase 2: MiniChat). supabaseRaw, not the wrapped
+        // client — chat_messages isn't one of the 4 tables the legacy proxy wraps, but every
+        // real-data table access goes through the same explicit, unambiguous client. Unlike
+        // most fetches above, this sets state even on an empty result (no ">0" guard) since
+        // chat has no demo seed data to protect — a real employee with zero messages should
+        // see zero, not a stale local echo, same as the `users` fetch earlier in this function.
+        if (authenticatedUser) {
+          const { data: chatData, error: chatErr } = await supabaseRaw
+            .from('chat_messages')
+            .select('*')
+            .or(`sender_id.eq.${authenticatedUser.id},receiver_id.eq.${authenticatedUser.id}`)
+            .order('created_at', { ascending: true });
+          if (!chatErr && chatData) {
+            setChatMessages(chatData as ChatMessageRecord[]);
+          }
+        }
       } catch (err) {
         console.warn('Supabase query error, relying on local cached state:', err);
       }
@@ -681,6 +698,81 @@ export default function App() {
     setSupabaseSessionUser(authenticatedUser);
     loadData();
   }, [authenticatedUser, loadData]);
+
+  // Real-time chat delivery (Phase 2). A demo-mode login never calls
+  // supabase.auth.signInWithPassword, so there's no real JWT to open an authenticated
+  // Realtime channel with — postgres_changes would just receive nothing (no grant for the
+  // anon role). Detect that via getSession() and poll instead, so a demo session still sees
+  // new messages without a manual refresh. Uses supabaseRaw throughout: channel() is a direct
+  // instance method (unlike `.auth`, a plain nested property the legacy proxy passes through
+  // safely), so calling it through the wrapped client risks `this` binding to the Proxy
+  // instead of the real client instance — supabaseRaw sidesteps that entirely.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+
+    const refetchChatMessages = async () => {
+      const { data, error } = await supabaseRaw
+        .from('chat_messages')
+        .select('*')
+        .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+        .order('created_at', { ascending: true });
+      if (!cancelled && !error) {
+        setChatMessages((data as ChatMessageRecord[]) || []);
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        intervalId = setInterval(refetchChatMessages, 9000);
+        return;
+      }
+
+      // Two separate listeners, not one — Realtime's `filter` only supports a single-column
+      // equality, no OR across columns, so "I'm the sender or the receiver" needs both
+      // directions subscribed. That means my own sent message can echo back to me via the
+      // sender_id listener; the id-dedup guard below prevents a double-entry against the
+      // optimistic local append onSendMessage already does.
+      const appendIfNew = (payload: { new: ChatMessageRecord }) => {
+        const row = payload.new;
+        setChatMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+      };
+
+      channel = supabaseRaw
+        .channel(`chat_messages:${userId}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `receiver_id=eq.${userId}` },
+          appendIfNew
+        )
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `sender_id=eq.${userId}` },
+          appendIfNew
+        )
+        .subscribe();
+    })();
+
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
+    // authenticatedUser?.id (not the whole object) — loadData's own refresh cycle produces a
+    // new authenticatedUser reference on every reload even when the id is unchanged, and using
+    // the full object here would tear down and reopen the channel on every one of those, not
+    // just on an actual login/logout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedUser?.id, supabaseActive]);
 
   // Mock online users logic
   useEffect(() => {
@@ -2299,6 +2391,54 @@ export default function App() {
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 
+  // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
+  // same "persist, then sync local state" pattern as handleUpdateEmployee/
+  // handleDeactivateEmployee. Not appending optimistically-then-rolling-back on failure avoids
+  // ever showing a message that didn't actually reach the other person.
+  const handleSendChatMessage = async (receiverId: string, content: string) => {
+    const newMsg: ChatMessageRecord = {
+      id: `msg-${Date.now()}`,
+      sender_id: currentUser.id,
+      receiver_id: receiverId,
+      content,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw.from('chat_messages').insert(newMsg);
+        if (error) throw error;
+      } catch (err: any) {
+        console.error('Failed to send chat message:', err);
+        showNotification('Unable to send message.', 'info');
+        return;
+      }
+    }
+    setChatMessages((prev) => [...prev, newMsg]);
+  };
+
+  // MiniChat conversation open: mark that thread's unread messages (where I'm the receiver)
+  // read — matches chat_messages_update_rls's receiver_id = app_user_id() exactly.
+  const handleOpenChatConversation = async (otherUserId: string) => {
+    const unreadIds = chatMessages
+      .filter((m) => m.sender_id === otherUserId && m.receiver_id === currentUser.id && !m.is_read)
+      .map((m) => m.id);
+    if (unreadIds.length === 0) return;
+
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw.from('chat_messages').update({ is_read: true }).in('id', unreadIds);
+        if (error) throw error;
+      } catch (err: any) {
+        console.error('Failed to mark chat messages as read:', err);
+        return;
+      }
+    }
+    setChatMessages((prev) =>
+      prev.map((m) => (unreadIds.includes(m.id) ? { ...m, is_read: true } : m))
+    );
+  };
+
   // A PASSWORD_RECOVERY session takes precedence over everything else below
   // — including an already-authenticatedUser, which shouldn't be possible
   // at the same time, but this ordering keeps that invariant explicit
@@ -3091,21 +3231,12 @@ export default function App() {
       {/* --- New Global Features --- */}
       <GlobalSearch users={users} tasks={tasks} clients={clients} />
       
-      <MiniChat 
-        currentUser={currentUser} 
-        users={users} 
-        messages={chatMessages} 
-        onSendMessage={(receiverId, content) => {
-          const newMsg: ChatMessageRecord = {
-            id: `msg-${Date.now()}`,
-            sender_id: currentUser.id,
-            receiver_id: receiverId,
-            content,
-            is_read: false,
-            created_at: new Date().toISOString(),
-          };
-          setChatMessages(prev => [...prev, newMsg]);
-        }} 
+      <MiniChat
+        currentUser={currentUser}
+        users={users}
+        messages={chatMessages}
+        onSendMessage={handleSendChatMessage}
+        onOpenConversation={handleOpenChatConversation}
       />
 
       {/* Activity Feed Drawer */}
