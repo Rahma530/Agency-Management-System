@@ -264,37 +264,40 @@ export default function App() {
     setTimeout(() => setNotification(null), 4500);
   };
 
-  // Persists via supabaseRaw first, matching notifications_update_rls (user_id = app_user_id()
-  // — this user is always the recipient, so this is always allowed), only syncing local state
-  // on success so a failed write doesn't optimistically show read status that didn't persist.
-  const handleMarkNotificationAsRead = async (id: string) => {
-    if (supabaseActive) {
-      try {
-        const { error } = await supabaseRaw.from('notifications').update({ is_read: true }).eq('id', id);
-        if (error) throw error;
-      } catch (err) {
-        console.error('Failed to mark notification as read:', err);
-        return;
-      }
-    }
+  // Optimistic-first: update local state immediately, then fire the Postgres write in the
+  // background (error logged, not gated on). is_read is low-stakes and self-healing (worst
+  // case, a brief UI/DB mismatch corrected on the next fetch/poll) — unlike chat send, where
+  // persist-then-sync matters because showing an unsent message would be actively misleading.
+  // This also sidesteps a real-world bug: a benign non-null `error` from a bare
+  // update()-with-no-select() response was silently returning before setNotifications ran,
+  // even though the write itself had already committed — the badge never cleared for the rest
+  // of that session despite the database being correct (confirmed by a fresh login showing the
+  // right read state all along).
+  const handleMarkNotificationAsRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    if (supabaseActive) {
+      supabaseRaw
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', id)
+        .then(({ error }) => {
+          if (error) console.error('Failed to persist notification read status:', error);
+        });
+    }
   };
 
-  const handleMarkAllNotificationsAsRead = async () => {
-    if (supabaseActive) {
-      try {
-        const { error } = await supabaseRaw
-          .from('notifications')
-          .update({ is_read: true })
-          .eq('user_id', currentUser.id)
-          .eq('is_read', false);
-        if (error) throw error;
-      } catch (err) {
-        console.error('Failed to mark all notifications as read:', err);
-        return;
-      }
-    }
+  const handleMarkAllNotificationsAsRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    if (supabaseActive) {
+      supabaseRaw
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', currentUser.id)
+        .eq('is_read', false)
+        .then(({ error }) => {
+          if (error) console.error('Failed to persist all-notifications read status:', error);
+        });
+    }
   };
 
   // Notification click-through: link_url uses a 'chat:<senderId>' scheme (set by the
