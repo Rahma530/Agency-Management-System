@@ -17,6 +17,10 @@ interface MiniChatProps {
   // messages read. Optional so existing callers/tests that don't need read-tracking
   // aren't forced to pass a no-op.
   onOpenConversation?: (otherUserId: string) => void;
+  // Set by the caller (a fresh object each time, even for the same userId — see App.tsx) to
+  // imperatively open this chat straight to a specific conversation, e.g. from a notification
+  // click. Same shape as CrossTeamTaskBoard's initialAssigneeFilter prefill pattern.
+  openConversationRequest?: { userId: string } | null;
 }
 
 export const MiniChat: React.FC<MiniChatProps> = ({
@@ -25,6 +29,7 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   messages,
   onSendMessage,
   onOpenConversation,
+  openConversationRequest,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -38,6 +43,18 @@ export const MiniChat: React.FC<MiniChatProps> = ({
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isOpen, selectedUserId]);
+
+  // Opens straight to a specific conversation on request (e.g. a notification click) — a new
+  // object reference every time from the caller, so this refires even for a second click on a
+  // notification from the same sender.
+  useEffect(() => {
+    if (openConversationRequest?.userId) {
+      setIsOpen(true);
+      setSelectedUserId(openConversationRequest.userId);
+      onOpenConversation?.(openConversationRequest.userId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openConversationRequest]);
 
   const handleSend = async () => {
     if (!inputText.trim() || !selectedUserId) return;
@@ -71,6 +88,10 @@ export const MiniChat: React.FC<MiniChatProps> = ({
     .filter(u => u.id !== currentUser.id)
     .filter(u => u.name.toLowerCase().includes(colleagueSearch.trim().toLowerCase()));
   const selectedUser = users.find(u => u.id === selectedUserId);
+
+  // Unread count for the FAB badge — messages is already scoped to conversations involving
+  // currentUser (sender or receiver), so this only needs the receiver/is_read check.
+  const unreadCount = messages.filter((m) => m.receiver_id === currentUser.id && !m.is_read).length;
 
   return (
     <div className="fixed bottom-6 right-6 z-[90] flex flex-col items-end" dir="rtl">
@@ -209,9 +230,14 @@ export const MiniChat: React.FC<MiniChatProps> = ({
       {/* Floating Action Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-14 h-14 rounded-full shadow-lg shadow-purple-500/50 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bg-purple-600 hover:bg-purple-500 border border-purple-400/30"
+        className="relative w-14 h-14 rounded-full shadow-lg shadow-purple-500/50 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bg-purple-600 hover:bg-purple-500 border border-purple-400/30"
       >
         {isOpen ? <X className="w-6 h-6 text-white" /> : <MessageSquare className="w-6 h-6 text-white" />}
+        {unreadCount > 0 && (
+          <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#1c1626]">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </div>
+        )}
       </button>
     </div>
   );
