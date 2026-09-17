@@ -10,6 +10,10 @@ const CLIENT_REGISTRATION_ROLES: UserRole[] = [
 
 export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
 
+// Temporary portal preview is available only to an authenticated leadership account.
+export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
+  role === 'executive' || role === 'head_of_technical';
+
 // contract_value is financial/commercial data: full visibility stays with the roles who own the
 // client relationship end-to-end (leadership + AM), everyone else never sees it — except sales,
 // who entered the figure themselves at registration and may see it only for their own clients

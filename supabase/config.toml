@@ -1,0 +1,2 @@
+[functions.employee-test-account]
+verify_jwt = true

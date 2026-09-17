@@ -21,14 +21,16 @@ interface EmployeeLoginProps {
   users: UserRecord[];
   onLoginSuccess: (user: UserRecord) => void;
   supabaseActive: boolean;
+  realTestEmail?: string;
 }
 
 export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
   users,
   onLoginSuccess,
   supabaseActive,
+  realTestEmail,
 }) => {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(realTestEmail || '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -57,7 +59,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
   // flag, off by default. Never enable this on a public deployment — it was
   // accidentally hardcoded to true as collateral from an unrelated cleanup
   // (commit 8a04641), which left it live and unrestricted in production.
-  const isDemoLoginEnabled = import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
+  const isDemoLoginEnabled = !realTestEmail && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 
   // Email format validation helper
   const isValidEmail = (val: string) => {
@@ -69,7 +71,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
     setErrorMessage(null);
 
     const trimmedEmail = email.trim().toLowerCase();
-    const trimmedPassword = password.trim();
+    const trimmedPassword = password;
 
     // 1. Validation
     if (!trimmedEmail) {
@@ -102,16 +104,16 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
         return;
       }
 
-      // Retrieve the employee's profile from the database 'users' table by auth_id or email.
-      // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or() lookup
-      // only matches the hardcoded demo seed array, never a real Postgres row.
+      // Only the linked Auth ID can establish the employee identity. An email
+      // match alone must never turn an unrelated Auth session into this profile.
       const { data: dbUser, error: dbErr } = await supabaseRaw
         .from('users')
         .select('*')
-        .or(`auth_id.eq.${authData.user.id},email.eq.${trimmedEmail}`)
+        .eq('auth_id', authData.user.id)
         .single();
 
-      if (dbErr || !dbUser) {
+      if (dbErr || !dbUser || dbUser.deactivated_at) {
+        await supabase.auth.signOut();
         setErrorMessage('No employee profile found for this account. Please contact your administrator.');
         setIsLoading(false);
         return;

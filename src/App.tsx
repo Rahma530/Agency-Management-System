@@ -32,7 +32,7 @@ import {
   buildClientContractStoragePath,
 } from './lib/supabase';
 import { resolvePeriodRange, generateKpiScoreMetrics, suggestClassification } from './lib/performanceScore';
-import { canRegisterClient, isActiveEmployee } from './lib/permissions';
+import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee } from './lib/permissions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices } from './lib/clientServices';
 import {
@@ -104,6 +104,7 @@ import {
   AppModuleId,
 } from './data/roles';
 import { EmployeeLogin } from './components/EmployeeLogin';
+import { EmployeeTestingMode, type GeneratedTestPassword, type TestAccountStatus } from './components/EmployeeTestingMode';
 import { SetPasswordScreen } from './components/SetPasswordScreen';
 import { ClientRegistrationModal } from './components/ClientRegistrationModal';
 import { BulkClientUploadModal } from './components/BulkClientUploadModal';
@@ -126,6 +127,20 @@ import { MiniChat } from './components/MiniChat';
 import { AIAssistantWidget } from './components/AIAssistantWidget';
 
 export type AppModule = AppModuleId;
+
+// Temporary feature switch. Production builds require an explicit opt-in;
+// the real Auth + public.users role checks below remain mandatory either way.
+const EMPLOYEE_TESTING_MODE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_EMPLOYEE_TESTING_MODE === 'true';
+const TEST_SESSION_KEY = 'agency_employee_test_handoff';
+type TestHandoff = { employeeId: string; authId: string; email: string };
+
+function readTestHandoff(): TestHandoff | null {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(TEST_SESSION_KEY) || 'null');
+    return parsed && typeof parsed.employeeId === 'string' && typeof parsed.authId === 'string'
+      && typeof parsed.email === 'string' ? parsed as TestHandoff : null;
+  } catch { return null; }
+}
 
 export default function App() {
   const [supabaseActive, setSupabaseActive] = useState(false);
@@ -241,6 +256,7 @@ export default function App() {
 
   // Authenticated user state initialized from localStorage
   const [authenticatedUser, setAuthenticatedUser] = useState<UserRecord | null>(() => {
+    if (isSupabaseConfigured()) return null;
     try {
       const savedUserId = localStorage.getItem('agency_auth_user_id');
       if (savedUserId) {
@@ -261,10 +277,20 @@ export default function App() {
 
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isBulkClientUploadOpen, setIsBulkClientUploadOpen] = useState(false);
+  const [verifiedTesterId, setVerifiedTesterId] = useState<string | null>(null);
+  const [isTestingSelectorOpen, setIsTestingSelectorOpen] = useState(false);
+  // Non-secret UI marker only. Auth and RLS always come from Supabase's actual session.
+  const [testHandoff, setTestHandoff] = useState<TestHandoff | null>(readTestHandoff);
+  const [verifiedTestAuthId, setVerifiedTestAuthId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
 
   // Current active user based on authenticated session
+  const canAccessTestingMode = EMPLOYEE_TESTING_MODE_ENABLED && !testHandoff && !!authenticatedUser && verifiedTesterId === authenticatedUser.id
+    && canUseEmployeeTestingMode(authenticatedUser.role);
   const currentUser: UserRecord = authenticatedUser || (users && users.length > 0 ? users[0] : INITIAL_USERS[0]);
+  const isRealTestSession = !!testHandoff && !!authenticatedUser
+    && verifiedTestAuthId === testHandoff.authId && authenticatedUser.auth_id === testHandoff.authId
+    && authenticatedUser.id === testHandoff.employeeId;
   const canRegisterClients = canRegisterClient(currentUser.role);
   const userRoleInfo = getRoleInfo(currentUser?.role || 'sales');
 
@@ -412,9 +438,9 @@ export default function App() {
             const { data: dbUser } = await supabaseRaw
               .from('users')
               .select('*')
-              .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
+              .eq('auth_id', session.user.id)
               .single();
-            if (dbUser) {
+            if (dbUser && !dbUser.deactivated_at) {
               setAuthenticatedUser(dbUser as UserRecord);
               return;
             }
@@ -422,6 +448,9 @@ export default function App() {
         } catch (err) {
           console.warn('Session check warning:', err);
         }
+        // A cached employee ID cannot replace a real Supabase Auth session.
+        setAuthenticatedUser(null);
+        return;
       }
 
       // Check localStorage cached user
@@ -451,10 +480,12 @@ export default function App() {
           const { data: dbUser } = await supabaseRaw
             .from('users')
             .select('*')
-            .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
+            .eq('auth_id', session.user.id)
             .single();
-          if (dbUser) {
+          if (dbUser && !dbUser.deactivated_at) {
             setAuthenticatedUser(dbUser as UserRecord);
+          } else {
+            setAuthenticatedUser(null);
           }
         } else if (event === 'SIGNED_OUT') {
           setAuthenticatedUser(null);
@@ -465,6 +496,57 @@ export default function App() {
       };
     }
   }, []);
+
+  // Validate the real Supabase JWT and the linked public.users row before
+  // exposing the temporary selector. Cached/demo employee state is insufficient.
+  useEffect(() => {
+    let cancelled = false;
+    setVerifiedTesterId(null);
+    setIsTestingSelectorOpen(false);
+    if (!EMPLOYEE_TESTING_MODE_ENABLED || !authenticatedUser || !isSupabaseConfigured()
+      || !canUseEmployeeTestingMode(authenticatedUser.role)) {
+      return;
+    }
+    (async () => {
+      const { data: { user }, error: authError } = await supabaseRaw.auth.getUser();
+      if (cancelled || authError || !user) return;
+      const { data: admin, error } = await supabaseRaw.from('users')
+        .select('id, role, auth_id, deactivated_at')
+        .eq('auth_id', user.id)
+        .maybeSingle();
+      if (!cancelled && !error && admin && admin.id === authenticatedUser.id
+        && admin.role === authenticatedUser.role
+        && !admin.deactivated_at && canUseEmployeeTestingMode(admin.role as UserRole)) {
+        setVerifiedTesterId(admin.id);
+      }
+    })().catch((err) => console.warn('Testing Mode authorization check failed:', err));
+    return () => { cancelled = true; };
+  }, [authenticatedUser?.id, authenticatedUser?.role]);
+
+  useEffect(() => {
+    setVerifiedTestAuthId(null);
+    if (!testHandoff || !authenticatedUser) return;
+    let cancelled = false;
+    supabaseRaw.auth.getUser().then(async ({ data: { user }, error }) => {
+      if (cancelled) return;
+      if (!error && user?.id === testHandoff.authId
+        && authenticatedUser.auth_id === user.id && authenticatedUser.id === testHandoff.employeeId) {
+        // app_user_id() resolves public.users through the server's auth.uid().
+        const { data: rlsEmployeeId, error: rlsError } = await supabaseRaw.rpc('app_user_id');
+        if (!cancelled && !rlsError && rlsEmployeeId === authenticatedUser.id) {
+          setVerifiedTestAuthId(user.id);
+        } else if (!cancelled) {
+          setVerifiedTestAuthId(null);
+        }
+      } else {
+        sessionStorage.removeItem(TEST_SESSION_KEY);
+        setTestHandoff(null);
+      }
+    }).catch(() => {
+      if (!cancelled) setVerifiedTestAuthId(null);
+    });
+    return () => { cancelled = true; };
+  }, [testHandoff, authenticatedUser?.id, authenticatedUser?.auth_id]);
 
   // 2. Hash routing & unauthorized route protection
   useEffect(() => {
@@ -555,7 +637,91 @@ export default function App() {
     window.location.hash = `#/portal/${meta.portalSlug}/${meta.defaultModule}`;
   };
 
+  const invokeTestAccount = async (action: 'status' | 'setup' | 'generate_test_password', employeeId: string, password?: string): Promise<TestAccountStatus & { temporaryPassword?: string }> => {
+    if (!canAccessTestingMode || !usersLoadedFromSupabase) {
+      throw new Error('A verified leadership session and the live employee directory are required.');
+    }
+    const { data, error } = await supabaseRaw.functions.invoke('employee-test-account', {
+      body: { action, employeeId, ...(password === undefined ? {} : { password }) },
+    });
+    if (error) {
+      const context = error.context;
+      const status = context instanceof Response ? context.status : undefined;
+      let detail: string | undefined;
+      if (context instanceof Response) {
+        try {
+          const body: unknown = await context.clone().json();
+          if (body && typeof body === 'object') {
+            const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+            if (typeof value === 'string') detail = value;
+          }
+        } catch { /* A gateway error may not have a JSON body. */ }
+      }
+      console.error('Employee account setup request failed:', {
+        action, status, detail, errorName: error.name, errorMessage: error.message,
+      });
+      throw new Error(status
+        ? `Account setup request failed (HTTP ${status}): ${detail || error.message}`
+        : `Account setup request failed before an HTTP response: ${error.message}`);
+    }
+    if (!data || (data.status !== 'ready' && data.status !== 'pending')) {
+      throw new Error('Unexpected account setup response.');
+    }
+    return data as TestAccountStatus & { temporaryPassword?: string };
+  };
+
+  const generateTestPassword = async (employeeId: string): Promise<GeneratedTestPassword> => {
+    const result = await invokeTestAccount('generate_test_password', employeeId);
+    if (result.status !== 'ready' || !result.authId || !result.authEmail
+      || typeof result.temporaryPassword !== 'string' || result.temporaryPassword.length < 12) {
+      throw new Error('Unexpected temporary test password response. Check account status before retrying.');
+    }
+    return result as GeneratedTestPassword;
+  };
+
+  const handleStartEmployeeTest = async (employee: UserRecord, account: TestAccountStatus) => {
+    if (!canAccessTestingMode || !account.authId || !account.authEmail) throw new Error('Account is not ready.');
+    const fresh = await invokeTestAccount('status', employee.id);
+    if (fresh.status !== 'ready' || fresh.authId !== account.authId || fresh.authEmail !== account.authEmail) {
+      throw new Error('Account status changed. Check it again before continuing.');
+    }
+    // This marker only controls the test banner. It contains no token or password.
+    const handoff: TestHandoff = { employeeId: employee.id, authId: fresh.authId, email: fresh.authEmail };
+    sessionStorage.setItem(TEST_SESSION_KEY, JSON.stringify(handoff));
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      sessionStorage.removeItem(TEST_SESSION_KEY);
+      throw new Error('Could not sign out of the admin session. No employee session was started.');
+    }
+    localStorage.removeItem('agency_auth_user_id');
+    setTestHandoff(handoff);
+    setAuthenticatedUser(null);
+    setSupabaseSessionUser(null);
+    setVerifiedTesterId(null);
+    setIsTestingSelectorOpen(false);
+    setUnauthorizedRoute(null);
+    window.location.hash = '#login';
+  };
+
+  const handleExitEmployeeTest = async () => {
+    if (!testHandoff || !authenticatedUser) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      showNotification('Could not sign out of the employee session. Please retry.', 'info');
+      return;
+    }
+    sessionStorage.removeItem(TEST_SESSION_KEY);
+    localStorage.removeItem('agency_auth_user_id');
+    setTestHandoff(null);
+    setVerifiedTestAuthId(null);
+    setAuthenticatedUser(null);
+    setSupabaseSessionUser(null);
+    setUnauthorizedRoute(null);
+    window.location.hash = '#login';
+  };
+
   const handleLoginSuccess = (user: UserRecord) => {
+    setVerifiedTesterId(null);
     setAuthenticatedUser(user);
     setSupabaseSessionUser(user);
     setUnauthorizedRoute(null);
@@ -577,9 +743,9 @@ export default function App() {
         const { data: dbUser } = await supabase
           .from('users')
           .select('*')
-          .or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`)
+          .eq('auth_id', session.user.id)
           .single();
-        if (dbUser) {
+        if (dbUser && !dbUser.deactivated_at) {
           handleLoginSuccess(dbUser as UserRecord);
           return;
         }
@@ -593,6 +759,11 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    sessionStorage.removeItem(TEST_SESSION_KEY);
+    setTestHandoff(null);
+    setVerifiedTestAuthId(null);
+    setVerifiedTesterId(null);
+    setIsTestingSelectorOpen(false);
     try {
       if (isSupabaseConfigured()) {
         await supabase.auth.signOut();
@@ -3228,11 +3399,22 @@ export default function App() {
   // If no authenticated employee, render the dedicated Employee Portal Login
   if (!authenticatedUser) {
     return (
-      <EmployeeLogin
-        users={users}
-        onLoginSuccess={handleLoginSuccess}
-        supabaseActive={supabaseActive}
-      />
+      <>
+        {testHandoff && (
+          <div className="fixed inset-x-0 top-0 z-50 flex flex-wrap items-center justify-between gap-2 border-b border-amber-500 bg-amber-950 px-4 py-3 text-sm text-amber-100">
+            <span>TESTING LOGIN — Sign in normally with the employee's Auth email: <strong>{testHandoff.email}</strong></span>
+            <button onClick={() => { sessionStorage.removeItem(TEST_SESSION_KEY); setTestHandoff(null); }}
+              className="rounded-lg border border-amber-400 px-3 py-1">Return to Admin Login</button>
+          </div>
+        )}
+        <EmployeeLogin
+          key={testHandoff?.authId || 'normal-login'}
+          users={users}
+          onLoginSuccess={handleLoginSuccess}
+          supabaseActive={supabaseActive}
+          realTestEmail={testHandoff?.email}
+        />
+      </>
     );
   }
 
@@ -3288,6 +3470,14 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {canAccessTestingMode && usersLoadedFromSupabase && (
+              <button
+                onClick={() => setIsTestingSelectorOpen(true)}
+                className="rounded-xl border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-900/60"
+              >
+                Employee Testing Mode
+              </button>
+            )}
             {/* زر النشاط الحي للمديرين */}
             {['executive', 'head_of_technical'].includes(currentUser.role) && (
               <button
@@ -3382,13 +3572,26 @@ export default function App() {
             </button>
           </div>
         </div>
+        {testHandoff && authenticatedUser && (
+          <div className="mx-auto mt-3 flex max-w-7xl flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500 bg-amber-950/80 px-4 py-2 text-xs text-amber-100" role="status">
+            <span className="font-bold">
+              {isRealTestSession
+                ? `TESTING SESSION — Logged in as ${authenticatedUser.name} — ${getRoleInfo(authenticatedUser.role).englishTitle}`
+                : 'TESTING SESSION — Verifying employee Auth identity and RLS; do not test until verified'}
+              {isRealTestSession && <span className="ml-2 font-normal">(real employee Supabase Auth and RLS session)</span>}
+            </span>
+            <button onClick={handleExitEmployeeTest} className="rounded-lg bg-amber-300 px-3 py-1 font-bold text-black hover:bg-amber-200">
+              Exit Testing Session
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Sidebar + Content shell */}
       <div className="flex">
         {/* Left Sidebar Navigation - Filtered strictly by Employee's Role Permissions */}
         <aside
-          className="w-60 shrink-0 border-r sticky top-[65px] h-[calc(100vh-65px)] overflow-y-auto backdrop-blur-md"
+          className={`w-60 shrink-0 border-r sticky overflow-y-auto backdrop-blur-md ${testHandoff ? 'top-[110px] h-[calc(100vh-110px)]' : 'top-[65px] h-[calc(100vh-65px)]'}`}
           style={{
             background: 'rgba(15, 12, 22, 0.95)',
             borderColor: 'var(--border-soft)',
@@ -3981,6 +4184,16 @@ export default function App() {
       </div>
 
       {/* Client registration */}
+      {canAccessTestingMode && isTestingSelectorOpen && usersLoadedFromSupabase && (
+        <EmployeeTestingMode
+          employees={users}
+          onClose={() => setIsTestingSelectorOpen(false)}
+          onInspect={(employeeId) => invokeTestAccount('status', employeeId)}
+          onSetup={(employeeId, password) => invokeTestAccount('setup', employeeId, password)}
+          onGenerateTestPassword={generateTestPassword}
+          onStart={handleStartEmployeeTest}
+        />
+      )}
       <ClientRegistrationModal
         isOpen={canRegisterClients && isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
