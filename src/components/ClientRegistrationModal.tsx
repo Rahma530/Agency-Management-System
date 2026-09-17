@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
 import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers } from 'lucide-react';
 import { ServiceType, UserRecord } from '../types/database';
-
-const SERVICE_OPTIONS: { value: ServiceType; label: string }[] = [
-  { value: 'seo', label: 'SEO' },
-  { value: 'social_media', label: 'Social Media' },
-  { value: 'media_buying', label: 'Media Buying' },
-  { value: 'creative', label: 'Creative' },
-];
+import { CLIENT_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
 
 interface ClientRegistrationModalProps {
   isOpen: boolean;
@@ -117,7 +111,11 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
     }
   };
 
-  const toggleService = (service: ServiceType) => {
+  const toggleService = (service: ClientServiceOption) => {
+    if (service === 'comprehensive') {
+      setSelectedServices((prev) => prev.length === CLIENT_SERVICES.length ? [] : [...CLIENT_SERVICES]);
+      return;
+    }
     setSelectedServices((prev) =>
       prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]
     );
@@ -324,8 +322,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
               Services <span className="text-red-400">*</span>
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {SERVICE_OPTIONS.map((opt) => {
-                const isSelected = selectedServices.includes(opt.value);
+              {CLIENT_SERVICE_OPTIONS.map((opt) => {
+                const isSelected = opt.value === 'comprehensive'
+                  ? selectedServices.length === CLIENT_SERVICES.length
+                  : selectedServices.includes(opt.value);
                 return (
                   <button
                     key={opt.value}

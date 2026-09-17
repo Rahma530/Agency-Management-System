@@ -14,6 +14,7 @@ import {
   UserRole,
 } from '../types/database';
 import { getCampaignStartDate, getCampaignEndDate } from '../components/CampaignManagementModule';
+import { normalizeClientServices } from './clientServices';
 
 // ----------------------------------------------------------------------------
 // Period boundaries
@@ -123,7 +124,7 @@ export type ReportMode = 'comparison' | 'period_summary';
 // Module 13 Phase 5: reads ClientRecord.services directly — no more package_id -> packages
 // indirection.
 export function clientHasService(client: ClientRecord, service: ServiceType): boolean {
-  return (client.services || []).includes(service);
+  return normalizeClientServices(client.services).includes(service);
 }
 
 // Every client subscribed to a given service — the same set a team lead for that department

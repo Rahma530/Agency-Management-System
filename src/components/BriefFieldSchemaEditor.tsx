@@ -23,7 +23,7 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',
   media_buying: 'Media Buying',
-  creative: 'Creative',
+  interface: 'واجهة',
 };
 
 const emptyDraft = (serviceType: ServiceType, sortOrder: number): Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'> => ({

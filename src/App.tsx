@@ -34,6 +34,7 @@ import {
 import { resolvePeriodRange, generateKpiScoreMetrics, suggestClassification } from './lib/performanceScore';
 import { canRegisterClient, isActiveEmployee } from './lib/permissions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
+import { normalizeClientServices } from './lib/clientServices';
 import {
   ComparisonGranularity,
   ComparisonPeriod,
@@ -647,7 +648,9 @@ export default function App() {
           console.error('Failed to load clients from Supabase:', clientErr);
           showNotification(`Failed to load clients from the server: ${clientErr.message}`, 'info');
         } else {
-          setClients((clientData as ClientRecord[]) || []);
+          setClients(((clientData as ClientRecord[]) || []).map((client) => ({
+            ...client, services: normalizeClientServices(client.services),
+          })));
         }
 
         // Fetch briefs
@@ -1288,7 +1291,7 @@ export default function App() {
       id: `cl-${Date.now().toString().slice(-4)}`,
       name: clientData.name,
       industry: clientData.industry,
-      services: clientData.services,
+      services: normalizeClientServices(clientData.services),
       phone_number: clientData.phone_number || null,
       status: isManagementRegistration ? 'onboarding' : isAmRegistration ? 'active' : 'onboarding',
       sales_owner_id: isAmRegistration || isManagementRegistration ? null : currentUser.id,
@@ -1364,7 +1367,7 @@ export default function App() {
       id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       name: clientData.name,
       industry: clientData.industry,
-      services: clientData.services,
+      services: normalizeClientServices(clientData.services),
       phone_number: clientData.phone_number || null,
       status: isManagementUpload ? 'onboarding' : isAmUpload ? 'active' : 'onboarding',
       sales_owner_id: isAmUpload || isManagementUpload ? null : currentUser.id,
@@ -3285,22 +3288,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {(currentUser.role === 'executive' || currentUser.role === 'head_of_technical') && (
-              <>
-                <button
-                  onClick={() => setIsRegisterModalOpen(true)}
-                  className="text-xs px-4 py-2 rounded-xl font-bold text-white bg-purple-700/60 hover:bg-purple-600/70"
-                >
-                  Register Client
-                </button>
-                <button
-                  onClick={() => setIsBulkClientUploadOpen(true)}
-                  className="text-xs px-4 py-2 rounded-xl font-bold text-amber-200 bg-amber-950/40 hover:bg-amber-900/60"
-                >
-                  Bulk Upload
-                </button>
-              </>
-            )}
             {/* زر النشاط الحي للمديرين */}
             {['executive', 'head_of_technical'].includes(currentUser.role) && (
               <button

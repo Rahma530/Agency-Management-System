@@ -1,4 +1,5 @@
 import { BriefFieldDef, BriefFieldSchemaRow, ServiceType } from '../types/database';
+import { normalizeClientServices } from '../lib/clientServices';
 
 // Re-exported for backward compatibility with existing call sites that import these types from
 // here — the canonical definitions now live in types/database.ts alongside BriefFieldSchemaRow,
@@ -59,11 +60,13 @@ export function groupBriefFieldSchemas(rows: BriefFieldSchemaRow[]): Record<Serv
     seo: [],
     social_media: [],
     media_buying: [],
-    creative: [],
+    interface: [],
   };
   const sorted = [...rows].sort((a, b) => a.sort_order - b.sort_order);
   for (const row of sorted) {
-    result[row.service_type].push(toBriefFieldDef(row));
+    for (const service of normalizeClientServices([row.service_type])) {
+      result[service].push(toBriefFieldDef(row));
+    }
   }
   return result;
 }

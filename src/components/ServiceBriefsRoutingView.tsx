@@ -46,6 +46,7 @@ import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
+import { normalizeClientServices } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
 import { BriefRepositoryView } from './BriefRepositoryView';
 import { DynamicBriefForm } from './DynamicBriefForm';
@@ -206,7 +207,7 @@ const AMServiceBriefsPanel: React.FC<{
 
   const [dashboardClientId, setDashboardClientId] = useState<string | null>(null);
 
-  const clientServices = (client: ClientRecord): ServiceType[] => client.services || [];
+  const clientServices = (client: ClientRecord): ServiceType[] => normalizeClientServices(client.services);
 
   const clientBriefsDocumented = (client: ClientRecord) => {
     const services = clientServices(client);
@@ -488,7 +489,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   //   clientBriefs, which is never filtered by service_type). This queue itself still
   //   only lists clients subscribed to serviceType, via the hasService check below.
   const authorizedClients = clients.filter((c) => {
-    const hasService = (c.services || []).includes(serviceType);
+    const hasService = normalizeClientServices(c.services).includes(serviceType);
     if (!hasService) return false;
 
     if (isTeamLead) {

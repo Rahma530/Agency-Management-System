@@ -75,6 +75,7 @@ import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, can
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
+import { normalizeClientServices, SERVICE_LABELS } from '../lib/clientServices';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
 interface ClientDashboardProps {
@@ -231,7 +232,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isSavingPaymentTracking, setIsSavingPaymentTracking] = useState(false);
 
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
-  const services: ServiceType[] = client.services || [];
+  const services: ServiceType[] = useMemo(() => normalizeClientServices(client.services), [client.services]);
 
   // Initialize active brief service
   React.useEffect(() => {
@@ -834,7 +835,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                               : '#f472b6',
                         }}
                       >
-                        {s.replace('_', ' ')}
+                        {SERVICE_LABELS[s]}
                       </span>
                     ))}
                   </div>
@@ -1482,7 +1483,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                               : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
                           }`}
                         >
-                          <span>{srv.replace('_', ' ').toUpperCase()} Brief</span>
+                          <span>{SERVICE_LABELS[srv]} Brief</span>
                           <span className={`w-2 h-2 rounded-full ${dotColor}`} title={dotTitle} />
                         </button>
                       );

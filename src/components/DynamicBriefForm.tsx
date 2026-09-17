@@ -153,7 +153,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
         return <Share2 className="w-4 h-4 text-purple-400" />;
       case 'media_buying':
         return <Target className="w-4 h-4 text-amber-400" />;
-      case 'creative':
+      case 'interface':
         return <Palette className="w-4 h-4 text-pink-400" />;
       default:
         return <Layers className="w-4 h-4 text-stone-400" />;
@@ -168,8 +168,8 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
         return 'Social Media Management';
       case 'media_buying':
         return 'Paid Advertising (Media Buying)';
-      case 'creative':
-        return 'Creative (Graphic Design & Video)';
+      case 'interface':
+        return 'واجهة (UI/UX Interface Design)';
       default:
         return serviceType;
     }

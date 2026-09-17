@@ -13,6 +13,7 @@ import {
 import { ComparisonCard, FiledReportsList } from '../reporting/ComparisonDisplay';
 import { BriefFieldsReadOnly } from '../BriefFieldsReadOnly';
 import { groupBriefFieldSchemas } from '../../data/briefFieldSchemas';
+import { normalizeClientServices } from '../../lib/clientServices';
 
 interface ClientPortalViewProps {
   client: ClientRecord;
@@ -23,7 +24,7 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   media_buying: 'Media Buying',
   seo: 'SEO',
   social_media: 'Social Media',
-  creative: 'Creative',
+  interface: 'واجهة',
 };
 
 // Purely read-only: reuses ComparisonCard/FiledReportsList from reporting/ComparisonDisplay.tsx
@@ -39,7 +40,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
     seo: [],
     social_media: [],
     media_buying: [],
-    creative: [],
+    interface: [],
   });
   const [loading, setLoading] = useState(true);
   const [activeBriefService, setActiveBriefService] = useState<ServiceType | null>(null);
@@ -73,7 +74,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
 
   // Module 13 Phase 5: services now lives directly on the client row the portal fetch already
   // returned — no more package lookup needed.
-  const services = useMemo(() => client.services || [], [client.services]);
+  const services = useMemo(() => normalizeClientServices(client.services), [client.services]);
 
   useEffect(() => {
     if (services.length > 0 && !activeBriefService) setActiveBriefService(services[0]);

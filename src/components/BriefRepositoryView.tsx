@@ -3,6 +3,7 @@ import { Building2, Search, Clock, ChevronDown, ChevronRight, ExternalLink } fro
 import { BriefFieldDef, ClientRecord, BriefRecord, BriefRevisionRecord, UserRecord, ServiceType } from '../types/database';
 import { BriefFieldsReadOnly } from './BriefFieldsReadOnly';
 import { BriefEditHistory } from './BriefEditHistory';
+import { normalizeClientServices } from '../lib/clientServices';
 
 interface BriefRepositoryViewProps {
   clients: ClientRecord[];
@@ -17,7 +18,7 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',
   media_buying: 'Media Buying',
-  creative: 'Creative',
+  interface: 'واجهة',
 };
 
 const timeAgo = (iso: string): string => {
@@ -70,7 +71,7 @@ export const BriefRepositoryView: React.FC<BriefRepositoryViewProps> = ({
           (c.industry || '').toLowerCase().includes(searchQuery.toLowerCase())
       )
       .map((client) => {
-        const services = client.services || [];
+        const services = normalizeClientServices(client.services);
         const serviceRows = services
           .filter((s) => serviceFilter === 'all' || s === serviceFilter)
           .map((s) => {
@@ -102,7 +103,7 @@ export const BriefRepositoryView: React.FC<BriefRepositoryViewProps> = ({
           />
         </div>
         <div className="flex items-center gap-1 bg-stone-900/60 p-1 rounded-xl border border-stone-800 text-[11px]">
-          {(['all', 'seo', 'social_media', 'media_buying', 'creative'] as const).map((s) => (
+          {(['all', 'seo', 'social_media', 'media_buying', 'interface'] as const).map((s) => (
             <button
               key={s}
               onClick={() => setServiceFilter(s)}

@@ -16,6 +16,7 @@ import { getUserCapacityData } from '../../lib/capacity';
 import { STATUS_META } from '../../lib/performanceScore';
 import { isActiveEmployee } from '../../lib/permissions';
 import { isPausedClient } from '../../lib/clientStatus';
+import { normalizeClientServices } from '../../lib/clientServices';
 
 interface DeptConfig {
   team: string;
@@ -94,7 +95,7 @@ export const TeamLeadDashboard: React.FC<{
     if (config?.service) return !clientHasBrief(client, config.service);
     // Account Management spans every service a client subscribes to — missing if any of them
     // has no documented brief yet.
-    const services = client.services || [];
+    const services = normalizeClientServices(client.services);
     return services.some((s) => !clientHasBrief(client, s));
   };
 

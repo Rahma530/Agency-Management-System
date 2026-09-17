@@ -65,9 +65,8 @@ export const canManageEmployeesOrClients = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
 
 // Global brief field schema (brief_field_schemas) write access: executive/head_of_technical/
-// am_team_lead/am_agent unconditionally (this branch already covers 'creative' — there is no
-// dedicated "creative team lead" role in this app; creative resources are pooled under
-// am_team_lead's oversight elsewhere), plus each department team lead scoped to only their own
+// am_team_lead/am_agent unconditionally (including interface briefs, which have no dedicated
+// service team lead), plus each department team lead scoped to only their own
 // service_type.
 export const canEditBriefFieldSchema = (role: UserRole, serviceType: ServiceType): boolean => {
   if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'am_agent') {

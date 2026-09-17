@@ -53,6 +53,7 @@ import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee, canSeeContractValue } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
+import { normalizeClientServices, SERVICE_LABELS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 
@@ -269,7 +270,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       };
     }
 
-    const services = client.services || [];
+    const services = normalizeClientServices(client.services);
     const clientBriefs = getClientBriefs(client.id);
     const hasAllBriefs =
       services.length > 0 &&
@@ -405,7 +406,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 ? visibleClients.filter((c) => !c.am_agent_id).length
                 : visibleClients.filter((c) => {
                     const brfs = getClientBriefs(c.id);
-                    return (c.services || []).some((s) => !brfs.some((b) => b.service_type === s));
+                    return normalizeClientServices(c.services).some((s) => !brfs.some((b) => b.service_type === s));
                   }).length}
             </p>
           </div>
@@ -528,7 +529,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 {displayedClients.map((client) => {
                   const assignedAgent = amAgents.find((u) => u.id === client.am_agent_id);
                   const lifecycle = getClientLifecycleStatus(client);
-                  const services = client.services || [];
+                  const services = normalizeClientServices(client.services);
 
                   return (
                     <tr
@@ -588,7 +589,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                                       : '#f472b6',
                                 }}
                               >
-                                {s.replace('_', ' ')}
+                                {SERVICE_LABELS[s]}
                               </span>
                             ))}
                           </div>

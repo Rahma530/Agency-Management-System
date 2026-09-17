@@ -9,7 +9,7 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   media_buying: 'Media Buying',
   seo: 'SEO',
   social_media: 'Social Media',
-  creative: 'Creative',
+  interface: 'واجهة',
 };
 
 // Module 9, point 4: a monthly report draft is an auto-compiled document — the client's period

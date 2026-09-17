@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { X, Download, FileSpreadsheet, Upload, AlertCircle, Loader2, UploadCloud } from 'lucide-react';
 import { ClientRecord, ServiceType, UserRecord } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
+import { normalizeClientServices } from '../lib/clientServices';
 
 interface BulkClientUploadModalProps {
   isOpen: boolean;
@@ -24,8 +25,8 @@ interface BulkClientUploadModalProps {
   }) => Promise<void>;
 }
 
-const VALID_SERVICES: ServiceType[] = ['seo', 'social_media', 'media_buying', 'creative'];
-const isValidService = (val: string): val is ServiceType => (VALID_SERVICES as string[]).includes(val);
+const VALID_SERVICES = ['seo', 'social_media', 'media_buying', 'interface', 'واجهة', 'comprehensive', 'شاملة', 'creative'];
+const isValidService = (val: string): boolean => VALID_SERVICES.includes(val);
 const isValidDateStr = (val: string) => !Number.isNaN(new Date(val).getTime());
 const todayIso = () => new Date().toISOString().split('T')[0];
 const addOneYear = (dateStr: string): string => {
@@ -206,11 +207,11 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             row: rowNum,
             name: rowName,
             status: 'skipped',
-            reason: `Invalid services "${rowServicesRaw}" (valid: seo, social_media, media_buying, creative)`,
+            reason: `Invalid services "${rowServicesRaw}" (valid: seo, social_media, media_buying, interface, comprehensive / شاملة)`,
           });
           continue;
         }
-        const services = Array.from(new Set(serviceTokens)) as ServiceType[];
+        const services = normalizeClientServices(serviceTokens);
 
         if (rowContractValue && Number.isNaN(Number(rowContractValue))) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'contract_value is not a number' });

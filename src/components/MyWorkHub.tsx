@@ -101,8 +101,8 @@ const SERVICE_TEAM_LEAD_ROLES: UserRole[] = ['media_buying_team_lead', 'seo_team
 
 // graphic_designer/video_editor/programming_agent have no AssignmentRecord
 // relationship (that machinery only exists for the three departments above —
-// 'creative' is a valid ServiceType but no UI path ever creates an
-// assignments row for it, and programming_agent was deliberately kept
+// interface design does not create an assignment row for these roles;
+// programming_agent was deliberately kept
 // task-based only per Module 12 Phase 1), so "their" clients are derived
 // from active task assignment instead: a genuinely different, more
 // transient signal than an owned relationship, but the only one this app's

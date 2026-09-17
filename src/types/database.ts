@@ -32,7 +32,7 @@ export type UserRole =
   // (edit/deactivate/role-change) anywhere.
   | 'marketing_manager';         // Marketing Manager
 
-export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'creative';
+export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface';
 
 // Module 13: 5-value lifecycle, replacing the old 4-value 'lead'|'onboarding'|'active'|'renewal'|
 // 'churned' set. 'lead' is gone — a ClientRecord is now only ever created at 'onboarding' (that
@@ -79,7 +79,7 @@ export interface ClientRecord {
   // alongside name via lib/clientSearch.ts's shared predicate.
   phone_number?: string | null;
   // Module 13 Phase 5: which services this client is directly subscribed to — SEO, Social Media,
-  // Media Buying, Creative, any combination. Replaces the old named-Package indirection
+  // Media Buying, interface design, any combination. Social Media includes designs and videos.
   // (package_id -> packages.services); no "package" concept exists in this schema anymore.
   // Never empty in practice, but the type allows it since a brand-new client mid-registration may
   // transiently have none selected yet.
