@@ -32,7 +32,7 @@ import {
   buildClientContractStoragePath,
 } from './lib/supabase';
 import { resolvePeriodRange, generateKpiScoreMetrics, suggestClassification } from './lib/performanceScore';
-import { isActiveEmployee } from './lib/permissions';
+import { canRegisterClient, isActiveEmployee } from './lib/permissions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import {
   ComparisonGranularity,
@@ -89,9 +89,7 @@ import {
 } from './types/database';
 import {
   INITIAL_USERS,
-  INITIAL_CLIENTS,
   INITIAL_BRIEFS,
-  INITIAL_TASKS,
   INITIAL_CAPACITY_LOGS,
   INITIAL_DAILY_LOGS,
   INITIAL_EXTRA_NOTES,
@@ -141,7 +139,8 @@ export default function App() {
 
   // Data State
   const [users, setUsers] = useState<UserRecord[]>(INITIAL_USERS);
-  const [clients, setClients] = useState<ClientRecord[]>(INITIAL_CLIENTS);
+  const [usersLoadedFromSupabase, setUsersLoadedFromSupabase] = useState(false);
+  const [clients, setClients] = useState<ClientRecord[]>([]);
   const [briefs, setBriefs] = useState<BriefRecord[]>(INITIAL_BRIEFS);
   const [briefRevisions, setBriefRevisions] = useState<BriefRevisionRecord[]>([]);
   // Global per-service brief question list — moved here from a static import (data/briefFieldSchemas.ts)
@@ -150,7 +149,7 @@ export default function App() {
   // id) the schema editor needs for update/delete.
   const [briefFieldSchemaRows, setBriefFieldSchemaRows] = useState<BriefFieldSchemaRow[]>([]);
   const briefFieldSchemas = useMemo(() => groupBriefFieldSchemas(briefFieldSchemaRows), [briefFieldSchemaRows]);
-  const [tasks, setTasks] = useState<TaskRecord[]>(INITIAL_TASKS);
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
   const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>(INITIAL_CAPACITY_LOGS);
@@ -265,6 +264,7 @@ export default function App() {
 
   // Current active user based on authenticated session
   const currentUser: UserRecord = authenticatedUser || (users && users.length > 0 ? users[0] : INITIAL_USERS[0]);
+  const canRegisterClients = canRegisterClient(currentUser.role);
   const userRoleInfo = getRoleInfo(currentUser?.role || 'sales');
 
   const showNotification = (text: string, type: 'success' | 'info' = 'success') => {
@@ -612,6 +612,8 @@ export default function App() {
   // Fetch initial data directly from Supabase (or fallback to initial state)
   const loadData = useCallback(async () => {
     setLoading(true);
+    setClients([]);
+    setUsersLoadedFromSupabase(false);
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
 
@@ -627,6 +629,7 @@ export default function App() {
           showNotification(`Failed to load employees from the server: ${userErr.message}`, 'info');
         } else {
           setUsers((userData as UserRecord[]) || []);
+          setUsersLoadedFromSupabase(true);
         }
       } else {
         setUsers(INITIAL_USERS);
@@ -639,9 +642,12 @@ export default function App() {
     if (configured) {
       try {
         // Fetch clients
-        const { data: clientData, error: clientErr } = await supabase.from('clients').select('*');
-        if (!clientErr && clientData && clientData.length > 0) {
-          setClients(clientData as ClientRecord[]);
+        const { data: clientData, error: clientErr } = await supabaseRaw.from('clients').select('*');
+        if (clientErr) {
+          console.error('Failed to load clients from Supabase:', clientErr);
+          showNotification(`Failed to load clients from the server: ${clientErr.message}`, 'info');
+        } else {
+          setClients((clientData as ClientRecord[]) || []);
         }
 
         // Fetch briefs
@@ -667,9 +673,12 @@ export default function App() {
         }
 
         // Fetch tasks
-        const { data: taskData, error: taskErr } = await supabase.from('tasks').select('*');
-        if (!taskErr && taskData && taskData.length > 0) {
-          setTasks(taskData as TaskRecord[]);
+        const { data: taskData, error: taskErr } = await supabaseRaw.from('tasks').select('*');
+        if (taskErr) {
+          console.error('Failed to load tasks from Supabase:', taskErr);
+          showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
+        } else {
+          setTasks((taskData as TaskRecord[]) || []);
         }
 
         // Fetch task comments
@@ -1241,14 +1250,19 @@ export default function App() {
     };
   }, [authenticatedUser, supabaseActive]);
 
-  // 1. Single-client registration (ClientRegistrationModal.tsx) — shared by sales, am_team_lead,
-  // and am_agent now, branching on currentUser.role exactly like handleBulkAddClient's three-way
-  // split below: sales still creates a new-pipeline lead (status 'onboarding', sales_owner_id =
-  // self, that creation IS the Sales -> AM Team Lead handoff); am_team_lead/am_agent register an
-  // already-active client they manage (status 'active', sales_owner_id null, am_agent_id = self
-  // for an am_agent with am_agent_assigned_at stamped, am_team_lead_id resolved from the form's
-  // picker either way). Same clients_insert_am_rls policy already covers this — it's the same
-  // clients INSERT regardless of whether it came from this single form or the bulk uploader.
+  const validateClientAssignment = async (id: string | null | undefined, role: 'am_team_lead' | 'am_agent') => {
+    if (!id) return null;
+    const { data, error } = await supabaseRaw.from('users').select('id, role, auth_id, deactivated_at').eq('id', id).single();
+    if (error) throw error;
+    if (!data || data.role !== role || !isActiveEmployee(data as UserRecord)) {
+      throw new Error(`Selected ${role === 'am_team_lead' ? 'AM Team Leader' : 'AM Agent'} is not an active employee.`);
+    }
+    return data.id as string;
+  };
+
+  // 1. Single-client registration (ClientRegistrationModal.tsx) — shared by permitted roles.
+  // Sales retains its onboarding handoff. Management may register an onboarding client
+  // with either AM assignment, both, or neither. AM Agents retain their active-client path.
   const handleRegisterClient = async (clientData: {
     name: string;
     industry: string;
@@ -1258,51 +1272,55 @@ export default function App() {
     start_date: string;
     renewal_date: string;
     am_team_lead_id?: string;
+    am_agent_id?: string;
   }) => {
+    if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
+    const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
+    const leadId = isManagementRegistration
+      ? await validateClientAssignment(clientData.am_team_lead_id, 'am_team_lead')
+      : clientData.am_team_lead_id || 'usr-am-lead';
+    const agentId = isManagementRegistration
+      ? await validateClientAssignment(clientData.am_agent_id, 'am_agent')
+      : currentUser.role === 'am_agent' ? currentUser.id : null;
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}`,
       name: clientData.name,
       industry: clientData.industry,
       services: clientData.services,
       phone_number: clientData.phone_number || null,
-      status: isAmRegistration ? 'active' : 'onboarding',
-      sales_owner_id: isAmRegistration ? null : currentUser.id,
-      am_agent_id: currentUser.role === 'am_agent' ? currentUser.id : null,
-      am_agent_assigned_at: currentUser.role === 'am_agent' ? new Date().toISOString() : null,
-      am_team_lead_id: clientData.am_team_lead_id || 'usr-am-lead',
+      status: isManagementRegistration ? 'onboarding' : isAmRegistration ? 'active' : 'onboarding',
+      sales_owner_id: isAmRegistration || isManagementRegistration ? null : currentUser.id,
+      am_agent_id: agentId,
+      am_agent_assigned_at: agentId ? new Date().toISOString() : null,
+      am_team_lead_id: leadId,
       contract_value: clientData.contract_value,
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
     };
 
-    if (supabaseActive) {
-      try {
-        const { data, error } = await supabase
-          .from('clients')
-          .insert([newClientPayload])
-          .select();
-        if (error) throw error;
-        if (data && data[0]) {
-          setClients((prev) => [data[0] as ClientRecord, ...prev]);
-        } else {
-          setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
-        }
-      } catch (err: any) {
-        console.error('Supabase error inserting client:', err);
-        setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
-      }
-    } else {
-      setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
+    let persistedClient: ClientRecord;
+    try {
+      const { data, error } = await supabaseRaw.from('clients').insert([newClientPayload]).select();
+      if (error) throw error;
+      if (!data?.[0]) throw new Error('Client creation returned no persisted row.');
+      persistedClient = data[0] as ClientRecord;
+    } catch (err) {
+      console.error('Supabase error inserting client:', err);
+      throw err;
     }
+    setClients((prev) => [persistedClient, ...prev]);
 
-    await logActivity('create', 'client', newClientPayload.id!, newClientPayload.name!, `Registered new client in ${newClientPayload.industry}`);
+    await logActivity('create', 'client', persistedClient.id, persistedClient.name, `Registered new client in ${persistedClient.industry}`);
 
     showNotification(
-      isAmRegistration
-        ? `Client "${clientData.name}" added as an active account under your management.`
-        : `Client "${clientData.name}" registered and routed to Account Management.`
+      isManagementRegistration
+        ? `Client "${clientData.name}" registered for onboarding.`
+        : isAmRegistration
+          ? `Client "${clientData.name}" added as an active account under your management.`
+          : `Client "${clientData.name}" registered and routed to Account Management.`
     );
   };
 
@@ -1313,21 +1331,14 @@ export default function App() {
   // catch and report per-row failures (e.g. a constraint violation) individually instead of every
   // row silently "succeeding" locally.
   //
-  // Branches on the uploading user's role — the modal itself doesn't know or care which path it's
-  // on, it just resolves the same columns (including am_team_lead_id, required for every path) and
-  // hands them here:
+  // Branches on the uploading user's role; the modal resolves optional assignment names to IDs.
   //   - sales: new-pipeline lead, sales_owner_id = self, status starts at 'onboarding' — matches
   //     clients_insert_sales_rls exactly.
   //   - am_agent: an already-active client of their own, am_agent_id = self (agents only manage
   //     their own book), sales_owner_id stays null, status starts at 'active', and
   //     am_agent_assigned_at is stamped now so it isn't invisible to MyWorkHub's gained/lost
   //     metrics from creation.
-  //   - am_team_lead: an already-active client, am_team_lead_id comes from the resolved column
-  //     (may be themselves or a peer lead), am_agent_id stays null (awaiting individual AM
-  //     assignment, same "unassigned at creation" convention the sales path already uses), status
-  //     starts at 'active'.
-  // Matches the additive clients_insert_am_rls policy (20260929100000_client_bulk_upload_am_rls.sql)
-  // for the am_agent/am_team_lead branches; clients_insert_sales_rls is untouched for sales.
+  //   - management: onboarding client, no sales owner, independent optional AM assignments.
   const handleBulkAddClient = async (clientData: {
     name: string;
     industry: string;
@@ -1336,32 +1347,44 @@ export default function App() {
     contract_value: number;
     start_date: string;
     renewal_date: string;
-    am_team_lead_id: string;
+    am_team_lead_id?: string;
+    am_agent_id?: string;
   }) => {
+    if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmUpload = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
+    const isManagementUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
+    const leadId = isManagementUpload
+      ? await validateClientAssignment(clientData.am_team_lead_id, 'am_team_lead')
+      : clientData.am_team_lead_id;
+    const agentId = isManagementUpload
+      ? await validateClientAssignment(clientData.am_agent_id, 'am_agent')
+      : currentUser.role === 'am_agent' ? currentUser.id : null;
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       name: clientData.name,
       industry: clientData.industry,
       services: clientData.services,
       phone_number: clientData.phone_number || null,
-      status: isAmUpload ? 'active' : 'onboarding',
-      sales_owner_id: isAmUpload ? null : currentUser.id,
-      am_agent_id: currentUser.role === 'am_agent' ? currentUser.id : null,
-      am_agent_assigned_at: currentUser.role === 'am_agent' ? new Date().toISOString() : null,
-      am_team_lead_id: clientData.am_team_lead_id,
+      status: isManagementUpload ? 'onboarding' : isAmUpload ? 'active' : 'onboarding',
+      sales_owner_id: isAmUpload || isManagementUpload ? null : currentUser.id,
+      am_agent_id: agentId,
+      am_agent_assigned_at: agentId ? new Date().toISOString() : null,
+      am_team_lead_id: leadId,
       contract_value: clientData.contract_value,
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
     };
 
-    if (supabaseActive) {
-      const { data, error } = await supabase.from('clients').insert([newClientPayload]).select();
+    try {
+      const { data, error } = await supabaseRaw.from('clients').insert([newClientPayload]).select();
       if (error) throw error;
-      setClients((prev) => [(data?.[0] as ClientRecord) || (newClientPayload as ClientRecord), ...prev]);
-    } else {
-      setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
+      if (!data?.[0]) throw new Error('Client creation returned no persisted row.');
+      setClients((prev) => [data[0] as ClientRecord, ...prev]);
+    } catch (err) {
+      console.error('Supabase bulk client insert error:', err);
+      throw err;
     }
   };
 
@@ -1457,33 +1480,52 @@ export default function App() {
     }
   };
 
+  const updatePersistedClient = async (clientId: string, updates: Partial<ClientRecord>) => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not updated.');
+    const { data, error } = await supabaseRaw
+      .from('clients')
+      .update(updates)
+      .eq('id', clientId)
+      .select('*')
+      .single();
+    if (error) throw error;
+    if (!data) throw new Error('Client update returned no persisted row.');
+    const persistedClient = data as ClientRecord;
+    setClients((prev) => prev.map((client) => client.id === clientId ? persistedClient : client));
+  };
+
   // 2. Assign the client to an Account Manager (AM Agent)
+  const handleAssignAMTeamLead = async (clientId: string, leadId: string) => {
+    if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
+      throw new Error('You do not have permission to assign an AM Team Leader.');
+    }
+    const validatedId = await validateClientAssignment(leadId, 'am_team_lead');
+    await updatePersistedClient(clientId, { am_team_lead_id: validatedId, am_team_lead_viewed_at: null });
+    showNotification(validatedId ? 'AM Team Leader assignment updated.' : 'AM Team Leader assignment cleared.');
+  };
+
   const handleAssignAMAgent = async (clientId: string, agentId: string) => {
+    if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
+      throw new Error('You do not have permission to assign an AM Agent.');
+    }
+    const validatedId = await validateClientAssignment(agentId, 'am_agent');
     // Module 13 Phase 4: only bump am_agent_assigned_at on an actual change of agent — a no-op
     // resubmission of the same agent shouldn't re-date the "gained" moment. Mirrors the
     // reassignment-clears-viewed_at convention from Module 12 Phase 5.
     const existing = clients.find((c) => c.id === clientId);
-    const isReassignment = existing?.am_agent_id !== agentId;
-    const assignedAt = isReassignment ? new Date().toISOString() : existing?.am_agent_assigned_at;
+    const isReassignment = existing?.am_agent_id !== validatedId;
+    const assignedAt = validatedId ? (isReassignment ? new Date().toISOString() : existing?.am_agent_assigned_at) : null;
 
-    if (supabaseActive) {
-      try {
-        const { error } = await supabase
-          .from('clients')
-          .update({ am_agent_id: agentId, am_agent_assigned_at: assignedAt })
-          .eq('id', clientId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase assign error:', err);
-      }
+    try {
+      await updatePersistedClient(clientId, { am_agent_id: validatedId, am_agent_assigned_at: assignedAt });
+    } catch (err) {
+      console.error('Supabase assign error:', err);
+      showNotification('Unable to assign this client.', 'info');
+      throw err;
     }
 
-    setClients((prev) =>
-      prev.map((c) => (c.id === clientId ? { ...c, am_agent_id: agentId, am_agent_assigned_at: assignedAt } : c))
-    );
-
-    const agent = users.find((u) => u.id === agentId);
-    showNotification(`Client assigned to Account Manager: ${agent?.name || agentId}`);
+    const agent = users.find((u) => u.id === validatedId);
+    showNotification(validatedId ? `Client assigned to Account Manager: ${agent?.name || validatedId}` : 'Account Manager assignment cleared.');
   };
 
   // 2b. Transition a client's lifecycle status (Onboarding -> Active <-> Paused -> Renewal -> Closed)
@@ -1503,21 +1545,13 @@ export default function App() {
       updatePayload.renewal_date = options.renewal_date;
     }
 
-    if (supabaseActive) {
-      try {
-        const { error } = await supabase
-          .from('clients')
-          .update(updatePayload)
-          .eq('id', clientId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase update client status error:', err);
-      }
+    try {
+      await updatePersistedClient(clientId, updatePayload);
+    } catch (err) {
+      console.error('Supabase update client status error:', err);
+      showNotification('Unable to update this client status.', 'info');
+      return;
     }
-
-    setClients((prev) =>
-      prev.map((c) => (c.id === clientId ? { ...c, ...updatePayload } : c))
-    );
 
     const client = clients.find((c) => c.id === clientId);
     await logActivity('status_change', 'client', clientId, client?.name || 'Client', `Status updated to ${newStatus}`);
@@ -1533,13 +1567,13 @@ export default function App() {
   // exactly what's blocking before ever calling this, but this still fails safely on its own if
   // that pre-check ever misses something.
   const handleDeleteClient = async (clientId: string) => {
-    if (supabaseActive) {
-      const { error } = await supabase.from('clients').delete().eq('id', clientId);
-      if (error) {
-        console.error('Supabase delete client error:', error);
-        showNotification('Unable to delete this client — it may still have related records.', 'info');
-        throw error;
-      }
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not deleted.');
+    const { data, error } = await supabaseRaw.from('clients').delete().eq('id', clientId).select('id').single();
+    if (error || !data) {
+      const failure = error || new Error('Client deletion returned no persisted result.');
+      console.error('Supabase delete client error:', failure);
+      showNotification('Unable to delete this client — it may still have related records.', 'info');
+      throw failure;
     }
 
     setClients((prev) => prev.filter((c) => c.id !== clientId));
@@ -1553,18 +1587,13 @@ export default function App() {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => {
-    if (supabaseActive) {
-      try {
-        const { error } = await supabase.from('clients').update(updates).eq('id', clientId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase update payment tracking error:', err);
-        showNotification('Unable to save payment tracking.', 'info');
-        return;
-      }
+    try {
+      await updatePersistedClient(clientId, updates);
+    } catch (err) {
+      console.error('Supabase update payment tracking error:', err);
+      showNotification('Unable to save payment tracking.', 'info');
+      return;
     }
-
-    setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, ...updates } : c)));
     showNotification('Payment tracking updated.');
   };
 
@@ -1600,21 +1629,11 @@ export default function App() {
   const handleMarkClientViewedByAMLead = async (clientId: string) => {
     const viewedAt = new Date().toISOString();
 
-    if (supabaseActive) {
-      try {
-        const { error } = await supabase
-          .from('clients')
-          .update({ am_team_lead_viewed_at: viewedAt })
-          .eq('id', clientId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase mark client viewed error:', err);
-      }
+    try {
+      await updatePersistedClient(clientId, { am_team_lead_viewed_at: viewedAt });
+    } catch (err) {
+      console.error('Supabase mark client viewed error:', err);
     }
-
-    setClients((prev) =>
-      prev.map((c) => (c.id === clientId ? { ...c, am_team_lead_viewed_at: viewedAt } : c))
-    );
   };
 
   // 2d. Mark an assignment as viewed by its assigned agent (Module 12 Phase 5 — clears the
@@ -2038,6 +2057,17 @@ export default function App() {
     showNotification('Task status moved and the shared board updated.');
   };
 
+  const assertRealTaskClient = async (clientId: string) => {
+    if (!clientId) throw new Error('Select a client before saving the task.');
+    const { data, error } = await supabaseRaw
+      .from('clients')
+      .select('id')
+      .eq('id', clientId)
+      .maybeSingle();
+    if (error) throw new Error(`Unable to verify the selected client: ${error.message}`);
+    if (!data) throw new Error('The selected client no longer exists in Supabase. Choose an available client.');
+  };
+
   // Update task details and hours
   const handleUpdateTask = async (taskId: string, updates: Partial<TaskRecord>) => {
     // Same completed_at bookkeeping as handleUpdateTaskStatus, but only when
@@ -2056,20 +2086,25 @@ export default function App() {
       }
     }
 
-    if (supabaseActive) {
-      try {
-        await supabase
-          .from('tasks')
-          .update(finalUpdates)
-          .eq('id', taskId);
-      } catch (err) {
-        console.error('Supabase task update error:', err);
-      }
+    if (!supabaseActive) throw new Error('Supabase is not configured; the task was not updated.');
+    if ('client_id' in finalUpdates) await assertRealTaskClient(finalUpdates.client_id || '');
+    let persistedTask: TaskRecord;
+    try {
+      const { data, error } = await supabaseRaw
+        .from('tasks')
+        .update(finalUpdates)
+        .eq('id', taskId)
+        .select('*')
+        .single();
+      if (error) throw error;
+      if (!data) throw new Error('Task update returned no persisted row.');
+      persistedTask = data as TaskRecord;
+    } catch (err) {
+      console.error('Supabase task update error:', err);
+      throw err;
     }
 
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, ...finalUpdates } : t))
-    );
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
     
     const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
     await logActivity('update', 'task', taskId, taskTitle, 'Task details updated');
@@ -2108,24 +2143,52 @@ export default function App() {
       parent_task_id: taskData.parent_task_id || null,
     };
 
-    if (supabaseActive) {
-      try {
-        const { data, error } = await supabase.from('tasks').insert([newTaskPayload]).select();
-        if (error) throw error;
-        if (data && data[0]) {
-          setTasks((prev) => [data[0] as TaskRecord, ...prev]);
-        } else {
-          setTasks((prev) => [newTaskPayload, ...prev]);
-        }
-      } catch (err: any) {
-        console.error('Supabase task insert error:', err);
-        setTasks((prev) => [newTaskPayload, ...prev]);
-      }
-    } else {
-      setTasks((prev) => [newTaskPayload, ...prev]);
+    if (!supabaseActive) {
+      throw new Error('Supabase is not configured; the task was not created.');
+    }
+    await assertRealTaskClient(newTaskPayload.client_id);
+
+    let persistedTask: TaskRecord;
+    try {
+      const { data, error } = await supabaseRaw.from('tasks').insert([newTaskPayload]).select();
+      if (error) throw error;
+      if (!data?.[0]) throw new Error('Task creation returned no persisted row.');
+      persistedTask = data[0] as TaskRecord;
+    } catch (err) {
+      console.error('Supabase task insert error:', err);
+      throw err;
     }
 
-    await logActivity('create', 'task', newTaskPayload.id, newTaskPayload.title, `Created task for team: ${newTaskPayload.team}`);
+    setTasks((prev) => [persistedTask, ...prev]);
+    await logActivity('create', 'task', persistedTask.id, persistedTask.title, `Created task for team: ${persistedTask.team}`);
+
+    if (persistedTask.assigned_to) {
+      try {
+        const { data: recipient, error: recipientError } = await supabaseRaw
+          .from('users')
+          .select('id, auth_id, deactivated_at')
+          .eq('id', persistedTask.assigned_to)
+          .maybeSingle();
+        if (recipientError) throw recipientError;
+        if (recipient && isActiveEmployee(recipient)) {
+          const notificationId = `notif-task-created-${persistedTask.id}-${recipient.id}`;
+          const { error: notificationError } = await supabaseRaw.from('notifications').insert({
+            id: notificationId,
+            user_id: recipient.id,
+            sender_id: currentUser.id,
+            title: 'New Task Assigned',
+            message: `You have been assigned a new task: ${persistedTask.title}.`,
+            type: 'task_assigned',
+            is_read: false,
+            link_url: 'module:tasks',
+            created_at: persistedTask.created_at || new Date().toISOString(),
+          });
+          if (notificationError && notificationError.code !== '23505') throw notificationError;
+        }
+      } catch (err) {
+        console.error('Failed to create task notification:', err);
+      }
+    }
 
     showNotification(`Task "${taskData.title}" added to the shared task board successfully!`);
   };
@@ -3222,6 +3285,22 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {(currentUser.role === 'executive' || currentUser.role === 'head_of_technical') && (
+              <>
+                <button
+                  onClick={() => setIsRegisterModalOpen(true)}
+                  className="text-xs px-4 py-2 rounded-xl font-bold text-white bg-purple-700/60 hover:bg-purple-600/70"
+                >
+                  Register Client
+                </button>
+                <button
+                  onClick={() => setIsBulkClientUploadOpen(true)}
+                  className="text-xs px-4 py-2 rounded-xl font-bold text-amber-200 bg-amber-950/40 hover:bg-amber-900/60"
+                >
+                  Bulk Upload
+                </button>
+              </>
+            )}
             {/* زر النشاط الحي للمديرين */}
             {['executive', 'head_of_technical'].includes(currentUser.role) && (
               <button
@@ -3709,6 +3788,7 @@ export default function App() {
                     currentUser={currentUser}
                     currentUserId={currentUser.id}
                     onAssignAMAgent={handleAssignAMAgent}
+                    onAssignAMTeamLead={handleAssignAMTeamLead}
                     onSaveBrief={handleSaveBrief}
                     briefFieldSchemas={briefFieldSchemas}
                     briefFieldSchemaRows={briefFieldSchemaRows}
@@ -3716,8 +3796,8 @@ export default function App() {
                     onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
                     onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                     onDeleteClient={handleDeleteClient}
-                    onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
-                    onOpenBulkUploadModal={() => setIsBulkClientUploadOpen(true)}
+                    onOpenRegisterModal={canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
+                    onOpenBulkUploadModal={canRegisterClients ? () => setIsBulkClientUploadOpen(true) : undefined}
                     onUpdateClientStatus={handleUpdateClientStatus}
                     onMarkClientViewed={handleMarkClientViewedByAMLead}
                     onNavigateToModule={handleNavigateToModule}
@@ -3913,20 +3993,22 @@ export default function App() {
         </main>
       </div>
 
-      {/* Modal: Client Registration by Sales */}
+      {/* Client registration */}
       <ClientRegistrationModal
-        isOpen={isRegisterModalOpen}
+        isOpen={canRegisterClients && isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
         currentUser={currentUser}
-        amTeamLeaders={users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u))}
+        amTeamLeaders={(currentUser.role === 'sales' || currentUser.role === 'am_agent' || usersLoadedFromSupabase)
+          ? users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u)) : []}
+        amAgents={usersLoadedFromSupabase ? users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u)) : []}
         onSubmit={handleRegisterClient}
       />
 
       <BulkClientUploadModal
-        isOpen={isBulkClientUploadOpen}
+        isOpen={canRegisterClients && isBulkClientUploadOpen}
         onClose={() => setIsBulkClientUploadOpen(false)}
         currentUser={currentUser}
-        users={users}
+        users={(currentUser.role === 'sales' || currentUser.role === 'am_agent' || usersLoadedFromSupabase) ? users : []}
         clients={clients}
         onAddClientRow={handleBulkAddClient}
       />

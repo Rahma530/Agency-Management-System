@@ -108,6 +108,7 @@ interface ClientDashboardProps {
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
   onAssignAMAgent?: (clientId: string, agentId: string) => Promise<void>;
+  onAssignAMTeamLead?: (clientId: string, leadId: string) => Promise<void>;
   onUpdateTaskStatus?: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onCreateCampaign?: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateClientStatus?: (
@@ -177,6 +178,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onDeleteBriefFieldSchema,
   onDeleteClient,
   onAssignAMAgent,
+  onAssignAMTeamLead,
   onUpdateTaskStatus,
   onCreateCampaign,
   onUpdateClientStatus,
@@ -206,6 +208,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [selectedBriefService, setSelectedBriefService] = useState<ServiceType | null>(null);
   const [isAssigningAM, setIsAssigningAM] = useState(false);
   const [selectedAMId, setSelectedAMId] = useState(client.am_agent_id || '');
+  const [selectedLeadId, setSelectedLeadId] = useState(client.am_team_lead_id || '');
+  const [isAssigningLead, setIsAssigningLead] = useState(false);
+  const [assignmentError, setAssignmentError] = useState('');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showChurnConfirm, setShowChurnConfirm] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -546,14 +551,31 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   };
 
   const amAgents = users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u));
+  const amTeamLeaders = users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u));
 
   const handleAssignAM = async () => {
-    if (!selectedAMId || !onAssignAMAgent) return;
+    if (!onAssignAMAgent) return;
     setIsAssigningAM(true);
     try {
+      setAssignmentError('');
       await onAssignAMAgent(client.id, selectedAMId);
+    } catch (err: any) {
+      setAssignmentError(err?.message || 'Unable to update AM Agent assignment.');
     } finally {
       setIsAssigningAM(false);
+    }
+  };
+
+  const handleAssignLead = async () => {
+    if (!onAssignAMTeamLead) return;
+    setIsAssigningLead(true);
+    try {
+      setAssignmentError('');
+      await onAssignAMTeamLead(client.id, selectedLeadId);
+    } catch (err: any) {
+      setAssignmentError(err?.message || 'Unable to update AM Team Leader assignment.');
+    } finally {
+      setIsAssigningLead(false);
     }
   };
 
@@ -1215,7 +1237,24 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           {/* 2. ASSIGNED TEAM */}
           {activeTab === 'team' && (
             <div className="space-y-6">
+              {assignmentError && <p className="text-xs text-red-300">{assignmentError}</p>}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-semibold text-purple-300 uppercase tracking-wider">AM Team Leader</span>
+                    {canEditAM && onAssignAMTeamLead && (
+                      <button onClick={handleAssignLead} disabled={isAssigningLead} className="text-xs px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold disabled:opacity-50">
+                        {isAssigningLead ? 'Saving...' : 'Update Lead'}
+                      </button>
+                    )}
+                  </div>
+                  {canEditAM && onAssignAMTeamLead ? (
+                    <select value={selectedLeadId} onChange={(e) => setSelectedLeadId(e.target.value)} className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+                      <option value="">-- Unassigned --</option>
+                      {amTeamLeaders.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}
+                    </select>
+                  ) : <p className="text-sm text-white">{amLead?.name || 'Unassigned'}</p>}
+                </div>
                 {/* Account Manager Card */}
                 <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
                   <div className="flex items-center justify-between mb-3">

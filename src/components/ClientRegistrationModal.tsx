@@ -14,6 +14,7 @@ interface ClientRegistrationModalProps {
   onClose: () => void;
   currentUser: UserRecord;
   amTeamLeaders?: UserRecord[];
+  amAgents?: UserRecord[];
   onSubmit: (clientData: {
     name: string;
     industry: string;
@@ -23,6 +24,7 @@ interface ClientRegistrationModalProps {
     start_date: string;
     renewal_date: string;
     am_team_lead_id?: string;
+    am_agent_id?: string;
   }) => Promise<void>;
 }
 
@@ -38,13 +40,13 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   onClose,
   currentUser,
   amTeamLeaders = [],
+  amAgents = [],
   onSubmit,
 }) => {
-  // Same component, two behaviors — derived from currentUser.role directly rather than a
-  // separate mode prop, matching BulkClientUploadModal's pattern. Attribution/status differ
-  // entirely in the App.tsx handler; this component only adjusts its own copy and which AM lead
-  // the dropdown defaults to.
+  // Management assignments start empty; Sales and AM Agent retain their lead picker default.
   const isAmForm = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
+  const isLeadershipForm = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  const isManagementForm = isLeadershipForm || currentUser.role === 'am_team_lead';
 
   const [name, setName] = useState('');
   const [industry, setIndustry] = useState('');
@@ -54,19 +56,18 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
-  // Defaults the AM lead picker sensibly per role: an am_team_lead registering a client is almost
-  // always registering their own, so default to self; an am_agent's own manager_id points at
-  // their team lead. Both stay full dropdowns (not locked), since either role may occasionally
-  // register on behalf of a peer lead's book, same as the bulk uploader allows.
-  const [amTeamLeadId, setAmTeamLeadId] = useState(() => {
-    if (currentUser.role === 'am_team_lead' && amTeamLeaders.some((u) => u.id === currentUser.id)) {
-      return currentUser.id;
+  const [amTeamLeadId, setAmTeamLeadId] = useState('');
+  const [amAgentId, setAmAgentId] = useState('');
+  React.useEffect(() => {
+    if (isManagementForm) {
+      setAmTeamLeadId('');
+      setAmAgentId('');
     }
-    if (currentUser.role === 'am_agent' && amTeamLeaders.some((u) => u.id === currentUser.manager_id)) {
-      return currentUser.manager_id as string;
-    }
-    return amTeamLeaders[0]?.id || 'usr-am-lead';
-  });
+  }, [isOpen, currentUser.id, isManagementForm]);
+  const selectedLeadId = isManagementForm
+    ? amTeamLeadId
+    : amTeamLeadId || (currentUser.role === 'am_agent' && amTeamLeaders.some((u) => u.id === currentUser.manager_id)
+      ? currentUser.manager_id || '' : amTeamLeaders[0]?.id || 'usr-am-lead');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -94,7 +95,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
         contract_value: contractValue ? Number(contractValue) : 0,
         start_date: startDate,
         renewal_date: renewalDate,
-        am_team_lead_id: amTeamLeadId,
+        am_team_lead_id: selectedLeadId || undefined,
+        ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
       });
       // reset
       setName('');
@@ -102,6 +104,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setPhoneNumber('');
       setSelectedServices([]);
       setContractValue('');
+      if (isManagementForm) {
+        setAmTeamLeadId('');
+        setAmAgentId('');
+      }
       setRenewalDateTouched(false);
       onClose();
     } catch (err: any) {
@@ -145,9 +151,11 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 Register New Client
               </h3>
               <p className="text-xs" style={{ color: 'var(--grey)' }}>
-                {isAmForm
-                  ? 'Client will be created as an already-active account under your management.'
-                  : 'Client will be created and routed to Account Management to begin onboarding'}
+                {isManagementForm
+                  ? 'Client will be registered for onboarding. AM assignments can be made now or later.'
+                  : isAmForm
+                    ? 'Client will be created as an already-active account under your management.'
+                    : 'Client will be created and routed to Account Management to begin onboarding'}
               </p>
             </div>
           </div>
@@ -341,12 +349,12 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           {/* Assign / Transfer to AM Team Leader */}
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              {isAmForm ? 'Account Management Lead' : 'Route to Account Management Lead'} <span className="text-red-400">*</span>
+              {isAmForm ? 'Account Management Lead' : 'Route to Account Management Lead'} {!isManagementForm && <span className="text-red-400">*</span>}
             </label>
             <div className="relative">
               <Users className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
               <select
-                value={amTeamLeadId}
+                value={selectedLeadId}
                 onChange={(e) => setAmTeamLeadId(e.target.value)}
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
                 style={{
@@ -355,17 +363,14 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                   color: 'var(--white)',
                 }}
               >
-                {amTeamLeaders.length > 0 ? (
-                  amTeamLeaders.map((leader) => (
+                {isManagementForm && <option value="" className="bg-stone-900 text-white">-- Unassigned --</option>}
+                {amTeamLeaders.length > 0 ? amTeamLeaders.map((leader) => (
                     <option key={leader.id} value={leader.id} className="bg-stone-900 text-white">
                       {leader.name} — ({leader.team || 'Account Management Lead'})
                     </option>
-                  ))
-                ) : (
-                  <option value="usr-am-lead" className="bg-stone-900 text-white">
-                    Maha Al-Shami — AM Team Lead
-                  </option>
-                )}
+                  )) : !isManagementForm && (
+                    <option value="usr-am-lead" className="bg-stone-900 text-white">Maha Al-Shami — AM Team Lead</option>
+                  )}
               </select>
             </div>
             <p className="text-[11px] text-stone-400 mt-1">
@@ -374,6 +379,16 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 : 'Client record will be routed to AM lead for account assignment and service kickoff.'}
             </p>
           </div>
+
+          {isManagementForm && (
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Account Manager (optional)</label>
+              <select value={amAgentId} onChange={(e) => setAmAgentId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl text-sm bg-stone-950 text-white border border-purple-900/40">
+                <option value="">-- Unassigned --</option>
+                {amAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+              </select>
+            </div>
+          )}
 
           <div className="pt-2 flex items-center justify-end gap-3">
             <button

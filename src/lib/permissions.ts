@@ -1,5 +1,15 @@
 import { ServiceType, UserRecord, UserRole } from '../types/database';
 
+const CLIENT_REGISTRATION_ROLES: UserRole[] = [
+  'executive',
+  'head_of_technical',
+  'sales',
+  'am_team_lead',
+  'am_agent',
+];
+
+export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
+
 // contract_value is financial/commercial data: full visibility stays with the roles who own the
 // client relationship end-to-end (leadership + AM), everyone else never sees it — except sales,
 // who entered the figure themselves at registration and may see it only for their own clients

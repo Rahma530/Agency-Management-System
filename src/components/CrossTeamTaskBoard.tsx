@@ -163,6 +163,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newClientId, setNewClientId] = useState(clients[0]?.id || '');
+  useEffect(() => {
+    if (!addSubtaskParent && !clients.some((client) => client.id === newClientId)) {
+      setNewClientId(clients[0]?.id || '');
+    }
+  }, [clients, newClientId, addSubtaskParent]);
   const [newTeam, setNewTeam] = useState('SEO');
   const [newAssignedTo, setNewAssignedTo] = useState<string>('');
   const [newDueDate, setNewDueDate] = useState(
@@ -446,7 +451,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setTimeout(() => setNotification(null), 3500);
     } catch (err: any) {
       console.error(err);
-      setNotification({ text: 'Failed to create task under available permissions.', type: 'error' });
+      setNotification({
+        text: `Failed to create task: ${err?.message || 'Unknown Supabase error.'}`,
+        type: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -531,9 +539,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setEditingTask(null);
       setNotification({ text: 'Task details updated successfully.', type: 'success' });
       setTimeout(() => setNotification(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setNotification({ text: 'Error updating task.', type: 'error' });
+      setNotification({ text: `Error updating task: ${err?.message || 'Unknown Supabase error.'}`, type: 'error' });
     } finally {
       setIsUpdating(false);
     }

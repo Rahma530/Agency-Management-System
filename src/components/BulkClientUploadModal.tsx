@@ -19,7 +19,8 @@ interface BulkClientUploadModalProps {
     contract_value: number;
     start_date: string;
     renewal_date: string;
-    am_team_lead_id: string;
+    am_team_lead_id?: string;
+    am_agent_id?: string;
   }) => Promise<void>;
 }
 
@@ -44,6 +45,7 @@ const CSV_TEMPLATE_HEADERS = [
   'phone_number',
   'am_team_lead_name',
 ];
+const MANAGEMENT_TEMPLATE_HEADERS = [...CSV_TEMPLATE_HEADERS, 'am_agent_name'];
 const CSV_TEMPLATE_EXAMPLE = [
   'Apex Global Trading',
   'E-Commerce',
@@ -107,18 +109,16 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   const [results, setResults] = useState<RowResult[] | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 
-  // Column/validation logic is identical for every uploading role (sales, am_team_lead,
-  // am_agent) — am_team_lead_name is always required and always resolves am_team_lead_id, even
-  // for an am_agent's own upload, so every client keeps a real accountable lead. Only the
-  // resulting status/sales_owner_id/am_agent_id attribution differs, and that's entirely handled
-  // by the onAddClientRow handler the caller supplies — this component doesn't branch on role at
-  // all except for this one line of descriptive copy.
+  // Sales and AM Agent retain a required AM lead; management may leave both AM assignments empty.
   const isSalesUpload = currentUser.role === 'sales';
+  const isLeadershipUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  const isManagementUpload = isLeadershipUpload || currentUser.role === 'am_team_lead';
 
   const amTeamLeads = useMemo(
     () => users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u)),
     [users]
   );
+  const amAgents = useMemo(() => users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u)), [users]);
 
   // Duplicate detection has no unique DB constraint to lean on (clients has no email column) —
   // purely a client-side name+phone_number heuristic, same combination requested for this
@@ -135,7 +135,9 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   if (!isOpen) return null;
 
   const downloadTemplate = () => {
-    const csv = [CSV_TEMPLATE_HEADERS.join(','), CSV_TEMPLATE_EXAMPLE.join(',')].join('\n');
+    const headers = isManagementUpload ? MANAGEMENT_TEMPLATE_HEADERS : CSV_TEMPLATE_HEADERS;
+    const example = isManagementUpload ? [...CSV_TEMPLATE_EXAMPLE, ''] : CSV_TEMPLATE_EXAMPLE;
+    const csv = [headers.join(','), example.join(',')].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -179,6 +181,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const rowRenewalDate = (raw.renewal_date || '').trim();
         const rowPhone = (raw.phone_number || '').trim();
         const rowAmLeadName = (raw.am_team_lead_name || '').trim();
+        const rowAmAgentName = (raw.am_agent_name || '').trim();
 
         if (!rowName) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'Missing name' });
@@ -227,7 +230,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         }
         const renewalDate = rowRenewalDate || addOneYear(startDate);
 
-        if (!rowAmLeadName) {
+        if (!rowAmLeadName && !isManagementUpload) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'Missing am_team_lead_name' });
           continue;
         }
@@ -235,14 +238,20 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         // silently resolve to whichever comes first in `users`. Not handled specially since role
         // names are set by leadership at hire time and collisions are expected to be rare/caught
         // elsewhere, same trust level manager_id gets in the employee bulk uploader.
-        const matchedLead = amTeamLeads.find((u) => u.name.trim().toLowerCase() === rowAmLeadName.toLowerCase());
-        if (!matchedLead) {
+        const matchedLead = rowAmLeadName ? amTeamLeads.find((u) => u.name.trim().toLowerCase() === rowAmLeadName.toLowerCase()) : null;
+        if (rowAmLeadName && !matchedLead) {
           rowResults.push({
             row: rowNum,
             name: rowName,
             status: 'skipped',
             reason: `No active AM Team Lead named "${rowAmLeadName}"`,
           });
+          continue;
+        }
+        const matchedAgent = rowAmAgentName && isManagementUpload
+          ? amAgents.find((u) => u.name.trim().toLowerCase() === rowAmAgentName.toLowerCase()) : null;
+        if (rowAmAgentName && isManagementUpload && !matchedAgent) {
+          rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: `No active AM Agent named "${rowAmAgentName}"` });
           continue;
         }
 
@@ -262,7 +271,8 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             contract_value: contractValue,
             start_date: startDate,
             renewal_date: renewalDate,
-            am_team_lead_id: matchedLead.id,
+            am_team_lead_id: matchedLead?.id,
+            am_agent_id: matchedAgent?.id,
           });
           rowResults.push({ row: rowNum, name: rowName, status: 'added' });
         } catch (err: any) {
@@ -299,7 +309,9 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
               <p className="text-xs" style={{ color: 'var(--grey)' }}>
                 {isSalesUpload
                   ? 'Every row is registered under your name and routed to Account Management, same as a single registration.'
-                  : 'Every row is added as an already-active client under your management — no sales handoff, no onboarding stage.'}
+                  : isManagementUpload
+                    ? 'Every row is registered for onboarding; AM assignments may be supplied now or later.'
+                    : 'Every row is added as an already-active client under your management — no sales handoff, no onboarding stage.'}
               </p>
             </div>
           </div>
@@ -315,9 +327,9 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-xs text-stone-400">
-              Columns: <code className="font-mono">{CSV_TEMPLATE_HEADERS.join(', ')}</code>
+              Columns: <code className="font-mono">{(isManagementUpload ? MANAGEMENT_TEMPLATE_HEADERS : CSV_TEMPLATE_HEADERS).join(', ')}</code>
               <br />
-              Required: name, services, am_team_lead_name. Everything else is optional.
+              Required: name, services{isManagementUpload ? '.' : ', am_team_lead_name.'} Everything else is optional.
             </p>
             <button
               onClick={downloadTemplate}

@@ -73,6 +73,7 @@ interface AMQueueProps {
   currentUser?: UserRecord;
   currentUserId?: string;
   onAssignAMAgent: (clientId: string, agentId: string) => Promise<void>;
+  onAssignAMTeamLead?: (clientId: string, leadId: string) => Promise<void>;
   onSaveBrief: (briefData: {
     client_id: string;
     service_type: ServiceType;
@@ -147,6 +148,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   currentUser,
   currentUserId,
   onAssignAMAgent,
+  onAssignAMTeamLead,
   onSaveBrief,
   briefFieldSchemas,
   briefFieldSchemaRows,
@@ -699,6 +701,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
           onDeleteClient={onDeleteClient}
           onAssignAMAgent={onAssignAMAgent}
+          onAssignAMTeamLead={onAssignAMTeamLead}
           onUpdateTaskStatus={onUpdateTaskStatus}
           onUpdateClientStatus={onUpdateClientStatus}
           onMarkClientViewed={onMarkClientViewed}
