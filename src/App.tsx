@@ -33,6 +33,7 @@ import {
 } from './lib/supabase';
 import { resolvePeriodRange, generateKpiScoreMetrics, suggestClassification } from './lib/performanceScore';
 import { isActiveEmployee } from './lib/permissions';
+import { createBusinessNotification, type BusinessNotificationInput } from './lib/businessNotifications';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import {
   ComparisonGranularity,
@@ -126,6 +127,13 @@ import { LiveActivityFeed } from './components/LiveActivityFeed';
 import { MiniChat } from './components/MiniChat';
 
 export type AppModule = AppModuleId;
+
+const SERVICE_NOTIFICATION_LABELS: Record<ServiceType, string> = {
+  seo: 'SEO',
+  social_media: 'Social Media',
+  media_buying: 'Media Buying',
+  creative: 'Creative',
+};
 
 export default function App() {
   const [supabaseActive, setSupabaseActive] = useState(false);
@@ -271,6 +279,13 @@ export default function App() {
     setTimeout(() => setNotification(null), 4500);
   };
 
+  const sendBusinessNotification = async (
+    input: Omit<BusinessNotificationInput, 'senderId'>
+  ) => {
+    if (!supabaseActive) return;
+    await createBusinessNotification(supabaseRaw, { ...input, senderId: currentUser.id });
+  };
+
   const mergeNotificationsPreservingLocalReads = (
     previous: NotificationRecord[],
     incoming: NotificationRecord[]
@@ -361,6 +376,15 @@ export default function App() {
             });
         }
         setChatOpenRequest({ userId: otherUserId });
+      }
+      return;
+    }
+
+    if (notification.link_url?.startsWith('module:')) {
+      const requestedModule = notification.link_url.slice('module:'.length) as AppModule;
+      const supportedNotificationModules: AppModule[] = ['onboarding', 'tasks', 'service_briefs', 'employees'];
+      if (supportedNotificationModules.includes(requestedModule)) {
+        handleTabChange(requestedModule);
       }
     }
   };
@@ -526,7 +550,7 @@ export default function App() {
   }, [authenticatedUser]);
 
   // Switch tab and keep URL hash synchronized
-  const handleTabChange = (newTab: AppModule, prefillAssigneeName?: string) => {
+  function handleTabChange(newTab: AppModule, prefillAssigneeName?: string) {
     if (!authenticatedUser) return;
     if (!isModuleAllowed(authenticatedUser.role, newTab)) {
       setUnauthorizedRoute(`#/${newTab}`);
@@ -541,7 +565,7 @@ export default function App() {
     window.location.hash = `#/portal/${mySlug}/${newTab}`;
     setActiveTab(newTab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }
 
   const handleNavigateToModule = handleTabChange;
 
@@ -1156,18 +1180,20 @@ export default function App() {
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
     };
+    let persistedClient: ClientRecord | null = null;
 
     if (supabaseActive) {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await supabaseRaw
           .from('clients')
           .insert([newClientPayload])
           .select();
         if (error) throw error;
         if (data && data[0]) {
-          setClients((prev) => [data[0] as ClientRecord, ...prev]);
+          persistedClient = data[0] as ClientRecord;
+          setClients((prev) => [persistedClient as ClientRecord, ...prev]);
         } else {
-          setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
+          throw new Error('Client registration returned no persisted row.');
         }
       } catch (err: any) {
         console.error('Supabase error inserting client:', err);
@@ -1182,6 +1208,18 @@ export default function App() {
         ? `Client "${clientData.name}" added as an active account under your management.`
         : `Client "${clientData.name}" registered and routed to Account Management.`
     );
+
+    if (persistedClient?.am_team_lead_id) {
+      await sendBusinessNotification({
+        id: `notif-client-registered-${persistedClient.id}-${persistedClient.am_team_lead_id}`,
+        recipientId: persistedClient.am_team_lead_id,
+        title: 'New Client Registered',
+        message: `${persistedClient.name} has been registered and assigned to you.`,
+        type: 'general',
+        linkUrl: 'module:onboarding',
+        createdAt: persistedClient.created_at,
+      });
+    }
   };
 
   // 1a2. Bulk-upload client insert (BulkClientUploadModal.tsx), one row at a time. Deliberately
@@ -1235,9 +1273,22 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      const { data, error } = await supabase.from('clients').insert([newClientPayload]).select();
+      const { data, error } = await supabaseRaw.from('clients').insert([newClientPayload]).select();
       if (error) throw error;
-      setClients((prev) => [(data?.[0] as ClientRecord) || (newClientPayload as ClientRecord), ...prev]);
+      if (!data?.[0]) throw new Error('Client bulk registration returned no persisted row.');
+      const persistedClient = data[0] as ClientRecord;
+      setClients((prev) => [persistedClient, ...prev]);
+      if (persistedClient.am_team_lead_id) {
+        await sendBusinessNotification({
+          id: `notif-client-registered-${persistedClient.id}-${persistedClient.am_team_lead_id}`,
+          recipientId: persistedClient.am_team_lead_id,
+          title: 'New Client Registered',
+          message: `${persistedClient.name} has been registered and assigned to you.`,
+          type: 'general',
+          linkUrl: 'module:onboarding',
+          createdAt: persistedClient.created_at,
+        });
+      }
     } else {
       setClients((prev) => [newClientPayload as ClientRecord, ...prev]);
     }
@@ -1309,14 +1360,19 @@ export default function App() {
     const existing = clients.find((c) => c.id === clientId);
     const isReassignment = existing?.am_agent_id !== agentId;
     const assignedAt = isReassignment ? new Date().toISOString() : existing?.am_agent_assigned_at;
+    let persisted = false;
 
     if (supabaseActive) {
       try {
-        const { error } = await supabase
+        const { data, error } = await supabaseRaw
           .from('clients')
           .update({ am_agent_id: agentId, am_agent_assigned_at: assignedAt })
-          .eq('id', clientId);
+          .eq('id', clientId)
+          .select('id')
+          .single();
         if (error) throw error;
+        if (!data) throw new Error('Client assignment update returned no persisted row.');
+        persisted = true;
       } catch (err: any) {
         console.error('Supabase assign error:', err);
       }
@@ -1328,6 +1384,18 @@ export default function App() {
 
     const agent = users.find((u) => u.id === agentId);
     showNotification(`Client assigned to Account Manager: ${agent?.name || agentId}`);
+
+    if (persisted && isReassignment && existing) {
+      await sendBusinessNotification({
+        id: `notif-client-am-${clientId}-${agentId}`,
+        recipientId: agentId,
+        title: 'Client Assigned',
+        message: `You have been assigned as AM for ${existing.name}.`,
+        type: 'general',
+        linkUrl: 'module:onboarding',
+        createdAt: assignedAt,
+      });
+    }
   };
 
   // 2b. Transition a client's lifecycle status (Onboarding -> Active <-> Paused -> Renewal -> Closed)
@@ -1336,24 +1404,32 @@ export default function App() {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; renewal_date?: string }
   ) => {
+    const client = clients.find((c) => c.id === clientId);
+    const statusChanged = !!client && client.status !== newStatus;
+    const statusChangedAt = new Date().toISOString();
     const updatePayload: Partial<ClientRecord> = { status: newStatus };
     // Field names kept as churn_reason/churned_at (Module 13 only renamed the status VALUE
     // 'churned' -> 'closed', not these columns — see types/database.ts).
     if (newStatus === 'closed') {
       updatePayload.churn_reason = options?.churn_reason || null;
-      updatePayload.churned_at = new Date().toISOString();
+      updatePayload.churned_at = statusChangedAt;
     }
     if (options?.renewal_date) {
       updatePayload.renewal_date = options.renewal_date;
     }
 
+    let persisted = false;
     if (supabaseActive) {
       try {
-        const { error } = await supabase
+        const { data, error } = await supabaseRaw
           .from('clients')
           .update(updatePayload)
-          .eq('id', clientId);
+          .eq('id', clientId)
+          .select('id')
+          .single();
         if (error) throw error;
+        if (!data) throw new Error('Client status update returned no persisted row.');
+        persisted = true;
       } catch (err: any) {
         console.error('Supabase update client status error:', err);
       }
@@ -1363,8 +1439,32 @@ export default function App() {
       prev.map((c) => (c.id === clientId ? { ...c, ...updatePayload } : c))
     );
 
-    const client = clients.find((c) => c.id === clientId);
     showNotification(`Client "${client?.name || clientId}" status updated to ${newStatus}.`);
+
+    if (persisted && statusChanged && client) {
+      const recipientIds = new Set<string>();
+      [client.sales_owner_id, client.am_agent_id, client.am_team_lead_id].forEach((id) => {
+        if (id) recipientIds.add(id);
+      });
+      assignments
+        .filter((assignment) => assignment.client_id === clientId)
+        .forEach((assignment) => recipientIds.add(assignment.team_lead_id));
+      recipientIds.delete(currentUser.id);
+
+      await Promise.all(
+        Array.from(recipientIds).map((recipientId) =>
+          sendBusinessNotification({
+            id: `notif-client-status-${clientId}-${newStatus}-${recipientId}`,
+            recipientId,
+            title: 'Client Status Updated',
+            message: `${client.name}'s status has changed to ${newStatus}.`,
+            type: 'general',
+            linkUrl: 'module:onboarding',
+            createdAt: statusChangedAt,
+          })
+        )
+      );
+    }
   };
 
   // 2a-3. Hard delete a client (point 6/7) — real DELETE, not deactivation, since clients have no
@@ -1512,6 +1612,8 @@ export default function App() {
   ) => {
     const existing = assignments.find((a) => a.client_id === clientId && a.service_type === serviceType);
     const teamLeadId = users.find((u) => u.id === agentId)?.manager_id || currentUser.id;
+    const assignmentChanged = !existing || existing.agent_id !== agentId;
+    let persistedAssignment: AssignmentRecord | null = null;
 
     if (existing) {
       // Reassigning to a different agent is a fresh "new client" for them — clears the
@@ -1519,11 +1621,15 @@ export default function App() {
       const viewedAt = existing.agent_id !== agentId ? null : existing.viewed_at;
       if (supabaseActive) {
         try {
-          const { error } = await supabase
+          const { data, error } = await supabaseRaw
             .from('assignments')
             .update({ agent_id: agentId, reason_notes: reasonNotes || existing.reason_notes, viewed_at: viewedAt })
-            .eq('id', existing.id);
+            .eq('id', existing.id)
+            .select('*')
+            .single();
           if (error) throw error;
+          if (!data) throw new Error('Service assignment update returned no persisted row.');
+          persistedAssignment = data as AssignmentRecord;
         } catch (err: any) {
           console.error('Supabase assignment update error:', err);
         }
@@ -1548,12 +1654,13 @@ export default function App() {
 
       if (supabaseActive) {
         try {
-          const { data, error } = await supabase.from('assignments').insert([newAssignment]).select();
+          const { data, error } = await supabaseRaw.from('assignments').insert([newAssignment]).select();
           if (error) throw error;
           if (data && data[0]) {
-            setAssignments((prev) => [data[0] as AssignmentRecord, ...prev]);
+            persistedAssignment = data[0] as AssignmentRecord;
+            setAssignments((prev) => [persistedAssignment as AssignmentRecord, ...prev]);
           } else {
-            setAssignments((prev) => [newAssignment, ...prev]);
+            throw new Error('Service assignment insert returned no persisted row.');
           }
         } catch (err: any) {
           console.error('Supabase assignment insert error:', err);
@@ -1566,6 +1673,19 @@ export default function App() {
 
     const agent = users.find((u) => u.id === agentId);
     showNotification(`Service brief assigned to specialist: ${agent?.name || agentId}`);
+
+    if (persistedAssignment && assignmentChanged) {
+      const client = clients.find((item) => item.id === clientId);
+      await sendBusinessNotification({
+        id: `notif-service-assigned-${persistedAssignment.id}-${persistedAssignment.agent_id}`,
+        recipientId: persistedAssignment.agent_id,
+        title: 'Service Assigned',
+        message: `You have been assigned to ${SERVICE_NOTIFICATION_LABELS[serviceType]} for ${client?.name || clientId}.`,
+        type: 'general',
+        linkUrl: 'module:service_briefs',
+        createdAt: new Date().toISOString(),
+      });
+    }
   };
 
   // 3. Save the dynamic brief form (SEO, Social Media, Media Buying)
@@ -1583,6 +1703,7 @@ export default function App() {
 
     let updatedBriefs: BriefRecord[] = [];
     let savedBrief: BriefRecord;
+    let briefPersisted = false;
 
     if (existingIndex >= 0) {
       const existing = briefs[existingIndex];
@@ -1600,7 +1721,7 @@ export default function App() {
 
       if (supabaseActive) {
         try {
-          await supabase
+          const { data, error } = await supabaseRaw
             .from('briefs')
             .update({
               fields: updated.fields,
@@ -1610,7 +1731,12 @@ export default function App() {
               team_lead_viewed_at: updated.team_lead_viewed_at,
               updated_at: updated.updated_at,
             })
-            .eq('id', existing.id);
+            .eq('id', existing.id)
+            .select('id')
+            .single();
+          if (error) throw error;
+          if (!data) throw new Error('Brief update returned no persisted row.');
+          briefPersisted = true;
         } catch (err) {
           console.error('Supabase brief update error:', err);
         }
@@ -1635,10 +1761,14 @@ export default function App() {
 
       if (supabaseActive) {
         try {
-          const { data } = await supabase.from('briefs').insert([newBrief]).select();
+          const { data, error } = await supabaseRaw.from('briefs').insert([newBrief]).select();
+          if (error) throw error;
           if (data && data[0]) {
-            newBrief.id = data[0].id;
+            Object.assign(newBrief, data[0] as BriefRecord);
+          } else {
+            throw new Error('Brief insert returned no persisted row.');
           }
+          briefPersisted = true;
         } catch (err) {
           console.error('Supabase brief insert error:', err);
         }
@@ -1675,6 +1805,25 @@ export default function App() {
 
     setBriefRevisions((prev) => [revision, ...prev]);
     showNotification('Brief documented and saved as an official version successfully.');
+
+    const relevantAssignment = assignments.find(
+      (assignment) =>
+        assignment.client_id === savedBrief.client_id && assignment.service_type === savedBrief.service_type
+    );
+    // There is no per-client service Team Lead before an assignment exists. Skipping here is
+    // intentional: role matching or the chat directory would guess a recipient.
+    if (briefPersisted && relevantAssignment?.team_lead_id) {
+      const client = clients.find((item) => item.id === savedBrief.client_id);
+      await sendBusinessNotification({
+        id: `notif-brief-${savedBrief.id}-v${savedBrief.version}-${relevantAssignment.team_lead_id}`,
+        recipientId: relevantAssignment.team_lead_id,
+        title: 'New Brief',
+        message: `A new brief has been saved for ${client?.name || savedBrief.client_id} — ${SERVICE_NOTIFICATION_LABELS[savedBrief.service_type]}.`,
+        type: 'general',
+        linkUrl: 'module:service_briefs',
+        createdAt: savedBrief.updated_at,
+      });
+    }
   };
 
   // 3a-2. Global brief field schema CRUD (point 10) — brief_field_schemas_write_rls scopes who can
@@ -1813,7 +1962,9 @@ export default function App() {
   // pattern as provisioning. That script isn't triggered from here on purpose: it needs the
   // service-role key, which never touches the browser.
   const handleDeactivateEmployee = async (userId: string) => {
+    const employee = users.find((user) => user.id === userId);
     const deactivatedAt = new Date().toISOString();
+    let persisted = false;
 
     if (supabaseActive) {
       try {
@@ -1822,8 +1973,15 @@ export default function App() {
         // always return error: null, never touching real Postgres.
         const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
         if (error) throw error;
-        const { error: userErr } = await supabaseRaw.from('users').update({ deactivated_at: deactivatedAt }).eq('id', userId);
+        const { data: deactivatedUser, error: userErr } = await supabaseRaw
+          .from('users')
+          .update({ deactivated_at: deactivatedAt })
+          .eq('id', userId)
+          .select('id')
+          .single();
         if (userErr) throw userErr;
+        if (!deactivatedUser) throw new Error('Employee deactivation returned no persisted row.');
+        persisted = true;
       } catch (err: any) {
         console.error('Supabase error deactivating employee:', err);
         showNotification('Unable to deactivate this employee.', 'info');
@@ -1836,6 +1994,18 @@ export default function App() {
     showNotification(
       'Employee deactivated. Run `npm run deactivate-auth-users` to fully lock out their login.'
     );
+
+    if (persisted && employee?.manager_id) {
+      await sendBusinessNotification({
+        id: `notif-employee-deactivated-${employee.id}-${employee.manager_id}`,
+        recipientId: employee.manager_id,
+        title: 'Employee Deactivated',
+        message: `${employee.name} has been deactivated.`,
+        type: 'general',
+        linkUrl: 'module:employees',
+        createdAt: deactivatedAt,
+      });
+    }
   };
 
   // Log a new capacity reading
@@ -1853,18 +2023,26 @@ export default function App() {
 
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
+    const existingTask = tasks.find((task) => task.id === taskId);
+    const becameCompleted = existingTask?.status !== 'completed' && newStatus === 'completed';
     // completed_at is the only reliable signal for "completed today" (the
     // Daily Work Log's auto-suggestion) — status alone carries no timing
     // information, so it's set/cleared here rather than left to drift.
     const completedAt = newStatus === 'completed' ? new Date().toISOString() : null;
     const updates = { status: newStatus, completed_at: completedAt };
 
+    let persisted = false;
     if (supabaseActive) {
       try {
-        await supabase
+        const { data, error } = await supabaseRaw
           .from('tasks')
           .update(updates)
-          .eq('id', taskId);
+          .eq('id', taskId)
+          .select('id')
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('Task status update returned no persisted row.');
+        persisted = true;
       } catch (err) {
         console.error('Supabase task update error:', err);
       }
@@ -1875,6 +2053,18 @@ export default function App() {
     );
 
     showNotification('Task status moved and the shared board updated.');
+
+    if (persisted && becameCompleted && existingTask && existingTask.created_by !== currentUser.id) {
+      await sendBusinessNotification({
+        id: `notif-task-completed-${taskId}`,
+        recipientId: existingTask.created_by,
+        title: 'Task Completed',
+        message: `${currentUser.name} completed your task: ${existingTask.title}.`,
+        type: 'task_updated',
+        linkUrl: 'module:tasks',
+        createdAt: completedAt || undefined,
+      });
+    }
   };
 
   // Update task details and hours
@@ -1882,6 +2072,7 @@ export default function App() {
     // Same completed_at bookkeeping as handleUpdateTaskStatus, but only when
     // this edit actually touches status — editing title/description alone
     // shouldn't disturb it.
+    const existingTask = tasks.find((task) => task.id === taskId);
     const finalUpdates: Partial<TaskRecord> = { ...updates };
     if ('status' in updates) {
       finalUpdates.completed_at = updates.status === 'completed' ? new Date().toISOString() : null;
@@ -1889,18 +2080,23 @@ export default function App() {
     // Reassigning a task to a different person is a fresh "new task" for them (Module 12
     // Phase 5's programming_agent notification badge, since that role has no assignments row).
     if ('assigned_to' in updates) {
-      const existingTask = tasks.find((t) => t.id === taskId);
       if (existingTask && existingTask.assigned_to !== updates.assigned_to) {
         finalUpdates.assignee_viewed_at = null;
       }
     }
 
+    let persisted = false;
     if (supabaseActive) {
       try {
-        await supabase
+        const { data, error } = await supabaseRaw
           .from('tasks')
           .update(finalUpdates)
-          .eq('id', taskId);
+          .eq('id', taskId)
+          .select('id')
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('Task update returned no persisted row.');
+        persisted = true;
       } catch (err) {
         console.error('Supabase task update error:', err);
       }
@@ -1911,6 +2107,48 @@ export default function App() {
     );
 
     showNotification('Task data updated successfully.');
+
+    if (persisted && existingTask) {
+      const notificationPromises: Promise<void>[] = [];
+      const updatedTitle = updates.title || existingTask.title;
+      if (
+        'assigned_to' in updates &&
+        updates.assigned_to &&
+        existingTask.assigned_to !== updates.assigned_to
+      ) {
+        notificationPromises.push(
+          sendBusinessNotification({
+            id: `notif-task-reassigned-${taskId}-${updates.assigned_to}`,
+            recipientId: updates.assigned_to,
+            title: 'Task Reassigned',
+            message: `You have been assigned the task: ${updatedTitle}.`,
+            type: 'task_assigned',
+            linkUrl: 'module:tasks',
+          })
+        );
+      }
+
+      if (
+        'status' in updates &&
+        updates.status === 'completed' &&
+        existingTask.status !== 'completed' &&
+        existingTask.created_by !== currentUser.id
+      ) {
+        notificationPromises.push(
+          sendBusinessNotification({
+            id: `notif-task-completed-${taskId}`,
+            recipientId: existingTask.created_by,
+            title: 'Task Completed',
+            message: `${currentUser.name} completed your task: ${updatedTitle}.`,
+            type: 'task_updated',
+            linkUrl: 'module:tasks',
+            createdAt: finalUpdates.completed_at || undefined,
+          })
+        );
+      }
+
+      await Promise.all(notificationPromises);
+    }
   };
 
   // 6. Add a new shared task (or a subtask, when parent_task_id is set)
@@ -1943,25 +2181,42 @@ export default function App() {
       created_at: new Date().toISOString(),
       parent_task_id: taskData.parent_task_id || null,
     };
+    let persistedTask: TaskRecord | null = null;
 
     if (supabaseActive) {
       try {
-        const { data, error } = await supabase.from('tasks').insert([newTaskPayload]).select();
+        const { data, error } = await supabaseRaw.from('tasks').insert([newTaskPayload]).select();
         if (error) throw error;
         if (data && data[0]) {
-          setTasks((prev) => [data[0] as TaskRecord, ...prev]);
+          persistedTask = data[0] as TaskRecord;
+          setTasks((prev) => [persistedTask as TaskRecord, ...prev]);
         } else {
-          setTasks((prev) => [newTaskPayload, ...prev]);
+          throw new Error('Task creation returned no persisted row.');
         }
       } catch (err: any) {
         console.error('Supabase task insert error:', err);
-        setTasks((prev) => [newTaskPayload, ...prev]);
+        const errorMessage =
+          err?.message || err?.details || err?.hint || 'Supabase did not return an error message.';
+        showNotification(`Unable to create task in Supabase: ${errorMessage}`, 'info');
+        return;
       }
     } else {
       setTasks((prev) => [newTaskPayload, ...prev]);
     }
 
     showNotification(`Task "${taskData.title}" added to the shared task board successfully!`);
+
+    if (persistedTask?.assigned_to) {
+      await sendBusinessNotification({
+        id: `notif-task-created-${persistedTask.id}-${persistedTask.assigned_to}`,
+        recipientId: persistedTask.assigned_to,
+        title: 'New Task Assigned',
+        message: `You have been assigned a new task: ${persistedTask.title}.`,
+        type: 'task_assigned',
+        linkUrl: 'module:tasks',
+        createdAt: persistedTask.created_at,
+      });
+    }
   };
 
   // 6b. Post a task comment or reply (parent_comment_id set for a reply,
