@@ -6,7 +6,12 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const enabled = Deno.env.get('EMPLOYEE_TEST_ACCOUNT_SETUP_ENABLED') === 'true';
-const allowedOrigin = Deno.env.get('EMPLOYEE_TEST_ALLOWED_ORIGIN') || 'http://localhost:3000';
+const supportedOrigins = new Set([
+  'http://localhost:3000',
+  'https://agency-management-system-alpha.vercel.app',
+]);
+const allowedOrigins = new Set((Deno.env.get('EMPLOYEE_TEST_ALLOWED_ORIGIN') || 'http://localhost:3000')
+  .split(',').map((origin) => origin.trim()).filter((origin) => supportedOrigins.has(origin)));
 // Auth IDs are configured on the server, never inferred from display names or browser data.
 // Fail closed until both protected accounts have been identified.
 const protectedAuthIds = [
@@ -18,18 +23,10 @@ const protectedIdsConfigured = protectedAuthIds.every((id) =>
   && protectedAuthIds[0] !== protectedAuthIds[1];
 
 const cors = {
-  'Access-Control-Allow-Origin': allowedOrigin,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Vary': 'Origin',
 };
-
-function response(body: Record<string, unknown>, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  });
-}
 
 async function findAuthByEmail(admin: ReturnType<typeof createClient>, email: string): Promise<User | null> {
   for (let page = 1; page <= 100; page++) {
@@ -62,7 +59,17 @@ function generateTemporaryPassword(): string {
 }
 
 Deno.serve(async (req) => {
-  if (req.headers.get('Origin') && req.headers.get('Origin') !== allowedOrigin) {
+  const origin = req.headers.get('Origin');
+  const response = (body: Record<string, unknown>, status = 200): Response => new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...cors,
+      ...(origin && allowedOrigins.has(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
+  });
+  if (origin && !allowedOrigins.has(origin)) {
     return response({ error: 'Origin not allowed.' }, 403);
   }
   if (req.method === 'OPTIONS') return response({ ok: true });
