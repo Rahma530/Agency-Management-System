@@ -159,7 +159,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" dir="ltr">
       <div
-        className="w-full max-w-xl rounded-[20px] p-6 shadow-2xl relative overflow-hidden font-sans"
+        className="w-full max-w-xl max-h-[90vh] rounded-[20px] p-6 shadow-2xl relative overflow-x-hidden overflow-y-auto font-sans"
         style={{
           background: 'var(--gradient-card)',
           border: '1px solid var(--border-medium)',
