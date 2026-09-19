@@ -608,9 +608,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 Today: {todayStr}
               </span>
             </div>
-            <p className="text-xs text-stone-400 mt-0.5">
-              Organize today's priorities • Track logged hours • Document daily activity and blockers
-            </p>
           </div>
         </div>
 
@@ -762,7 +759,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-bold text-white">{todayWorkloadHours} <span className="text-xs font-normal text-stone-400">hrs</span></p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Against capacity: {resolveCapacityLimit(effectiveEmployee)} tasks</p>
+                <p className="text-[10px] text-stone-400 mt-0.5">Capacity: {resolveCapacityLimit(effectiveEmployee)} tasks</p>
               </div>
             </div>
 
@@ -777,7 +774,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-bold text-purple-300">{inProgressTasks.length}</p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Active tasks on your desk</p>
               </div>
             </div>
 
@@ -794,7 +790,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-bold text-red-400">{overdueTasks.length}</p>
-                <p className="text-[10px] text-red-400/80 mt-0.5">Needs immediate attention</p>
               </div>
             </div>
 
@@ -809,7 +804,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-bold text-amber-400">{priorityFirstTasks.length}</p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Urgent & High Priority</p>
               </div>
             </div>
 
@@ -824,7 +818,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-bold text-rose-300">{blockedEmployeeTasks.length}</p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Awaiting client or management</p>
               </div>
             </div>
           </div>
@@ -915,14 +908,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                   <PlayCircle className="w-4 h-4 text-purple-400" />
                   <h3 className="text-xs font-bold text-white">What to do today, in priority order</h3>
                 </div>
-                <span className="text-[11px] text-stone-400">Sorted by priority, then due date</span>
               </div>
 
               {sortedEmployeeTasks.filter((t) => t.status !== 'completed').length === 0 ? (
                 <div className="p-8 text-center text-stone-400 text-xs border border-dashed border-stone-800 rounded-xl">
                   <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
                   <p className="font-bold text-white text-sm">All clear! No active tasks pending for you today.</p>
-                  <p className="text-stone-400 mt-1">All your tasks are completed or sitting in the general queue.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1046,41 +1037,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
             {/* Column 3: Daily Summary & Quick Stats */}
             <div className="space-y-4">
-              {/* Daily Focus Guidance Box */}
-              <div
-                className="p-4 rounded-[18px] space-y-3"
-                style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
-              >
-                <div className="flex items-center gap-2 text-xs font-bold text-white">
-                  <CheckSquare className="w-4 h-4 text-purple-400" />
-                  <span>Daily Work Guidance</span>
-                </div>
-                <div className="space-y-2 text-xs text-stone-300 leading-relaxed">
-                  <p className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
-                    <span>Start with overdue tasks and anything marked <strong>Urgent</strong> to avoid holding up other teams.</span>
-                  </p>
-                  <p className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
-                    <span>Log actual hours when you finish work to keep individual productivity metrics up to date.</span>
-                  </p>
-                  <p className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
-                    <span>If anything blocks a task (e.g. no client response or missing permissions), mark it <strong>Blocked</strong> immediately.</span>
-                  </p>
-                </div>
-
-                <div className="pt-2 border-t border-stone-800">
-                  <button
-                    onClick={() => setIsLoggingDailyActivity(true)}
-                    className="w-full py-2 rounded-xl text-xs font-bold text-center text-white transition-all shadow-md hover:opacity-90"
-                    style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                  >
-                    Log Your Daily Summary
-                  </button>
-                </div>
-              </div>
-
               {/* Time Tracking / Hours Summary Widget */}
               <div
                 className="p-4 rounded-[18px] space-y-3"
@@ -1357,9 +1313,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white">Blockers Hub</h3>
-                <p className="text-xs text-stone-400 mt-0.5">
-                  Track tasks stalled by external or technical obstacles, and work with management to resolve them
-                </p>
               </div>
             </div>
             <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-950 text-red-400 border border-red-500/40 font-mono">
@@ -1374,9 +1327,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             >
               <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2 opacity-90" />
               <h4 className="text-sm font-bold text-white">No blocked tasks right now!</h4>
-              <p className="text-xs text-stone-400 mt-1">
-                Everything is running smoothly with no pending blockers.
-              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1469,9 +1419,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <FileText className="w-4 h-4 text-purple-400" />
                 <span>Daily Logs & Standup</span>
               </h3>
-              <p className="text-xs text-stone-400 mt-0.5">
-                Document daily work accomplished, completed tasks, and coordination notes between employees and team leads
-              </p>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
@@ -1506,7 +1453,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             >
               <FileText className="w-8 h-8 text-stone-600 mx-auto mb-2" />
               <h4 className="text-xs font-bold text-white">No previous daily activity reports recorded for the selected employee.</h4>
-              <p className="text-xs text-stone-400 mt-1">Click the button above to log a summary of today's work.</p>
+              <p className="text-xs text-stone-400 mt-1">Use the button above to add one.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1588,9 +1535,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <Users className="w-4 h-4 text-purple-400" />
                 <span>Team Lead / Manager Overview</span>
               </h3>
-              <p className="text-xs text-stone-400 mt-0.5">
-                Monitor employee performance, workload distribution, overdue tasks, and clear operational blockers
-              </p>
             </div>
             <span className="text-xs text-stone-400 bg-stone-900 px-3 py-1 rounded-xl border border-stone-800">
               Current Role: <strong className="text-purple-300">{currentUser.role}</strong>
@@ -2125,8 +2069,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             </div>
 
             <p className="text-[11px] text-stone-400">
-              Document work beyond your normal task scope — mentoring a teammate, improving a process,
-              taking on something outside your usual role. Counted separately from regular task performance.
+              Document initiative beyond your normal task scope (e.g. mentoring, process improvements). Tracked
+              separately from task performance.
             </p>
 
             <form onSubmit={handleSubmitExtraEffort} className="space-y-4">

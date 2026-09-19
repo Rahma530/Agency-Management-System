@@ -247,17 +247,12 @@ const AMServiceBriefsPanel: React.FC<{
                 {isTeamLead ? 'AM Team Lead' : 'AM Specialist'}
               </span>
             </div>
-            <p className="text-xs text-stone-400 mt-0.5">
-              {isTeamLead
-                ? 'Review every service brief across all clients managed by Account Management.'
-                : 'Review every service brief — SEO, Social Media, Media Buying — for your assigned client portfolio.'}
-            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200 self-start md:self-center">
           <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-          <span>Read-only across all services — assignment stays with each service team lead</span>
+          <span>Read-only — assignment stays with each service team</span>
         </div>
       </div>
 
@@ -463,7 +458,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
         <h3 className="text-base font-bold text-white">Access Restricted</h3>
         <p className="text-xs text-stone-300">
-          This portal is reserved for operational service teams (SEO, Social Media, Media Buying).
+          Reserved for SEO, Social Media, and Media Buying teams.
         </p>
       </div>
     );
@@ -660,18 +655,13 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                 {isTeamLead ? leadRoleTitle : agentRoleTitle}
               </span>
             </div>
-            <p className="text-xs text-stone-400 mt-0.5">
-              {isTeamLead
-                ? 'Review onboarding briefs, manage service assignments, and oversee delivery.'
-                : 'Directly access briefs and deliverables assigned to your specialist queue.'}
-            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 self-start md:self-center">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200">
             <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-            <span>Multi-Service Workflow: {serviceNameEn}</span>
+            <span>{serviceNameEn}</span>
           </div>
           {isTeamLead && onNavigateToModule && (
             <button
@@ -697,7 +687,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           <div className="text-2xl font-bold text-white mt-1 font-mono">
             {authorizedClients.length}
           </div>
-          <div className="text-[10px] text-stone-400 mt-0.5">Contracted for {serviceType.toUpperCase()}</div>
+          <div className="text-[10px] text-stone-400 mt-0.5">{serviceType.toUpperCase()}</div>
         </div>
 
         <div
@@ -715,7 +705,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
               ).length
             }
           </div>
-          <div className="text-[10px] text-stone-400 mt-0.5">Pending team lead delegation</div>
         </div>
 
         <div
@@ -732,7 +721,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
               }).length
             }
           </div>
-          <div className="text-[10px] text-stone-400 mt-0.5">Ready for live execution</div>
         </div>
       </div>
 
@@ -1027,7 +1015,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
             <div className="p-12 text-center rounded-xl bg-stone-900/40 border border-stone-800 space-y-2">
               <FileText className="w-10 h-10 text-stone-500 mx-auto" />
               <h4 className="text-sm font-bold text-white">Select a client from the queue</h4>
-              <p className="text-xs text-stone-400">Select a client to view and delegate this service brief.</p>
             </div>
           )}
         </div>
