@@ -14,6 +14,8 @@ import {
   ClipboardCheck,
   Plus,
   X,
+  Store,
+  Fingerprint,
 } from 'lucide-react';
 import { BriefFieldDef, BriefRecord, BriefRevisionRecord, ServiceType } from '../types/database';
 import { reviewBrief, BriefReviewSeverity } from '../lib/briefReview';
@@ -155,6 +157,10 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
         return <Target className="w-4 h-4 text-amber-400" />;
       case 'interface':
         return <Palette className="w-4 h-4 text-pink-400" />;
+      case 'creation':
+        return <Store className="w-4 h-4 text-orange-400" />;
+      case 'branding':
+        return <Fingerprint className="w-4 h-4 text-cyan-400" />;
       default:
         return <Layers className="w-4 h-4 text-stone-400" />;
     }
@@ -170,6 +176,10 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
         return 'Paid Advertising (Media Buying)';
       case 'interface':
         return 'واجهة (UI/UX Interface Design)';
+      case 'creation':
+        return 'Creation (Store/Website Setup) — إنشاء';
+      case 'branding':
+        return 'Branding — الهوية البصرية';
       default:
         return serviceType;
     }

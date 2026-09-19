@@ -19,6 +19,8 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   social_media: 'Social Media',
   media_buying: 'Media Buying',
   interface: 'واجهة',
+  creation: 'Creation',
+  branding: 'Branding',
 };
 
 const timeAgo = (iso: string): string => {
@@ -103,7 +105,7 @@ export const BriefRepositoryView: React.FC<BriefRepositoryViewProps> = ({
           />
         </div>
         <div className="flex items-center gap-1 bg-stone-900/60 p-1 rounded-xl border border-stone-800 text-[11px]">
-          {(['all', 'seo', 'social_media', 'media_buying', 'interface'] as const).map((s) => (
+          {(['all', 'seo', 'social_media', 'media_buying', 'interface', 'creation', 'branding'] as const).map((s) => (
             <button
               key={s}
               onClick={() => setServiceFilter(s)}

@@ -75,7 +75,7 @@ import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, can
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
-import { normalizeClientServices, SERVICE_LABELS } from '../lib/clientServices';
+import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
 interface ClientDashboardProps {
@@ -821,18 +821,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         key={s}
                         className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
                         style={{
-                          background:
-                            s === 'media_buying'
-                              ? 'rgba(14, 165, 233, 0.2)'
-                              : s === 'seo'
-                              ? 'rgba(16, 185, 129, 0.2)'
-                              : 'rgba(236, 72, 153, 0.2)',
-                          color:
-                            s === 'media_buying'
-                              ? '#38bdf8'
-                              : s === 'seo'
-                              ? '#34d399'
-                              : '#f472b6',
+                          background: SERVICE_BADGE_COLORS[s]?.bg ?? 'rgba(236, 72, 153, 0.2)',
+                          color: SERVICE_BADGE_COLORS[s]?.text ?? '#f472b6',
                         }}
                       >
                         {SERVICE_LABELS[s]}

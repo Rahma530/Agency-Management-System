@@ -1439,9 +1439,11 @@ export default function App() {
   // with either AM assignment, both, or neither. AM Agents retain their active-client path.
   const handleRegisterClient = async (clientData: {
     name: string;
+    client_contact_name?: string;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
+    website_or_social_link?: string;
     contract_value: number;
     start_date: string;
     renewal_date: string;
@@ -1461,9 +1463,11 @@ export default function App() {
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}`,
       name: clientData.name,
+      client_contact_name: clientData.client_contact_name || null,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
       phone_number: clientData.phone_number || null,
+      website_or_social_link: clientData.website_or_social_link || null,
       status: isManagementRegistration ? 'onboarding' : isAmRegistration ? 'active' : 'onboarding',
       sales_owner_id: isAmRegistration || isManagementRegistration ? null : currentUser.id,
       am_agent_id: agentId,
@@ -1515,9 +1519,11 @@ export default function App() {
   //   - management: onboarding client, no sales owner, independent optional AM assignments.
   const handleBulkAddClient = async (clientData: {
     name: string;
+    client_contact_name?: string;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
+    website_or_social_link?: string;
     contract_value: number;
     start_date: string;
     renewal_date: string;
@@ -1537,9 +1543,11 @@ export default function App() {
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       name: clientData.name,
+      client_contact_name: clientData.client_contact_name || null,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
       phone_number: clientData.phone_number || null,
+      website_or_social_link: clientData.website_or_social_link || null,
       status: isManagementUpload ? 'onboarding' : isAmUpload ? 'active' : 'onboarding',
       sales_owner_id: isAmUpload || isManagementUpload ? null : currentUser.id,
       am_agent_id: agentId,
