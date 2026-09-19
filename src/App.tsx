@@ -3625,10 +3625,13 @@ export default function App() {
 
       {/* Sidebar + Content shell */}
       <div className="flex">
-        {/* Backdrop, mobile only — closes the drawer on outside tap */}
+        {/* Backdrop, mobile only — closes the drawer on outside tap. z-[95] sits above
+            the header (z-40) and the floating chat/AI buttons (z-[90]) so both are
+            actually dimmed and untappable while the drawer is open, instead of
+            visibly "poking through" the overlay. */}
         {isMobileSidebarOpen && (
           <div
-            className="fixed inset-0 z-30 bg-black/60 md:hidden"
+            className="fixed inset-0 z-[95] bg-black/60 md:hidden"
             onClick={() => setIsMobileSidebarOpen(false)}
             aria-hidden="true"
           />
@@ -3636,11 +3639,14 @@ export default function App() {
 
         {/* Left Sidebar Navigation - Filtered strictly by Employee's Role Permissions.
             Fixed off-canvas drawer below md (toggled via isMobileSidebarOpen), sticky
-            in-flow column at md and up — same positioning/sizing either way. */}
+            in-flow column at md and up — same positioning/sizing either way. z-[96]
+            keeps it above its own backdrop; dvh (not vh) so the drawer's height
+            tracks the real visible viewport on mobile browsers whose address bar
+            shrinks/grows the usable area. */}
         <aside
-          className={`fixed md:sticky left-0 z-40 md:z-auto w-60 shrink-0 border-r overflow-y-auto backdrop-blur-md transition-transform duration-200 ease-in-out md:translate-x-0 ${
+          className={`fixed md:sticky left-0 z-[96] md:z-auto w-60 shrink-0 border-r overflow-y-auto backdrop-blur-md transition-transform duration-200 ease-in-out md:translate-x-0 ${
             isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } ${testHandoff ? 'top-[110px] h-[calc(100vh-110px)]' : 'top-[65px] h-[calc(100vh-65px)]'}`}
+          } ${testHandoff ? 'top-[110px] h-[calc(100dvh-110px)]' : 'top-[65px] h-[calc(100dvh-65px)]'}`}
           style={{
             background: 'rgba(15, 12, 22, 0.95)',
             borderColor: 'var(--border-soft)',
@@ -3914,6 +3920,24 @@ export default function App() {
                 <UserPlus className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Employees</span>
               </button>
+            )}
+
+            {/* Live Activity Feed — mobile only; desktop keeps its own header button
+                (hidden md:flex above) instead of duplicating it here. */}
+            {['executive', 'head_of_technical'].includes(currentUser.role) && (
+              <div className="md:hidden mt-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                <button
+                  onClick={() => {
+                    setIsActivityFeedOpen(true);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 text-white"
+                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                >
+                  <div className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse border border-emerald-500 shrink-0" />
+                  <span className="flex-1 text-left">Live Activity Feed ⚡</span>
+                </button>
+              </div>
             )}
           </nav>
         </aside>
