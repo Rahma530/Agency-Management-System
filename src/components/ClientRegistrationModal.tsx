@@ -73,10 +73,13 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setAmAgentId('');
     }
   }, [isOpen, currentUser.id, isManagementForm]);
-  const selectedLeadId = isManagementForm
-    ? amTeamLeadId
-    : amTeamLeadId || (currentUser.role === 'am_agent' && amTeamLeaders.some((u) => u.id === currentUser.manager_id)
-      ? currentUser.manager_id || '' : amTeamLeaders[0]?.id || 'usr-am-lead');
+  // Sales/AM Agent never pick an AM Team Lead manually (the field is hidden for them below) —
+  // instead this auto-resolves to the one real, currently-active am_team_lead if there's exactly
+  // one. Zero or more than one active lead falls back to genuinely unassigned (null) rather than
+  // guessing, so this keeps working correctly once a second AM Team Lead exists — at that point
+  // AMQueue's unfiltered "Client Onboarding & Reception" queue is the existing safety net that
+  // lets any am_team_lead claim it. Never a hardcoded placeholder id.
+  const soleActiveAmTeamLeadId = amTeamLeaders.length === 1 ? amTeamLeaders[0].id : undefined;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -117,7 +120,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
         remaining_value: remainingValue === '' ? undefined : Number(remainingValue),
         start_date: startDate,
         renewal_date: renewalDate,
-        am_team_lead_id: selectedLeadId || undefined,
+        am_team_lead_id: isManagementForm ? (amTeamLeadId || undefined) : soleActiveAmTeamLeadId,
         ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
       });
       // reset
@@ -562,39 +565,41 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          {/* Assign / Transfer to AM Team Leader */}
-          <div>
-            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              {isAmForm ? 'Account Management Lead' : 'Route to Account Management Lead'} {!isManagementForm && <span className="text-red-400">*</span>}
-            </label>
-            <div className="relative">
-              <Users className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
-              <select
-                value={selectedLeadId}
-                onChange={(e) => setAmTeamLeadId(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
-                style={{
-                  background: 'rgba(10, 10, 13, 0.9)',
-                  border: '1px solid var(--border-soft)',
-                  color: 'var(--white)',
-                }}
-              >
-                {isManagementForm && <option value="" className="bg-stone-900 text-white">-- Unassigned --</option>}
-                {amTeamLeaders.length > 0 ? amTeamLeaders.map((leader) => (
+          {/* Assign / Transfer to AM Team Leader — Sales/AM Agent never pick this manually; it's
+              auto-resolved on submit (see soleActiveAmTeamLeadId above) and this field is simply
+              hidden for them. */}
+          {isManagementForm && (
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                {isAmForm ? 'Account Management Lead' : 'Route to Account Management Lead'}
+              </label>
+              <div className="relative">
+                <Users className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
+                <select
+                  value={amTeamLeadId}
+                  onChange={(e) => setAmTeamLeadId(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.9)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                >
+                  <option value="" className="bg-stone-900 text-white">-- Unassigned --</option>
+                  {amTeamLeaders.map((leader) => (
                     <option key={leader.id} value={leader.id} className="bg-stone-900 text-white">
                       {leader.name} — ({leader.team || 'Account Management Lead'})
                     </option>
-                  )) : !isManagementForm && (
-                    <option value="usr-am-lead" className="bg-stone-900 text-white">Maha Al-Shami — AM Team Lead</option>
-                  )}
-              </select>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[11px] text-stone-400 mt-1">
+                {isAmForm
+                  ? 'The team lead of record for this client.'
+                  : 'Client record will be routed to AM lead for account assignment and service kickoff.'}
+              </p>
             </div>
-            <p className="text-[11px] text-stone-400 mt-1">
-              {isAmForm
-                ? 'The team lead of record for this client.'
-                : 'Client record will be routed to AM lead for account assignment and service kickoff.'}
-            </p>
-          </div>
+          )}
 
           {isManagementForm && (
             <div>
