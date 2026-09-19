@@ -18,6 +18,8 @@ interface ClientRegistrationModalProps {
     phone_number?: string;
     website_or_social_link?: string;
     contract_value: number;
+    due_value?: number;
+    remaining_value?: number;
     start_date: string;
     renewal_date: string;
     am_team_lead_id?: string;
@@ -58,6 +60,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState('');
   const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
   const [contractValue, setContractValue] = useState<number | ''>('');
+  const [dueValue, setDueValue] = useState<number | ''>('');
+  const [remainingValue, setRemainingValue] = useState<number | ''>('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
@@ -109,6 +113,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
         phone_number: phoneNumber.trim() || undefined,
         website_or_social_link: websiteOrSocialLink.trim() || undefined,
         contract_value: contractValue ? Number(contractValue) : 0,
+        due_value: dueValue === '' ? undefined : Number(dueValue),
+        remaining_value: remainingValue === '' ? undefined : Number(remainingValue),
         start_date: startDate,
         renewal_date: renewalDate,
         am_team_lead_id: selectedLeadId || undefined,
@@ -125,6 +131,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setWebsiteOrSocialLink('');
       setSelectedServices([]);
       setContractValue('');
+      setDueValue('');
+      setRemainingValue('');
       if (isManagementForm) {
         setAmTeamLeadId('');
         setAmAgentId('');
@@ -441,6 +449,53 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                       setRenewalDate(addOneYear(newStart));
                     }
                   }}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Total Contract Value (optional)
+              </label>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  value={dueValue}
+                  onChange={(e) => setDueValue(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 60000"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+              <p className="text-[11px] text-stone-400 mt-1">
+                If known now — AM can also fill this in later.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Remaining Amount (optional)
+              </label>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  value={remainingValue}
+                  onChange={(e) => setRemainingValue(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 60000"
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
                   style={{
                     background: 'rgba(10, 10, 13, 0.8)',
