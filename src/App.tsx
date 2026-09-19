@@ -3918,12 +3918,14 @@ export default function App() {
           />
         ) : (
           <>
-            {/* Dedicated Role-Based Portal Header */}
-            <RolePortalHeader
-              currentUser={currentUser}
-              tasks={tasks}
-              clients={clients}
-            />
+            {/* Dedicated Role-Based Portal Header (Dashboard tab only) */}
+            {activeTab === 'dashboard' && (
+              <RolePortalHeader
+                currentUser={currentUser}
+                tasks={tasks}
+                clients={clients}
+              />
+            )}
 
             {/* Tab 0: Leadership Dashboard */}
             {activeTab === 'dashboard' && (
