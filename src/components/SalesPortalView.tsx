@@ -132,9 +132,6 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
             <h2 className="text-xl md:text-2xl font-bold text-white">
               Client Acquisition & Onboarding Intake
             </h2>
-            <p className="text-xs text-stone-300 max-w-xl">
-              Register closed client contracts and route them directly to Account Management for intake.
-            </p>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -168,7 +165,6 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           <div className="text-2xl font-bold font-mono text-white">
             {personalClients.length}
           </div>
-          <span className="text-[11px] text-stone-400 block">Referred to Account Management</span>
         </div>
 
         <div className="p-4 rounded-xl space-y-1.5 bg-[#161224]/80 border border-purple-900/30">
@@ -179,7 +175,6 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           <div className="text-2xl font-bold font-mono text-emerald-400">
             {totalContractValue.toLocaleString()} SAR
           </div>
-          <span className="text-[11px] text-stone-400 block">Cumulative monthly volume</span>
         </div>
 
         <div className="p-4 rounded-xl space-y-1.5 bg-[#161224]/80 border border-purple-900/30">
@@ -191,7 +186,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
             <CheckCircle2 className="w-4 h-4 text-purple-400" />
             <span>Auto-Routed to AM</span>
           </div>
-          <span className="text-[11px] text-stone-400 block">Registered clients go straight to the AM Team Lead</span>
+          <span className="text-[11px] text-stone-400 block">Goes to AM Team Lead</span>
         </div>
       </div>
 

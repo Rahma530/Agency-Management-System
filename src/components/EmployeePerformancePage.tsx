@@ -442,7 +442,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
           ) : (
             <div className="p-4 text-center rounded-xl bg-stone-900/40 border border-dashed border-stone-800">
               <p className="text-xs text-stone-400">
-                No score generated yet for this employee. Pick a period above and generate one.
+                No score generated yet.
               </p>
             </div>
           )}
@@ -530,7 +530,6 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
             <Calendar className="w-4 h-4 text-purple-400" />
             <h3 className="text-sm font-bold text-white">Capacity Trend</h3>
           </div>
-          <p className="text-[10px] text-stone-500 mb-2">Logged active client/task count over time</p>
           <TrendLineChart points={capacityHistory} color="var(--purple-light)" emptyLabel="No capacity history logged yet." />
 
           {scoreHistory.length > 1 && (
@@ -569,9 +568,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
             </div>
 
             <p className="text-[10px] text-stone-400 -mt-2">
-              A guided suggestion for the Team Lead or Head of Technical reviewing this profile to weigh — not an
-              automatic decision. Any promotion, raise, or development plan still requires human review and
-              sign-off.
+              Advisory only — promotions, raises, and development plans still require human review.
             </p>
 
             <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-stone-900/60 border border-stone-800">
@@ -598,7 +595,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
             {classification.diagnostics.length > 0 && (
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold text-stone-400 block">
-                  Diagnostic breakdown — where this is coming from
+                  Diagnostic breakdown
                 </label>
                 {classification.diagnostics.map((d) => (
                   <div
@@ -642,9 +639,8 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-purple-950/20 border border-purple-900/30">
           <Info className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
           <p className="text-[10px] text-stone-400">
-            Client Satisfaction and Task Execution Quality are not yet collected anywhere in this system — the
-            overall score above is computed only from On-Time Completion, Capacity Utilization, and Initiative,
-            with weights rebalanced across those three.
+            Client Satisfaction and Execution Quality aren't tracked yet; the score above only weighs On-Time
+            Completion, Capacity Utilization, and Initiative.
           </p>
         </div>
       </div>

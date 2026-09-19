@@ -216,8 +216,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <div>
             <h2 className="text-lg font-bold text-white">Reports & Comparisons</h2>
             <p className="text-xs text-stone-400">
-              Generate a period-over-period performance report for a specific client, all of your clients pooled
-              together{isTeamLead ? ', or a specific agent under you' : ''}.
+              Generate a report for a client, all your clients{isTeamLead ? ', or a specific agent' : ''}.
             </p>
           </div>
         </div>
@@ -354,8 +353,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
         <p className="text-[11px] text-stone-400">
           {isSinglePeriod
-            ? 'A general activity summary for one period — totals only, no prior-period comparison.'
-            : 'Current period vs. a prior period, with deltas and a rule-generated recommendation.'}
+            ? 'Totals for one period, no comparison.'
+            : 'Current vs. prior period, with deltas and a recommendation.'}
         </p>
       </div>
 
@@ -369,7 +368,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         canGenerate={!!resolvedScope}
         isGenerating={isGenerating}
         onGenerate={handleGenerate}
-        disabledReason="Select a scope above to generate a report."
+        disabledReason="Select a scope first."
         singlePeriod={isSinglePeriod}
       />
 

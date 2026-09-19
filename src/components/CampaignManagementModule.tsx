@@ -724,7 +724,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               Paid Advertising Hub
             </h2>
             <p className="text-xs leading-relaxed max-w-3xl" style={{ color: 'var(--lilac)' }}>
-              Direct linkage between client, marketing service, and responsible employee — with precise control over performance metrics, budgets, utilization rates, and real ad ROI across platforms (Meta, Google, TikTok, LinkedIn).
+              Manage budgets, performance, and ROI across Meta, Google, TikTok, and LinkedIn.
             </p>
           </div>
 
@@ -851,9 +851,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           <div className="text-xl font-bold font-mono" style={{ color: 'var(--white)' }}>
             {dashboardStats.avgRoas !== null ? `${dashboardStats.avgRoas.toFixed(2)}x` : '—'}
           </div>
-          <div className="text-[10px] mt-1 text-stone-400">
-            {dashboardStats.avgRoas !== null ? 'Calculated from recorded results' : 'No ROAS data'}
-          </div>
         </div>
 
         {/* Card 5: Total Conversions */}
@@ -870,9 +867,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           </div>
           <div className="text-xl font-bold font-mono text-cyan-300">
             {dashboardStats.totalConversions !== null ? dashboardStats.totalConversions.toLocaleString() : '—'}
-          </div>
-          <div className="text-[10px] mt-1 text-stone-400">
-            {dashboardStats.totalConversions !== null ? 'Conversions / deals recorded' : 'No data'}
           </div>
         </div>
 
@@ -1219,8 +1213,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           </h3>
           <p className="text-xs text-stone-400 max-w-md mx-auto">
             {isFiltered
-              ? 'No campaign matches the filters selected above. Try changing or resetting the filters.'
-              : 'No visible campaigns have been recorded for this account yet.'}
+              ? 'Try resetting the filters.'
+              : 'No campaigns recorded yet.'}
           </p>
           {isFiltered && (
             <button
@@ -1244,7 +1238,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               Showing <strong className="text-white font-mono">{filteredCampaigns.length}</strong> of{' '}
               <strong className="text-white font-mono">{visibleCampaigns.length}</strong> visible campaigns
             </span>
-            <span className="text-[11px]">Click any campaign to view its full details page</span>
           </div>
 
           <div className="grid grid-cols-1 gap-3">
@@ -1421,9 +1414,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                   <h3 className="text-base font-bold" style={{ color: 'var(--white)' }}>
                     {campaignToEdit ? 'Edit Campaign Data' : 'Create New Ad Campaign'}
                   </h3>
-                  <p className="text-[11px] text-stone-400">
-                    Link the campaign to a client, platform, budget, and actual performance metrics
-                  </p>
                 </div>
               </div>
 
@@ -1716,7 +1706,6 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2.5">
                 <div className="text-xs font-bold text-stone-300 flex items-center justify-between">
                   <span>Campaign Performance Metrics (optional — stored in campaign results):</span>
-                  <span className="text-[10px] text-stone-400">Update Platform Metrics</span>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
