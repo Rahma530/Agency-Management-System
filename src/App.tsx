@@ -3456,7 +3456,7 @@ export default function App() {
           borderColor: 'var(--border-soft)',
         }}
       >
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+        <div className="max-w-screen-2xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsMobileSidebarOpen(true)}
@@ -3607,7 +3607,7 @@ export default function App() {
           </div>
         </div>
         {testHandoff && authenticatedUser && (
-          <div className="mx-auto mt-3 flex max-w-7xl flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500 bg-amber-950/80 px-4 py-2 text-xs text-amber-100" role="status">
+          <div className="mx-auto mt-3 flex max-w-screen-2xl flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500 bg-amber-950/80 px-4 py-2 text-xs text-amber-100" role="status">
             <span className="font-bold">
               {isRealTestSession
                 ? `TESTING SESSION — Logged in as ${authenticatedUser.name} — ${getRoleInfo(authenticatedUser.role).englishTitle}`
@@ -3916,7 +3916,7 @@ export default function App() {
           </nav>
         </aside>
       {/* Main Workspace */}
-      <main className="flex-1 min-w-0 max-w-7xl mx-auto px-6 pt-6 space-y-6">
+      <main className="flex-1 min-w-0 max-w-screen-2xl mx-auto px-6 lg:px-10 pt-6 space-y-6">
         {/* Floating Notification */}
         {notification && (
           <div
@@ -3955,12 +3955,14 @@ export default function App() {
           />
         ) : (
           <>
-            {/* Dedicated Role-Based Portal Header */}
-            <RolePortalHeader
-              currentUser={currentUser}
-              tasks={tasks}
-              clients={clients}
-            />
+            {/* Dedicated Role-Based Portal Header (Dashboard tab only) */}
+            {activeTab === 'dashboard' && (
+              <RolePortalHeader
+                currentUser={currentUser}
+                tasks={tasks}
+                clients={clients}
+              />
+            )}
 
             {/* Tab 0: Leadership Dashboard */}
             {activeTab === 'dashboard' && (
