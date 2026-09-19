@@ -1643,8 +1643,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           {/* 5. TASKS & DEADLINES */}
           {activeTab === 'tasks' && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-stone-400">Tasks assigned across operational agency teams</span>
+              <div className="flex items-center justify-end mb-2">
                 <span className="text-xs text-purple-300 font-bold">{clientTasks.length} Total Tasks</span>
               </div>
               <div className="space-y-2">
@@ -1712,7 +1711,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           {/* 6. LOGS & NOTES */}
           {activeTab === 'logs' && (
             <div className="space-y-3">
-              <span className="text-xs text-stone-400 block mb-2">Team activity logs & operational milestones</span>
               <div className="space-y-2">
                 {clientLogs.map((log) => {
                   const author = users.find((u) => u.id === log.user_id);
@@ -1739,10 +1737,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           {/* 6b. TEAM ACTIVITY (Module 12 Phase 4) */}
           {activeTab === 'team_activity' && (
             <div className="space-y-4">
-              <span className="text-xs text-stone-400 block">
-                Every task currently in flight for this client, across every department — a single
-                consolidated view for account management and leadership.
-              </span>
               {clientTasksByTeam.length === 0 && (
                 <p className="text-xs text-stone-500 py-6 text-center">No task activity recorded for this client yet.</p>
               )}
@@ -2043,8 +2037,8 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
         </div>
         <p className="text-[11px] text-stone-400">
           {reportMode === 'period_summary'
-            ? 'A general activity summary for one period — totals only, no prior-period comparison.'
-            : 'Current period vs. a prior period, with deltas and a rule-generated recommendation.'}
+            ? 'One period, totals only.'
+            : 'Compare two periods with deltas.'}
         </p>
       </div>
 

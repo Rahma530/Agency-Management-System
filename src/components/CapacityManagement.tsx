@@ -494,7 +494,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               {availableCount} <span className="text-xs font-normal text-stone-400">employees</span>
             </p>
             <p className="text-[11px] mt-0.5" style={{ color: 'var(--roas-good)' }}>
-              Utilization under 75%
+              &lt;75%
             </p>
           </div>
           <div
@@ -522,7 +522,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               {nearCapacityCount} <span className="text-xs font-normal text-stone-400">employees</span>
             </p>
             <p className="text-[11px] mt-0.5" style={{ color: 'var(--roas-mid)' }}>
-              Utilization between 75% and 99%
+              75-99%
             </p>
           </div>
           <div
@@ -553,7 +553,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               {overCapacityCount} <span className="text-xs font-normal text-stone-400">employees</span>
             </p>
             <p className="text-[11px] mt-0.5" style={{ color: 'var(--roas-bad)' }}>
-              100%+ utilization (overloaded)
+              100%+
             </p>
           </div>
           <div
