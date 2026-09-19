@@ -78,10 +78,6 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
           >
             {roleInfo.portalTitleEn}
           </h2>
-
-          <p className="text-xs leading-relaxed text-[#c7b8db]">
-            {roleInfo.description}
-          </p>
         </div>
 
         {/* Role Portal Quick Status Strip & Action */}

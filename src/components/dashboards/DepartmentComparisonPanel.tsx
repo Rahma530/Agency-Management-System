@@ -141,11 +141,7 @@ export const DepartmentComparisonPanel: React.FC<{
           ))}
         </div>
       </div>
-      <p className="text-[10px] text-stone-500 -mt-2">
-        {period.label} — headline metrics are department-specific (different units, not directly
-        comparable); on-time rate and capacity utilization are normalized 0-100 and are the actual
-        cross-department comparison.
-      </p>
+      <p className="text-[10px] text-stone-500 -mt-2">{period.label}</p>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {rows.map((row) => (
