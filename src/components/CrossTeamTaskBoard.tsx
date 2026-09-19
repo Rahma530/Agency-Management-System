@@ -671,7 +671,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-white">{totalTasksCount}</p>
-            <p className="text-[10px] text-stone-400 mt-0.5">In accessible scope</p>
           </div>
         </div>
 
@@ -686,7 +685,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-emerald-400">{completedTasksCount}</p>
-            <p className="text-[10px] text-stone-400 mt-0.5">Finished and approved</p>
           </div>
         </div>
 
@@ -701,7 +699,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-purple-300">{inProgressTasksCount}</p>
-            <p className="text-[10px] text-stone-400 mt-0.5">Currently active</p>
           </div>
         </div>
 
@@ -716,7 +713,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-stone-300">{pendingTasksCount}</p>
-            <p className="text-[10px] text-stone-400 mt-0.5">Awaiting start</p>
           </div>
         </div>
 
@@ -733,7 +729,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-red-400">{overdueTasksCount}</p>
-            <p className="text-[10px] text-red-400/80 mt-0.5">Past deadline</p>
           </div>
         </div>
 
@@ -748,7 +743,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-amber-400">{unassignedTasksCount}</p>
-            <p className="text-[10px] text-stone-400 mt-0.5">Requires assignee</p>
           </div>
         </div>
 
@@ -763,7 +757,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           </div>
           <div className="mt-2">
             <p className="text-xl font-bold text-purple-300">{capacityUtilization}%</p>
-            <p className="text-[10px] text-stone-400 mt-0.5">Operational load</p>
           </div>
         </div>
       </div>

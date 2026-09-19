@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { DollarSign, Users, TrendingDown, Building2, AlertCircle } from 'lucide-react';
+import { DollarSign, Users, TrendingDown, Building2 } from 'lucide-react';
 import { ClientRecord, CampaignRecord, TaskRecord, SocialInsightRecord, UserRecord } from '../../types/database';
 import { ComparisonGranularity, resolveComparisonPeriods } from '../../lib/reportingEngine';
 import { DepartmentComparisonPanel } from './DepartmentComparisonPanel';
@@ -123,17 +123,6 @@ export const ExecutiveDashboard: React.FC<{
           </div>
         </div>
       </div>
-
-      {churnStats.legacyChurned > 0 && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-950/20 border border-amber-900/30">
-          <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-          <p className="text-[10px] text-stone-400">
-            {churnStats.legacyChurned} closed client{churnStats.legacyChurned === 1 ? '' : 's'} predate closure-date tracking
-            (churned_at unknown) and are excluded from the period figure above — not counted as closed in any period,
-            not counted as active either.
-          </p>
-        </div>
-      )}
 
       <DepartmentComparisonPanel
         clients={clients}
