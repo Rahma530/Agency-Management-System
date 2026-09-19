@@ -21,6 +21,8 @@ import {
   BarChart3,
   Briefcase,
   UserPlus,
+  Menu,
+  X,
 } from 'lucide-react';
 import {
   supabase,
@@ -150,6 +152,8 @@ export default function App() {
   // Active module tab
   const [activeTab, setActiveTab] = useState<AppModule>('onboarding');
   const [unauthorizedRoute, setUnauthorizedRoute] = useState<string | null>(null);
+  // Off-canvas sidebar drawer, mobile only (md breakpoint and below)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   
   // Online Users Mock State
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
@@ -625,6 +629,7 @@ export default function App() {
     const mySlug = getPortalSlug(authenticatedUser.role);
     window.location.hash = `#/portal/${mySlug}/${newTab}`;
     setActiveTab(newTab);
+    setIsMobileSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -3453,6 +3458,15 @@ export default function App() {
       >
         <div className="max-w-screen-2xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="md:hidden p-2 -ml-1 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
+              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              title="Open navigation menu"
+              aria-label="Open navigation menu"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
             <div
               className="w-10 h-10 rounded-[12px] flex items-center justify-center shadow-lg font-bold text-lg"
               style={{
@@ -3609,14 +3623,37 @@ export default function App() {
 
       {/* Sidebar + Content shell */}
       <div className="flex">
-        {/* Left Sidebar Navigation - Filtered strictly by Employee's Role Permissions */}
+        {/* Backdrop, mobile only — closes the drawer on outside tap */}
+        {isMobileSidebarOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-black/60 md:hidden"
+            onClick={() => setIsMobileSidebarOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+
+        {/* Left Sidebar Navigation - Filtered strictly by Employee's Role Permissions.
+            Fixed off-canvas drawer below md (toggled via isMobileSidebarOpen), sticky
+            in-flow column at md and up — same positioning/sizing either way. */}
         <aside
-          className={`w-60 shrink-0 border-r sticky overflow-y-auto backdrop-blur-md ${testHandoff ? 'top-[110px] h-[calc(100vh-110px)]' : 'top-[65px] h-[calc(100vh-65px)]'}`}
+          className={`fixed md:sticky left-0 z-40 md:z-auto w-60 shrink-0 border-r overflow-y-auto backdrop-blur-md transition-transform duration-200 ease-in-out md:translate-x-0 ${
+            isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          } ${testHandoff ? 'top-[110px] h-[calc(100vh-110px)]' : 'top-[65px] h-[calc(100vh-65px)]'}`}
           style={{
             background: 'rgba(15, 12, 22, 0.95)',
             borderColor: 'var(--border-soft)',
           }}
         >
+          <div className="flex items-center justify-between px-4 pt-4 md:hidden">
+            <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Menu</span>
+            <button
+              onClick={() => setIsMobileSidebarOpen(false)}
+              className="p-1.5 rounded-lg text-stone-400 hover:text-white transition-colors"
+              aria-label="Close navigation menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
           <nav className="flex flex-col gap-1.5 p-4">
             {/* Tab -1: My Work (personal landing view — clients/tasks/deadlines/daily log/performance) */}
             {userRoleInfo.allowedModules.includes('my_work') && (
