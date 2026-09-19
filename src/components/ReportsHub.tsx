@@ -215,9 +215,6 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           </div>
           <div>
             <h2 className="text-lg font-bold text-white">Reports & Comparisons</h2>
-            <p className="text-xs text-stone-400">
-              Generate a report for a client, all your clients{isTeamLead ? ', or a specific agent' : ''}.
-            </p>
           </div>
         </div>
       </div>

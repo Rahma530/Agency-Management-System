@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Shield,
   Briefcase,
   Layers,
   Sparkles,
@@ -54,24 +53,6 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
 
       <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div className="space-y-2 max-w-3xl">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span
-              className="text-[11px] px-3 py-1 font-bold rounded-full border shadow-sm flex items-center gap-1.5"
-              style={{
-                background: roleInfo.badgeBg,
-                color: roleInfo.badgeText,
-                borderColor: 'var(--border-soft)',
-              }}
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>{roleInfo.portalTitleEn}</span>
-            </span>
-
-            <span className="text-xs text-stone-400">
-              • {roleInfo.department} ({currentUser?.team || 'Operations'})
-            </span>
-          </div>
-
           <h2
             className="text-xl sm:text-2xl font-black tracking-tight"
             style={{ color: 'var(--white)' }}

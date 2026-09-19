@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import {
-  UserCheck,
   Plus,
   Building2,
   Calendar,
@@ -119,16 +118,6 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>Sales Portal</span>
-              </span>
-              <span className="text-[11px] px-2.5 py-0.5 font-medium rounded-full bg-purple-900/30 text-purple-300 border border-purple-700/30">
-                RLS Active: Personal Submissions
-              </span>
-            </div>
-
             <h2 className="text-xl md:text-2xl font-bold text-white">
               Client Acquisition & Onboarding Intake
             </h2>
