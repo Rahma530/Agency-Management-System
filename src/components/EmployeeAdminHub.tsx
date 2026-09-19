@@ -8,7 +8,6 @@ import {
   FileSpreadsheet,
   AlertCircle,
   CheckCircle2,
-  Info,
   Loader2,
   Clock,
   Pencil,
@@ -480,18 +479,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             <p className="text-[11px] text-stone-400">Executive / Head of Technical only</p>
           </div>
         </div>
-        <div
-          className="mt-3 p-3 rounded-xl text-[11px] flex items-start gap-2"
-          style={{ background: 'rgba(123, 47, 247, 0.08)', border: '1px solid var(--border-soft)', color: 'var(--lilac)' }}
-        >
-          <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-          <span>
-            Adding someone here creates a <strong>pending</strong> employee record — not a working login. Real account
-            creation needs a key that never touches the browser, so it happens separately: after adding people, run{' '}
-            <code className="px-1 py-0.5 rounded bg-black/40 font-mono">npm run provision-auth-users</code> to create their
-            real sign-in and generate their one-time password-setup link.
-          </span>
-        </div>
       </div>
 
       <div className="flex gap-2">
@@ -712,10 +699,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-stone-500 mt-3">
-            Run <code className="px-1 py-0.5 rounded bg-black/40 font-mono">npm run provision-auth-users</code> to activate
-            these accounts.
-          </p>
         </div>
       )}
       </>
@@ -809,9 +792,8 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                       <p className="text-[11px] text-amber-300 flex items-start gap-1.5">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                         Deactivate {u.name}? Their open tasks become unassigned, they're removed from every
-                        active-employee picker, and their login is banned once{' '}
-                        <code className="px-1 py-0.5 rounded bg-black/40 font-mono">npm run deactivate-auth-users</code> is
-                        run. Historical records keep their name — this is permanent but not a delete.
+                        active-employee picker, and their login is banned. Historical records keep their name — this
+                        is permanent but not a delete.
                       </p>
                       <div className="flex justify-end gap-2">
                         <button
