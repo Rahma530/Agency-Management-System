@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers, Globe } from 'lucide-react';
-import { ServiceType, UserRecord } from '../types/database';
+import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers, Globe, ChevronDown } from 'lucide-react';
+import { ClientSector, ServiceType, UserRecord } from '../types/database';
 import { CLIENT_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
 
 interface ClientRegistrationModalProps {
@@ -12,6 +12,7 @@ interface ClientRegistrationModalProps {
   onSubmit: (clientData: {
     name: string;
     client_contact_name?: string;
+    sector: ClientSector;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
@@ -31,6 +32,9 @@ const addOneYear = (dateStr: string): string => {
   return d.toISOString().split('T')[0];
 };
 
+const SECTOR_OPTIONS: ClientSector[] = ['E-Commerce', 'Service'];
+const INDUSTRY_OPTIONS = ['عطور/بخور', 'عبايات', 'أحذية وشنط', 'أخرى'];
+
 export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = ({
   isOpen,
   onClose,
@@ -46,7 +50,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
   const [name, setName] = useState('');
   const [contactName, setContactName] = useState('');
+  const [sector, setSector] = useState<ClientSector | ''>('');
   const [industry, setIndustry] = useState('');
+  const [isIndustryOpen, setIsIndustryOpen] = useState(false);
+  const [activeIndustryIndex, setActiveIndustryIndex] = useState(-1);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState('');
   const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
@@ -77,6 +84,14 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setErrorMsg('Please enter the client / company name.');
       return;
     }
+    if (!sector) {
+      setErrorMsg('Please select a sector.');
+      return;
+    }
+    if (!industry.trim()) {
+      setErrorMsg('Please select or enter an industry.');
+      return;
+    }
     if (selectedServices.length === 0) {
       setErrorMsg('Please select at least one service.');
       return;
@@ -88,7 +103,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       await onSubmit({
         name: name.trim(),
         client_contact_name: contactName.trim() || undefined,
-        industry: industry.trim() || 'General',
+        sector,
+        industry: industry.trim(),
         services: selectedServices,
         phone_number: phoneNumber.trim() || undefined,
         website_or_social_link: websiteOrSocialLink.trim() || undefined,
@@ -101,7 +117,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       // reset
       setName('');
       setContactName('');
+      setSector('');
       setIndustry('');
+      setIsIndustryOpen(false);
+      setActiveIndustryIndex(-1);
       setPhoneNumber('');
       setWebsiteOrSocialLink('');
       setSelectedServices([]);
@@ -250,47 +269,137 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Industry / Sector
+                Sector <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <Briefcase className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
-                <input
-                  type="text"
-                  value={industry}
-                  onChange={(e) => setIndustry(e.target.value)}
-                  placeholder="e.g. E-Commerce, Real Estate"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                <select
+                  required
+                  value={sector}
+                  onChange={(e) => setSector(e.target.value as ClientSector | '')}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
                   style={{
                     background: 'rgba(10, 10, 13, 0.8)',
                     border: '1px solid var(--border-soft)',
                     color: 'var(--white)',
                   }}
-                />
+                >
+                  <option value="">Select sector</option>
+                  {SECTOR_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
               </div>
             </div>
 
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Phone Number
+                Industry <span className="text-red-400">*</span>
               </label>
               <div className="relative">
-                <Phone className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <Briefcase className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
                 <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="e.g. +966 5X XXX XXXX"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  type="text"
+                  required
+                  value={industry}
+                  onChange={(e) => {
+                    setIndustry(e.target.value);
+                    setIsIndustryOpen(true);
+                    setActiveIndustryIndex(-1);
+                  }}
+                  onFocus={() => setIsIndustryOpen(true)}
+                  onBlur={() => setIsIndustryOpen(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setIsIndustryOpen(true);
+                      setActiveIndustryIndex((current) => Math.min(current + 1, INDUSTRY_OPTIONS.length - 1));
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setActiveIndustryIndex((current) => Math.max(current - 1, 0));
+                    } else if (e.key === 'Enter' && isIndustryOpen && activeIndustryIndex >= 0) {
+                      e.preventDefault();
+                      setIndustry(INDUSTRY_OPTIONS[activeIndustryIndex]);
+                      setIsIndustryOpen(false);
+                      setActiveIndustryIndex(-1);
+                    } else if (e.key === 'Escape') {
+                      setIsIndustryOpen(false);
+                      setActiveIndustryIndex(-1);
+                    }
+                  }}
+                  placeholder="Select or type an industry"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={isIndustryOpen}
+                  aria-controls="client-industry-options"
+                  aria-activedescendant={activeIndustryIndex >= 0 ? `client-industry-option-${activeIndustryIndex}` : undefined}
+                  autoComplete="off"
+                  className="w-full pl-9 pr-9 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
                   style={{
                     background: 'rgba(10, 10, 13, 0.8)',
                     border: '1px solid var(--border-soft)',
                     color: 'var(--white)',
                   }}
                 />
+                <ChevronDown className="w-4 h-4 absolute right-3 top-3 text-stone-400 pointer-events-none" />
+                {isIndustryOpen && (
+                  <div
+                    id="client-industry-options"
+                    role="listbox"
+                    className="absolute z-30 mt-1 w-full overflow-hidden rounded-xl py-1 shadow-xl"
+                    style={{
+                      background: 'rgb(18, 16, 24)',
+                      border: '1px solid var(--border-soft)',
+                    }}
+                  >
+                    {INDUSTRY_OPTIONS.map((option, index) => (
+                      <button
+                        key={option}
+                        id={`client-industry-option-${index}`}
+                        type="button"
+                        role="option"
+                        aria-selected={industry === option}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setIndustry(option);
+                          setIsIndustryOpen(false);
+                          setActiveIndustryIndex(-1);
+                        }}
+                        onMouseEnter={() => setActiveIndustryIndex(index)}
+                        className="w-full px-3 py-2.5 text-left text-sm transition-colors hover:bg-purple-500/20"
+                        style={{
+                          background: activeIndustryIndex === index ? 'rgba(168, 85, 247, 0.18)' : 'transparent',
+                          color: 'var(--white)',
+                        }}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Phone Number
+            </label>
+            <div className="relative">
+              <Phone className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+              <input
+                type="tel"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                placeholder="e.g. +966 5X XXX XXXX"
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                style={{
+                  background: 'rgba(10, 10, 13, 0.8)',
+                  border: '1px solid var(--border-soft)',
+                  color: 'var(--white)',
+                }}
+              />
             </div>
           </div>
 

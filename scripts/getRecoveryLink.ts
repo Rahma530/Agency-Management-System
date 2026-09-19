@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type User } from '@supabase/supabase-js';
 
 const s = createClient(
   process.env.SUPABASE_URL!,
@@ -8,7 +8,7 @@ const s = createClient(
 const email = 'headtechnical@kesraa.com';
 
 const { data: users } = await s.auth.admin.listUsers();
-const user = users?.users.find(u => u.email === email);
+const user = (users?.users as User[] | undefined)?.find(u => u.email === email);
 
 if (!user) {
   console.log('User not found in auth');

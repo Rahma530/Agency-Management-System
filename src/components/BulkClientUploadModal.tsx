@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { X, Download, FileSpreadsheet, Upload, AlertCircle, Loader2, UploadCloud } from 'lucide-react';
-import { ClientRecord, ServiceType, UserRecord } from '../types/database';
+import { ClientRecord, ClientSector, ServiceType, UserRecord } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
 import { normalizeClientServices } from '../lib/clientServices';
 
@@ -15,6 +15,7 @@ interface BulkClientUploadModalProps {
   onAddClientRow: (client: {
     name: string;
     client_contact_name?: string;
+    sector?: ClientSector;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
@@ -33,6 +34,12 @@ const VALID_SERVICES = [
   'comprehensive', 'شاملة', 'creative',
 ];
 const isValidService = (val: string): boolean => VALID_SERVICES.includes(val);
+const normalizeSector = (value: string): ClientSector | null => {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'e-commerce') return 'E-Commerce';
+  if (normalized === 'service') return 'Service';
+  return null;
+};
 const isValidDateStr = (val: string) => !Number.isNaN(new Date(val).getTime());
 const todayIso = () => new Date().toISOString().split('T')[0];
 const addOneYear = (dateStr: string): string => {
@@ -45,6 +52,7 @@ const addOneYear = (dateStr: string): string => {
 const CSV_TEMPLATE_HEADERS = [
   'name',
   'client_contact_name',
+  'sector',
   'industry',
   'services',
   'contract_value',
@@ -59,6 +67,7 @@ const CSV_TEMPLATE_EXAMPLE = [
   'Apex Global Trading',
   'Khaled',
   'E-Commerce',
+  'عطور/بخور',
   'seo;media_buying',
   '5000',
   '',
@@ -186,6 +195,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const raw = rows[i];
         const rowName = (raw.name || '').trim();
         const rowContactName = (raw.client_contact_name || '').trim();
+        const rowSector = (raw.sector || '').trim();
         const rowIndustry = (raw.industry || '').trim();
         const rowServicesRaw = (raw.services || '').trim();
         const rowContractValue = (raw.contract_value || '').trim();
@@ -203,6 +213,11 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
 
         if (!rowServicesRaw) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'Missing services' });
+          continue;
+        }
+        const sector = rowSector ? normalizeSector(rowSector) : null;
+        if (rowSector && !sector) {
+          rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'Invalid sector (valid: E-Commerce, Service)' });
           continue;
         }
         // Semicolon is the recommended delimiter (a CSV cell already uses comma as the field
@@ -279,6 +294,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
           await onAddClientRow({
             name: rowName,
             client_contact_name: rowContactName || undefined,
+            sector: sector || undefined,
             industry: rowIndustry || 'General',
             services,
             phone_number: rowPhone || undefined,

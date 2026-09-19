@@ -33,6 +33,7 @@ export type UserRole =
   | 'marketing_manager';         // Marketing Manager
 
 export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface' | 'creation' | 'branding';
+export type ClientSector = 'E-Commerce' | 'Service';
 
 // Module 13: 5-value lifecycle, replacing the old 4-value 'lead'|'onboarding'|'active'|'renewal'|
 // 'churned' set. 'lead' is gone — a ClientRecord is now only ever created at 'onboarding' (that
@@ -73,6 +74,9 @@ export interface UserRecord {
 export interface ClientRecord {
   id: string;
   name: string;
+  // Structured top-level market category used by client registration. Nullable for clients
+  // created before the dedicated sector column was introduced.
+  sector?: ClientSector | null;
   industry?: string | null;
   // The individual point of contact at the client's company — distinct from `name` (the
   // company/business name itself), which may differ (e.g. name: "Apex Global Trading",

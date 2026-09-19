@@ -53,6 +53,7 @@ import { EmployeeAdminHub, NewEmployeeInput } from './components/EmployeeAdminHu
 import { DashboardHub } from './components/DashboardHub';
 import {
   ClientRecord,
+  ClientSector,
   ClientStatus,
   UserRecord,
   BriefRecord,
@@ -1440,6 +1441,7 @@ export default function App() {
   const handleRegisterClient = async (clientData: {
     name: string;
     client_contact_name?: string;
+    sector: ClientSector;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
@@ -1464,6 +1466,7 @@ export default function App() {
       id: `cl-${Date.now().toString().slice(-4)}`,
       name: clientData.name,
       client_contact_name: clientData.client_contact_name || null,
+      sector: clientData.sector,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
       phone_number: clientData.phone_number || null,
@@ -1520,6 +1523,7 @@ export default function App() {
   const handleBulkAddClient = async (clientData: {
     name: string;
     client_contact_name?: string;
+    sector?: ClientSector;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
@@ -1544,6 +1548,7 @@ export default function App() {
       id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       name: clientData.name,
       client_contact_name: clientData.client_contact_name || null,
+      sector: clientData.sector || null,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
       phone_number: clientData.phone_number || null,
