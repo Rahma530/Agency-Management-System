@@ -14,9 +14,11 @@ interface BulkClientUploadModalProps {
   clients: ClientRecord[];
   onAddClientRow: (client: {
     name: string;
+    client_contact_name?: string;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
+    website_or_social_link?: string;
     contract_value: number;
     start_date: string;
     renewal_date: string;
@@ -25,7 +27,11 @@ interface BulkClientUploadModalProps {
   }) => Promise<void>;
 }
 
-const VALID_SERVICES = ['seo', 'social_media', 'media_buying', 'interface', 'واجهة', 'comprehensive', 'شاملة', 'creative'];
+const VALID_SERVICES = [
+  'seo', 'social_media', 'media_buying', 'interface', 'واجهة',
+  'creation', 'إنشاء', 'branding', 'الهوية البصرية', 'هوية',
+  'comprehensive', 'شاملة', 'creative',
+];
 const isValidService = (val: string): boolean => VALID_SERVICES.includes(val);
 const isValidDateStr = (val: string) => !Number.isNaN(new Date(val).getTime());
 const todayIso = () => new Date().toISOString().split('T')[0];
@@ -38,23 +44,27 @@ const addOneYear = (dateStr: string): string => {
 
 const CSV_TEMPLATE_HEADERS = [
   'name',
+  'client_contact_name',
   'industry',
   'services',
   'contract_value',
   'start_date',
   'renewal_date',
   'phone_number',
+  'website_or_social_link',
   'am_team_lead_name',
 ];
 const MANAGEMENT_TEMPLATE_HEADERS = [...CSV_TEMPLATE_HEADERS, 'am_agent_name'];
 const CSV_TEMPLATE_EXAMPLE = [
   'Apex Global Trading',
+  'Khaled',
   'E-Commerce',
   'seo;media_buying',
   '5000',
   '',
   '',
   '+966 50 123 4567',
+  'https://apexglobal.example.com',
   'مها الشامي',
 ];
 
@@ -175,12 +185,14 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const rowNum = i + 2; // +1 for 1-indexing, +1 for the header row
         const raw = rows[i];
         const rowName = (raw.name || '').trim();
+        const rowContactName = (raw.client_contact_name || '').trim();
         const rowIndustry = (raw.industry || '').trim();
         const rowServicesRaw = (raw.services || '').trim();
         const rowContractValue = (raw.contract_value || '').trim();
         const rowStartDate = (raw.start_date || '').trim();
         const rowRenewalDate = (raw.renewal_date || '').trim();
         const rowPhone = (raw.phone_number || '').trim();
+        const rowWebsiteOrSocial = (raw.website_or_social_link || '').trim();
         const rowAmLeadName = (raw.am_team_lead_name || '').trim();
         const rowAmAgentName = (raw.am_agent_name || '').trim();
 
@@ -207,7 +219,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             row: rowNum,
             name: rowName,
             status: 'skipped',
-            reason: `Invalid services "${rowServicesRaw}" (valid: seo, social_media, media_buying, interface, comprehensive / شاملة)`,
+            reason: `Invalid services "${rowServicesRaw}" (valid: seo, social_media, media_buying, interface, creation, branding, comprehensive / شاملة)`,
           });
           continue;
         }
@@ -266,9 +278,11 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         try {
           await onAddClientRow({
             name: rowName,
+            client_contact_name: rowContactName || undefined,
             industry: rowIndustry || 'General',
             services,
             phone_number: rowPhone || undefined,
+            website_or_social_link: rowWebsiteOrSocial || undefined,
             contract_value: contractValue,
             start_date: startDate,
             renewal_date: renewalDate,

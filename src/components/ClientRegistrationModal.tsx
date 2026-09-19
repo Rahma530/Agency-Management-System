@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers } from 'lucide-react';
+import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers, Globe } from 'lucide-react';
 import { ServiceType, UserRecord } from '../types/database';
 import { CLIENT_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
 
@@ -11,9 +11,11 @@ interface ClientRegistrationModalProps {
   amAgents?: UserRecord[];
   onSubmit: (clientData: {
     name: string;
+    client_contact_name?: string;
     industry: string;
     services: ServiceType[];
     phone_number?: string;
+    website_or_social_link?: string;
     contract_value: number;
     start_date: string;
     renewal_date: string;
@@ -43,8 +45,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const isManagementForm = isLeadershipForm || currentUser.role === 'am_team_lead';
 
   const [name, setName] = useState('');
+  const [contactName, setContactName] = useState('');
   const [industry, setIndustry] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState('');
   const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
   const [contractValue, setContractValue] = useState<number | ''>('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -83,9 +87,11 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
     try {
       await onSubmit({
         name: name.trim(),
+        client_contact_name: contactName.trim() || undefined,
         industry: industry.trim() || 'General',
         services: selectedServices,
         phone_number: phoneNumber.trim() || undefined,
+        website_or_social_link: websiteOrSocialLink.trim() || undefined,
         contract_value: contractValue ? Number(contractValue) : 0,
         start_date: startDate,
         renewal_date: renewalDate,
@@ -94,8 +100,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       });
       // reset
       setName('');
+      setContactName('');
       setIndustry('');
       setPhoneNumber('');
+      setWebsiteOrSocialLink('');
       setSelectedServices([]);
       setContractValue('');
       if (isManagementForm) {
@@ -195,6 +203,50 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                   color: 'var(--white)',
                 }}
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Contact Person (optional)
+              </label>
+              <div className="relative">
+                <UserCheck className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={contactName}
+                  onChange={(e) => setContactName(e.target.value)}
+                  placeholder="e.g. Khaled"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Website / Social Link (optional)
+              </label>
+              <div className="relative">
+                <Globe className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={websiteOrSocialLink}
+                  onChange={(e) => setWebsiteOrSocialLink(e.target.value)}
+                  placeholder="Website URL, or a social media handle/link"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
             </div>
           </div>
 

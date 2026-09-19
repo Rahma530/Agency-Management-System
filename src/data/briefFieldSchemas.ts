@@ -61,6 +61,8 @@ export function groupBriefFieldSchemas(rows: BriefFieldSchemaRow[]): Record<Serv
     social_media: [],
     media_buying: [],
     interface: [],
+    creation: [],
+    branding: [],
   };
   const sorted = [...rows].sort((a, b) => a.sort_order - b.sort_order);
   for (const row of sorted) {

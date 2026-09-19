@@ -24,6 +24,8 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   social_media: 'Social Media',
   media_buying: 'Media Buying',
   interface: 'واجهة',
+  creation: 'Creation',
+  branding: 'Branding',
 };
 
 const emptyDraft = (serviceType: ServiceType, sortOrder: number): Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'> => ({

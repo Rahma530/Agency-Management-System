@@ -25,6 +25,8 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',
   interface: 'واجهة',
+  creation: 'Creation',
+  branding: 'Branding',
 };
 
 // Purely read-only: reuses ComparisonCard/FiledReportsList from reporting/ComparisonDisplay.tsx

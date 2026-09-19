@@ -32,7 +32,7 @@ export type UserRole =
   // (edit/deactivate/role-change) anywhere.
   | 'marketing_manager';         // Marketing Manager
 
-export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface';
+export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface' | 'creation' | 'branding';
 
 // Module 13: 5-value lifecycle, replacing the old 4-value 'lead'|'onboarding'|'active'|'renewal'|
 // 'churned' set. 'lead' is gone — a ClientRecord is now only ever created at 'onboarding' (that
@@ -74,10 +74,19 @@ export interface ClientRecord {
   id: string;
   name: string;
   industry?: string | null;
+  // The individual point of contact at the client's company — distinct from `name` (the
+  // company/business name itself), which may differ (e.g. name: "Apex Global Trading",
+  // client_contact_name: "Khaled"). Optional, searchable alongside name/phone_number via
+  // lib/clientSearch.ts's shared predicate.
+  client_contact_name?: string | null;
   // Module 14: plain free-text contact number, no format enforcement (spans multiple countries/
   // formats). Optional at registration — collected via ClientRegistrationModal, searchable
   // alongside name via lib/clientSearch.ts's shared predicate.
   phone_number?: string | null;
+  // Free text on purpose: a website URL and a social media handle/link are both valid, and a
+  // client without a website yet may only have the latter. No format enforcement, same
+  // convention as phone_number.
+  website_or_social_link?: string | null;
   // Module 13 Phase 5: which services this client is directly subscribed to — SEO, Social Media,
   // Media Buying, interface design, any combination. Social Media includes designs and videos.
   // (package_id -> packages.services); no "package" concept exists in this schema anymore.
