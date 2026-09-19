@@ -24,7 +24,6 @@ import {
   SlidersHorizontal,
   Building2,
   Info,
-  ShieldCheck,
   Zap,
 } from 'lucide-react';
 import {
@@ -692,40 +691,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       >
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className="text-[11px] px-3 py-1 font-bold flex items-center gap-1.5"
-                style={{
-                  borderRadius: 'var(--radius-pill)',
-                  background: 'rgba(123, 47, 247, 0.35)',
-                  color: 'var(--purple-light)',
-                  border: '1px solid var(--border-strong)',
-                }}
-              >
-                <Target className="w-3.5 h-3.5 text-purple-300" />
-                <span>Campaign Management</span>
-              </span>
-
-              <span
-                className="text-[11px] px-2.5 py-0.5 font-medium flex items-center gap-1"
-                style={{
-                  borderRadius: 'var(--radius-pill)',
-                  background: 'rgba(56, 189, 248, 0.15)',
-                  color: '#38bdf8',
-                  border: '1px solid rgba(56, 189, 248, 0.3)',
-                }}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>RLS Protection Active • {roleInfo.englishTitle}</span>
-              </span>
-            </div>
-
             <h2 className="text-xl font-bold" style={{ color: 'var(--white)' }}>
               Paid Advertising Hub
             </h2>
-            <p className="text-xs leading-relaxed max-w-3xl" style={{ color: 'var(--lilac)' }}>
-              Manage budgets, performance, and ROI across Meta, Google, TikTok, and LinkedIn.
-            </p>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
