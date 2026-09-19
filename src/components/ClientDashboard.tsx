@@ -982,6 +982,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         <p className="text-sm font-bold text-white font-mono">
                           {client.remaining_value != null ? `${client.remaining_value.toLocaleString()} SAR` : 'Not set'}
                         </p>
+                        <span
+                          className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                          style={
+                            !client.remaining_value
+                              ? { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }
+                              : { background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }
+                          }
+                        >
+                          {!client.remaining_value ? 'Fully Paid' : 'Pending Payment'}
+                        </span>
                       </div>
                       <div>
                         <span className="text-[11px] text-stone-400 block">Contract Duration</span>

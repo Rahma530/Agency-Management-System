@@ -21,6 +21,8 @@ interface BulkClientUploadModalProps {
     phone_number?: string;
     website_or_social_link?: string;
     contract_value: number;
+    due_value?: number;
+    remaining_value?: number;
     start_date: string;
     renewal_date: string;
     am_team_lead_id?: string;
@@ -56,6 +58,8 @@ const CSV_TEMPLATE_HEADERS = [
   'industry',
   'services',
   'contract_value',
+  'due_value',
+  'remaining_value',
   'start_date',
   'renewal_date',
   'phone_number',
@@ -70,6 +74,8 @@ const CSV_TEMPLATE_EXAMPLE = [
   'عطور/بخور',
   'seo;media_buying',
   '5000',
+  '',
+  '',
   '',
   '',
   '+966 50 123 4567',
@@ -199,6 +205,8 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const rowIndustry = (raw.industry || '').trim();
         const rowServicesRaw = (raw.services || '').trim();
         const rowContractValue = (raw.contract_value || '').trim();
+        const rowDueValue = (raw.due_value || '').trim();
+        const rowRemainingValue = (raw.remaining_value || '').trim();
         const rowStartDate = (raw.start_date || '').trim();
         const rowRenewalDate = (raw.renewal_date || '').trim();
         const rowPhone = (raw.phone_number || '').trim();
@@ -245,6 +253,18 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
           continue;
         }
         const contractValue = rowContractValue ? Number(rowContractValue) : 0;
+
+        if (rowDueValue && Number.isNaN(Number(rowDueValue))) {
+          rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'due_value is not a number' });
+          continue;
+        }
+        const dueValue = rowDueValue ? Number(rowDueValue) : undefined;
+
+        if (rowRemainingValue && Number.isNaN(Number(rowRemainingValue))) {
+          rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'remaining_value is not a number' });
+          continue;
+        }
+        const remainingValue = rowRemainingValue ? Number(rowRemainingValue) : undefined;
 
         if (rowStartDate && !isValidDateStr(rowStartDate)) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'start_date is not a valid date' });
@@ -300,6 +320,8 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             phone_number: rowPhone || undefined,
             website_or_social_link: rowWebsiteOrSocial || undefined,
             contract_value: contractValue,
+            due_value: dueValue,
+            remaining_value: remainingValue,
             start_date: startDate,
             renewal_date: renewalDate,
             am_team_lead_id: matchedLead?.id,

@@ -1447,6 +1447,8 @@ export default function App() {
     phone_number?: string;
     website_or_social_link?: string;
     contract_value: number;
+    due_value?: number;
+    remaining_value?: number;
     start_date: string;
     renewal_date: string;
     am_team_lead_id?: string;
@@ -1477,6 +1479,8 @@ export default function App() {
       am_agent_assigned_at: agentId ? new Date().toISOString() : null,
       am_team_lead_id: leadId,
       contract_value: clientData.contract_value,
+      due_value: clientData.due_value ?? null,
+      remaining_value: clientData.remaining_value ?? null,
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
@@ -1529,6 +1533,8 @@ export default function App() {
     phone_number?: string;
     website_or_social_link?: string;
     contract_value: number;
+    due_value?: number;
+    remaining_value?: number;
     start_date: string;
     renewal_date: string;
     am_team_lead_id?: string;
@@ -1559,6 +1565,8 @@ export default function App() {
       am_agent_assigned_at: agentId ? new Date().toISOString() : null,
       am_team_lead_id: leadId,
       contract_value: clientData.contract_value,
+      due_value: clientData.due_value ?? null,
+      remaining_value: clientData.remaining_value ?? null,
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
