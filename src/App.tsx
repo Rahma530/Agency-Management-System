@@ -3503,20 +3503,20 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             {canAccessTestingMode && usersLoadedFromSupabase && (
               <button
                 onClick={() => setIsTestingSelectorOpen(true)}
-                className="rounded-xl border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-900/60"
+                className="hidden md:block rounded-xl border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-900/60"
               >
                 Employee Testing Mode
               </button>
             )}
-            {/* زر النشاط الحي للمديرين */}
+            {/* زر النشاط الحي للمديرين — hidden below md: a desk-admin convenience, not essential mobile nav */}
             {['executive', 'head_of_technical'].includes(currentUser.role) && (
               <button
                 onClick={() => setIsActivityFeedOpen(!isActivityFeedOpen)}
-                className="text-xs px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
+                className="hidden md:flex text-xs px-4 py-2 rounded-xl font-bold items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
                 style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
               >
                 <div className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse border border-emerald-500" />
@@ -3533,12 +3533,14 @@ export default function App() {
               onNotificationClick={handleNotificationClick}
             />
 
-            {/* Online Users Widget */}
-            <OnlineUsersWidget users={users} tasks={tasks} clients={clients} onlineUserIds={onlineUserIds} />
+            {/* Online Users Widget — hidden below md, not essential mobile nav */}
+            <div className="hidden md:block">
+              <OnlineUsersWidget users={users} tasks={tasks} clients={clients} onlineUserIds={onlineUserIds} />
+            </div>
 
-            {/* Supabase Status Indicator */}
+            {/* Supabase Status Indicator — hidden below md, decorative connection info */}
             <div
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
+              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
               style={{
                 background: 'rgba(21, 19, 24, 0.9)',
                 border: '1px solid var(--border-soft)',
@@ -3583,13 +3585,13 @@ export default function App() {
                 <div className="text-xs font-bold text-white flex items-center gap-1.5">
                   <span>{currentUser.name}</span>
                   <span
-                    className="px-1.5 py-0.2 rounded text-[10px] font-semibold"
+                    className="hidden sm:inline-block px-1.5 py-0.2 rounded text-[10px] font-semibold"
                     style={{ background: userRoleInfo.badgeBg, color: userRoleInfo.badgeText }}
                   >
                     {userRoleInfo.englishTitle}
                   </span>
                 </div>
-                <div className="text-[10px] text-[#a89bb8]">
+                <div className="hidden sm:block text-[10px] text-[#a89bb8]">
                   {currentUser.team || 'Agency'}
                 </div>
               </div>

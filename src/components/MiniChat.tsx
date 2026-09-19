@@ -230,11 +230,11 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   }, {} as Record<string, number>);
 
   return (
-    <div className="fixed bottom-6 right-6 z-[90] flex flex-col items-end" dir="rtl">
+    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[90] flex flex-col items-end" dir="rtl">
       {/* Chat Window */}
       {isOpen && (
-        <div 
-          className="mb-4 w-[380px] h-[550px] max-h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-white/10 animate-in slide-in-from-bottom-5 fade-in duration-200"
+        <div
+          className="mb-4 w-[calc(100vw-2rem)] sm:w-[380px] h-[550px] max-h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-white/10 animate-in slide-in-from-bottom-5 fade-in duration-200"
           style={{ background: 'var(--gradient-card)' }}
         >
           {/* Header */}
@@ -723,9 +723,9 @@ export const MiniChat: React.FC<MiniChatProps> = ({
       {/* Floating Action Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative w-14 h-14 rounded-full shadow-lg shadow-purple-500/50 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bg-purple-600 hover:bg-purple-500 border border-purple-400/30"
+        className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-lg shadow-purple-500/50 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bg-purple-600 hover:bg-purple-500 border border-purple-400/30"
       >
-        {isOpen ? <X className="w-6 h-6 text-white" /> : <MessageSquare className="w-6 h-6 text-white" />}
+        {isOpen ? <X className="w-5 h-5 sm:w-6 sm:h-6 text-white" /> : <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6 text-white" />}
         {unreadCount > 0 && (
           <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#1c1626]">
             {unreadCount > 9 ? '9+' : unreadCount}
