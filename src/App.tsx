@@ -3486,9 +3486,6 @@ export default function App() {
                   Operational System
                 </span>
               </div>
-              <p className="text-xs" style={{ color: 'var(--grey)' }}>
-                Client Lifecycle • Capacity Monitoring • Cross-Team Collaboration
-              </p>
             </div>
           </div>
 
