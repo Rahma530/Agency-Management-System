@@ -133,9 +133,15 @@ interface AMQueueProps {
   onUpdateClientAccess?: (
     clientId: string,
     updates: {
-      access_username?: string | null;
-      access_password?: string | null;
-      ad_account_access_details?: string | null;
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
       payment_card_details?: string | null;
     }
   ) => Promise<void>;

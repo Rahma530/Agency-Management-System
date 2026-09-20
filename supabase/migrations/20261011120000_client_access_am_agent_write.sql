@@ -1,7 +1,6 @@
--- Grant AM Agent full edit rights on the "Client Access" tab (access_username, access_password,
--- ad_account_access_details, payment_card_details), matching Executive/Head of Technical/AM Team
--- Leader — all four roles in canAccessClientSensitiveInfo() now have both view AND edit rights on
--- this tab.
+-- Grant AM Agent full edit rights on the "Client Access" fields, matching Executive/Head of
+-- Technical/AM Team Leader — all four roles in canAccessClientSensitiveInfo() have both view AND
+-- edit rights here.
 --
 -- Why an RPC instead of widening clients_update_am_assignment_rls: that policy is the ONLY UPDATE
 -- policy on public.clients, and RLS is row-level, not column-level — adding an am_agent branch to
@@ -9,12 +8,19 @@
 -- am_team_lead_id, due_value/remaining_value, etc.), silently reopening the Payment Tracking
 -- write restriction that ClientDashboard.tsx's canEditPaymentTracking deliberately keeps
 -- am_agent out of ("am_agent is read-only here"). A SECURITY DEFINER function scoped to exactly
--- these four columns grants the write access this tab needs without touching that boundary.
+-- these Client Access columns grants the write access this section needs without touching that
+-- boundary. Every parameter is nullable — none of these fields may ever be required.
 create or replace function public.update_client_access(
   p_client_id text,
-  p_access_username text,
-  p_access_password text,
-  p_ad_account_access_details text,
+  p_general_email text,
+  p_general_email_password text,
+  p_store_platform_username text,
+  p_store_platform_password text,
+  p_social_media_username text,
+  p_social_media_password text,
+  p_ad_account_username text,
+  p_ad_account_password text,
+  p_ad_account_setup_type text,
   p_payment_card_details text
 )
 returns public.clients
@@ -39,9 +45,15 @@ begin
 
   update public.clients
   set
-    access_username = p_access_username,
-    access_password = p_access_password,
-    ad_account_access_details = p_ad_account_access_details,
+    general_email = p_general_email,
+    general_email_password = p_general_email_password,
+    store_platform_username = p_store_platform_username,
+    store_platform_password = p_store_platform_password,
+    social_media_username = p_social_media_username,
+    social_media_password = p_social_media_password,
+    ad_account_username = p_ad_account_username,
+    ad_account_password = p_ad_account_password,
+    ad_account_setup_type = p_ad_account_setup_type,
     payment_card_details = p_payment_card_details
   where id = p_client_id
   returning * into v_client;
@@ -50,4 +62,6 @@ begin
 end;
 $$;
 
-grant execute on function public.update_client_access(text, text, text, text, text) to authenticated;
+grant execute on function public.update_client_access(
+  text, text, text, text, text, text, text, text, text, text, text
+) to authenticated;

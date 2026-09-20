@@ -1930,19 +1930,27 @@ export default function App() {
     showNotification('Payment tracking updated.');
   };
 
-  // 2a-3. "Client Access" tab: agency-held credentials for the client's own external
-  // platforms/ad accounts. All four roles gated in ClientDashboard.tsx's
+  // 2a-3. "Client Access": general email, store platform login, social media login, ad account
+  // login + setup type, and payment card details — collected during the Brief phase, rendered in
+  // ClientDashboard.tsx's Service Briefs tab. All four roles gated by
   // canAccessClientSensitiveInfo (executive/head_of_technical/am_team_lead/am_agent) can edit —
   // routed through the update_client_access() RPC rather than a direct table update, since
   // clients_update_am_assignment_rls (the only general UPDATE policy on clients) doesn't cover
   // am_agent at all. The RPC re-checks the same four-role/own-client rule server-side and scopes
-  // the write to exactly these four columns.
+  // the write to exactly these columns. Every field is optional; leaving any/all blank is expected
+  // (the client often hasn't shared them yet) and never blocks this save or anything downstream.
   const handleUpdateClientAccess = async (
     clientId: string,
     updates: {
-      access_username?: string | null;
-      access_password?: string | null;
-      ad_account_access_details?: string | null;
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
       payment_card_details?: string | null;
     }
   ) => {
@@ -1953,9 +1961,15 @@ export default function App() {
     try {
       const { data, error } = await supabaseRaw.rpc('update_client_access', {
         p_client_id: clientId,
-        p_access_username: updates.access_username ?? null,
-        p_access_password: updates.access_password ?? null,
-        p_ad_account_access_details: updates.ad_account_access_details ?? null,
+        p_general_email: updates.general_email ?? null,
+        p_general_email_password: updates.general_email_password ?? null,
+        p_store_platform_username: updates.store_platform_username ?? null,
+        p_store_platform_password: updates.store_platform_password ?? null,
+        p_social_media_username: updates.social_media_username ?? null,
+        p_social_media_password: updates.social_media_password ?? null,
+        p_ad_account_username: updates.ad_account_username ?? null,
+        p_ad_account_password: updates.ad_account_password ?? null,
+        p_ad_account_setup_type: updates.ad_account_setup_type ?? null,
         p_payment_card_details: updates.payment_card_details ?? null,
       });
       if (error) throw error;
