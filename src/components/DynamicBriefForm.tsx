@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Save,
   CheckCircle2,
@@ -52,6 +52,42 @@ const SEVERITY_STYLES: Record<BriefReviewSeverity, { bg: string; text: string; b
   unusual_gap: { bg: 'rgba(123, 47, 247, 0.12)', text: 'var(--purple-light)', border: 'var(--border-soft)' },
 };
 
+// Draft safety net: sessionStorage-persist unsaved answers so a remount that isn't the user's
+// own doing (a stale-data refetch, a future bug of the same shape) doesn't silently destroy
+// in-progress work. Keyed per client+service so switching between briefs never mixes drafts.
+interface BriefDraft {
+  formData: Record<string, any>;
+  customFieldDefs: BriefFieldDef[];
+  savedAt: number;
+}
+
+const briefDraftKey = (clientId: string, serviceType: ServiceType) => `brief_draft_${clientId}_${serviceType}`;
+
+// Reconciliation: a draft only wins if we can't prove a newer save already exists server-side.
+// If existingBrief was updated (by anyone) after the draft's own timestamp, the draft is stale —
+// discard it rather than silently clobbering someone else's more recent save.
+const loadBriefInitialState = (
+  clientId: string,
+  serviceType: ServiceType,
+  existingBrief: BriefRecord | undefined
+): { formData: Record<string, any>; customFieldDefs: BriefFieldDef[] } => {
+  try {
+    const raw = sessionStorage.getItem(briefDraftKey(clientId, serviceType));
+    if (raw) {
+      const draft = JSON.parse(raw) as Partial<BriefDraft>;
+      const existingUpdatedAt = existingBrief?.updated_at ? new Date(existingBrief.updated_at).getTime() : 0;
+      if (existingUpdatedAt <= (draft.savedAt || 0)) {
+        return { formData: draft.formData || {}, customFieldDefs: draft.customFieldDefs || [] };
+      }
+      // existingBrief is newer than this draft — someone else's save wins, drop the stale draft.
+      sessionStorage.removeItem(briefDraftKey(clientId, serviceType));
+    }
+  } catch {
+    // Corrupt/unavailable sessionStorage — fall through to existingBrief below.
+  }
+  return { formData: existingBrief?.fields || {}, customFieldDefs: existingBrief?.custom_field_defs || [] };
+};
+
 export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
   clientId,
   clientName,
@@ -65,8 +101,12 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
   onSaveBrief,
 }) => {
   const [activeView, setActiveView] = useState<'edit' | 'spreadsheet'>('edit');
-  const [formData, setFormData] = useState<Record<string, any>>(existingBrief?.fields || {});
-  const [customFieldDefs, setCustomFieldDefs] = useState<BriefFieldDef[]>(existingBrief?.custom_field_defs || []);
+  const [formData, setFormData] = useState<Record<string, any>>(
+    () => loadBriefInitialState(clientId, serviceType, existingBrief).formData
+  );
+  const [customFieldDefs, setCustomFieldDefs] = useState<BriefFieldDef[]>(
+    () => loadBriefInitialState(clientId, serviceType, existingBrief).customFieldDefs
+  );
   const [isAddingCustomQuestion, setIsAddingCustomQuestion] = useState(false);
   const [customQuestionLabel, setCustomQuestionLabel] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -74,6 +114,40 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
 
   const currentVersion = existingBrief?.version || 1;
+
+  // Re-derive on an actual client/service switch — this component is reused (not remounted)
+  // when the caller flips between service tabs on the same open dashboard, so the lazy
+  // initializers above only cover the very first mount. Skips its own first run (isFirstRender)
+  // so it doesn't redundantly repeat what those initializers already computed. Deliberately not
+  // depending on existingBrief itself — that reference can churn on unrelated refetches the same
+  // way authenticatedUser did in App.tsx, which is exactly the class of bug this file's own
+  // remount protection exists to survive.
+  const isFirstRenderRef = useRef(true);
+  useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
+    const initial = loadBriefInitialState(clientId, serviceType, existingBrief);
+    setFormData(initial.formData);
+    setCustomFieldDefs(initial.customFieldDefs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, serviceType]);
+
+  // Debounced draft save — sessionStorage only (per-tab, cleared on browser close), not a
+  // substitute for actually saving the brief. Skipped entirely for a read-only viewer.
+  useEffect(() => {
+    if (!canEdit) return;
+    const handle = setTimeout(() => {
+      try {
+        const draft: BriefDraft = { formData, customFieldDefs, savedAt: Date.now() };
+        sessionStorage.setItem(briefDraftKey(clientId, serviceType), JSON.stringify(draft));
+      } catch {
+        // sessionStorage unavailable/full — draft persistence is a safety net, not critical path.
+      }
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [formData, customFieldDefs, clientId, serviceType, canEdit]);
 
   // Review assistant (Module 9, point 1): recomputed live off formData as the author types, not
   // just the last-saved existingBrief — advisory only, never blocks handleSave below. Only
@@ -140,6 +214,12 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
       });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
+      try {
+        sessionStorage.removeItem(briefDraftKey(clientId, serviceType));
+      } catch {
+        // Best-effort cleanup only — a leftover draft just gets superseded by existingBrief's
+        // newer updated_at on next load per the reconciliation check above.
+      }
     } catch (err: any) {
       setErrorMsg(err?.message || 'An error occurred while saving the brief');
     } finally {
