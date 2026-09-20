@@ -128,6 +128,15 @@ export interface ClientRecord {
   // period-scoped gained/lost client metrics in MyWorkHub; not a general "assigned since" display
   // field beyond that.
   am_agent_assigned_at?: string | null;
+  // "Client Access" tab (ClientDashboard.tsx): agency-held credentials for the client's own
+  // external platforms/ad accounts — distinct from client_portal_users (the CLIENT's own login
+  // into THIS app's portal). Plain text, same convention as phone_number/UserRecord.password
+  // elsewhere in this schema; visibility gated in the UI via canAccessClientSensitiveInfo(), not
+  // by a DB-level view.
+  access_username?: string | null;
+  access_password?: string | null;
+  ad_account_access_details?: string | null;
+  payment_card_details?: string | null;
   created_at?: string;
 }
 

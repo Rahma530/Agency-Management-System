@@ -1134,6 +1134,79 @@ export default function App() {
     loadData();
   }, [loadData]);
 
+  // Automated renewal alert (Module 15 Phase 1): fires through the SAME channel every other
+  // in-app alert already uses — a persisted notifications row surfaced by NotificationBell — for
+  // any client whose renewal_date falls within the next 7 days. Recipients are the roles that
+  // actually own a renewal decision: leadership (executive/head_of_technical) plus this client's
+  // own AM Team Leader/AM Agent plus the team lead of each service this client is actively
+  // subscribed to. Design/Graphics (graphic_designer/video_editor) is explicitly excluded even
+  // though the 'social_media' service bundles design/video work — a renewal alert is never
+  // relevant to that department. The notification id is deterministic (client id + renewal_date +
+  // recipient), so re-running this effect (e.g. after an unrelated client update) never creates a
+  // duplicate for the same still-current renewal date — the unique-violation (23505) from a
+  // second insert attempt is expected and silently ignored, same as the existing task-notification
+  // insert above.
+  const renewalAlertsCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!supabaseActive || renewalAlertsCheckedRef.current) return;
+    if (clients.length === 0 || users.length === 0) return;
+    renewalAlertsCheckedRef.current = true;
+
+    const checkRenewalAlerts = async () => {
+      const now = new Date();
+      const in7Days = new Date(now);
+      in7Days.setDate(in7Days.getDate() + 7);
+
+      for (const client of clients) {
+        if (!client.renewal_date || client.status === 'closed') continue;
+        const renewal = new Date(client.renewal_date);
+        if (Number.isNaN(renewal.getTime()) || renewal < now || renewal > in7Days) continue;
+
+        const activeServiceLeadRoles = client.services
+          .map((service): UserRole | null => {
+            if (service === 'seo') return 'seo_team_lead';
+            if (service === 'media_buying') return 'media_buying_team_lead';
+            if (service === 'social_media') return 'social_media_team_lead';
+            return null;
+          })
+          .filter((role): role is UserRole => role !== null);
+
+        const recipients = users.filter((u) => {
+          if (!isActiveEmployee(u)) return false;
+          if (u.role === 'graphic_designer' || u.role === 'video_editor') return false;
+          return (
+            u.role === 'executive' ||
+            u.role === 'head_of_technical' ||
+            u.id === client.am_team_lead_id ||
+            u.id === client.am_agent_id ||
+            activeServiceLeadRoles.includes(u.role)
+          );
+        });
+
+        for (const recipient of recipients) {
+          try {
+            const { error } = await supabaseRaw.from('notifications').insert({
+              id: `notif-renewal-${client.id}-${client.renewal_date}-${recipient.id}`,
+              user_id: recipient.id,
+              sender_id: null,
+              title: 'Upcoming Client Renewal',
+              message: `${client.name}'s contract is due for renewal on ${client.renewal_date} (within 7 days).`,
+              type: 'general',
+              is_read: false,
+              link_url: null,
+              created_at: new Date().toISOString(),
+            });
+            if (error && error.code !== '23505') throw error;
+          } catch (err) {
+            console.error('Failed to create renewal alert notification:', err);
+          }
+        }
+      }
+    };
+
+    checkRenewalAlerts();
+  }, [clients, users, supabaseActive]);
+
   // Real-time chat delivery (Phase 2). A demo-mode login never calls
   // supabase.auth.signInWithPassword, so there's no real JWT to open an authenticated
   // Realtime channel with — postgres_changes would just receive nothing (no grant for the
@@ -1511,6 +1584,7 @@ export default function App() {
     due_value?: number;
     remaining_value?: number;
     start_date: string;
+    contract_duration_months?: number;
     renewal_date: string;
     am_team_lead_id?: string;
     am_agent_id?: string;
@@ -1545,6 +1619,7 @@ export default function App() {
       due_value: clientData.due_value ?? null,
       remaining_value: clientData.remaining_value ?? null,
       start_date: clientData.start_date,
+      contract_duration_months: clientData.contract_duration_months ?? null,
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
     };
@@ -1853,6 +1928,28 @@ export default function App() {
       return;
     }
     showNotification('Payment tracking updated.');
+  };
+
+  // 2a-3. "Client Access" tab: agency-held credentials for the client's own external
+  // platforms/ad accounts. Edit rights are gated in ClientDashboard.tsx to
+  // executive/head_of_technical/am_team_lead, matching clients_update_am_assignment_rls exactly.
+  const handleUpdateClientAccess = async (
+    clientId: string,
+    updates: {
+      access_username?: string | null;
+      access_password?: string | null;
+      ad_account_access_details?: string | null;
+      payment_card_details?: string | null;
+    }
+  ) => {
+    try {
+      await updatePersistedClient(clientId, updates);
+    } catch (err) {
+      console.error('Supabase update client access error:', err);
+      showNotification('Unable to save client access details.', 'info');
+      return;
+    }
+    showNotification('Client access details updated.');
   };
 
   // 2b-2. Invite a client to the Client Portal: creates the placeholder client_portal_users row
@@ -4107,6 +4204,7 @@ export default function App() {
                     onUploadClientContract={handleUploadClientContract}
                     onDeleteClientContract={handleDeleteClientContract}
                     onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                    onUpdateClientAccess={handleUpdateClientAccess}
                   />
                 )}
               </div>
