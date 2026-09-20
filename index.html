@@ -3,6 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Runs synchronously, before any CSS or the app loads, so the correct theme is set on
+      // <html> before first paint — avoids a flash of the wrong theme on reload. Kept as a tiny
+      // inline script rather than app JS specifically so it isn't gated behind React mounting.
+      (function () {
+        try {
+          if (localStorage.getItem('agency_theme') === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch (e) {
+          // localStorage unavailable (private browsing, disabled storage) — fall back to dark.
+        }
+      })();
+    </script>
     <title>Kesra Management System</title>
     <meta name="description" content="Internal agency operational platform for client management, multi-service workflows, capacity, and campaigns" />
     <meta property="og:title" content="Kesra Management System" />
@@ -13,7 +27,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-[#0a0a0d] text-[#e9d9fb] font-['Plus_Jakarta_Sans',sans-serif] antialiased selection:bg-[#7b2ff7]/30 selection:text-[#ffffff]">
+  <body class="font-['Plus_Jakarta_Sans',sans-serif] antialiased selection:bg-[#7b2ff7]/30 selection:text-[#ffffff]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
