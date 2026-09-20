@@ -77,6 +77,47 @@
   --control-surface: rgba(255, 255, 255, 0.05);
   --header-muted: #a89bb8;
   --on-accent: #ffffff;
+  /* Dedicated nav border role, split out from --border-soft (which stays a general-purpose
+     card/badge border) so the topbar/sidebar edge can get its own distinct light-mode
+     treatment without shifting every other bordered surface in the app. Dark-mode value is
+     identical to --border-soft on purpose — this is a pure rename for dark, no visual change. */
+  --nav-border: var(--border-soft);
+
+  /* ---- Two-tone light-theme design system (new token vocabulary) ----
+     These are declared in :root too, aliased to the existing dark tokens above, purely so
+     that any component referencing the new names directly (inline style, not a CSS-class
+     rule) still resolves to a valid, pixel-identical-to-today dark value. The actual new
+     *values* only exist in the [data-theme='light'] block below. */
+  --canvas: var(--black);
+  --chrome: var(--navigation-surface);
+  --chrome-border: var(--nav-border);
+  --surface-border: var(--border);
+  --ink: var(--white);
+  --ink-soft: var(--text-mid);
+  --ink-faint: var(--text-lo);
+  --accent-ink: var(--purple-deep);
+  --accent-tint: var(--accent-soft);
+  --success-tint: var(--success-bg);
+  --warning-tint: var(--warning-bg);
+  --info-tint: var(--info-bg);
+  --rose: var(--pink);
+  --rose-tint: var(--pink-bg);
+
+  /* ---- Stat-number colors ----
+     Dedicated from the primary --accent/--success/--warning/--info/--rose tokens (which serve
+     buttons, badges, and borders elsewhere) so that fixing stat-number legibility here can't
+     silently repaint those broader roles. Dark values are the exact literal Tailwind shade each
+     stat number already used (emerald-400, purple-300, etc.) — not the closest brand token —
+     so switching this file's stat cards to these tokens changes nothing in dark mode. */
+  --stat-neutral: var(--white);
+  --stat-neutral-soft: #d6d3d1;
+  --stat-accent: #d8b4fe;
+  --pill-accent-ink: #e9d5ff;
+  --stat-success: #34d399;
+  --stat-warning: #fbbf24;
+  --stat-warning-alt: #fcd34d;
+  --stat-info: #7dd3fc;
+  --stat-rose: #f87171;
 }
 
 /* ---- Light theme — refined pass over Phase 1's initial values ----
@@ -104,65 +145,108 @@
    Operations, Campaigns, Reports, and Employees actually theme-aware is the separately-scoped
    Phase 2+ file-by-file work, not a gap in this pass. */
 [data-theme='light'] {
-  --black: #f1efea;
-  --black-2: #fffefa;
-  --purple-deep: #33206f;
-  --purple: #6746c3;
-  --purple-light: #8869d6;
-  --lilac: #33206f;
-  --white: #33206f;
-  --grey: #685b82;
+  /* ---- Canonical two-tone light-theme tokens ----
+     Two distinct background tones by design: --chrome (topbar/sidebar) is deliberately one
+     shade darker than --canvas (page content), so navigation reads as its own zone rather
+     than blending into the workspace — that separation was the whole point of this pass.
+     --surface (cards/table/header-card) sits a shade lighter again, on top of --canvas. */
+  --canvas: #f6f3ec;
+  --chrome: #efe9db;
+  --chrome-border: #ddd4bd;
 
-  --chart-1: #6746c3;
-  --chart-2: #4a2c99;
-  --chart-3: #8c63de;
-  --chart-4: #b8a5ee;
-  --chart-5: #33206f;
-  --chart-6: #685b82;
+  --surface: #fffdf8;
+  --surface-border: #e7e0cf;
 
-  --roas-good: #3f9d6f;
-  --roas-mid: #c98a2b;
-  --roas-bad: #b3554f;
+  --ink: #262138;
+  --ink-soft: #55506a;
+  --ink-faint: #8b8698;
 
-  --gradient-page: linear-gradient(180deg, var(--black) 0%, var(--black-2) 40%, var(--black) 100%);
-  --gradient-hero: radial-gradient(circle at 50% -10%, rgba(109,95,216,0.12), transparent 60%),
-                    linear-gradient(135deg, var(--black-2) 0%, var(--accent-soft) 100%);
-  --gradient-title-text: linear-gradient(90deg, var(--purple-deep), var(--purple));
-  --gradient-card: linear-gradient(160deg, var(--black-2), var(--surface-2));
-  --gradient-badge: linear-gradient(135deg, var(--purple), var(--purple-deep));
-  --gradient-section: linear-gradient(160deg, rgba(251,250,246,0.9), rgba(238,235,228,0.6));
+  --accent: #5a4fd6;
+  --accent-ink: #3d3499;
+  --accent-tint: #ece9fb;
 
-  --border-soft: #d8cfeb;
-  --border-medium: #c8bae4;
-  --border-strong: #ab98d4;
-  --border-lilac: rgba(103,70,195,0.3);
+  --success: #2f8f63;
+  --success-tint: #e3f2e9;
+  --warning: #b8791f;
+  --warning-tint: #f8ecd8;
+  --info: #2f6fae;
+  --info-tint: #e2eefa;
+  --rose: #a24d78;
+  --rose-tint: #f7e6ef;
+
+  /* ---- Legacy brand/semantic token names, rebuilt as aliases onto the primitives above ----
+     Every pre-existing component in the app (badges, gradients, chart colors, and every
+     component fixed in earlier passes) references these old names. Re-deriving them from
+     the new two-tone primitives, instead of declaring a second independent palette, keeps
+     every consumer visually consistent with the new system without a full rewrite. */
+  --black: var(--canvas);
+  --black-2: var(--surface);
+  --purple-deep: var(--accent-ink);
+  --purple: var(--accent);
+  --purple-light: var(--accent);
+  --lilac: var(--ink);
+  --white: var(--ink);
+  --grey: var(--ink-soft);
+
+  --chart-1: var(--accent);
+  --chart-2: var(--accent-ink);
+  --chart-3: #8c7fe6;
+  --chart-4: var(--info);
+  --chart-5: var(--rose);
+  --chart-6: var(--ink-soft);
+
+  --roas-good: var(--success);
+  --roas-mid: var(--warning);
+  --roas-bad: var(--rose);
+
+  --gradient-page: linear-gradient(180deg, var(--canvas) 0%, var(--surface) 40%, var(--canvas) 100%);
+  --gradient-hero: radial-gradient(circle at 50% -10%, rgba(90,79,214,0.12), transparent 60%),
+                    linear-gradient(135deg, var(--surface) 0%, var(--accent-tint) 100%);
+  --gradient-title-text: linear-gradient(90deg, var(--accent-ink), var(--accent));
+  --gradient-card: linear-gradient(160deg, var(--surface), var(--canvas));
+  --gradient-badge: linear-gradient(135deg, var(--accent), var(--accent-ink));
+  --gradient-section: linear-gradient(160deg, rgba(255,253,248,0.9), rgba(239,233,219,0.6));
+
+  --border-soft: var(--surface-border);
+  --border-medium: #d6cbaf;
+  --border-strong: #c3b696;
+  --border-lilac: rgba(90,79,214,0.25);
 
   /* New semantic roles (see :root's dark-mode declarations for the aliasing/rationale) */
-  --surface-2: #f5f0ff;
-  --surface-dark: #fffefa;
-  --input-surface: #fffefa;
-  --modal-surface: #fffefa;
-  --border: #d8cfeb;
-  --text-hi: var(--lilac);
-  --text-mid: var(--grey);
-  --text-lo: #8b7d9f;
-  --accent: var(--purple);
-  --accent-soft: #e9e1fb;
-  --success: var(--roas-good);
-  --success-bg: #e7f4ec;
-  --warning: var(--roas-mid);
-  --warning-bg: #fbf1e2;
-  --info: #3e7fc4;
-  --info-bg: #e8f1fb;
-  --pink: #b25f89;
-  --pink-bg: #faeaf2;
+  --surface-2: var(--canvas);
+  --surface-dark: var(--surface);
+  --input-surface: var(--surface);
+  --modal-surface: var(--surface);
+  --border: var(--surface-border);
+  --text-hi: var(--ink);
+  --text-mid: var(--ink-soft);
+  --text-lo: var(--ink-faint);
+  --accent-soft: var(--accent-tint);
+  --success-bg: var(--success-tint);
+  --warning-bg: var(--warning-tint);
+  --info-bg: var(--info-tint);
+  --pink: var(--rose);
+  --pink-bg: var(--rose-tint);
 
-  /* Navigation has a deliberately distinct, light surface so it no longer reads as a
-     dark shell sitting on top of the light workspace. */
-  --header-surface: rgba(255, 254, 250, 0.96);
-  --navigation-surface: rgba(252, 250, 255, 0.98);
-  --control-surface: #f3edff;
-  --header-muted: #685b82;
+  --stat-neutral: var(--ink);
+  --stat-neutral-soft: var(--ink-soft);
+  --stat-accent: var(--accent);
+  --stat-success: var(--success);
+  --stat-warning: var(--warning);
+  --stat-warning-alt: var(--warning);
+  --stat-info: var(--info);
+  --stat-rose: var(--rose);
+  --pill-accent-ink: var(--accent-ink);
+
+  /* Navigation is deliberately --chrome, one shade darker than --canvas, so the topbar and
+     sidebar read as a distinct zone instead of a leftover dark shell or blending into the
+     page. Pills/controls inside the topbar use --surface so they read as mini cards floating
+     on the chrome, mirroring how --surface cards float on --canvas everywhere else. */
+  --header-surface: var(--chrome);
+  --navigation-surface: var(--chrome);
+  --nav-border: var(--chrome-border);
+  --control-surface: var(--surface);
+  --header-muted: var(--ink-soft);
   --on-accent: #ffffff;
 }
 
@@ -264,27 +348,27 @@
 /* Formerly dark status blocks become softly tinted light surfaces instead of leaking a dark
    panel into Light Mode. */
 [data-theme='light'] :is(.bg-purple-950, .bg-purple-950\/10, .bg-purple-950\/20, .bg-purple-950\/30, .bg-purple-950\/40, .bg-purple-950\/50, .bg-purple-950\/60) {
-  background-color: #f0eaff !important;
+  background-color: var(--accent-tint) !important;
 }
 
 [data-theme='light'] :is(.bg-red-950, .bg-red-950\/20, .bg-red-950\/30, .bg-red-950\/40, .bg-red-950\/50, .bg-red-950\/60, .bg-red-950\/80) {
-  background-color: #fff0f1 !important;
+  background-color: var(--rose-tint) !important;
 }
 
 [data-theme='light'] :is(.bg-amber-950, .bg-amber-950\/20, .bg-amber-950\/30, .bg-amber-950\/40, .bg-amber-950\/50, .bg-amber-950\/60, .bg-amber-950\/80) {
-  background-color: #fff5e4 !important;
+  background-color: var(--warning-tint) !important;
 }
 
 [data-theme='light'] :is(.bg-emerald-950, .bg-emerald-950\/30, .bg-emerald-950\/60, .bg-emerald-950\/80) {
-  background-color: #e9f7ef !important;
+  background-color: var(--success-tint) !important;
 }
 
 [data-theme='light'] :is(.bg-purple-950\/40, .bg-purple-950\/60) {
-  background-color: #f0edfc;
+  background-color: var(--accent-tint);
 }
 
 [data-theme='light'] :is(.border-purple-800\/40, .border-purple-800\/60) {
-  border-color: #d4cef2;
+  border-color: var(--border-lilac);
 }
 
 [data-theme='light'] aside :is(.text-stone-400, .hover\:text-white:hover) {
@@ -314,19 +398,21 @@
 }
 
 /* Buttons retain clear semantic treatments in Light Mode. Legacy dark-mode alpha utilities
-   otherwise become too faint against light cards, so primary, secondary, and gold actions
-   deliberately receive their own readable foreground, border, and elevation. */
+   otherwise become too faint against light cards, so primary, secondary, and warning actions
+   deliberately receive their own readable foreground, border, and elevation — all sourced
+   from the shared accent/warning tokens rather than one-off hex, so they track the two-tone
+   system if it's retuned later. */
 [data-theme='light'] :is(.employee-testing-action, .brand-gold-action) {
-  background: linear-gradient(135deg, #b56a08, #804308) !important;
-  border-color: #914f07 !important;
+  background: linear-gradient(135deg, var(--warning), #92600f) !important;
+  border-color: #7a4f0c !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 8px 18px rgba(128, 67, 8, 0.28);
+  box-shadow: 0 8px 18px rgba(184, 121, 31, 0.28);
 }
 
 [data-theme='light'] :is(.employee-testing-action, .brand-gold-action):hover {
-  background: linear-gradient(135deg, #d18212, #99500a) !important;
+  background: linear-gradient(135deg, #cf9535, #7a4f0c) !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 11px 22px rgba(128, 67, 8, 0.34);
+  box-shadow: 0 11px 22px rgba(184, 121, 31, 0.34);
   transform: translateY(-1px);
 }
 
@@ -335,16 +421,16 @@
 }
 
 [data-theme='light'] :is(.primary-action, button[class*='bg-purple-600/'], button[class*='bg-purple-700/']) {
-  background: linear-gradient(135deg, #5b35b1, var(--purple-deep)) !important;
-  border-color: #5134a6 !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-ink)) !important;
+  border-color: var(--accent-ink) !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 7px 16px rgba(74, 44, 153, 0.24);
+  box-shadow: 0 7px 16px rgba(90, 79, 214, 0.24);
 }
 
 [data-theme='light'] :is(.primary-action, button[class*='bg-purple-600/'], button[class*='bg-purple-700/']):hover {
-  background: linear-gradient(135deg, var(--purple), #412583) !important;
+  background: linear-gradient(135deg, #6f64de, var(--accent-ink)) !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 10px 20px rgba(74, 44, 153, 0.3);
+  box-shadow: 0 10px 20px rgba(90, 79, 214, 0.3);
   transform: translateY(-1px);
 }
 
@@ -357,68 +443,68 @@
 }
 
 [data-theme='light'] :is(button[class*='bg-purple-900/'], button[class*='bg-purple-800/'], .capacity-management button[class*='bg-stone-800']) {
-  background-color: #f4efff !important;
-  border-color: #9f8ad2 !important;
-  color: var(--purple-deep) !important;
-  box-shadow: 0 3px 9px rgba(74, 44, 153, 0.12);
+  background-color: var(--accent-tint) !important;
+  border-color: #a99ee0 !important;
+  color: var(--accent-ink) !important;
+  box-shadow: 0 3px 9px rgba(90, 79, 214, 0.12);
 }
 
 [data-theme='light'] :is(button[class*='bg-purple-900/'], button[class*='bg-purple-800/'], .capacity-management button[class*='bg-stone-800']):hover {
-  background-color: #e7ddfb !important;
-  color: var(--purple-deep) !important;
-  border-color: var(--purple) !important;
+  background-color: #ded9f7 !important;
+  color: var(--accent-ink) !important;
+  border-color: var(--accent) !important;
 }
 
 [data-theme='light'] .client-initial-avatar {
-  background: linear-gradient(135deg, #6746c3, #3b237d) !important;
-  border-color: #5134a6 !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-ink)) !important;
+  border-color: var(--accent-ink) !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 5px 12px rgba(74, 44, 153, 0.24);
+  box-shadow: 0 5px 12px rgba(90, 79, 214, 0.24);
 }
 
 /* Focused interactive refinements --------------------------------------------------------- */
 [data-theme='light'] .performance-action {
-  background: #b5dfc2 !important;
-  border-color: #4d9b68 !important;
+  background: var(--success-tint) !important;
+  border-color: var(--success) !important;
   color: #185a35 !important;
-  box-shadow: 0 4px 10px rgba(42, 111, 65, 0.16);
+  box-shadow: 0 4px 10px rgba(47, 143, 99, 0.16);
 }
 
 [data-theme='light'] .performance-action:hover {
-  background: #8fcfa4 !important;
-  border-color: #287348 !important;
+  background: #cdeada !important;
+  border-color: #24704e !important;
   color: #124527 !important;
-  box-shadow: 0 7px 14px rgba(42, 111, 65, 0.22);
+  box-shadow: 0 7px 14px rgba(47, 143, 99, 0.22);
   transform: translateY(-1px);
 }
 
 [data-theme='light'] .secondary-action {
   background: var(--surface) !important;
-  border: 1px solid #9f8ad2 !important;
-  color: var(--purple-deep) !important;
-  box-shadow: 0 2px 6px rgba(74, 44, 153, 0.1);
+  border: 1px solid #a99ee0 !important;
+  color: var(--accent-ink) !important;
+  box-shadow: 0 2px 6px rgba(90, 79, 214, 0.1);
 }
 
 [data-theme='light'] .secondary-action:hover {
-  background: #e7ddfb !important;
-  border-color: var(--purple) !important;
-  color: var(--purple-deep) !important;
+  background: #ded9f7 !important;
+  border-color: var(--accent) !important;
+  color: var(--accent-ink) !important;
 }
 
-/* These comparison tabs intentionally keep white labels in both states; a rich purple
+/* These comparison tabs intentionally keep white labels in both states; a rich accent
    surface makes the selected period unmistakable without introducing pastel controls. */
 [data-theme='light'] .department-comparison button {
-  background: #745eb3 !important;
-  border: 1px solid #60469f !important;
+  background: #6d61c9 !important;
+  border: 1px solid #574ca8 !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 3px 8px rgba(74, 44, 153, 0.18);
+  box-shadow: 0 3px 8px rgba(90, 79, 214, 0.18);
 }
 
 [data-theme='light'] .department-comparison button:hover {
-  background: #54388f !important;
-  border-color: #422979 !important;
+  background: var(--accent-ink) !important;
+  border-color: #2e276e !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 6px 12px rgba(74, 44, 153, 0.25);
+  box-shadow: 0 6px 12px rgba(90, 79, 214, 0.25);
   transform: translateY(-1px);
 }
 
@@ -426,18 +512,18 @@
   color: var(--on-accent) !important;
 }
 
-/* Reports use a quieter, medium-purple family than global primary actions while preserving
+/* Reports use a quieter, medium-accent family than global primary actions while preserving
    a crisp white label and visible selected state. */
 [data-theme='light'] .reports-hub button.bg-purple-600 {
-  background: #7560b6 !important;
-  border-color: #62509f !important;
+  background: #7469c9 !important;
+  border-color: #5d52ab !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 4px 10px rgba(80, 57, 146, 0.2);
+  box-shadow: 0 4px 10px rgba(90, 79, 214, 0.2);
 }
 
 [data-theme='light'] .reports-hub button.bg-purple-600:hover {
-  background: #60479f !important;
-  box-shadow: 0 7px 14px rgba(80, 57, 146, 0.26);
+  background: #5d52ab !important;
+  box-shadow: 0 7px 14px rgba(90, 79, 214, 0.26);
   transform: translateY(-1px);
 }
 
@@ -480,14 +566,14 @@
 }
 
 [data-theme='light'] .mini-chat .chat-avatar {
-  background: linear-gradient(135deg, #6746c3, #3b237d) !important;
-  border-color: #5134a6 !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-ink)) !important;
+  border-color: var(--accent-ink) !important;
   color: var(--on-accent) !important;
   box-shadow: 0 4px 10px rgba(74, 44, 153, 0.24);
 }
 
 [data-theme='light'] .mini-chat .bg-purple-600 {
-  background: linear-gradient(135deg, #6746c3, #3b237d) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-ink)) !important;
   color: var(--on-accent) !important;
   box-shadow: 0 4px 10px rgba(74, 44, 153, 0.2);
 }
@@ -533,7 +619,7 @@
 }
 
 [data-theme='light'] .client-portfolio-row:hover {
-  background-color: #f1ebff !important;
+  background-color: var(--accent-tint) !important;
   box-shadow: inset 3px 0 0 var(--purple), 0 3px 10px rgba(74, 44, 153, 0.1);
 }
 
@@ -550,8 +636,8 @@
    filled treatment last, so that legacy secondary-button compatibility rules cannot split the
    gradient from its required white foreground. */
 [data-theme='light'] button.primary-action {
-  background: linear-gradient(135deg, #5b35b1, var(--purple-deep)) !important;
-  border-color: #5134a6 !important;
+  background: linear-gradient(135deg, var(--accent), var(--purple-deep)) !important;
+  border-color: var(--accent-ink) !important;
   color: var(--on-accent) !important;
   box-shadow: 0 7px 16px rgba(74, 44, 153, 0.24);
 }
@@ -569,7 +655,7 @@
   button:not(.primary-action)[class*='bg-purple-800/']
 ) {
   background-color: var(--surface) !important;
-  border-color: #8d75c8 !important;
+  border-color: #a99ee0 !important;
   color: var(--purple-deep) !important;
 }
 
@@ -585,7 +671,7 @@
   button:not(.primary-action)[class*='bg-purple-900/'],
   button:not(.primary-action)[class*='bg-purple-800/']
 ):hover {
-  background-color: #e8dffc !important;
+  background-color: var(--accent-tint) !important;
   border-color: var(--purple) !important;
   color: var(--purple-deep) !important;
   box-shadow: 0 5px 11px rgba(74, 44, 153, 0.16);
@@ -598,7 +684,7 @@
 }
 
 [data-theme='light'] .reports-hub :is(.text-stone-200, .text-stone-300) {
-  color: #4d3c71 !important;
+  color: var(--ink-soft) !important;
 }
 
 [data-theme='light'] .reports-hub :is(.text-stone-400, .text-stone-500) {
@@ -609,8 +695,8 @@
    later than page typography compatibility rules, because those rules must never turn
    an action label or its currentColor SVG dark on a purple background. */
 [data-theme='light'] button.filled-purple-action {
-  background: linear-gradient(135deg, #5b35b1, var(--purple-deep)) !important;
-  border-color: #5134a6 !important;
+  background: linear-gradient(135deg, var(--accent), var(--purple-deep)) !important;
+  border-color: var(--accent-ink) !important;
   color: var(--on-accent) !important;
 }
 
@@ -620,14 +706,14 @@
 }
 
 [data-theme='light'] button.filled-purple-action:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--purple), #412583) !important;
+  background: linear-gradient(135deg, var(--purple), var(--accent-ink)) !important;
   color: var(--on-accent) !important;
 }
 
 /* Outlined purple controls remain light-surface actions with purple foregrounds. */
 [data-theme='light'] button.purple-outline-action {
   background-color: var(--surface) !important;
-  border-color: #8d75c8 !important;
+  border-color: #a99ee0 !important;
   color: var(--purple-deep) !important;
 }
 
@@ -637,15 +723,15 @@
 }
 
 [data-theme='light'] button.purple-outline-action:hover:not(:disabled) {
-  background-color: #e8dffc !important;
+  background-color: var(--accent-tint) !important;
   color: var(--purple-deep) !important;
 }
 
 /* This must remain after Reports' text hierarchy.  Selected scope, report-type,
    period, and generate actions all use this filled treatment. */
 [data-theme='light'] .reports-hub button.bg-purple-600 {
-  background: #7560b6 !important;
-  border-color: #62509f !important;
+  background: #7469c9 !important;
+  border-color: #5d52ab !important;
   color: var(--on-accent) !important;
 }
 
@@ -655,7 +741,7 @@
 }
 
 [data-theme='light'] .reports-hub button.bg-purple-600:hover:not(:disabled) {
-  background: #60479f !important;
+  background: #5d52ab !important;
   color: var(--on-accent) !important;
 }
 
@@ -709,6 +795,102 @@
 [data-theme='light'] .employee-add-icon * {
   color: var(--on-accent) !important;
   stroke: var(--on-accent) !important;
+}
+
+/* ---- Sidebar nav item: theme-branched via CSS classes, not inline style ----
+   Dark mode's rule below reproduces the app's existing gradient-pill treatment exactly
+   (same properties/values it always had), so switching themes is the only thing that can
+   change its appearance — never this refactor. Light mode replaces the full-color pill with
+   a quiet wayfinding cue: a tinted background, accent-colored label, and a 3px accent border
+   on the leading edge (border-inline-start resolves to the correct side regardless of the
+   container's actual text direction, so it doesn't need to guess LTR vs RTL). */
+.sidebar-nav-item--active {
+  background: var(--gradient-badge);
+  color: var(--white);
+  border: 1px solid var(--border-strong);
+}
+
+.sidebar-nav-item--inactive {
+  background: transparent;
+  color: var(--lilac);
+  border: 1px solid transparent;
+}
+
+.sidebar-nav-item--inactive:hover {
+  color: var(--white);
+}
+
+[data-theme='light'] .sidebar-nav-item--active {
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-inline-start: 3px solid var(--accent);
+  box-shadow: none;
+}
+
+[data-theme='light'] .sidebar-nav-item--inactive {
+  color: var(--ink-soft);
+}
+
+[data-theme='light'] .sidebar-nav-item--inactive:hover {
+  color: var(--ink);
+}
+
+/* Nav-item count badges (client counts, "active" tallies) keep their semantic tint colors
+   in the inactive state (set inline per-item), but need an explicit active-state override:
+   the dark theme's white-on-purple-pill tint would be invisible against light mode's new
+   accent-tint pill, so the active badge becomes a small solid accent chip instead. */
+.sidebar-nav-item--active .nav-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--white);
+}
+
+[data-theme='light'] .sidebar-nav-item--active .nav-badge {
+  background: var(--accent) !important;
+  color: var(--on-accent) !important;
+}
+
+/* ---- Stat cards: semantic top accent bar (light mode only) ----
+   A 4px bar along the card's leading edge, colored per its meaning, so status reads at a
+   glance instead of relying solely on a colored icon circle. Cards opt in via
+   data-accent="neutral|warning|success|info|rose" — no markup changes beyond that attribute. */
+[data-theme='light'] [data-accent] {
+  position: relative;
+}
+
+[data-theme='light'] [data-accent]::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 4px;
+  border-radius: 4px 0 0 4px;
+}
+
+[data-theme='light'] [data-accent='neutral']::before { background: var(--accent); }
+[data-theme='light'] [data-accent='warning']::before { background: var(--warning); }
+[data-theme='light'] [data-accent='success']::before { background: var(--success); }
+[data-theme='light'] [data-accent='info']::before { background: var(--info); }
+[data-theme='light'] [data-accent='rose']::before { background: var(--rose); }
+
+/* ---- Stat numbers: tabular figures so digits don't jiggle sideways on update ---- */
+.stat-number {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Chips ----
+   Service/status chips share a tint+ink pairing per meaning. Service chips (SEO, Social
+   Media, Media Buying, etc.) use a 6px radius to read as a distinct shape from the fully
+   rounded status/nav pills elsewhere in the UI. */
+.chip-accent { background: var(--accent-tint); color: var(--accent-ink); }
+.chip-green { background: var(--success-tint); color: var(--success); }
+.chip-rose { background: var(--rose-tint); color: var(--rose); }
+.chip-blue { background: var(--info-tint); color: var(--info); }
+.chip-warning { background: var(--warning-tint); color: var(--warning); }
+
+.chip-service {
+  border-radius: 6px;
 }
 
 body {

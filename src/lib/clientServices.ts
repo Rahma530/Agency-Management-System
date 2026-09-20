@@ -48,9 +48,12 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
 // Services" chips). interface has no explicit entry here — it always fell through to the
 // social_media color as a pre-existing default, unchanged by this addition. creation/branding
 // get their own distinct colors per explicit request, rather than falling through too.
+// Values are theme tokens (not literal colors) so these chips stay legible whichever theme
+// is active: the dark-mode :root and [data-theme='light'] blocks in index.css give --info/
+// --success/--warning/--rose (and their -tint backgrounds) different, theme-appropriate values.
 export const SERVICE_BADGE_COLORS: Partial<Record<ServiceType, { bg: string; text: string }>> = {
-  media_buying: { bg: 'rgba(14, 165, 233, 0.2)', text: '#38bdf8' },
-  seo: { bg: 'rgba(16, 185, 129, 0.2)', text: '#34d399' },
-  creation: { bg: 'rgba(251, 146, 60, 0.2)', text: '#fb923c' },
-  branding: { bg: 'rgba(34, 211, 238, 0.2)', text: '#22d3ee' },
+  media_buying: { bg: 'var(--info-bg)', text: 'var(--info)' },
+  seo: { bg: 'var(--success-bg)', text: 'var(--success)' },
+  creation: { bg: 'var(--warning-bg)', text: 'var(--warning)' },
+  branding: { bg: 'var(--info-bg)', text: 'var(--info)' },
 };

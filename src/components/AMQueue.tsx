@@ -318,7 +318,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white">
+              <h2 className="text-base font-bold" style={{ color: 'var(--ink)' }}>
                 {isAMTeamLead ? 'Client Onboarding & Reception' : 'My Assigned Clients'}
               </h2>
               <span
@@ -341,7 +341,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-center">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs" style={{ color: 'var(--pill-accent-ink)' }}>
             <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
             <span>{isAMTeamLead ? 'Full Assignment Control' : 'Assigned Client Scope'}</span>
           </div>
@@ -380,11 +380,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div
           className="p-4 rounded-xl flex items-center justify-between"
+          data-accent="neutral"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
         >
           <div>
-            <p className="text-xs font-semibold text-stone-400">Total In Onboarding</p>
-            <p className="text-2xl font-bold text-white mt-1">
+            <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Total In Onboarding</p>
+            <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--ink)' }}>
               {visibleClients.filter((c) => c.status === 'onboarding').length}
             </p>
           </div>
@@ -395,13 +396,14 @@ export const AMQueue: React.FC<AMQueueProps> = ({
 
         <div
           className="p-4 rounded-xl flex items-center justify-between"
+          data-accent="warning"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
         >
           <div>
-            <p className="text-xs font-semibold text-stone-400">
+            <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>
               {isAMTeamLead ? 'Awaiting Assignment' : 'Pending Briefs'}
             </p>
-            <p className="text-2xl font-bold mt-1 text-amber-300">
+            <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--stat-warning-alt)' }}>
               {isAMTeamLead
                 ? visibleClients.filter((c) => !c.am_agent_id).length
                 : visibleClients.filter((c) => {
@@ -417,11 +419,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
 
         <div
           className="p-4 rounded-xl flex items-center justify-between"
+          data-accent="success"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
         >
           <div>
-            <p className="text-xs font-semibold text-stone-400">Documented Briefs</p>
-            <p className="text-2xl font-bold mt-1 text-emerald-400">
+            <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Documented Briefs</p>
+            <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--stat-success)' }}>
               {briefs.filter((b) => visibleClients.some((c) => c.id === b.client_id)).length}
             </p>
           </div>
@@ -436,12 +439,13 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       {renewalClients.length > 0 && (
         <div
           className="rounded-2xl border overflow-hidden"
+          data-accent="warning"
           style={{ background: 'var(--gradient-card)', borderColor: 'rgba(245, 226, 154, 0.3)' }}
         >
           <div className="p-4 border-b border-amber-800/30 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-amber-300" />
-              <h3 className="text-sm font-bold text-white">Renewal Queue</h3>
+              <h3 className="text-sm font-bold" style={{ color: 'var(--ink)' }}>Renewal Queue</h3>
             </div>
             <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-950/60 text-amber-300 border border-amber-800/40">
               {renewalClients.length} pending
@@ -451,7 +455,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             {renewalClients.map((c) => (
               <div key={c.id} className="p-3.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-white truncate">{c.name}</p>
+                  <p className="text-xs font-bold truncate" style={{ color: 'var(--ink)' }}>{c.name}</p>
                   <p className="text-[11px] text-stone-400">
                     Renewal Date: <strong className="text-amber-300">{c.renewal_date || 'Not set'}</strong>
                     {canSeeContractValue(currentRole, c.sales_owner_id === effectiveUserId) && c.contract_value
@@ -483,7 +487,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         <div className="p-4 border-b border-purple-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-purple-400" />
-            <h3 className="text-sm font-bold text-white">Client Portfolio</h3>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--ink)' }}>Client Portfolio</h3>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative w-full sm:w-64">
@@ -497,7 +501,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
               />
             </div>
             <span className="text-xs text-stone-400 whitespace-nowrap">
-              Showing <strong className="text-white">{displayedClients.length}</strong> clients
+              Showing <strong style={{ color: 'var(--ink)' }}>{displayedClients.length}</strong> clients
             </span>
           </div>
         </div>
@@ -516,7 +520,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-purple-900/30 text-[11px] font-semibold text-stone-400 uppercase tracking-wider bg-black/20">
+                <tr className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--ink-soft)', background: 'var(--canvas)' }}>
                   <th className="py-3 px-4">Client Name</th>
                   <th className="py-3 px-4">Industry</th>
                   <th className="py-3 px-4">Services</th>
@@ -543,7 +547,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                             {client.name.charAt(0)}
                           </div>
                           <div>
-                            <span className="client-portfolio-name font-bold text-white group-hover:text-purple-300 transition-colors inline-flex items-center gap-1.5">
+                            <span className="client-portfolio-name font-bold group-hover:text-purple-300 transition-colors inline-flex items-center gap-1.5" style={{ color: 'var(--ink)' }}>
                               {client.name}
                               {isAMTeamLead &&
                                 client.am_team_lead_id === resolvedUser?.id &&
@@ -567,16 +571,16 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                       <td className="py-3.5 px-4">
                         <div className="space-y-1">
                           {services.length === 0 && (
-                            <span className="text-white font-medium block">Custom Plan</span>
+                            <span className="font-medium block" style={{ color: 'var(--ink)' }}>Custom Plan</span>
                           )}
                           <div className="flex flex-wrap gap-1">
                             {services.map((s) => (
                               <span
                                 key={s}
-                                className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider"
+                                className="chip-service px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider"
                                 style={{
-                                  background: SERVICE_BADGE_COLORS[s]?.bg ?? 'rgba(236, 72, 153, 0.2)',
-                                  color: SERVICE_BADGE_COLORS[s]?.text ?? '#f472b6',
+                                  background: SERVICE_BADGE_COLORS[s]?.bg ?? 'var(--pink-bg)',
+                                  color: SERVICE_BADGE_COLORS[s]?.text ?? 'var(--pink)',
                                 }}
                               >
                                 {SERVICE_LABELS[s]}

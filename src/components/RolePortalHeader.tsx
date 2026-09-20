@@ -66,27 +66,27 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
           {/* Quick Metrics tailored to role */}
           {['sales'].includes(role) && (
             <div className="flex items-center gap-2">
-              <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
-                <div className="text-[10px] text-stone-400">Sales Clients</div>
-                <div className="text-sm font-bold text-white">{myClients.length} Clients</div>
+              <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="neutral" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Sales Clients</div>
+                <div className="text-sm font-bold stat-number" style={{ color: 'var(--ink)' }}>{myClients.length} Clients</div>
               </div>
             </div>
           )}
 
           {['am_team_lead', 'am_agent'].includes(role) && (
             <div className="flex items-center gap-2">
-              <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
-                <div className="text-[10px] text-stone-400">Onboarding Clients</div>
-                <div className="text-sm font-bold text-purple-300 font-mono">
+              <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="neutral" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Onboarding Clients</div>
+                <div className="text-sm font-bold font-mono stat-number" style={{ color: 'var(--stat-accent)' }}>
                   {role === 'am_team_lead'
                     ? clients.filter((c) => c.status === 'onboarding').length
                     : myOnboardingClients.length}{' '}
                   Clients
                 </div>
               </div>
-              <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
-                <div className="text-[10px] text-stone-400">Total Accounts</div>
-                <div className="text-sm font-bold text-white">
+              <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="neutral" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Total Accounts</div>
+                <div className="text-sm font-bold stat-number" style={{ color: 'var(--ink)' }}>
                   {role === 'am_team_lead' ? clients.length : myClients.length} Clients
                 </div>
               </div>
@@ -95,15 +95,15 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
 
           {['executive', 'head_of_technical'].includes(role) && (
             <div className="flex items-center gap-2">
-              <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
-                <div className="text-[10px] text-stone-400">Active Clients</div>
-                <div className="text-sm font-bold text-emerald-400 font-mono">
+              <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="success" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Active Clients</div>
+                <div className="text-sm font-bold font-mono stat-number" style={{ color: 'var(--stat-success)' }}>
                   {clients.filter(isCurrentlyActiveClient).length} Clients
                 </div>
               </div>
-              <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
-                <div className="text-[10px] text-stone-400">Total Agency Tasks</div>
-                <div className="text-sm font-bold text-white font-mono">
+              <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="neutral" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Total Agency Tasks</div>
+                <div className="text-sm font-bold font-mono stat-number" style={{ color: 'var(--ink)' }}>
                   {tasks.length} Tasks
                 </div>
               </div>
@@ -124,16 +124,16 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
             'video_editor',
           ].includes(role) && (
             <div className="flex items-center gap-2">
-              <div className="px-3.5 py-2 rounded-xl bg-purple-950/40 border border-purple-800/40 text-left">
-                <div className="text-[10px] text-stone-400">Active Tasks</div>
-                <div className="text-sm font-bold text-sky-300 font-mono">
+              <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="info" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Active Tasks</div>
+                <div className="text-sm font-bold font-mono stat-number" style={{ color: 'var(--stat-info)' }}>
                   {myActiveTasks.length} Tasks
                 </div>
               </div>
               {myBlockedTasks.length > 0 && (
-                <div className="px-3.5 py-2 rounded-xl bg-red-950/50 border border-red-800/50 text-left">
-                  <div className="text-[10px] text-red-300">Blocked Tasks</div>
-                  <div className="text-sm font-bold text-red-400 font-mono">
+                <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="rose" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
+                  <div className="text-[10px]" style={{ color: 'var(--stat-rose)' }}>Blocked Tasks</div>
+                  <div className="text-sm font-bold font-mono stat-number" style={{ color: 'var(--stat-rose)' }}>
                     {myBlockedTasks.length} Blocked
                   </div>
                 </div>

@@ -663,42 +663,45 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         {/* 1. Total Tasks */}
         <div
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
+          data-accent="neutral"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">Total Tasks</span>
             <Kanban className="w-3.5 h-3.5 text-purple-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-white">{totalTasksCount}</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--ink)' }}>{totalTasksCount}</p>
           </div>
         </div>
 
         {/* 2. Completed */}
         <div
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
+          data-accent="success"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">Completed</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-emerald-400">{completedTasksCount}</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--stat-success)' }}>{completedTasksCount}</p>
           </div>
         </div>
 
         {/* 3. In Progress */}
         <div
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
+          data-accent="neutral"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">In Progress</span>
             <Timer className="w-3.5 h-3.5 text-purple-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-purple-300">{inProgressTasksCount}</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--stat-accent)' }}>{inProgressTasksCount}</p>
           </div>
         </div>
 
@@ -707,12 +710,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">Pending</span>
-            <Clock className="w-3.5 h-3.5 text-stone-400" />
+            <Clock className="w-3.5 h-3.5" style={{ color: 'var(--ink-soft)' }} />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-stone-300">{pendingTasksCount}</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--stat-neutral-soft)' }}>{pendingTasksCount}</p>
           </div>
         </div>
 
@@ -721,42 +724,45 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className={`p-3.5 rounded-[16px] flex flex-col justify-between transition-all ${
             overdueTasksCount > 0 ? 'ring-1 ring-red-500/40' : ''
           }`}
+          data-accent="rose"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">Overdue</span>
             <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-red-400">{overdueTasksCount}</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--stat-rose)' }}>{overdueTasksCount}</p>
           </div>
         </div>
 
         {/* 6. Unassigned */}
         <div
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
+          data-accent="warning"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">Unassigned</span>
             <UserX className="w-3.5 h-3.5 text-amber-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-amber-400">{unassignedTasksCount}</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--stat-warning)' }}>{unassignedTasksCount}</p>
           </div>
         </div>
 
         {/* 7. Capacity Utilization */}
         <div
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
+          data-accent="neutral"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span className="text-[11px] font-semibold">Capacity</span>
             <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-purple-300">{capacityUtilization}%</p>
+            <p className="text-xl font-bold stat-number" style={{ color: 'var(--stat-accent)' }}>{capacityUtilization}%</p>
           </div>
         </div>
       </div>
