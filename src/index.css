@@ -44,52 +44,107 @@
   --radius-md: 16px;
   --radius-sm: 12px;
   --radius-pill: 30px;
+
+  /* ---- Semantic aliases + new roles introduced by the light-theme refinement ----
+     Aliases (--bg, --surface, --text-hi, --text-mid, --accent, --success, --warning) just
+     point at the existing brand tokens above — same single source of truth, no duplication —
+     so the light-theme override only has to change one value per role. --text-lo, --accent-soft,
+     --success-bg, --warning-bg, --info(-bg), --pink(-bg) have no existing dark-mode counterpart,
+     so they're declared standalone here with values chosen to fit today's shipped dark theme
+     (unchanged by this pass) until components adopt them. */
+  --bg: var(--black);
+  --surface: var(--black-2);
+  --surface-2: #1c1224;
+  --border: var(--border-medium);
+  --text-hi: var(--lilac);
+  --text-mid: var(--grey);
+  --text-lo: #6b6072;
+  --accent: var(--purple);
+  --accent-soft: rgba(123,47,247,0.15);
+  --success: var(--roas-good);
+  --success-bg: rgba(169,245,193,0.15);
+  --warning: var(--roas-mid);
+  --warning-bg: rgba(245,226,154,0.15);
+  --info: #38bdf8;
+  --info-bg: rgba(56,189,248,0.15);
+  --pink: #ec4899;
+  --pink-bg: rgba(236,72,153,0.15);
 }
 
-/* ---- Light theme — Phase 1 of the light/dark toggle ----
+/* ---- Light theme — refined pass over Phase 1's initial values ----
    Overrides every color token above when <html data-theme="light"> is set (see index.html's
-   inline theme-init script and App.tsx's toggle button). Radius tokens aren't re-declared —
+   inline theme-init script and App.tsx's toggle button). Dark mode (:root above) is completely
+   unchanged by this pass — only these override values change. Radius tokens aren't re-declared —
    they're geometry, not color, and don't change between themes.
 
+   Design intent: calm, warm, low-contrast. No pure #ffffff surfaces anywhere (--surface/--black-2
+   is a warm broken-white, #fbfaf6) — that was Phase 1's one violation of this rule, fixed here.
+   --roas-bad has no equivalent in the new token spec (which only defines success/warning/info/
+   pink, no danger/red role) — picked a muted brick-red in the same desaturated family as the
+   others, a judgment call flagged for confirmation rather than silently invented.
+
    Scope of this pass: only the token-driven brand/structural surface (this :root block's own
-   706 usages across the app — gradients, borders, badge accents) responds to this override.
-   The much larger set of hardcoded Tailwind utility colors (stone-*, purple-*, literal
-   bg-black/text-white, ad-hoc hex values — 2,300+ occurrences across every component file)
-   is untouched and will still render its dark-mode appearance in light mode. That's the
-   explicitly scoped Phase 2+ work, not a gap in this pass. */
+   706 usages across the app — gradients, borders, badge accents, plus the new semantic aliases
+   above) responds to this override. The much larger set of hardcoded Tailwind utility colors
+   (stone-*, purple-*, literal bg-black/text-white, ad-hoc hex values — 2,300+ occurrences across
+   every component file: status/service badges, stat cards, tables) is untouched and will still
+   render its dark-mode appearance in light mode. Confirmed via grep: no existing code has any
+   light-mode-conditional hardcoded hex to migrate (no dark: variants, no theme === 'light'
+   checks anywhere) — everything hardcoded today applies unconditionally in both themes, so
+   there was nothing already gated to light-mode-only for that grep pass to find. Making every
+   badge/card/button in Dashboard, Client Onboarding, Capacity & Assignment, Task Board, Daily
+   Operations, Campaigns, Reports, and Employees actually theme-aware is the separately-scoped
+   Phase 2+ file-by-file work, not a gap in this pass. */
 [data-theme='light'] {
-  --black: #f7f4fb;
-  --black-2: #ffffff;
-  --purple-deep: #3b1560;
-  --purple: #7b2ff7;
-  --purple-light: #9b59f0;
-  --lilac: #2a1b3d;
-  --white: #150f1f;
-  --grey: #6b5b7a;
+  --black: #f2f0eb;
+  --black-2: #fbfaf6;
+  --purple-deep: #4a3f9e;
+  --purple: #6d5fd8;
+  --purple-light: #8b7ee0;
+  --lilac: #2c2a35;
+  --white: #2c2a35;
+  --grey: #6b6875;
 
-  --chart-1: #7b2ff7;
-  --chart-2: #5c2a99;
-  --chart-3: #9b59f0;
-  --chart-4: #b98cf0;
-  --chart-5: #3b1560;
-  --chart-6: #6b5b7a;
+  --chart-1: #6d5fd8;
+  --chart-2: #4a3f9e;
+  --chart-3: #8b7ee0;
+  --chart-4: #ab9fe8;
+  --chart-5: #362d6e;
+  --chart-6: #6b6875;
 
-  --roas-good: #15803d;
-  --roas-mid: #92400e;
-  --roas-bad: #b91c1c;
+  --roas-good: #3f9d6f;
+  --roas-mid: #c98a2b;
+  --roas-bad: #b3554f;
 
-  --gradient-page: linear-gradient(180deg, var(--black) 0%, #ffffff 40%, var(--black) 100%);
-  --gradient-hero: radial-gradient(circle at 50% -10%, rgba(123,47,247,0.15), transparent 60%),
-                    linear-gradient(135deg, #ffffff 0%, #f0e6fc 100%);
+  --gradient-page: linear-gradient(180deg, var(--black) 0%, var(--black-2) 40%, var(--black) 100%);
+  --gradient-hero: radial-gradient(circle at 50% -10%, rgba(109,95,216,0.12), transparent 60%),
+                    linear-gradient(135deg, var(--black-2) 0%, var(--accent-soft) 100%);
   --gradient-title-text: linear-gradient(90deg, var(--purple-deep), var(--purple));
-  --gradient-card: linear-gradient(160deg, #ffffff, #f5eefc);
+  --gradient-card: linear-gradient(160deg, var(--black-2), var(--surface-2));
   --gradient-badge: linear-gradient(135deg, var(--purple), var(--purple-deep));
-  --gradient-section: linear-gradient(160deg, rgba(255,255,255,0.9), rgba(185,140,240,0.15));
+  --gradient-section: linear-gradient(160deg, rgba(251,250,246,0.9), rgba(238,235,228,0.6));
 
-  --border-soft: rgba(123,47,247,0.18);
-  --border-medium: rgba(123,47,247,0.28);
-  --border-strong: rgba(123,47,247,0.45);
-  --border-lilac: rgba(123,47,247,0.3);
+  --border-soft: #e0dcd2;
+  --border-medium: #d5d0c3;
+  --border-strong: #c7c1b0;
+  --border-lilac: rgba(109,95,216,0.25);
+
+  /* New semantic roles (see :root's dark-mode declarations for the aliasing/rationale) */
+  --surface-2: #eeebe4;
+  --border: #e0dcd2;
+  --text-hi: var(--lilac);
+  --text-mid: var(--grey);
+  --text-lo: #9a97a3;
+  --accent: var(--purple);
+  --accent-soft: #ece9fb;
+  --success: var(--roas-good);
+  --success-bg: #e7f4ec;
+  --warning: var(--roas-mid);
+  --warning-bg: #fbf1e2;
+  --info: #3e7fc4;
+  --info-bg: #e8f1fb;
+  --pink: #b25f89;
+  --pink-bg: #faeaf2;
 }
 
 body {
