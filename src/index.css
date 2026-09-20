@@ -278,8 +278,8 @@
   .bg-stone-950, .bg-stone-950\/60,
   .bg-stone-900, .bg-stone-900\/30, .bg-stone-900\/40, .bg-stone-900\/50, .bg-stone-900\/60, .bg-stone-900\/70, .bg-stone-900\/80, .bg-stone-900\/90,
   .bg-stone-800, .bg-stone-800\/40, .bg-stone-800\/60
-) .text-white,
-[data-theme='light'] :is(.bg-stone-950, .bg-stone-950\/60, .bg-stone-900, .bg-stone-900\/30, .bg-stone-900\/40, .bg-stone-900\/50, .bg-stone-900\/60, .bg-stone-900\/70, .bg-stone-900\/80, .bg-stone-900\/90, .bg-stone-800, .bg-stone-800\/40, .bg-stone-800\/60).text-white {
+) .text-white:not(button, button *),
+[data-theme='light'] :is(.bg-stone-950, .bg-stone-950\/60, .bg-stone-900, .bg-stone-900\/30, .bg-stone-900\/40, .bg-stone-900\/50, .bg-stone-900\/60, .bg-stone-900\/70, .bg-stone-900\/80, .bg-stone-900\/90, .bg-stone-800, .bg-stone-800\/40, .bg-stone-800\/60).text-white:not(button, button *) {
   color: var(--text-hi) !important;
 }
 
@@ -296,7 +296,7 @@
 [data-theme='light'] :is(
   [style*='rgba(10, 10, 13'], [style*='rgba(15, 12, 22'], [style*='rgba(21, 16, 32'],
   [style*='rgba(21, 19, 24'], [style*='rgba(28, 22, 38']
-) .text-white {
+) .text-white:not(button, button *) {
   color: var(--text-hi) !important;
 }
 
@@ -393,7 +393,7 @@
 
 [data-theme='light'] :is(.reports-hub, .employee-admin-hub) :is(
   [class*='bg-[#161224]/80'], [class*='bg-[#1a1428]'], [class~='bg-black/20']
-) .text-white {
+) .text-white:not(button, button *) {
   color: var(--text-hi) !important;
 }
 
