@@ -3509,7 +3509,7 @@ export default function App() {
         className="sticky top-0 z-40 backdrop-blur-md px-6 py-3.5 border-b"
         style={{
           background: 'var(--header-surface)',
-          borderColor: 'var(--border-soft)',
+          borderColor: 'var(--nav-border)',
         }}
       >
         <div className="max-w-screen-2xl mx-auto flex flex-wrap items-center justify-between gap-4">
@@ -3716,7 +3716,7 @@ export default function App() {
           } ${testHandoff ? 'top-[110px] h-[calc(100dvh-110px)]' : 'top-[65px] h-[calc(100dvh-65px)]'}`}
           style={{
             background: 'var(--navigation-surface)',
-            borderColor: 'var(--border-soft)',
+            borderColor: 'var(--nav-border)',
           }}
         >
           <div className="flex items-center justify-between px-4 pt-4 md:hidden">
@@ -3734,16 +3734,11 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('my_work') && (
               <button
                 onClick={() => handleTabChange('my_work')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'my_work'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'my_work' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'my_work' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'my_work' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Briefcase className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">My Work</span>
@@ -3754,16 +3749,11 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('dashboard') && (
               <button
                 onClick={() => handleTabChange('dashboard')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'dashboard'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'dashboard' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'dashboard' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'dashboard' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Gauge className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Dashboard</span>
@@ -3774,24 +3764,19 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('onboarding') && (
               <button
                 onClick={() => handleTabChange('onboarding')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'onboarding'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'onboarding' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'onboarding' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'onboarding' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <FileText className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Client Onboarding</span>
                 <span
-                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0"
+                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: activeTab === 'onboarding' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(123, 47, 247, 0.25)',
-                    color: 'var(--white)',
+                  background: 'rgba(123, 47, 247, 0.25)',
+                  color: 'var(--white)',
                   }}
                 >
                   {onboardingClientsCount}
@@ -3803,24 +3788,19 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('service_briefs') && (
               <button
                 onClick={() => handleTabChange('service_briefs')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'service_briefs'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'service_briefs' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'service_briefs' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'service_briefs' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Layers className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Service Briefs</span>
                 <span
-                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0"
+                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: activeTab === 'service_briefs' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(123, 47, 247, 0.25)',
-                    color: 'var(--white)',
+                  background: 'rgba(123, 47, 247, 0.25)',
+                  color: 'var(--white)',
                   }}
                 >
                   {briefs.length}
@@ -3832,24 +3812,19 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('capacity') && (
               <button
                 onClick={() => handleTabChange('capacity')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'capacity'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'capacity' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'capacity' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'capacity' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Gauge className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Capacity Management</span>
                 <span
-                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0"
+                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: activeTab === 'capacity' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(169, 245, 193, 0.2)',
-                    color: activeTab === 'capacity' ? 'var(--white)' : 'var(--roas-good)',
+                  background: 'rgba(169, 245, 193, 0.2)',
+                  color: 'var(--roas-good)',
                   }}
                 >
                   Live
@@ -3861,24 +3836,19 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('tasks') && (
               <button
                 onClick={() => handleTabChange('tasks')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'tasks'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'tasks' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'tasks' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'tasks' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Kanban className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Task Board</span>
                 <span
-                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0"
+                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: activeTab === 'tasks' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(245, 226, 154, 0.2)',
-                    color: activeTab === 'tasks' ? 'var(--white)' : 'var(--roas-mid)',
+                  background: 'rgba(245, 226, 154, 0.2)',
+                  color: 'var(--roas-mid)',
                   }}
                 >
                   {activeTasksCount} active
@@ -3890,16 +3860,11 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('daily_operations') && (
               <button
                 onClick={() => handleTabChange('daily_operations')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'daily_operations'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'daily_operations' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'daily_operations' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'daily_operations' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Clock className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Daily Operations</span>
@@ -3909,10 +3874,10 @@ export default function App() {
                   </span>
                 ) : (
                   <span
-                    className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0"
+                    className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                     style={{
-                      background: activeTab === 'daily_operations' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(169, 245, 193, 0.2)',
-                      color: activeTab === 'daily_operations' ? 'var(--white)' : 'var(--roas-good)',
+                    background: 'rgba(169, 245, 193, 0.2)',
+                    color: 'var(--roas-good)',
                     }}
                   >
                     Active
@@ -3925,24 +3890,19 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('campaigns') && (
               <button
                 onClick={() => handleTabChange('campaigns')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'campaigns'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'campaigns' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'campaigns' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'campaigns' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <Target className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Campaigns</span>
                 <span
-                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0"
+                  className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: activeTab === 'campaigns' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(14, 165, 233, 0.2)',
-                    color: activeTab === 'campaigns' ? 'var(--white)' : '#38bdf8',
+                    background: 'rgba(14, 165, 233, 0.2)',
+                    color: '#38bdf8',
                   }}
                 >
                   {campaigns.filter((c) => (c.status || c.results?.status) === 'active').length} active
@@ -3954,16 +3914,11 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('reports') && (
               <button
                 onClick={() => handleTabChange('reports')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'reports'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'reports' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'reports' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'reports' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <BarChart3 className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Reports</span>
@@ -3973,16 +3928,11 @@ export default function App() {
             {userRoleInfo.allowedModules.includes('employees') && (
               <button
                 onClick={() => handleTabChange('employees')}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
                   activeTab === 'employees'
-                    ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
                 }`}
-                style={{
-                  background: activeTab === 'employees' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'employees' ? 'var(--white)' : 'var(--lilac)',
-                  border: `1px solid ${activeTab === 'employees' ? 'var(--border-strong)' : 'transparent'}`,
-                }}
               >
                 <UserPlus className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Employees</span>
