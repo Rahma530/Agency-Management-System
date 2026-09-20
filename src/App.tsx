@@ -3503,12 +3503,12 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen text-[#e9d9fb] pb-16" dir="ltr" style={{ background: 'var(--gradient-page)' }}>
+    <div className="min-h-screen pb-16" dir="ltr" style={{ background: 'var(--gradient-page)', color: 'var(--lilac)' }}>
       {/* Top Navigation Bar adhering to Kesra Brand Identity */}
       <header
         className="sticky top-0 z-40 backdrop-blur-md px-6 py-3.5 border-b"
         style={{
-          background: 'rgba(10, 10, 13, 0.9)',
+          background: 'var(--header-surface)',
           borderColor: 'var(--border-soft)',
         }}
       >
@@ -3516,8 +3516,8 @@ export default function App() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsMobileSidebarOpen(true)}
-              className="md:hidden p-2 -ml-1 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              className="md:hidden p-2 -ml-1 rounded-lg transition-colors shrink-0"
+              style={{ background: 'var(--control-surface)', border: '1px solid var(--border-soft)', color: 'var(--text-mid)' }}
               title="Open navigation menu"
               aria-label="Open navigation menu"
             >
@@ -3528,7 +3528,7 @@ export default function App() {
               style={{
                 background: 'var(--gradient-badge)',
                 border: '1px solid var(--border-strong)',
-                color: 'var(--white)',
+                color: 'var(--on-accent)',
               }}
             >
               K
@@ -3563,7 +3563,7 @@ export default function App() {
             {canAccessTestingMode && usersLoadedFromSupabase && (
               <button
                 onClick={() => setIsTestingSelectorOpen(true)}
-                className="hidden md:block rounded-xl border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-900/60"
+                className="employee-testing-action hidden md:block rounded-xl border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-900/60"
               >
                 Employee Testing Mode
               </button>
@@ -3583,8 +3583,8 @@ export default function App() {
             {/* Light/Dark Theme Toggle */}
             <button
               onClick={toggleTheme}
-              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              className="p-1.5 rounded-lg transition-colors shrink-0"
+              style={{ background: 'var(--control-surface)', border: '1px solid var(--border-soft)', color: 'var(--text-mid)' }}
               title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
             >
@@ -3609,7 +3609,7 @@ export default function App() {
             <div
               className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
               style={{
-                background: 'rgba(21, 19, 24, 0.9)',
+                background: 'var(--control-surface)',
                 border: '1px solid var(--border-soft)',
               }}
               title={supabaseActive ? 'Connected to Supabase - RLS Active' : 'Supabase RLS Ready'}
@@ -3627,8 +3627,8 @@ export default function App() {
             {/* Global Refresh (moved here from the old nav bar — refreshes every module's data) */}
             <button
               onClick={loadData}
-              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              className="p-1.5 rounded-lg transition-colors shrink-0"
+              style={{ background: 'var(--control-surface)', border: '1px solid var(--border-soft)', color: 'var(--text-mid)' }}
               title="Refresh data"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -3638,7 +3638,7 @@ export default function App() {
             <div
               className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-md shadow-sm"
               style={{
-                background: 'rgba(28, 22, 38, 0.85)',
+                background: 'var(--control-surface)',
                 borderColor: 'var(--border-soft)',
               }}
             >
@@ -3649,7 +3649,7 @@ export default function App() {
                 {currentUser.name.charAt(0)}
               </div>
               <div className="flex flex-col text-left">
-                <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                <div className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--text-hi)' }}>
                   <span>{currentUser.name}</span>
                   <span
                     className="hidden sm:inline-block px-1.5 py-0.2 rounded text-[10px] font-semibold"
@@ -3658,7 +3658,7 @@ export default function App() {
                     {userRoleInfo.englishTitle}
                   </span>
                 </div>
-                <div className="hidden sm:block text-[10px] text-[#a89bb8]">
+                <div className="hidden sm:block text-[10px]" style={{ color: 'var(--header-muted)' }}>
                   {currentUser.team || 'Agency'}
                 </div>
               </div>
@@ -3715,7 +3715,7 @@ export default function App() {
             isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
           } ${testHandoff ? 'top-[110px] h-[calc(100dvh-110px)]' : 'top-[65px] h-[calc(100dvh-65px)]'}`}
           style={{
-            background: 'rgba(15, 12, 22, 0.95)',
+            background: 'var(--navigation-surface)',
             borderColor: 'var(--border-soft)',
           }}
         >

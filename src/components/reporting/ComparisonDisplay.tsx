@@ -119,7 +119,7 @@ export const ComparisonCard: React.FC<{
           <button
             onClick={onGenerateReport}
             disabled={isGeneratingReport}
-            className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all disabled:opacity-50"
+            className="purple-outline-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all disabled:opacity-50"
           >
             {isGeneratingReport ? 'Filing...' : 'Generate Report'}
           </button>

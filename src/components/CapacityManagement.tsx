@@ -414,7 +414,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
 
 
   return (
-    <div className="space-y-6">
+    <div className="capacity-management space-y-6">
       {/* RLS / Operational Alert Message */}
       {statusMessage && (
         <div
@@ -831,7 +831,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                             className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0"
                             style={{
                               background: 'var(--gradient-badge)',
-                              color: 'var(--white)',
+                              color: 'var(--on-accent)',
                               border: '1px solid var(--border-medium)',
                             }}
                           >
@@ -1058,7 +1058,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                     {canViewPerformance(currentUser?.role, item.user) && onGenerateKpiScore && (
                       <button
                         onClick={() => setPerformanceEmployeeId(item.user.id)}
-                        className="mt-1.5 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-emerald-200 bg-emerald-900/20 hover:bg-emerald-800/40 hover:text-white border border-emerald-700/30 transition-all"
+                        className="performance-action mt-1.5 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-emerald-200 bg-emerald-900/20 hover:bg-emerald-800/40 hover:text-white border border-emerald-700/30 transition-all"
                       >
                         <Gauge className="w-3.5 h-3.5" />
                         <span>View Performance</span>
@@ -1373,7 +1373,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsLogModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs text-stone-400 hover:text-white"
+                  className="secondary-action px-4 py-2 rounded-xl text-xs text-stone-400 hover:text-white"
                 >
                   Cancel
                 </button>

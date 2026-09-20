@@ -201,7 +201,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   );
 
   return (
-    <div className="space-y-6">
+    <div className="reports-hub space-y-6">
       <div
         className="p-5 rounded-2xl border relative overflow-hidden backdrop-blur-md"
         style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}
@@ -257,7 +257,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <button
             onClick={() => setScope('own')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              scope === 'own' ? 'bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              scope === 'own' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
             All My Clients ({myClients.length})
@@ -265,7 +265,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <button
             onClick={() => setScope('client')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              scope === 'client' ? 'bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              scope === 'client' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
             Specific Client
@@ -274,7 +274,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             <button
               onClick={() => setScope('agent')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                scope === 'agent' ? 'bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                scope === 'agent' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
               }`}
             >
               Specific Agent
@@ -334,7 +334,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <button
             onClick={() => setReportMode('comparison')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              reportMode === 'comparison' ? 'bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              reportMode === 'comparison' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
             Comparison Report
@@ -342,7 +342,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <button
             onClick={() => setReportMode('period_summary')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              reportMode === 'period_summary' ? 'bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              reportMode === 'period_summary' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
             Period Report

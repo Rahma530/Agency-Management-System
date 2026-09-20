@@ -463,7 +463,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="employee-admin-hub space-y-6">
       {canAddEmployees && (
       <>
       <div className="p-4 rounded-2xl border border-purple-900/30 bg-[#161224]/80">
@@ -472,7 +472,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0"
             style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
           >
-            <UserPlus className="w-4.5 h-4.5" />
+            <UserPlus className="employee-add-icon w-4.5 h-4.5 text-white" />
           </div>
           <div>
             <h2 className="text-sm font-bold text-white">Add Employee</h2>
@@ -485,7 +485,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
         <button
           onClick={() => setMode('single')}
           className={`flex-1 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
-            mode === 'single' ? 'text-white shadow' : 'text-stone-400 hover:text-stone-200'
+            mode === 'single' ? 'filled-purple-action text-white shadow' : 'text-stone-400 hover:text-stone-200'
           }`}
           style={{ background: mode === 'single' ? 'var(--gradient-badge)' : 'rgba(255,255,255,0.04)' }}
         >
@@ -494,7 +494,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
         <button
           onClick={() => setMode('bulk')}
           className={`flex-1 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
-            mode === 'bulk' ? 'text-white shadow' : 'text-stone-400 hover:text-stone-200'
+            mode === 'bulk' ? 'filled-purple-action text-white shadow' : 'text-stone-400 hover:text-stone-200'
           }`}
           style={{ background: mode === 'bulk' ? 'var(--gradient-badge)' : 'rgba(255,255,255,0.04)' }}
         >
@@ -585,11 +585,11 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
+              className="filled-purple-action px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
               style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
             >
-              {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
-              {isSubmitting ? 'Adding...' : 'Add Employee'}
+              {isSubmitting ? <Loader2 className="employee-add-icon w-3.5 h-3.5 animate-spin text-white" /> : <UserPlus className="employee-add-icon w-3.5 h-3.5 text-white" />}
+              <span className="text-white">{isSubmitting ? 'Adding...' : 'Add Employee'}</span>
             </button>
           </div>
         </form>
@@ -772,7 +772,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                       <div className="flex justify-end gap-2">
                         <button
                           onClick={() => { setEditingId(null); setRoleChangeWarning(null); setEditError(null); }}
-                          className="px-2.5 py-1.5 rounded-lg text-[11px] text-stone-400 hover:text-white"
+                          className="secondary-action px-2.5 py-1.5 rounded-lg text-[11px] text-stone-400 hover:text-white"
                         >
                           <X className="w-3.5 h-3.5 inline mr-1" />
                           Cancel

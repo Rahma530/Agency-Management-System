@@ -121,7 +121,7 @@ export const DepartmentComparisonPanel: React.FC<{
   }, [departments, clients, campaigns, tasks, socialInsights, users, period, granularity]);
 
   return (
-    <div className="p-4 rounded-2xl border space-y-4" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
+    <div className="department-comparison p-4 rounded-2xl border space-y-4" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-purple-400" />

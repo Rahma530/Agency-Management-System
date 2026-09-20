@@ -23,7 +23,7 @@ const StatTile: React.FC<{
       <span className="text-[11px] font-semibold">{label}</span>
       <Icon className="w-4 h-4" style={accent ? { color: accent } : undefined} />
     </div>
-    <p className="text-2xl font-bold" style={{ color: accent || 'white' }}>
+    <p className="text-2xl font-bold" style={{ color: accent || 'var(--text-hi)' }}>
       {value}
     </p>
     {caption && <p className="text-[10px] text-stone-500 mt-1">{caption}</p>}

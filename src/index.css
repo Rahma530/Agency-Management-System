@@ -55,6 +55,9 @@
   --bg: var(--black);
   --surface: var(--black-2);
   --surface-2: #1c1224;
+  --surface-dark: #151318;
+  --input-surface: #1c1224;
+  --modal-surface: #151318;
   --border: var(--border-medium);
   --text-hi: var(--lilac);
   --text-mid: var(--grey);
@@ -69,6 +72,11 @@
   --info-bg: rgba(56,189,248,0.15);
   --pink: #ec4899;
   --pink-bg: rgba(236,72,153,0.15);
+  --header-surface: rgba(10, 10, 13, 0.9);
+  --navigation-surface: rgba(15, 12, 22, 0.95);
+  --control-surface: rgba(255, 255, 255, 0.05);
+  --header-muted: #a89bb8;
+  --on-accent: #ffffff;
 }
 
 /* ---- Light theme — refined pass over Phase 1's initial values ----
@@ -96,21 +104,21 @@
    Operations, Campaigns, Reports, and Employees actually theme-aware is the separately-scoped
    Phase 2+ file-by-file work, not a gap in this pass. */
 [data-theme='light'] {
-  --black: #f2f0eb;
-  --black-2: #fbfaf6;
-  --purple-deep: #4a3f9e;
-  --purple: #6d5fd8;
-  --purple-light: #8b7ee0;
-  --lilac: #2c2a35;
-  --white: #2c2a35;
-  --grey: #6b6875;
+  --black: #f1efea;
+  --black-2: #fffefa;
+  --purple-deep: #33206f;
+  --purple: #6746c3;
+  --purple-light: #8869d6;
+  --lilac: #33206f;
+  --white: #33206f;
+  --grey: #685b82;
 
-  --chart-1: #6d5fd8;
-  --chart-2: #4a3f9e;
-  --chart-3: #8b7ee0;
-  --chart-4: #ab9fe8;
-  --chart-5: #362d6e;
-  --chart-6: #6b6875;
+  --chart-1: #6746c3;
+  --chart-2: #4a2c99;
+  --chart-3: #8c63de;
+  --chart-4: #b8a5ee;
+  --chart-5: #33206f;
+  --chart-6: #685b82;
 
   --roas-good: #3f9d6f;
   --roas-mid: #c98a2b;
@@ -124,19 +132,22 @@
   --gradient-badge: linear-gradient(135deg, var(--purple), var(--purple-deep));
   --gradient-section: linear-gradient(160deg, rgba(251,250,246,0.9), rgba(238,235,228,0.6));
 
-  --border-soft: #e0dcd2;
-  --border-medium: #d5d0c3;
-  --border-strong: #c7c1b0;
-  --border-lilac: rgba(109,95,216,0.25);
+  --border-soft: #d8cfeb;
+  --border-medium: #c8bae4;
+  --border-strong: #ab98d4;
+  --border-lilac: rgba(103,70,195,0.3);
 
   /* New semantic roles (see :root's dark-mode declarations for the aliasing/rationale) */
-  --surface-2: #eeebe4;
-  --border: #e0dcd2;
+  --surface-2: #f5f0ff;
+  --surface-dark: #fffefa;
+  --input-surface: #fffefa;
+  --modal-surface: #fffefa;
+  --border: #d8cfeb;
   --text-hi: var(--lilac);
   --text-mid: var(--grey);
-  --text-lo: #9a97a3;
+  --text-lo: #8b7d9f;
   --accent: var(--purple);
-  --accent-soft: #ece9fb;
+  --accent-soft: #e9e1fb;
   --success: var(--roas-good);
   --success-bg: #e7f4ec;
   --warning: var(--roas-mid);
@@ -145,6 +156,559 @@
   --info-bg: #e8f1fb;
   --pink: #b25f89;
   --pink-bg: #faeaf2;
+
+  /* Navigation has a deliberately distinct, light surface so it no longer reads as a
+     dark shell sitting on top of the light workspace. */
+  --header-surface: rgba(255, 254, 250, 0.96);
+  --navigation-surface: rgba(252, 250, 255, 0.98);
+  --control-surface: #f3edff;
+  --header-muted: #685b82;
+  --on-accent: #ffffff;
+}
+
+/* Light Mode compatibility layer for the established component library. The application
+   predates theme tokens in many components, so neutral Tailwind surfaces are normalized here
+   as one shared system: white cards above a warm page, readable dark type, and restrained
+   elevation. Brand/status surfaces are deliberately not included. */
+[data-theme='light'] :is(
+  .bg-stone-950, .bg-stone-950\/60,
+  .bg-stone-900, .bg-stone-900\/30, .bg-stone-900\/40, .bg-stone-900\/50, .bg-stone-900\/60, .bg-stone-900\/70, .bg-stone-900\/80, .bg-stone-900\/90,
+  .bg-stone-800, .bg-stone-800\/40, .bg-stone-800\/60
+) {
+  background-color: var(--surface) !important;
+  box-shadow: 0 2px 6px rgba(51, 32, 111, 0.06), 0 14px 32px rgba(81, 56, 150, 0.13);
+}
+
+[data-theme='light'] :is(
+  .border-stone-600\/40, .border-stone-700, .border-stone-700\/40, .border-stone-700\/50,
+  .border-stone-800, .border-stone-800\/50, .border-stone-800\/60, .border-stone-800\/80
+) {
+  border-color: var(--border-soft) !important;
+}
+
+[data-theme='light'] :is(.text-slate-400, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500, .text-stone-600) {
+  color: var(--text-mid) !important;
+}
+
+[data-theme='light'] :is(
+  .bg-stone-950, .bg-stone-950\/60,
+  .bg-stone-900, .bg-stone-900\/30, .bg-stone-900\/40, .bg-stone-900\/50, .bg-stone-900\/60, .bg-stone-900\/70, .bg-stone-900\/80, .bg-stone-900\/90,
+  .bg-stone-800, .bg-stone-800\/40, .bg-stone-800\/60
+) .text-white,
+[data-theme='light'] :is(.bg-stone-950, .bg-stone-950\/60, .bg-stone-900, .bg-stone-900\/30, .bg-stone-900\/40, .bg-stone-900\/50, .bg-stone-900\/60, .bg-stone-900\/70, .bg-stone-900\/80, .bg-stone-900\/90, .bg-stone-800, .bg-stone-800\/40, .bg-stone-800\/60).text-white {
+  color: var(--text-hi) !important;
+}
+
+/* A small number of shared components still supply a former dark surface inline. Override
+   only those exact legacy values in Light Mode rather than touching the dark theme's markup. */
+[data-theme='light'] :is(
+  [style*='rgba(10, 10, 13'], [style*='rgba(15, 12, 22'], [style*='rgba(21, 16, 32'],
+  [style*='rgba(21, 19, 24'], [style*='rgba(28, 22, 38']
+) {
+  background: var(--surface) !important;
+  box-shadow: 0 2px 6px rgba(51, 32, 111, 0.06), 0 16px 36px rgba(81, 56, 150, 0.14);
+}
+
+[data-theme='light'] :is(
+  [style*='rgba(10, 10, 13'], [style*='rgba(15, 12, 22'], [style*='rgba(21, 16, 32'],
+  [style*='rgba(21, 19, 24'], [style*='rgba(28, 22, 38']
+) .text-white {
+  color: var(--text-hi) !important;
+}
+
+[data-theme='light'] :is(input, textarea, select) {
+  background-color: var(--input-surface) !important;
+  color: var(--text-hi) !important;
+  border-color: var(--border-soft) !important;
+  box-shadow: none !important;
+}
+
+[data-theme='light'] :is(input, textarea)::placeholder {
+  color: var(--text-lo) !important;
+  opacity: 1;
+}
+
+[data-theme='light'] option {
+  background-color: var(--input-surface);
+  color: var(--text-hi);
+}
+
+[data-theme='light'] :is(input, textarea, select):focus {
+  border-color: var(--purple) !important;
+  outline-color: var(--purple);
+}
+
+/* Typography is intentionally theme-aware. Dark Mode keeps its existing white type; in Light
+   Mode, white is reserved exclusively for solid brand/destructive actions. */
+[data-theme='light'] :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--purple-deep);
+}
+
+[data-theme='light'] .text-white {
+  color: var(--purple-deep) !important;
+}
+
+[data-theme='light'] :is(
+  .bg-purple-600, .bg-purple-700, .bg-indigo-600,
+  .bg-red-600, .bg-red-700, .bg-amber-600, .bg-amber-700, .bg-emerald-600,
+  [style*='--gradient-badge']
+),
+[data-theme='light'] :is(
+  .bg-purple-600, .bg-purple-700, .bg-indigo-600,
+  .bg-red-600, .bg-red-700, .bg-amber-600, .bg-amber-700, .bg-emerald-600,
+  [style*='--gradient-badge']
+) .text-white {
+  color: var(--on-accent) !important;
+}
+
+/* Formerly dark status blocks become softly tinted light surfaces instead of leaking a dark
+   panel into Light Mode. */
+[data-theme='light'] :is(.bg-purple-950, .bg-purple-950\/10, .bg-purple-950\/20, .bg-purple-950\/30, .bg-purple-950\/40, .bg-purple-950\/50, .bg-purple-950\/60) {
+  background-color: #f0eaff !important;
+}
+
+[data-theme='light'] :is(.bg-red-950, .bg-red-950\/20, .bg-red-950\/30, .bg-red-950\/40, .bg-red-950\/50, .bg-red-950\/60, .bg-red-950\/80) {
+  background-color: #fff0f1 !important;
+}
+
+[data-theme='light'] :is(.bg-amber-950, .bg-amber-950\/20, .bg-amber-950\/30, .bg-amber-950\/40, .bg-amber-950\/50, .bg-amber-950\/60, .bg-amber-950\/80) {
+  background-color: #fff5e4 !important;
+}
+
+[data-theme='light'] :is(.bg-emerald-950, .bg-emerald-950\/30, .bg-emerald-950\/60, .bg-emerald-950\/80) {
+  background-color: #e9f7ef !important;
+}
+
+[data-theme='light'] :is(.bg-purple-950\/40, .bg-purple-950\/60) {
+  background-color: #f0edfc;
+}
+
+[data-theme='light'] :is(.border-purple-800\/40, .border-purple-800\/60) {
+  border-color: #d4cef2;
+}
+
+[data-theme='light'] aside :is(.text-stone-400, .hover\:text-white:hover) {
+  color: var(--text-mid);
+}
+
+[data-theme='light'] aside button[style*='--gradient-badge'] {
+  color: var(--on-accent) !important;
+}
+
+/* Reports and employee administration still use a small set of legacy arbitrary dark
+   backgrounds for their cards, table rows, and list rows. Keep the adjustment scoped to
+   those two work surfaces: the warm workspace stays distinct from elevated white cards,
+   while status colours retain their own meaning. */
+[data-theme='light'] :is(.reports-hub, .employee-admin-hub) :is(
+  [class*='bg-[#161224]/80'], [class*='bg-[#1a1428]'], [class~='bg-black/20']
+) {
+  background-color: var(--surface) !important;
+  border-color: var(--border-soft) !important;
+  box-shadow: 0 2px 6px rgba(51, 32, 111, 0.05), 0 12px 28px rgba(81, 56, 150, 0.1);
+}
+
+[data-theme='light'] :is(.reports-hub, .employee-admin-hub) :is(
+  [class*='bg-[#161224]/80'], [class*='bg-[#1a1428]'], [class~='bg-black/20']
+) .text-white {
+  color: var(--text-hi) !important;
+}
+
+/* Buttons retain clear semantic treatments in Light Mode. Legacy dark-mode alpha utilities
+   otherwise become too faint against light cards, so primary, secondary, and gold actions
+   deliberately receive their own readable foreground, border, and elevation. */
+[data-theme='light'] :is(.employee-testing-action, .brand-gold-action) {
+  background: linear-gradient(135deg, #b56a08, #804308) !important;
+  border-color: #914f07 !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 8px 18px rgba(128, 67, 8, 0.28);
+}
+
+[data-theme='light'] :is(.employee-testing-action, .brand-gold-action):hover {
+  background: linear-gradient(135deg, #d18212, #99500a) !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 11px 22px rgba(128, 67, 8, 0.34);
+  transform: translateY(-1px);
+}
+
+[data-theme='light'] :is(.employee-testing-action, .brand-gold-action) :is(svg, span) {
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] :is(.primary-action, button[class*='bg-purple-600/'], button[class*='bg-purple-700/']) {
+  background: linear-gradient(135deg, #5b35b1, var(--purple-deep)) !important;
+  border-color: #5134a6 !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 7px 16px rgba(74, 44, 153, 0.24);
+}
+
+[data-theme='light'] :is(.primary-action, button[class*='bg-purple-600/'], button[class*='bg-purple-700/']):hover {
+  background: linear-gradient(135deg, var(--purple), #412583) !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 10px 20px rgba(74, 44, 153, 0.3);
+  transform: translateY(-1px);
+}
+
+[data-theme='light'] :is(.primary-action, button[class*='bg-purple-600/'], button[class*='bg-purple-700/']) :is(svg, span) {
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] button[style*='--gradient-badge'] :is(svg, span) {
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] :is(button[class*='bg-purple-900/'], button[class*='bg-purple-800/'], .capacity-management button[class*='bg-stone-800']) {
+  background-color: #f4efff !important;
+  border-color: #9f8ad2 !important;
+  color: var(--purple-deep) !important;
+  box-shadow: 0 3px 9px rgba(74, 44, 153, 0.12);
+}
+
+[data-theme='light'] :is(button[class*='bg-purple-900/'], button[class*='bg-purple-800/'], .capacity-management button[class*='bg-stone-800']):hover {
+  background-color: #e7ddfb !important;
+  color: var(--purple-deep) !important;
+  border-color: var(--purple) !important;
+}
+
+[data-theme='light'] .client-initial-avatar {
+  background: linear-gradient(135deg, #6746c3, #3b237d) !important;
+  border-color: #5134a6 !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 5px 12px rgba(74, 44, 153, 0.24);
+}
+
+/* Focused interactive refinements --------------------------------------------------------- */
+[data-theme='light'] .performance-action {
+  background: #b5dfc2 !important;
+  border-color: #4d9b68 !important;
+  color: #185a35 !important;
+  box-shadow: 0 4px 10px rgba(42, 111, 65, 0.16);
+}
+
+[data-theme='light'] .performance-action:hover {
+  background: #8fcfa4 !important;
+  border-color: #287348 !important;
+  color: #124527 !important;
+  box-shadow: 0 7px 14px rgba(42, 111, 65, 0.22);
+  transform: translateY(-1px);
+}
+
+[data-theme='light'] .secondary-action {
+  background: var(--surface) !important;
+  border: 1px solid #9f8ad2 !important;
+  color: var(--purple-deep) !important;
+  box-shadow: 0 2px 6px rgba(74, 44, 153, 0.1);
+}
+
+[data-theme='light'] .secondary-action:hover {
+  background: #e7ddfb !important;
+  border-color: var(--purple) !important;
+  color: var(--purple-deep) !important;
+}
+
+/* These comparison tabs intentionally keep white labels in both states; a rich purple
+   surface makes the selected period unmistakable without introducing pastel controls. */
+[data-theme='light'] .department-comparison button {
+  background: #745eb3 !important;
+  border: 1px solid #60469f !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 3px 8px rgba(74, 44, 153, 0.18);
+}
+
+[data-theme='light'] .department-comparison button:hover {
+  background: #54388f !important;
+  border-color: #422979 !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 6px 12px rgba(74, 44, 153, 0.25);
+  transform: translateY(-1px);
+}
+
+[data-theme='light'] .department-comparison button :is(svg, span) {
+  color: var(--on-accent) !important;
+}
+
+/* Reports use a quieter, medium-purple family than global primary actions while preserving
+   a crisp white label and visible selected state. */
+[data-theme='light'] .reports-hub button.bg-purple-600 {
+  background: #7560b6 !important;
+  border-color: #62509f !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 4px 10px rgba(80, 57, 146, 0.2);
+}
+
+[data-theme='light'] .reports-hub button.bg-purple-600:hover {
+  background: #60479f !important;
+  box-shadow: 0 7px 14px rgba(80, 57, 146, 0.26);
+  transform: translateY(-1px);
+}
+
+[data-theme='light'] .reports-hub button.bg-purple-600 :is(svg, span) {
+  color: var(--on-accent) !important;
+}
+
+/* Platform indicators remain recognisable without their former low-alpha dark-mode fills. */
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label) {
+  box-shadow: 0 2px 6px rgba(51, 32, 111, 0.12);
+  font-weight: 700;
+}
+
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label)[data-platform='meta'] { background: #dce9ff !important; color: #174ea6 !important; border-color: #4f83db !important; }
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label)[data-platform='google'] { background: #fde0dc !important; color: #a92c21 !important; border-color: #d85b50 !important; }
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label)[data-platform='tiktok'] { background: #d4f1f3 !important; color: #096d74 !important; border-color: #20a2a9 !important; }
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label)[data-platform='linkedin'] { background: #dbeaf8 !important; color: #075a9c !important; border-color: #3c82bd !important; }
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label)[data-platform='snapchat'] { background: #fff0a8 !important; color: #735600 !important; border-color: #c7a00b !important; }
+[data-theme='light'] :is(.campaign-platform-control, .campaign-platform-label)[data-platform='x'] { background: #e4e1e8 !important; color: #33206f !important; border-color: #766f82 !important; }
+
+[data-theme='light'] .campaign-platform-control:hover {
+  filter: saturate(1.15) brightness(0.94);
+  box-shadow: 0 5px 11px rgba(51, 32, 111, 0.18);
+  transform: translateY(-1px);
+}
+
+/* Chat has its own legacy dark palette, so it is explicitly mapped rather than relying on
+   broad colour replacements. Sent bubbles stay brand-purple; received content and every
+   control surface become light and readable. */
+[data-theme='light'] .mini-chat :is(
+  [class~='bg-black/10'], [class~='bg-black/20'], [class~='bg-black/30'], [class~='bg-black/40'],
+  [class~='bg-white/5'], [class~='bg-white/10'], [class*='bg-[#111623]'], [class*='bg-[#1a1f2e]'], [class*='bg-[#1c1626]']
+) {
+  background-color: var(--surface) !important;
+  border-color: var(--border-soft) !important;
+}
+
+[data-theme='light'] .mini-chat :is(.text-white, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500) {
+  color: var(--text-hi) !important;
+}
+
+[data-theme='light'] .mini-chat .chat-avatar {
+  background: linear-gradient(135deg, #6746c3, #3b237d) !important;
+  border-color: #5134a6 !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 4px 10px rgba(74, 44, 153, 0.24);
+}
+
+[data-theme='light'] .mini-chat .bg-purple-600 {
+  background: linear-gradient(135deg, #6746c3, #3b237d) !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 4px 10px rgba(74, 44, 153, 0.2);
+}
+
+[data-theme='light'] .mini-chat .bg-purple-600 :is(.text-white, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500) {
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] .mini-chat .bg-purple-600 :is([class~='bg-black/20'], [class~='bg-black/30']) {
+  background-color: rgba(47, 27, 111, 0.28) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+[data-theme='light'] .mini-chat :is(button, [role='button']):hover {
+  box-shadow: 0 4px 10px rgba(74, 44, 153, 0.16);
+}
+
+/* A purple button is always a white-foreground action in Light Mode. The selectors match
+   only actual bg-purple utility tokens (not hover:bg-purple utilities), so purple text on
+   intentionally light surfaces remains untouched. */
+[data-theme='light'] :is(
+  button:is([class^='bg-purple-'], [class*=' bg-purple-']),
+  button[style*='--gradient-badge'],
+  button[style*='background: var(--purple']
+) {
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] :is(
+  button:is([class^='bg-purple-'], [class*=' bg-purple-']),
+  button[style*='--gradient-badge'],
+  button[style*='background: var(--purple']
+) :is(svg, svg *, span) {
+  color: var(--on-accent) !important;
+  stroke: currentColor;
+}
+
+/* Client rows retain their content layer. Hover is deliberately limited to an in-place
+   tint, border cue, and shallow elevation — no pseudo-element or opaque overlay is created. */
+[data-theme='light'] .client-portfolio-row {
+  position: relative;
+  isolation: isolate;
+}
+
+[data-theme='light'] .client-portfolio-row:hover {
+  background-color: #f1ebff !important;
+  box-shadow: inset 3px 0 0 var(--purple), 0 3px 10px rgba(74, 44, 153, 0.1);
+}
+
+[data-theme='light'] .client-portfolio-row > td {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme='light'] .client-portfolio-row:hover .client-portfolio-name {
+  color: var(--purple-deep) !important;
+}
+
+/* Primary actions may retain a former purple-900 utility for Dark Mode. Reassert the complete
+   filled treatment last, so that legacy secondary-button compatibility rules cannot split the
+   gradient from its required white foreground. */
+[data-theme='light'] button.primary-action {
+  background: linear-gradient(135deg, #5b35b1, var(--purple-deep)) !important;
+  border-color: #5134a6 !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 7px 16px rgba(74, 44, 153, 0.24);
+}
+
+[data-theme='light'] button.primary-action :is(svg, svg *, span) {
+  color: var(--on-accent) !important;
+  stroke: currentColor;
+}
+
+/* Legacy purple-900/-800 button utilities become outlined secondary controls in Light Mode.
+   Declare their foreground after the filled-purple rule so labels and icons cannot inherit
+   white from a former dark-mode action treatment. */
+[data-theme='light'] :is(
+  button:not(.primary-action)[class*='bg-purple-900/'],
+  button:not(.primary-action)[class*='bg-purple-800/']
+) {
+  background-color: var(--surface) !important;
+  border-color: #8d75c8 !important;
+  color: var(--purple-deep) !important;
+}
+
+[data-theme='light'] :is(
+  button:not(.primary-action)[class*='bg-purple-900/'],
+  button:not(.primary-action)[class*='bg-purple-800/']
+) :is(svg, svg *, span) {
+  color: var(--purple-deep) !important;
+  stroke: currentColor;
+}
+
+[data-theme='light'] :is(
+  button:not(.primary-action)[class*='bg-purple-900/'],
+  button:not(.primary-action)[class*='bg-purple-800/']
+):hover {
+  background-color: #e8dffc !important;
+  border-color: var(--purple) !important;
+  color: var(--purple-deep) !important;
+  box-shadow: 0 5px 11px rgba(74, 44, 153, 0.16);
+}
+
+/* Reports retain a purple typography hierarchy even when individual legacy utilities used
+   dark-mode white or neutral values. Semantic status colours remain intentionally untouched. */
+[data-theme='light'] .reports-hub :is(h1, h2, h3, h4, h5, h6, .text-white):not(button, button *) {
+  color: var(--purple-deep) !important;
+}
+
+[data-theme='light'] .reports-hub :is(.text-stone-200, .text-stone-300) {
+  color: #4d3c71 !important;
+}
+
+[data-theme='light'] .reports-hub :is(.text-stone-400, .text-stone-500) {
+  color: var(--text-mid) !important;
+}
+
+/* A filled purple control is always an on-accent surface.  This rule is deliberately
+   later than page typography compatibility rules, because those rules must never turn
+   an action label or its currentColor SVG dark on a purple background. */
+[data-theme='light'] button.filled-purple-action {
+  background: linear-gradient(135deg, #5b35b1, var(--purple-deep)) !important;
+  border-color: #5134a6 !important;
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] button.filled-purple-action :is(svg, svg *, span) {
+  color: var(--on-accent) !important;
+  stroke: currentColor !important;
+}
+
+[data-theme='light'] button.filled-purple-action:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--purple), #412583) !important;
+  color: var(--on-accent) !important;
+}
+
+/* Outlined purple controls remain light-surface actions with purple foregrounds. */
+[data-theme='light'] button.purple-outline-action {
+  background-color: var(--surface) !important;
+  border-color: #8d75c8 !important;
+  color: var(--purple-deep) !important;
+}
+
+[data-theme='light'] button.purple-outline-action :is(svg, svg *, span) {
+  color: var(--purple-deep) !important;
+  stroke: currentColor !important;
+}
+
+[data-theme='light'] button.purple-outline-action:hover:not(:disabled) {
+  background-color: #e8dffc !important;
+  color: var(--purple-deep) !important;
+}
+
+/* This must remain after Reports' text hierarchy.  Selected scope, report-type,
+   period, and generate actions all use this filled treatment. */
+[data-theme='light'] .reports-hub button.bg-purple-600 {
+  background: #7560b6 !important;
+  border-color: #62509f !important;
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] .reports-hub button.bg-purple-600 :is(svg, svg *, span) {
+  color: var(--on-accent) !important;
+  stroke: currentColor !important;
+}
+
+[data-theme='light'] .reports-hub button.bg-purple-600:hover:not(:disabled) {
+  background: #60479f !important;
+  color: var(--on-accent) !important;
+}
+
+/* Reports actions opt into this explicit foreground contract at the JSX level.
+   It is more specific than the page's light-mode typography rules, so the default,
+   hover, and pressed states all retain white labels and currentColor SVG strokes. */
+[data-theme='light'] .reports-hub button.reports-filled-action,
+[data-theme='light'] .reports-hub button.reports-filled-action:hover:not(:disabled),
+[data-theme='light'] .reports-hub button.reports-filled-action:active:not(:disabled) {
+  color: #fff !important;
+}
+
+[data-theme='light'] .reports-hub button.reports-filled-action :is(svg, svg *, span) {
+  color: #fff !important;
+  stroke: #fff !important;
+}
+
+/* Final global foreground guard for existing component-level filled purple actions.
+   Deliberately excludes the purple-800/900 light-surface pattern above, which is
+   an outlined action in Light Mode rather than a filled purple button. */
+[data-theme='light'] button:is(
+  [class*='bg-purple-500'],
+  [class*='bg-purple-600'],
+  [class*='bg-purple-700'],
+  [class*='bg-violet-500'],
+  [class*='bg-violet-600'],
+  [class*='bg-violet-700'],
+  [style*='--gradient-badge'],
+  [style*='background: var(--purple']
+) {
+  color: var(--on-accent) !important;
+}
+
+[data-theme='light'] button:is(
+  [class*='bg-purple-500'],
+  [class*='bg-purple-600'],
+  [class*='bg-purple-700'],
+  [class*='bg-violet-500'],
+  [class*='bg-violet-600'],
+  [class*='bg-violet-700'],
+  [style*='--gradient-badge'],
+  [style*='background: var(--purple']
+) :is(svg, svg *, span) {
+  color: var(--on-accent) !important;
+  stroke: currentColor !important;
+}
+
+/* The Add Employee mark is a Lucide currentColor SVG inside a purple badge.
+   Lock its stroke at the element so page-level text colours cannot leak into it. */
+[data-theme='light'] .employee-add-icon,
+[data-theme='light'] .employee-add-icon * {
+  color: var(--on-accent) !important;
+  stroke: var(--on-accent) !important;
 }
 
 body {

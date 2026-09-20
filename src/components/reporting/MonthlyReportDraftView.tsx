@@ -162,7 +162,7 @@ export const MonthlyReportDraftView: React.FC<{
               <button
                 onClick={handleApprove}
                 disabled={isApproving}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md hover:opacity-90 disabled:opacity-50 transition-all"
+                className="filled-purple-action px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md hover:opacity-90 disabled:opacity-50 transition-all"
                 style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
               >
                 {isApproving ? 'Approving...' : 'Approve & Mark Final'}

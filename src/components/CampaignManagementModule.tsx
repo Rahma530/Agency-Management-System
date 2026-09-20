@@ -888,7 +888,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               <button
                 key={plat}
                 onClick={() => setSelectedPlatform(selectedPlatform === plat ? 'all' : plat)}
-                className={`px-3 py-1.5 rounded-xl text-xs flex items-center gap-2 transition-all ${
+                data-platform={plat}
+                className={`campaign-platform-control px-3 py-1.5 rounded-xl text-xs flex items-center gap-2 transition-all ${
                   selectedPlatform === plat ? 'ring-2 ring-purple-400 shadow-md' : 'hover:opacity-90'
                 }`}
                 style={{
@@ -1241,7 +1242,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                       <div className="flex flex-wrap items-center gap-2">
                         {/* Platform Badge */}
                         <span
-                          className="px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1"
+                          data-platform={campaign.platform}
+                          className="campaign-platform-label px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1"
                           style={{
                             background: platformCfg.bg,
                             color: platformCfg.text,

@@ -696,7 +696,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
         </div>
         <button
           onClick={() => setIsLoggingExtraEffort(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-amber-200 bg-amber-950/30 hover:bg-amber-900/40 border border-amber-800/40 transition-all"
+          className="brand-gold-action flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-amber-200 bg-amber-950/30 hover:bg-amber-900/40 border border-amber-800/40 transition-all"
           title="Document effort beyond normal task scope"
         >
           <Star className="w-3.5 h-3.5 text-amber-300" />

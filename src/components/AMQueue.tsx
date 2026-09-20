@@ -367,7 +367,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           {onOpenBulkUploadModal && (
             <button
               onClick={onOpenBulkUploadModal}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/40 hover:bg-amber-900/60 hover:text-white border border-amber-700/40 transition-all"
+              className="brand-gold-action flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/40 hover:bg-amber-900/60 hover:text-white border border-amber-700/40 transition-all"
             >
               <UploadCloud className="w-3.5 h-3.5" />
               <span>Bulk Upload</span>
@@ -461,7 +461,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 </div>
                 <button
                   onClick={() => setDashboardClientId(c.id)}
-                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-amber-200 bg-amber-900/30 hover:bg-amber-800/50 hover:text-white border border-amber-700/40 transition-all shrink-0 flex items-center gap-1.5"
+                  className="primary-action px-3 py-1.5 rounded-lg text-[11px] font-bold text-amber-200 bg-amber-900/30 hover:bg-amber-800/50 hover:text-white border border-amber-700/40 transition-all shrink-0 flex items-center gap-1.5"
                 >
                   <Eye className="w-3.5 h-3.5" />
                   <span>View Dashboard</span>
@@ -535,15 +535,15 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                     <tr
                       key={client.id}
                       onClick={() => setDashboardClientId(client.id)}
-                      className="hover:bg-purple-950/30 transition-colors cursor-pointer group"
+                      className="client-portfolio-row hover:bg-purple-950/30 transition-colors cursor-pointer group"
                     >
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-purple-900/30 border border-purple-700/30 flex items-center justify-center font-bold text-purple-300">
+                          <div className="client-initial-avatar w-8 h-8 rounded-lg bg-purple-900/30 border border-purple-700/30 flex items-center justify-center font-bold text-purple-300">
                             {client.name.charAt(0)}
                           </div>
                           <div>
-                            <span className="font-bold text-white group-hover:text-purple-300 transition-colors inline-flex items-center gap-1.5">
+                            <span className="client-portfolio-name font-bold text-white group-hover:text-purple-300 transition-colors inline-flex items-center gap-1.5">
                               {client.name}
                               {isAMTeamLead &&
                                 client.am_team_lead_id === resolvedUser?.id &&
@@ -651,7 +651,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                             e.stopPropagation();
                             setDashboardClientId(client.id);
                           }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all inline-flex items-center gap-1.5"
+                          className="primary-action px-3 py-1.5 rounded-lg text-xs font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all inline-flex items-center gap-1.5"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>View Dashboard</span>

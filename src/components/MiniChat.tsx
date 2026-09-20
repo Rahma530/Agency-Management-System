@@ -230,7 +230,7 @@ export const MiniChat: React.FC<MiniChatProps> = ({
   }, {} as Record<string, number>);
 
   return (
-    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[90] flex flex-col items-end" dir="rtl">
+    <div className="mini-chat fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[90] flex flex-col items-end" dir="rtl">
       {/* Chat Window */}
       {isOpen && (
         <div
@@ -249,7 +249,7 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                   عودة
                 </button>
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center text-sm font-bold relative shrink-0">
+                  <div className="chat-avatar w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center text-sm font-bold relative shrink-0">
                     {selectedUser?.name.charAt(0)}
                     {(() => {
                       if (!selectedUser) return null;
@@ -347,7 +347,7 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                       }}
                       className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors text-right"
                     >
-                      <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold text-white relative shrink-0">
+                      <div className="chat-avatar w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold text-white relative shrink-0">
                         {user.name.charAt(0)}
                         {(() => {
                           const isOnline = onlineUserIds.includes(user.id);
@@ -648,7 +648,7 @@ export const MiniChat: React.FC<MiniChatProps> = ({
                   {showEmojiPicker && (
                     <div className="absolute bottom-full left-2 mb-2 z-50">
                       <EmojiPicker 
-                        theme={Theme.DARK} 
+                        theme={document.documentElement.dataset.theme === 'light' ? Theme.LIGHT : Theme.DARK}
                         onEmojiClick={(emojiData) => setInputText(prev => prev + emojiData.emoji)}
                         searchDisabled
                         skinTonesDisabled
