@@ -23,6 +23,8 @@ import {
   UserPlus,
   Menu,
   X,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import {
   supabase,
@@ -154,7 +156,29 @@ export default function App() {
   const [unauthorizedRoute, setUnauthorizedRoute] = useState<string | null>(null);
   // Off-canvas sidebar drawer, mobile only (md breakpoint and below)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  
+
+  // Light/dark theme — lazy-initialized from the <html data-theme> attribute the inline script
+  // in index.html already set synchronously before this component ever mounts, so this never
+  // causes its own flash; it's just mirroring what's already on the DOM into React state for
+  // the toggle button's icon.
+  const [theme, setTheme] = useState<'dark' | 'light'>(
+    () => (document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark')
+  );
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    if (next === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    try {
+      localStorage.setItem('agency_theme', next);
+    } catch {
+      // localStorage unavailable — theme still applies for this session, just won't persist.
+    }
+  };
+
   // Online Users Mock State
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
 
@@ -3555,6 +3579,17 @@ export default function App() {
                 Live Activity Feed ⚡
               </button>
             )}
+
+            {/* Light/Dark Theme Toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
+              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+              aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+            >
+              {theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+            </button>
 
             {/* Notification Bell */}
             <NotificationBell

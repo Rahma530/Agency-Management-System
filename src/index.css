@@ -46,6 +46,52 @@
   --radius-pill: 30px;
 }
 
+/* ---- Light theme — Phase 1 of the light/dark toggle ----
+   Overrides every color token above when <html data-theme="light"> is set (see index.html's
+   inline theme-init script and App.tsx's toggle button). Radius tokens aren't re-declared —
+   they're geometry, not color, and don't change between themes.
+
+   Scope of this pass: only the token-driven brand/structural surface (this :root block's own
+   706 usages across the app — gradients, borders, badge accents) responds to this override.
+   The much larger set of hardcoded Tailwind utility colors (stone-*, purple-*, literal
+   bg-black/text-white, ad-hoc hex values — 2,300+ occurrences across every component file)
+   is untouched and will still render its dark-mode appearance in light mode. That's the
+   explicitly scoped Phase 2+ work, not a gap in this pass. */
+[data-theme='light'] {
+  --black: #f7f4fb;
+  --black-2: #ffffff;
+  --purple-deep: #3b1560;
+  --purple: #7b2ff7;
+  --purple-light: #9b59f0;
+  --lilac: #2a1b3d;
+  --white: #150f1f;
+  --grey: #6b5b7a;
+
+  --chart-1: #7b2ff7;
+  --chart-2: #5c2a99;
+  --chart-3: #9b59f0;
+  --chart-4: #b98cf0;
+  --chart-5: #3b1560;
+  --chart-6: #6b5b7a;
+
+  --roas-good: #15803d;
+  --roas-mid: #92400e;
+  --roas-bad: #b91c1c;
+
+  --gradient-page: linear-gradient(180deg, var(--black) 0%, #ffffff 40%, var(--black) 100%);
+  --gradient-hero: radial-gradient(circle at 50% -10%, rgba(123,47,247,0.15), transparent 60%),
+                    linear-gradient(135deg, #ffffff 0%, #f0e6fc 100%);
+  --gradient-title-text: linear-gradient(90deg, var(--purple-deep), var(--purple));
+  --gradient-card: linear-gradient(160deg, #ffffff, #f5eefc);
+  --gradient-badge: linear-gradient(135deg, var(--purple), var(--purple-deep));
+  --gradient-section: linear-gradient(160deg, rgba(255,255,255,0.9), rgba(185,140,240,0.15));
+
+  --border-soft: rgba(123,47,247,0.18);
+  --border-medium: rgba(123,47,247,0.28);
+  --border-strong: rgba(123,47,247,0.45);
+  --border-lilac: rgba(123,47,247,0.3);
+}
+
 body {
   background: var(--gradient-page);
   color: var(--lilac);
