@@ -767,11 +767,11 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       {/* VIEW 1: Employee Cards View */}
       {viewMode === 'cards' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between text-xs text-stone-400 px-1">
+          <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-mid)' }}>
             <span>
               Showing {filteredUserData.length} employees matching the selected filters
             </span>
-            <span className="text-[11px] text-stone-500">
+            <span className="text-[11px]" style={{ color: 'var(--text-lo)' }}>
               * Capacity is calculated from active clients (for Account Management) and active tasks (for technical teams).
             </span>
           </div>
@@ -782,8 +782,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
             >
               <Users className="w-10 h-10 mx-auto text-stone-600 mb-2" />
-              <p className="text-sm font-semibold text-white">No employees found</p>
-              <p className="text-xs text-stone-400 mt-1">
+              <p className="text-sm font-semibold" style={{ color: 'var(--text-hi)' }}>No employees found</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--text-mid)' }}>
                 Try adjusting the filter options or clearing the search fields.
               </p>
             </div>
@@ -838,7 +838,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                             {item.user.name.charAt(0)}
                           </div>
                           <div>
-                            <h4 className="text-sm font-bold text-white">{item.user.name}</h4>
+                            <h4 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>{item.user.name}</h4>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <span
                                 className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
@@ -847,7 +847,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                                 {roleBadge.label}
                               </span>
                               {item.user.team && (
-                                <span className="text-[10px] text-stone-400">
+                                <span className="text-[10px]" style={{ color: 'var(--text-mid)' }}>
                                   • {item.user.team}
                                 </span>
                               )}
@@ -1075,12 +1075,12 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       {/* VIEW 2: Detailed Matrix Table */}
       {viewMode === 'matrix' && (
         <div
-          className="rounded-[18px] overflow-hidden border border-stone-800"
-          style={{ background: 'var(--gradient-card)' }}
+          className="rounded-[18px] overflow-hidden border"
+          style={{ background: 'var(--gradient-card)', borderColor: 'var(--border)' }}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
-              <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
+              <thead className="border-b" style={{ background: 'var(--surface-2)', color: 'var(--text-mid)', borderColor: 'var(--border)' }}>
                 <tr>
                   <th className="p-3.5">Employee</th>
                   <th className="p-3.5">Department / Team</th>
@@ -1122,12 +1122,12 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                             {item.user.name.charAt(0)}
                           </div>
                           <div>
-                            <p className="font-bold text-white">{item.user.name}</p>
-                            <p className="text-[10px] text-stone-400">{item.user.email || 'Active'}</p>
+                            <p className="font-bold" style={{ color: 'var(--text-hi)' }}>{item.user.name}</p>
+                            <p className="text-[10px]" style={{ color: 'var(--text-mid)' }}>{item.user.email || 'Active'}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="p-3.5 text-stone-300 font-medium">
+                      <td className="p-3.5 font-medium" style={{ color: 'var(--text-mid)' }}>
                         {item.user.team || 'Not set'}
                       </td>
                       <td className="p-3.5">
@@ -1138,10 +1138,10 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                           {roleBadge.label}
                         </span>
                       </td>
-                      <td className="p-3.5 text-center font-bold text-purple-300">
+                      <td className="p-3.5 text-center font-bold" style={{ color: 'var(--accent)' }}>
                         {item.capacityLimit}
                       </td>
-                      <td className="p-3.5 text-center font-bold text-white">
+                      <td className="p-3.5 text-center font-bold" style={{ color: 'var(--text-hi)' }}>
                         {item.usedCapacity}
                       </td>
                       <td
@@ -1173,7 +1173,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                             Edit Capacity
                           </button>
                         ) : (
-                          <span className="text-[10px] text-stone-500">Leads only</span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-lo)' }}>Leads only</span>
                         )}
                       </td>
                     </tr>
@@ -1235,11 +1235,11 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           </div>
 
           <div
-            className="rounded-[18px] overflow-hidden border border-stone-800"
-            style={{ background: 'var(--gradient-card)' }}
+            className="rounded-[18px] overflow-hidden border"
+            style={{ background: 'var(--gradient-card)', borderColor: 'var(--border)' }}
           >
             <table className="w-full text-right text-xs">
-              <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
+              <thead className="border-b" style={{ background: 'var(--surface-2)', color: 'var(--text-mid)', borderColor: 'var(--border)' }}>
                 <tr>
                   <th className="p-3.5">Log ID</th>
                   <th className="p-3.5">Employee</th>
@@ -1251,7 +1251,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               <tbody className="divide-y divide-stone-800/60">
                 {capacityLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-stone-400">
+                    <td colSpan={5} className="p-8 text-center" style={{ color: 'var(--text-mid)' }}>
                       No capacity logs recorded yet.
                     </td>
                   </tr>
@@ -1265,11 +1265,11 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                     return (
                       <tr key={log.id} className="hover:bg-stone-900/40 transition-colors">
                         <td className="p-3.5 font-mono text-purple-300">{log.id}</td>
-                        <td className="p-3.5 font-bold text-white">
+                        <td className="p-3.5 font-bold" style={{ color: 'var(--text-hi)' }}>
                           {agent?.name || log.agent_id}
                         </td>
-                        <td className="p-3.5 text-stone-300">{log.date}</td>
-                        <td className="p-3.5 text-center font-bold text-white">
+                        <td className="p-3.5" style={{ color: 'var(--text-mid)' }}>{log.date}</td>
+                        <td className="p-3.5 text-center font-bold" style={{ color: 'var(--text-hi)' }}>
                           {log.active_clients_count} of {limit}
                         </td>
                         <td className="p-3.5 text-center">
@@ -1308,13 +1308,14 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
             }}
           >
             <div className="flex items-center justify-between border-b border-stone-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--text-hi)' }}>
                 <Gauge className="w-5 h-5 text-purple-400" />
                 <span>Log New Capacity Reading</span>
               </h3>
               <button
                 onClick={() => setIsLogModalOpen(false)}
-                className="p-1 rounded-lg text-stone-400 hover:text-white"
+                className="p-1 rounded-lg hover:opacity-70"
+                style={{ color: 'var(--text-mid)' }}
               >
                 <X className="w-5 h-5" />
               </button>

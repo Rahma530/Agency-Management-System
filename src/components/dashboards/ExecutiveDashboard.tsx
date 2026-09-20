@@ -18,15 +18,15 @@ const StatTile: React.FC<{
   caption?: string;
   accent?: string;
 }> = ({ label, value, icon: Icon, caption, accent }) => (
-  <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-    <div className="flex items-center justify-between text-stone-400 mb-1.5">
+  <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+    <div className="flex items-center justify-between mb-1.5" style={{ color: 'var(--text-mid)' }}>
       <span className="text-[11px] font-semibold">{label}</span>
       <Icon className="w-4 h-4" style={accent ? { color: accent } : undefined} />
     </div>
-    <p className="text-2xl font-bold" style={{ color: accent || 'white' }}>
+    <p className="text-2xl font-bold" style={{ color: accent || 'var(--text-hi)' }}>
       {value}
     </p>
-    {caption && <p className="text-[10px] text-stone-500 mt-1">{caption}</p>}
+    {caption && <p className="text-[10px] mt-1" style={{ color: 'var(--text-lo)' }}>{caption}</p>}
   </div>
 );
 
@@ -97,15 +97,15 @@ export const ExecutiveDashboard: React.FC<{
           icon={Users}
           caption={`${statusCounts.closed} closed all-time`}
         />
-        <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-          <div className="flex items-center justify-between text-stone-400 mb-1.5">
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <div className="flex items-center justify-between mb-1.5" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Churn Rate</span>
             <TrendingDown className="w-4 h-4" style={{ color: 'var(--roas-bad)' }} />
           </div>
           <p className="text-2xl font-bold" style={{ color: 'var(--roas-bad)' }}>
             {churnStats.rate !== null ? `${churnStats.rate}%` : 'N/A'}
           </p>
-          <p className="text-[10px] text-stone-500 mt-1">
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-lo)' }}>
             {churnStats.churnedInPeriod} of {churnStats.base} clients, {churnStats.periodLabel}
           </p>
           <div className="flex items-center gap-1 mt-2">
@@ -113,9 +113,12 @@ export const ExecutiveDashboard: React.FC<{
               <button
                 key={opt.value}
                 onClick={() => setChurnGranularity(opt.value)}
-                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                  churnGranularity === opt.value ? 'bg-purple-600/40 text-white' : 'text-stone-500 hover:text-white'
-                }`}
+                className="px-2 py-0.5 rounded text-[10px] font-bold transition-all"
+                style={
+                  churnGranularity === opt.value
+                    ? { background: 'rgba(123, 47, 247, 0.4)', color: 'white' }
+                    : { color: 'var(--text-lo)' }
+                }
               >
                 {opt.label}
               </button>

@@ -239,7 +239,7 @@ const AMServiceBriefsPanel: React.FC<{
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white">Service Briefs — Cross-Team Overview</h2>
+              <h2 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>Service Briefs — Cross-Team Overview</h2>
               <span
                 className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border"
                 style={{ background: 'rgba(123, 47, 247, 0.2)', color: 'var(--purple-light)', borderColor: 'var(--border-soft)' }}
@@ -250,7 +250,7 @@ const AMServiceBriefsPanel: React.FC<{
           </div>
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200 self-start md:self-center">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs self-start md:self-center" style={{ background: 'var(--accent-soft)', border: '1px solid var(--border)', color: 'var(--text-mid)' }}>
           <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
           <span>Read-only — assignment stays with each service team</span>
         </div>
@@ -259,16 +259,16 @@ const AMServiceBriefsPanel: React.FC<{
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
-          <div className="text-[11px] text-stone-400 font-semibold">{isTeamLead ? 'Total Clients' : 'My Assigned Clients'}</div>
-          <div className="text-2xl font-bold text-white mt-1 font-mono">{authorizedClients.length}</div>
+          <div className="text-[11px] font-semibold" style={{ color: 'var(--text-mid)' }}>{isTeamLead ? 'Total Clients' : 'My Assigned Clients'}</div>
+          <div className="text-2xl font-bold mt-1 font-mono" style={{ color: 'var(--text-hi)' }}>{authorizedClients.length}</div>
         </div>
         <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
-          <div className="text-[11px] text-stone-400 font-semibold">Briefs Documented</div>
-          <div className="text-2xl font-bold text-emerald-400 mt-1 font-mono">{totalBriefsDocumented}</div>
+          <div className="text-[11px] font-semibold" style={{ color: 'var(--text-mid)' }}>Briefs Documented</div>
+          <div className="text-2xl font-bold mt-1 font-mono" style={{ color: 'var(--success)' }}>{totalBriefsDocumented}</div>
         </div>
         <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
-          <div className="text-[11px] text-stone-400 font-semibold">Clients Missing a Brief</div>
-          <div className="text-2xl font-bold text-amber-300 mt-1 font-mono">{clientsMissingBriefs}</div>
+          <div className="text-[11px] font-semibold" style={{ color: 'var(--text-mid)' }}>Clients Missing a Brief</div>
+          <div className="text-2xl font-bold mt-1 font-mono" style={{ color: 'var(--warning)' }}>{clientsMissingBriefs}</div>
         </div>
       </div>
 
@@ -643,7 +643,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white">{departmentName}</h2>
+              <h2 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>{departmentName}</h2>
               <span
                 className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border"
                 style={{
@@ -659,7 +659,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         </div>
 
         <div className="flex items-center gap-2 self-start md:self-center">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/40 text-xs text-purple-200">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs" style={{ background: 'var(--accent-soft)', border: '1px solid var(--border)', color: 'var(--text-mid)' }}>
             <Info className="w-3.5 h-3.5 text-purple-400 shrink-0" />
             <span>{serviceNameEn}</span>
           </div>
@@ -681,13 +681,13 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           className="p-4 rounded-xl border"
           style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}
         >
-          <div className="text-[11px] text-stone-400 font-semibold">
+          <div className="text-[11px] font-semibold" style={{ color: 'var(--text-mid)' }}>
             {isTeamLead ? 'Total Service Clients' : 'My Assigned Clients'}
           </div>
-          <div className="text-2xl font-bold text-white mt-1 font-mono">
+          <div className="text-2xl font-bold mt-1 font-mono" style={{ color: 'var(--text-hi)' }}>
             {authorizedClients.length}
           </div>
-          <div className="text-[10px] text-stone-400 mt-0.5">{serviceType.toUpperCase()}</div>
+          <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-mid)' }}>{serviceType.toUpperCase()}</div>
         </div>
 
         <div

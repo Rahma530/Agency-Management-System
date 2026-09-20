@@ -665,12 +665,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Total Tasks</span>
             <Kanban className="w-3.5 h-3.5 text-purple-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-white">{totalTasksCount}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--text-hi)' }}>{totalTasksCount}</p>
           </div>
         </div>
 
@@ -679,12 +679,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Completed</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-emerald-400">{completedTasksCount}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--success)' }}>{completedTasksCount}</p>
           </div>
         </div>
 
@@ -693,12 +693,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">In Progress</span>
             <Timer className="w-3.5 h-3.5 text-purple-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-purple-300">{inProgressTasksCount}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--accent)' }}>{inProgressTasksCount}</p>
           </div>
         </div>
 
@@ -707,12 +707,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Pending</span>
-            <Clock className="w-3.5 h-3.5 text-stone-400" />
+            <Clock className="w-3.5 h-3.5" style={{ color: 'var(--text-mid)' }} />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-stone-300">{pendingTasksCount}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--text-hi)' }}>{pendingTasksCount}</p>
           </div>
         </div>
 
@@ -723,12 +723,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           }`}
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Overdue</span>
             <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-red-400">{overdueTasksCount}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--roas-bad)' }}>{overdueTasksCount}</p>
           </div>
         </div>
 
@@ -737,12 +737,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Unassigned</span>
             <UserX className="w-3.5 h-3.5 text-amber-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-amber-400">{unassignedTasksCount}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--warning)' }}>{unassignedTasksCount}</p>
           </div>
         </div>
 
@@ -751,12 +751,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="p-3.5 rounded-[16px] flex flex-col justify-between"
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
         >
-          <div className="flex items-center justify-between text-stone-400">
+          <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
             <span className="text-[11px] font-semibold">Capacity</span>
             <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
           </div>
           <div className="mt-2">
-            <p className="text-xl font-bold text-purple-300">{capacityUtilization}%</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--accent)' }}>{capacityUtilization}%</p>
           </div>
         </div>
       </div>
@@ -1089,12 +1089,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {/* VIEW 2: TABLE / LIST VIEW */}
       {viewMode === 'table' && (
         <div
-          className="rounded-[18px] overflow-hidden border border-stone-800"
-          style={{ background: 'var(--gradient-card)' }}
+          className="rounded-[18px] overflow-hidden border"
+          style={{ background: 'var(--gradient-card)', borderColor: 'var(--border)' }}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
+              <thead className="border-b" style={{ background: 'var(--surface-2)', color: 'var(--text-mid)', borderColor: 'var(--border)' }}>
                 <tr>
                   <th className="p-3.5">Task</th>
                   <th className="p-3.5">Client</th>
@@ -1113,7 +1113,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <tbody className="divide-y divide-stone-800/60">
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-stone-400">
+                    <td colSpan={12} className="p-8 text-center" style={{ color: 'var(--text-mid)' }}>
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
@@ -1133,11 +1133,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                         onClick={() => setSelectedTaskDetails(task)}
                       >
                         <td className="p-3.5">
-                          <p className="font-bold text-white hover:text-purple-300 transition-colors">
+                          <p className="font-bold hover:text-purple-300 transition-colors" style={{ color: 'var(--text-hi)' }}>
                             {task.title}
                           </p>
                           {task.description && (
-                            <p className="text-[11px] text-stone-400 line-clamp-1 max-w-xs">
+                            <p className="text-[11px] line-clamp-1 max-w-xs" style={{ color: 'var(--text-mid)' }}>
                               {task.description}
                             </p>
                           )}
@@ -1309,11 +1309,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     </span>
                   )}
                 </div>
-                <h3 className="text-base font-bold text-white">{selectedTaskDetails.title}</h3>
+                <h3 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>{selectedTaskDetails.title}</h3>
               </div>
               <button
                 onClick={() => setSelectedTaskDetails(null)}
-                className="p-1 rounded-lg text-stone-400 hover:text-white"
+                className="p-1 rounded-lg hover:opacity-70"
+                style={{ color: 'var(--text-mid)' }}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1568,12 +1569,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           >
             <div className="flex items-center justify-between border-b border-stone-800 pb-3">
               <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <h3 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--text-hi)' }}>
                   <PlusCircle className="w-5 h-5 text-purple-400" />
                   <span>{addSubtaskParent ? 'Add Subtask' : 'Create New Task'}</span>
                 </h3>
                 {addSubtaskParent && (
-                  <p className="text-[11px] text-stone-400 mt-0.5">
+                  <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-mid)' }}>
                     Under: <span className="text-purple-300 font-semibold">{addSubtaskParent.title}</span>
                   </p>
                 )}
@@ -1583,7 +1584,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   setIsCreateModalOpen(false);
                   setAddSubtaskParent(null);
                 }}
-                className="p-1 rounded-lg text-stone-400 hover:text-white"
+                className="p-1 rounded-lg hover:opacity-70"
+                style={{ color: 'var(--text-mid)' }}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1787,13 +1789,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             }}
           >
             <div className="flex items-center justify-between border-b border-stone-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--text-hi)' }}>
                 <Edit2 className="w-5 h-5 text-purple-400" />
                 <span>Edit Task</span>
               </h3>
               <button
                 onClick={() => setEditingTask(null)}
-                className="p-1 rounded-lg text-stone-400 hover:text-white"
+                className="p-1 rounded-lg hover:opacity-70"
+                style={{ color: 'var(--text-mid)' }}
               >
                 <X className="w-5 h-5" />
               </button>

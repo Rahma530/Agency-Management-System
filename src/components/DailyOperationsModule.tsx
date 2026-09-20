@@ -596,7 +596,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white">Daily Operations & Task Execution</h2>
+              <h2 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>Daily Operations & Task Execution</h2>
               <span
                 className="text-[10px] px-2 py-0.5 rounded-full font-bold"
                 style={{
@@ -613,14 +613,15 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
         {/* Employee Selector for Manager or Self */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-stone-900/80 border border-stone-800 text-xs">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
             <User className="w-3.5 h-3.5 text-purple-400" />
-            <span className="text-stone-400 text-[11px]">Active Employee:</span>
+            <span className="text-[11px]" style={{ color: 'var(--text-mid)' }}>Active Employee:</span>
             {isManagerOrLead ? (
               <select
                 value={selectedEmployeeId}
                 onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                className="bg-transparent text-xs font-bold focus:outline-none cursor-pointer"
+                style={{ color: 'var(--text-hi)' }}
               >
                 {teamMembers.map((member) => (
                   <option key={member.id} value={member.id} className="bg-stone-900 text-white">
@@ -629,7 +630,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 ))}
               </select>
             ) : (
-              <span className="font-bold text-white">{currentUser.name}</span>
+              <span className="font-bold" style={{ color: 'var(--text-hi)' }}>{currentUser.name}</span>
             )}
           </div>
 
@@ -753,13 +754,13 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               className="p-3.5 rounded-[16px] flex flex-col justify-between"
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
             >
-              <div className="flex items-center justify-between text-stone-400">
+              <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
                 <span className="text-[11px] font-semibold">Total Hours Today</span>
                 <Timer className="w-3.5 h-3.5 text-purple-400" />
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-bold text-white">{todayWorkloadHours} <span className="text-xs font-normal text-stone-400">hrs</span></p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Capacity: {resolveCapacityLimit(effectiveEmployee)} tasks</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--text-hi)' }}>{todayWorkloadHours} <span className="text-xs font-normal" style={{ color: 'var(--text-mid)' }}>hrs</span></p>
+                <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-mid)' }}>Capacity: {resolveCapacityLimit(effectiveEmployee)} tasks</p>
               </div>
             </div>
 
@@ -768,12 +769,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               className="p-3.5 rounded-[16px] flex flex-col justify-between"
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
             >
-              <div className="flex items-center justify-between text-stone-400">
+              <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
                 <span className="text-[11px] font-semibold">Currently In Progress</span>
                 <PlayCircle className="w-3.5 h-3.5 text-purple-400" />
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-bold text-purple-300">{inProgressTasks.length}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--accent)' }}>{inProgressTasks.length}</p>
               </div>
             </div>
 
@@ -784,12 +785,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               }`}
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
             >
-              <div className="flex items-center justify-between text-stone-400">
+              <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
                 <span className="text-[11px] font-semibold">Overdue</span>
                 <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-bold text-red-400">{overdueTasks.length}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--roas-bad)' }}>{overdueTasks.length}</p>
               </div>
             </div>
 
@@ -798,12 +799,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               className="p-3.5 rounded-[16px] flex flex-col justify-between"
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
             >
-              <div className="flex items-center justify-between text-stone-400">
+              <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
                 <span className="text-[11px] font-semibold">Urgent & High Priority</span>
                 <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-bold text-amber-400">{priorityFirstTasks.length}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--warning)' }}>{priorityFirstTasks.length}</p>
               </div>
             </div>
 
@@ -812,12 +813,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               className="p-3.5 rounded-[16px] flex flex-col justify-between"
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
             >
-              <div className="flex items-center justify-between text-stone-400">
+              <div className="flex items-center justify-between" style={{ color: 'var(--text-mid)' }}>
                 <span className="text-[11px] font-semibold">Blocked</span>
                 <ShieldAlert className="w-3.5 h-3.5 text-red-400" />
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-bold text-rose-300">{blockedEmployeeTasks.length}</p>
+                <p className="text-2xl font-bold" style={{ color: 'var(--roas-bad)' }}>{blockedEmployeeTasks.length}</p>
               </div>
             </div>
           </div>
@@ -906,14 +907,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               <div className="flex items-center justify-between pb-2 border-b border-stone-800">
                 <div className="flex items-center gap-2">
                   <PlayCircle className="w-4 h-4 text-purple-400" />
-                  <h3 className="text-xs font-bold text-white">What to do today, in priority order</h3>
+                  <h3 className="text-xs font-bold" style={{ color: 'var(--text-hi)' }}>What to do today, in priority order</h3>
                 </div>
               </div>
 
               {sortedEmployeeTasks.filter((t) => t.status !== 'completed').length === 0 ? (
-                <div className="p-8 text-center text-stone-400 text-xs border border-dashed border-stone-800 rounded-xl">
+                <div className="p-8 text-center text-xs border border-dashed border-stone-800 rounded-xl" style={{ color: 'var(--text-mid)' }}>
                   <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
-                  <p className="font-bold text-white text-sm">All clear! No active tasks pending for you today.</p>
+                  <p className="font-bold text-sm" style={{ color: 'var(--text-hi)' }}>All clear! No active tasks pending for you today.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1042,20 +1043,20 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 className="p-4 rounded-[18px] space-y-3"
                 style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
               >
-                <div className="flex items-center justify-between text-xs font-bold text-white">
+                <div className="flex items-center justify-between text-xs font-bold" style={{ color: 'var(--text-hi)' }}>
                   <div className="flex items-center gap-2">
                     <Timer className="w-4 h-4 text-purple-400" />
                     <span>Logged Hours</span>
                   </div>
-                  <span className="text-[11px] text-stone-400 font-mono">
+                  <span className="text-[11px] font-mono" style={{ color: 'var(--text-mid)' }}>
                     {totalActualHoursLogged} / {totalActiveEstimatedHours}h
                   </span>
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] text-stone-400">
+                  <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--text-mid)' }}>
                     <span>Estimated hours completed:</span>
-                    <span className="font-bold text-white">
+                    <span className="font-bold" style={{ color: 'var(--text-hi)' }}>
                       {totalActiveEstimatedHours > 0
                         ? Math.round((totalActualHoursLogged / totalActiveEstimatedHours) * 100)
                         : 0}%
@@ -1157,12 +1158,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
           {/* Tasks Table / Cards */}
           <div
-            className="rounded-[18px] overflow-hidden border border-stone-800"
-            style={{ background: 'var(--gradient-card)' }}
+            className="rounded-[18px] overflow-hidden border"
+            style={{ background: 'var(--gradient-card)', borderColor: 'var(--border)' }}
           >
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs">
-                <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
+                <thead className="border-b" style={{ background: 'var(--surface-2)', color: 'var(--text-mid)', borderColor: 'var(--border)' }}>
                   <tr>
                     <th className="p-3.5">Task</th>
                     <th className="p-3.5">Client</th>
@@ -1178,7 +1179,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <tbody className="divide-y divide-stone-800/60">
                   {filteredEmployeeTasks.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center text-stone-400">
+                      <td colSpan={9} className="p-8 text-center" style={{ color: 'var(--text-mid)' }}>
                         No tasks match the current search criteria for the selected employee.
                       </td>
                     </tr>
@@ -1197,17 +1198,17 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                           onClick={() => setSelectedTaskDetails(task)}
                         >
                           <td className="p-3.5">
-                            <p className="font-bold text-white hover:text-purple-300 transition-colors">
+                            <p className="font-bold hover:text-purple-300 transition-colors" style={{ color: 'var(--text-hi)' }}>
                               {task.title}
                             </p>
                             {task.description && (
-                              <p className="text-[11px] text-stone-400 line-clamp-1 max-w-xs">
+                              <p className="text-[11px] line-clamp-1 max-w-xs" style={{ color: 'var(--text-mid)' }}>
                                 {task.description}
                               </p>
                             )}
                           </td>
 
-                          <td className="p-3.5 font-medium text-stone-300">
+                          <td className="p-3.5 font-medium" style={{ color: 'var(--text-mid)' }}>
                             {client ? client.name : '—'}
                           </td>
 
@@ -1312,7 +1313,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <ShieldAlert className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Blockers Hub</h3>
+                <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Blockers Hub</h3>
               </div>
             </div>
             <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-950 text-red-400 border border-red-500/40 font-mono">
@@ -1326,7 +1327,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               style={{ background: 'var(--gradient-card)' }}
             >
               <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2 opacity-90" />
-              <h4 className="text-sm font-bold text-white">No blocked tasks right now!</h4>
+              <h4 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>No blocked tasks right now!</h4>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1415,7 +1416,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
           >
             <div>
-              <h3 className="text-xs font-bold text-white flex items-center gap-2">
+              <h3 className="text-xs font-bold flex items-center gap-2" style={{ color: 'var(--text-hi)' }}>
                 <FileText className="w-4 h-4 text-purple-400" />
                 <span>Daily Logs & Standup</span>
               </h3>
@@ -1425,7 +1426,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               <select
                 value={logClientFilter}
                 onChange={(e) => setLogClientFilter(e.target.value)}
-                className="px-2.5 py-1.5 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                className="px-2.5 py-1.5 rounded-xl text-xs border focus:outline-none focus:border-purple-500"
+                style={{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-hi)' }}
               >
                 <option value="all" className="bg-stone-900 text-white">All Clients</option>
                 {clients.map((c) => (
@@ -1452,8 +1454,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               style={{ background: 'var(--gradient-card)' }}
             >
               <FileText className="w-8 h-8 text-stone-600 mx-auto mb-2" />
-              <h4 className="text-xs font-bold text-white">No previous daily activity reports recorded for the selected employee.</h4>
-              <p className="text-xs text-stone-400 mt-1">Use the button above to add one.</p>
+              <h4 className="text-xs font-bold" style={{ color: 'var(--text-hi)' }}>No previous daily activity reports recorded for the selected employee.</h4>
+              <p className="text-xs mt-1" style={{ color: 'var(--text-mid)' }}>Use the button above to add one.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1531,13 +1533,13 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
           >
             <div>
-              <h3 className="text-xs font-bold text-white flex items-center gap-2">
+              <h3 className="text-xs font-bold flex items-center gap-2" style={{ color: 'var(--text-hi)' }}>
                 <Users className="w-4 h-4 text-purple-400" />
                 <span>Team Lead / Manager Overview</span>
               </h3>
             </div>
-            <span className="text-xs text-stone-400 bg-stone-900 px-3 py-1 rounded-xl border border-stone-800">
-              Current Role: <strong className="text-purple-300">{currentUser.role}</strong>
+            <span className="text-xs px-3 py-1 rounded-xl border" style={{ color: 'var(--text-mid)', background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+              Current Role: <strong style={{ color: 'var(--accent)' }}>{currentUser.role}</strong>
             </span>
           </div>
 

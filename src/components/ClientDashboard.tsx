@@ -619,7 +619,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
         }}
       >
         {/* TOP BAR */}
-        <div className="p-5 border-b border-purple-900/40 bg-purple-950/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+        <div className="p-5 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0" style={{ background: 'var(--accent-soft)', borderColor: 'var(--border)' }}>
           <div className="flex items-center gap-3.5">
             <div
               className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg text-white shadow-lg shrink-0"
@@ -629,7 +629,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-xl font-bold text-white">{client.name}</h2>
+                <h2 className="text-xl font-bold" style={{ color: 'var(--text-hi)' }}>{client.name}</h2>
                 <span
                   className="px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider"
                   style={{
@@ -640,18 +640,18 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 >
                   {(CLIENT_STATUS_META[client.status] || CLIENT_STATUS_META.onboarding).label}
                 </span>
-                <span className="text-xs text-stone-400 font-mono">ID: {client.id}</span>
+                <span className="text-xs font-mono" style={{ color: 'var(--text-mid)' }}>ID: {client.id}</span>
               </div>
-              <div className="flex items-center gap-4 text-xs text-stone-300 mt-1 flex-wrap">
-                <span>Industry: <strong className="text-white">{client.industry || 'General Business'}</strong></span>
+              <div className="flex items-center gap-4 text-xs mt-1 flex-wrap" style={{ color: 'var(--text-mid)' }}>
+                <span>Industry: <strong style={{ color: 'var(--text-hi)' }}>{client.industry || 'General Business'}</strong></span>
                 {client.phone_number && (
-                  <span>Phone: <strong className="text-white">{client.phone_number}</strong></span>
+                  <span>Phone: <strong style={{ color: 'var(--text-hi)' }}>{client.phone_number}</strong></span>
                 )}
                 {showContractValue && (
-                  <span>Contract: <strong className="text-emerald-400 font-mono">{client.contract_value ? `${client.contract_value.toLocaleString()} SAR/mo` : 'Custom'}</strong></span>
+                  <span>Contract: <strong className="font-mono" style={{ color: 'var(--success)' }}>{client.contract_value ? `${client.contract_value.toLocaleString()} SAR/mo` : 'Custom'}</strong></span>
                 )}
-                <span>Start Date: <strong className="text-stone-200">{client.start_date || 'Immediate'}</strong></span>
-                <span>Renewal Date: <strong className="text-stone-200">{client.renewal_date || 'Not set'}</strong></span>
+                <span>Start Date: <strong style={{ color: 'var(--text-hi)' }}>{client.start_date || 'Immediate'}</strong></span>
+                <span>Renewal Date: <strong style={{ color: 'var(--text-hi)' }}>{client.renewal_date || 'Not set'}</strong></span>
               </div>
             </div>
           </div>
@@ -1872,11 +1872,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           >
             <div className="flex items-center gap-2">
               <Trash2 className="w-5 h-5 text-red-400" />
-              <h3 className="text-sm font-bold text-white">Delete "{client.name}"?</h3>
+              <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Delete "{client.name}"?</h3>
             </div>
             {deleteBlockers.length === 0 ? (
               <>
-                <p className="text-xs text-stone-300">
+                <p className="text-xs" style={{ color: 'var(--text-mid)' }}>
                   This client has no activity in any table — tasks, briefs, campaigns, reports, contracts, or anything
                   else. This action is permanent and cannot be undone.
                 </p>
@@ -1898,7 +1898,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               </>
             ) : (
               <>
-                <p className="text-xs text-stone-300">
+                <p className="text-xs" style={{ color: 'var(--text-mid)' }}>
                   This client cannot be deleted — it has real activity recorded:
                 </p>
                 <ul className="space-y-1">

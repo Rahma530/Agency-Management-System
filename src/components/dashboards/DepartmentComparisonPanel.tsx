@@ -125,57 +125,60 @@ export const DepartmentComparisonPanel: React.FC<{
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-purple-400" />
-          <h3 className="text-sm font-bold text-white">Department Performance Comparison</h3>
+          <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Department Performance Comparison</h3>
         </div>
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-stone-900 border border-stone-800">
+        <div className="flex items-center gap-1 p-1 rounded-lg border" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
           {GRANULARITY_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               onClick={() => setGranularity(opt.value)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
-                granularity === opt.value ? 'bg-purple-600/40 text-white' : 'text-stone-400 hover:text-white'
-              }`}
+              className="px-2.5 py-1 rounded-md text-[11px] font-bold transition-all"
+              style={
+                granularity === opt.value
+                  ? { background: 'rgba(123, 47, 247, 0.4)', color: 'white' }
+                  : { color: 'var(--text-mid)' }
+              }
             >
               {opt.label}
             </button>
           ))}
         </div>
       </div>
-      <p className="text-[10px] text-stone-500 -mt-2">{period.label}</p>
+      <p className="text-[10px] -mt-2" style={{ color: 'var(--text-lo)' }}>{period.label}</p>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {rows.map((row) => (
-          <div key={row.service} className="p-3.5 rounded-xl border border-stone-800 bg-stone-900/60 space-y-3">
+          <div key={row.service} className="p-3.5 rounded-xl border space-y-3" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold uppercase tracking-wide" style={{ color: row.accent }}>
                 {row.label}
               </h4>
-              <span className="text-[10px] text-stone-400 font-mono">{row.clientCount} clients</span>
+              <span className="text-[10px] font-mono" style={{ color: 'var(--text-mid)' }}>{row.clientCount} clients</span>
             </div>
 
             <div className="space-y-1">
               {row.headline.map((h) => (
                 <div key={h.label} className="flex items-center justify-between text-[11px]">
-                  <span className="text-stone-400">{h.label}</span>
-                  <span className="font-mono font-bold text-stone-200">{h.value}</span>
+                  <span style={{ color: 'var(--text-mid)' }}>{h.label}</span>
+                  <span className="font-mono font-bold" style={{ color: 'var(--text-hi)' }}>{h.value}</span>
                 </div>
               ))}
             </div>
 
-            <div className="pt-2 border-t border-stone-800 space-y-1.5">
+            <div className="pt-2 border-t space-y-1.5" style={{ borderColor: 'var(--border)' }}>
               <div className="flex items-center justify-between text-[11px]">
-                <span className="text-stone-400 flex items-center gap-1">
+                <span className="flex items-center gap-1" style={{ color: 'var(--text-mid)' }}>
                   <Clock className="w-3 h-3" /> On-Time Rate
                 </span>
-                <span className="font-mono font-bold text-white">
+                <span className="font-mono font-bold" style={{ color: 'var(--text-hi)' }}>
                   {row.avgOnTimeRate !== null ? `${row.avgOnTimeRate}%` : 'N/A'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-[11px]">
-                <span className="text-stone-400 flex items-center gap-1">
+                <span className="flex items-center gap-1" style={{ color: 'var(--text-mid)' }}>
                   <Gauge className="w-3 h-3" /> Capacity Utilization
                 </span>
-                <span className="font-mono font-bold text-white">
+                <span className="font-mono font-bold" style={{ color: 'var(--text-hi)' }}>
                   {row.avgCapacityUtilization !== null ? `${row.avgCapacityUtilization}%` : 'N/A'}
                 </span>
               </div>

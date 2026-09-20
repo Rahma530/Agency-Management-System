@@ -318,7 +318,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white">
+              <h2 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>
                 {isAMTeamLead ? 'Client Onboarding & Reception' : 'My Assigned Clients'}
               </h2>
               <span
@@ -332,7 +332,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 {isAMTeamLead ? 'AM Team Lead' : 'AM Specialist'}
               </span>
             </div>
-            <p className="text-xs text-stone-400 mt-0.5">
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-mid)' }}>
               {isAMTeamLead
                 ? 'Manage newly acquired clients, distribute account assignments, and monitor service onboarding.'
                 : 'Manage your portfolio of assigned clients and coordinate service deliverables.'}
@@ -383,8 +383,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
         >
           <div>
-            <p className="text-xs font-semibold text-stone-400">Total In Onboarding</p>
-            <p className="text-2xl font-bold text-white mt-1">
+            <p className="text-xs font-semibold" style={{ color: 'var(--text-mid)' }}>Total In Onboarding</p>
+            <p className="text-2xl font-bold mt-1" style={{ color: 'var(--text-hi)' }}>
               {visibleClients.filter((c) => c.status === 'onboarding').length}
             </p>
           </div>
@@ -398,7 +398,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
         >
           <div>
-            <p className="text-xs font-semibold text-stone-400">
+            <p className="text-xs font-semibold" style={{ color: 'var(--text-mid)' }}>
               {isAMTeamLead ? 'Awaiting Assignment' : 'Pending Briefs'}
             </p>
             <p className="text-2xl font-bold mt-1 text-amber-300">
@@ -420,7 +420,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
         >
           <div>
-            <p className="text-xs font-semibold text-stone-400">Documented Briefs</p>
+            <p className="text-xs font-semibold" style={{ color: 'var(--text-mid)' }}>Documented Briefs</p>
             <p className="text-2xl font-bold mt-1 text-emerald-400">
               {briefs.filter((b) => visibleClients.some((c) => c.id === b.client_id)).length}
             </p>
@@ -441,7 +441,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div className="p-4 border-b border-amber-800/30 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-amber-300" />
-              <h3 className="text-sm font-bold text-white">Renewal Queue</h3>
+              <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Renewal Queue</h3>
             </div>
             <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-950/60 text-amber-300 border border-amber-800/40">
               {renewalClients.length} pending
@@ -451,8 +451,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             {renewalClients.map((c) => (
               <div key={c.id} className="p-3.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-white truncate">{c.name}</p>
-                  <p className="text-[11px] text-stone-400">
+                  <p className="text-xs font-bold truncate" style={{ color: 'var(--text-hi)' }}>{c.name}</p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-mid)' }}>
                     Renewal Date: <strong className="text-amber-300">{c.renewal_date || 'Not set'}</strong>
                     {canSeeContractValue(currentRole, c.sales_owner_id === effectiveUserId) && c.contract_value
                       ? ` • ${c.contract_value.toLocaleString()} SAR/mo`
@@ -483,7 +483,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         <div className="p-4 border-b border-purple-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-purple-400" />
-            <h3 className="text-sm font-bold text-white">Client Portfolio</h3>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Client Portfolio</h3>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative w-full sm:w-64">
@@ -493,18 +493,19 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search name or phone..."
-                className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs bg-black/30 border border-purple-900/40 text-white outline-none focus:border-purple-400"
+                className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs border outline-none focus:border-purple-400"
+                style={{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-hi)' }}
               />
             </div>
-            <span className="text-xs text-stone-400 whitespace-nowrap">
-              Showing <strong className="text-white">{displayedClients.length}</strong> clients
+            <span className="text-xs whitespace-nowrap" style={{ color: 'var(--text-mid)' }}>
+              Showing <strong style={{ color: 'var(--text-hi)' }}>{displayedClients.length}</strong> clients
             </span>
           </div>
         </div>
 
         {displayedClients.length === 0 ? (
           <div className="p-8 text-center space-y-2">
-            <p className="text-xs text-stone-400">
+            <p className="text-xs" style={{ color: 'var(--text-mid)' }}>
               {searchQuery
                 ? 'No clients match your search.'
                 : isAMAgent
@@ -516,7 +517,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-purple-900/30 text-[11px] font-semibold text-stone-400 uppercase tracking-wider bg-black/20">
+                <tr className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-mid)', background: 'var(--surface-2)' }}>
                   <th className="py-3 px-4">Client Name</th>
                   <th className="py-3 px-4">Industry</th>
                   <th className="py-3 px-4">Services</th>
@@ -543,7 +544,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                             {client.name.charAt(0)}
                           </div>
                           <div>
-                            <span className="font-bold text-white group-hover:text-purple-300 transition-colors inline-flex items-center gap-1.5">
+                            <span className="font-bold group-hover:text-purple-300 transition-colors inline-flex items-center gap-1.5" style={{ color: 'var(--text-hi)' }}>
                               {client.name}
                               {isAMTeamLead &&
                                 client.am_team_lead_id === resolvedUser?.id &&
@@ -553,21 +554,21 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                                   </span>
                                 )}
                             </span>
-                            <span className="text-[10px] text-stone-400 block font-mono">
+                            <span className="text-[10px] block font-mono" style={{ color: 'var(--text-mid)' }}>
                               {client.id}
                             </span>
                           </div>
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 text-stone-300">
+                      <td className="py-3.5 px-4" style={{ color: 'var(--text-mid)' }}>
                         {client.industry || 'General Business'}
                       </td>
 
                       <td className="py-3.5 px-4">
                         <div className="space-y-1">
                           {services.length === 0 && (
-                            <span className="text-white font-medium block">Custom Plan</span>
+                            <span className="font-medium block" style={{ color: 'var(--text-hi)' }}>Custom Plan</span>
                           )}
                           <div className="flex flex-wrap gap-1">
                             {services.map((s) => (
@@ -610,7 +611,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                                   [client.id]: e.target.value,
                                 })
                               }
-                              className="px-2 py-1 rounded-lg text-xs bg-[#120d1e] border border-purple-900/40 text-white focus:outline-none focus:border-purple-400"
+                              className="px-2 py-1 rounded-lg text-xs border focus:outline-none focus:border-purple-400"
+                              style={{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-hi)' }}
                             >
                               <option value="">-- Assign AM --</option>
                               {amAgents.map((ag) => {
@@ -634,7 +636,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                               )}
                           </div>
                         ) : (
-                          <span className={assignedAgent ? 'text-purple-300 font-medium' : 'text-amber-400'}>
+                          <span className="font-medium" style={{ color: assignedAgent ? 'var(--accent)' : 'var(--warning)' }}>
                             {assignedAgent ? assignedAgent.name : 'Unassigned'}
                           </span>
                         )}

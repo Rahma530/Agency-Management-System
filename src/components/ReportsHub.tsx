@@ -214,7 +214,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             <BarChart3 className="w-6 h-6 text-purple-300" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white">Reports & Comparisons</h2>
+            <h2 className="text-lg font-bold" style={{ color: 'var(--text-hi)' }}>Reports & Comparisons</h2>
           </div>
         </div>
       </div>

@@ -3503,13 +3503,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen text-[#e9d9fb] pb-16" dir="ltr" style={{ background: 'var(--gradient-page)' }}>
+    <div className="min-h-screen pb-16" dir="ltr" style={{ background: 'var(--gradient-page)', color: 'var(--lilac)' }}>
       {/* Top Navigation Bar adhering to Kesra Brand Identity */}
       <header
         className="sticky top-0 z-40 backdrop-blur-md px-6 py-3.5 border-b"
         style={{
-          background: 'rgba(10, 10, 13, 0.9)',
-          borderColor: 'var(--border-soft)',
+          background: 'var(--surface)',
+          borderColor: 'var(--border)',
         }}
       >
         <div className="max-w-screen-2xl mx-auto flex flex-wrap items-center justify-between gap-4">
@@ -3563,7 +3563,8 @@ export default function App() {
             {canAccessTestingMode && usersLoadedFromSupabase && (
               <button
                 onClick={() => setIsTestingSelectorOpen(true)}
-                className="hidden md:block rounded-xl border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-900/60"
+                className="hidden md:block rounded-xl border px-3 py-2 text-xs font-bold transition-colors hover:opacity-80"
+                style={{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-mid)' }}
               >
                 Employee Testing Mode
               </button>
@@ -3572,10 +3573,10 @@ export default function App() {
             {['executive', 'head_of_technical'].includes(currentUser.role) && (
               <button
                 onClick={() => setIsActivityFeedOpen(!isActivityFeedOpen)}
-                className="hidden md:flex text-xs px-4 py-2 rounded-xl font-bold items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
-                style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                className="hidden md:flex text-xs px-4 py-2 rounded-xl font-bold items-center gap-2 transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0"
+                style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-mid)' }}
               >
-                <div className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse border border-emerald-500" />
+                <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--success)', border: '1px solid var(--success)' }} />
                 Live Activity Feed ⚡
               </button>
             )}
@@ -3583,8 +3584,8 @@ export default function App() {
             {/* Light/Dark Theme Toggle */}
             <button
               onClick={toggleTheme}
-              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              className="p-1.5 rounded-lg transition-colors shrink-0 hover:opacity-70"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-mid)' }}
               title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
             >
@@ -3609,16 +3610,16 @@ export default function App() {
             <div
               className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
               style={{
-                background: 'rgba(21, 19, 24, 0.9)',
-                border: '1px solid var(--border-soft)',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
               }}
               title={supabaseActive ? 'Connected to Supabase - RLS Active' : 'Supabase RLS Ready'}
             >
               <div
                 className="w-2 h-2 rounded-full animate-pulse"
-                style={{ background: supabaseActive ? 'var(--roas-good)' : 'var(--roas-mid)' }}
+                style={{ background: supabaseActive ? 'var(--success)' : 'var(--warning)' }}
               />
-              <span style={{ color: supabaseActive ? 'var(--roas-good)' : 'var(--roas-mid)' }}>
+              <span style={{ color: 'var(--text-mid)' }}>
                 {supabaseActive ? 'Supabase Connected (RLS Active)' : 'Supabase Configured'}
               </span>
             </div>
@@ -3627,8 +3628,8 @@ export default function App() {
             {/* Global Refresh (moved here from the old nav bar — refreshes every module's data) */}
             <button
               onClick={loadData}
-              className="p-1.5 rounded-lg text-stone-300 hover:text-white transition-colors shrink-0"
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border-soft)' }}
+              className="p-1.5 rounded-lg transition-colors shrink-0 hover:opacity-70"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-mid)' }}
               title="Refresh data"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -3638,8 +3639,8 @@ export default function App() {
             <div
               className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-md shadow-sm"
               style={{
-                background: 'rgba(28, 22, 38, 0.85)',
-                borderColor: 'var(--border-soft)',
+                background: 'var(--surface-2)',
+                borderColor: 'var(--border)',
               }}
             >
               <div
@@ -3649,7 +3650,7 @@ export default function App() {
                 {currentUser.name.charAt(0)}
               </div>
               <div className="flex flex-col text-left">
-                <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                <div className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--text-hi)' }}>
                   <span>{currentUser.name}</span>
                   <span
                     className="hidden sm:inline-block px-1.5 py-0.2 rounded text-[10px] font-semibold"
@@ -3658,7 +3659,7 @@ export default function App() {
                     {userRoleInfo.englishTitle}
                   </span>
                 </div>
-                <div className="hidden sm:block text-[10px] text-[#a89bb8]">
+                <div className="hidden sm:block text-[10px]" style={{ color: 'var(--text-mid)' }}>
                   {currentUser.team || 'Agency'}
                 </div>
               </div>
@@ -3667,7 +3668,8 @@ export default function App() {
             {/* Logout Button */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-stone-300 hover:text-red-300 hover:bg-red-950/40 border border-transparent hover:border-red-900/40 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium hover:text-red-300 hover:bg-red-950/40 border border-transparent hover:border-red-900/40 transition-all"
+              style={{ color: 'var(--text-mid)' }}
               title="Sign out from session"
             >
               <LogOut className="w-3.5 h-3.5 text-red-400" />
@@ -3715,12 +3717,12 @@ export default function App() {
             isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
           } ${testHandoff ? 'top-[110px] h-[calc(100dvh-110px)]' : 'top-[65px] h-[calc(100dvh-65px)]'}`}
           style={{
-            background: 'rgba(15, 12, 22, 0.95)',
-            borderColor: 'var(--border-soft)',
+            background: 'var(--surface)',
+            borderColor: 'var(--border)',
           }}
         >
           <div className="flex items-center justify-between px-4 pt-4 md:hidden">
-            <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Menu</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-mid)' }}>Menu</span>
             <button
               onClick={() => setIsMobileSidebarOpen(false)}
               className="p-1.5 rounded-lg text-stone-400 hover:text-white transition-colors"
@@ -3737,11 +3739,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'my_work'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'my_work' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'my_work' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'my_work' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'my_work' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'my_work' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3757,11 +3759,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'dashboard'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'dashboard' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'dashboard' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'dashboard' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'dashboard' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'dashboard' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3777,11 +3779,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'onboarding'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'onboarding' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'onboarding' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'onboarding' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'onboarding' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'onboarding' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3806,11 +3808,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'service_briefs'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'service_briefs' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'service_briefs' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'service_briefs' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'service_briefs' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'service_briefs' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3835,11 +3837,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'capacity'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'capacity' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'capacity' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'capacity' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'capacity' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'capacity' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3864,11 +3866,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'tasks'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'tasks' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'tasks' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'tasks' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'tasks' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'tasks' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3893,11 +3895,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'daily_operations'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'daily_operations' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'daily_operations' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'daily_operations' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'daily_operations' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'daily_operations' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3928,11 +3930,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'campaigns'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'campaigns' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'campaigns' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'campaigns' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'campaigns' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'campaigns' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3957,11 +3959,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'reports'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'reports' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'reports' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'reports' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'reports' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'reports' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >
@@ -3976,11 +3978,11 @@ export default function App() {
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 ${
                   activeTab === 'employees'
                     ? 'ring-1 ring-purple-400 shadow-md'
-                    : 'text-stone-400 hover:text-white'
+                    : 'hover:opacity-70'
                 }`}
                 style={{
-                  background: activeTab === 'employees' ? 'var(--gradient-badge)' : 'transparent',
-                  color: activeTab === 'employees' ? 'var(--white)' : 'var(--lilac)',
+                  background: activeTab === 'employees' ? 'var(--accent-soft)' : 'transparent',
+                  color: activeTab === 'employees' ? 'var(--text-hi)' : 'var(--text-mid)',
                   border: `1px solid ${activeTab === 'employees' ? 'var(--border-strong)' : 'transparent'}`,
                 }}
               >

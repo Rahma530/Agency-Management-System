@@ -1201,10 +1201,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-xs text-stone-400 px-1">
+          <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-mid)' }}>
             <span>
-              Showing <strong className="text-white font-mono">{filteredCampaigns.length}</strong> of{' '}
-              <strong className="text-white font-mono">{visibleCampaigns.length}</strong> visible campaigns
+              Showing <strong className="font-mono" style={{ color: 'var(--text-hi)' }}>{filteredCampaigns.length}</strong> of{' '}
+              <strong className="font-mono" style={{ color: 'var(--text-hi)' }}>{visibleCampaigns.length}</strong> visible campaigns
             </span>
           </div>
 

@@ -50,10 +50,10 @@ const SectionCard: React.FC<{
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
         <Icon className="w-4 h-4 text-purple-400" />
-        <h3 className="text-sm font-bold text-white">{title}</h3>
+        <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>{title}</h3>
       </div>
       {onOpen && (
-        <button onClick={onOpen} className="flex items-center gap-1 text-[11px] font-bold text-purple-300 hover:text-white transition-colors">
+        <button onClick={onOpen} className="flex items-center gap-1 text-[11px] font-bold hover:opacity-70 transition-colors" style={{ color: 'var(--accent)' }}>
           {openLabel}
           <ExternalLink className="w-3 h-3" />
         </button>
@@ -142,29 +142,29 @@ export const TeamLeadDashboard: React.FC<{
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-          <span className="text-[11px] font-semibold text-stone-400 block mb-1">Active Clients</span>
-          <p className="text-2xl font-bold text-white">{statusCounts.active + statusCounts.renewal}</p>
-          <p className="text-[10px] text-stone-500 mt-1">{statusCounts.onboarding} onboarding</p>
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <span className="text-[11px] font-semibold block mb-1" style={{ color: 'var(--text-mid)' }}>Active Clients</span>
+          <p className="text-2xl font-bold" style={{ color: 'var(--text-hi)' }}>{statusCounts.active + statusCounts.renewal}</p>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-lo)' }}>{statusCounts.onboarding} onboarding</p>
         </div>
-        <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-          <span className="text-[11px] font-semibold text-stone-400 block mb-1">Pending Briefs</span>
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <span className="text-[11px] font-semibold block mb-1" style={{ color: 'var(--text-mid)' }}>Pending Briefs</span>
           <p className="text-2xl font-bold" style={{ color: pendingBriefsCount > 0 ? 'var(--roas-mid)' : 'var(--roas-good)' }}>
             {pendingBriefsCount}
           </p>
-          <p className="text-[10px] text-stone-500 mt-1">Clients missing a documented brief</p>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-lo)' }}>Clients missing a documented brief</p>
         </div>
-        <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-          <span className="text-[11px] font-semibold text-stone-400 block mb-1">Team Capacity</span>
-          <p className="text-2xl font-bold text-white">{avgCapacityUtilization !== null ? `${avgCapacityUtilization}%` : 'N/A'}</p>
-          <p className="text-[10px] text-stone-500 mt-1">Avg. utilization, {deptAgents.length} agents</p>
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <span className="text-[11px] font-semibold block mb-1" style={{ color: 'var(--text-mid)' }}>Team Capacity</span>
+          <p className="text-2xl font-bold" style={{ color: 'var(--text-hi)' }}>{avgCapacityUtilization !== null ? `${avgCapacityUtilization}%` : 'N/A'}</p>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-lo)' }}>Avg. utilization, {deptAgents.length} agents</p>
         </div>
-        <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-          <span className="text-[11px] font-semibold text-stone-400 block mb-1">Needs Attention</span>
+        <div className="p-4 rounded-xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <span className="text-[11px] font-semibold block mb-1" style={{ color: 'var(--text-mid)' }}>Needs Attention</span>
           <p className="text-2xl font-bold" style={{ color: needsAttention.length > 0 ? 'var(--roas-bad)' : 'var(--roas-good)' }}>
             {needsAttention.length}
           </p>
-          <p className="text-[10px] text-stone-500 mt-1">Renewal approaching or brief missing</p>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-lo)' }}>Renewal approaching or brief missing</p>
         </div>
       </div>
 
@@ -175,13 +175,13 @@ export const TeamLeadDashboard: React.FC<{
         openLabel="Open Full Client List"
       >
         {needsAttention.length === 0 ? (
-          <p className="text-xs text-stone-500 py-3 text-center">Nothing needs attention right now.</p>
+          <p className="text-xs py-3 text-center" style={{ color: 'var(--text-lo)' }}>Nothing needs attention right now.</p>
         ) : (
           <div className="space-y-1.5">
             {needsAttention.map((c) => (
-              <div key={c.id} className="flex items-center justify-between p-2 rounded-lg bg-stone-900/60 border border-stone-800 text-xs">
-                <span className="font-semibold text-white">{c.name}</span>
-                <span className="text-[10px] text-amber-300 flex items-center gap-1">
+              <div key={c.id} className="flex items-center justify-between p-2 rounded-lg border text-xs" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+                <span className="font-semibold" style={{ color: 'var(--text-hi)' }}>{c.name}</span>
+                <span className="text-[10px] flex items-center gap-1" style={{ color: 'var(--warning)' }}>
                   <AlertTriangle className="w-3 h-3" />
                   {isRenewalApproaching(c) ? 'Renewal approaching' : 'Missing brief'}
                 </span>
@@ -198,17 +198,17 @@ export const TeamLeadDashboard: React.FC<{
         openLabel="Open Capacity & Performance"
       >
         {deptAgents.length === 0 ? (
-          <p className="text-xs text-stone-500 py-3 text-center">No agents in this department yet.</p>
+          <p className="text-xs py-3 text-center" style={{ color: 'var(--text-lo)' }}>No agents in this department yet.</p>
         ) : (
           <div className="space-y-1.5">
             {deptAgents.map((u) => {
               const score = latestScoreFor(u.id);
               const meta = score?.suggested_status ? STATUS_META[score.suggested_status] : null;
               return (
-                <div key={u.id} className="flex items-center justify-between p-2 rounded-lg bg-stone-900/60 border border-stone-800 text-xs">
-                  <span className="font-semibold text-white">{u.name}</span>
+                <div key={u.id} className="flex items-center justify-between p-2 rounded-lg border text-xs" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+                  <span className="font-semibold" style={{ color: 'var(--text-hi)' }}>{u.name}</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-stone-300">{score ? `${score.overall_score}/100` : 'No score yet'}</span>
+                    <span className="font-mono" style={{ color: 'var(--text-mid)' }}>{score ? `${score.overall_score}/100` : 'No score yet'}</span>
                     {meta && (
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ color: meta.color, background: 'rgba(0,0,0,0.25)' }}>
                         {meta.label}
@@ -228,7 +228,7 @@ export const TeamLeadDashboard: React.FC<{
         onOpen={() => onNavigateToModule?.('capacity')}
         openLabel="Open Capacity Management"
       >
-        <p className="text-xs text-stone-400">
+        <p className="text-xs" style={{ color: 'var(--text-mid)' }}>
           {avgCapacityUtilization !== null
             ? `Department averaging ${avgCapacityUtilization}% utilization across ${deptAgents.length} agents.`
             : 'No tracked capacity data for this department yet.'}
@@ -241,7 +241,7 @@ export const TeamLeadDashboard: React.FC<{
         onOpen={() => onNavigateToModule?.('service_briefs')}
         openLabel="Open Service Briefs"
       >
-        <p className="text-xs text-stone-400">
+        <p className="text-xs" style={{ color: 'var(--text-mid)' }}>
           {pendingBriefsCount > 0
             ? `${pendingBriefsCount} client${pendingBriefsCount === 1 ? '' : 's'} still missing a documented brief.`
             : 'All clients have a documented brief.'}

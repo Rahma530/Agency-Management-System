@@ -385,9 +385,9 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-stone-800">
         <div className="flex items-center gap-2">
           <Building2 className="w-4 h-4 text-purple-400" />
-          <h3 className="text-xs font-bold text-white">My Clients</h3>
+          <h3 className="text-xs font-bold" style={{ color: 'var(--text-hi)' }}>My Clients</h3>
         </div>
-        <span className="text-[11px] text-stone-400 font-mono">{myClients.length}</span>
+        <span className="text-[11px] font-mono" style={{ color: 'var(--text-mid)' }}>{myClients.length}</span>
       </div>
 
       {myClients.length > 0 && (
@@ -506,7 +506,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-stone-800">
         <div className="flex items-center gap-2">
           <CheckSquare className="w-4 h-4 text-purple-400" />
-          <h3 className="text-xs font-bold text-white">My Tasks & Deadlines</h3>
+          <h3 className="text-xs font-bold" style={{ color: 'var(--text-hi)' }}>My Tasks & Deadlines</h3>
         </div>
         <div className="flex items-center gap-1.5">
           {overdueTasks.length > 0 && (
@@ -590,7 +590,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-stone-800">
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-purple-400" />
-          <h3 className="text-xs font-bold text-white">Daily Log</h3>
+          <h3 className="text-xs font-bold" style={{ color: 'var(--text-hi)' }}>Daily Log</h3>
         </div>
         <div className="flex items-center gap-2">
           {myClients.length > 0 && (
@@ -692,7 +692,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-stone-800">
         <div className="flex items-center gap-2">
           <Star className="w-4 h-4 text-amber-300" />
-          <h3 className="text-xs font-bold text-white">Log Extra Effort</h3>
+          <h3 className="text-xs font-bold" style={{ color: 'var(--text-hi)' }}>Log Extra Effort</h3>
         </div>
         <button
           onClick={() => setIsLoggingExtraEffort(true)}
@@ -793,8 +793,8 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
             {currentUser.name.charAt(0)}
           </div>
           <div>
-            <h2 className="text-base font-bold text-white">Welcome, {currentUser.name}</h2>
-            <p className="text-xs text-stone-400 mt-0.5">
+            <h2 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>Welcome, {currentUser.name}</h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-mid)' }}>
               {roleInfo.englishTitle} • {todayStr}
             </p>
           </div>

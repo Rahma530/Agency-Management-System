@@ -307,7 +307,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
               {employee.name.charAt(0)}
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">{employee.name}</h2>
+              <h2 className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>{employee.name}</h2>
               <div className="flex items-center gap-2 mt-0.5">
                 <span
                   className="text-[10px] px-2 py-0.5 rounded-full font-bold border"
@@ -315,11 +315,11 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
                 >
                   {roleInfo.englishTitle}
                 </span>
-                <span className="text-[11px] text-stone-400">{employee.team}</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-mid)' }}>{employee.team}</span>
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-stone-400 hover:text-white">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:opacity-70" style={{ color: 'var(--text-mid)' }}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -328,7 +328,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
         <div className="p-4 rounded-2xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
           <div className="flex items-center gap-2 mb-3">
             <Gauge className="w-4 h-4 text-purple-400" />
-            <h3 className="text-sm font-bold text-white">Performance Score</h3>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Performance Score</h3>
           </div>
 
           {/* Generation controls — self-view can't write kpi_scores (see canGenerate above) */}
@@ -468,7 +468,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
         <div className="p-4 rounded-2xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
           <div className="flex items-center gap-2 mb-3">
             <Sparkles className="w-4 h-4 text-purple-400" />
-            <h3 className="text-sm font-bold text-white">Current Snapshot</h3>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Current Snapshot</h3>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -492,18 +492,19 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
 
           {isAm ? (
             <div>
-              <label className="text-[10px] font-semibold text-stone-400 block mb-1.5">Current Clients</label>
+              <label className="text-[10px] font-semibold block mb-1.5" style={{ color: 'var(--text-mid)' }}>Current Clients</label>
               {capacityData.assignedClients.length === 0 ? (
-                <p className="text-xs text-stone-500 italic">No clients currently assigned.</p>
+                <p className="text-xs italic" style={{ color: 'var(--text-lo)' }}>No clients currently assigned.</p>
               ) : (
                 <div className="space-y-1">
                   {capacityData.assignedClients.map((c) => (
                     <div
                       key={c.id}
-                      className="flex items-center justify-between p-2 rounded-lg bg-stone-900/60 border border-stone-800 text-xs"
+                      className="flex items-center justify-between p-2 rounded-lg border text-xs"
+                      style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
                     >
-                      <span className="font-semibold text-white">{c.name}</span>
-                      <span className="text-[10px] text-stone-400 capitalize">{c.status}</span>
+                      <span className="font-semibold" style={{ color: 'var(--text-hi)' }}>{c.name}</span>
+                      <span className="text-[10px] capitalize" style={{ color: 'var(--text-mid)' }}>{c.status}</span>
                     </div>
                   ))}
                 </div>
@@ -511,12 +512,12 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
             </div>
           ) : (
             <div>
-              <label className="text-[10px] font-semibold text-stone-400 block mb-1.5">Task Status Breakdown</label>
+              <label className="text-[10px] font-semibold block mb-1.5" style={{ color: 'var(--text-mid)' }}>Task Status Breakdown</label>
               <div className="grid grid-cols-5 gap-1.5 text-center">
                 {Object.entries(tasksByStatus).map(([status, count]) => (
-                  <div key={status} className="p-2 rounded-lg bg-stone-900/60 border border-stone-800">
-                    <p className="text-sm font-bold text-white">{count}</p>
-                    <p className="text-[9px] text-stone-400 capitalize">{status.replace('_', ' ')}</p>
+                  <div key={status} className="p-2 rounded-lg border" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+                    <p className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>{count}</p>
+                    <p className="text-[9px] capitalize" style={{ color: 'var(--text-mid)' }}>{status.replace('_', ' ')}</p>
                   </div>
                 ))}
               </div>
@@ -528,7 +529,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
         <div className="p-4 rounded-2xl border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>
           <div className="flex items-center gap-2 mb-1">
             <Calendar className="w-4 h-4 text-purple-400" />
-            <h3 className="text-sm font-bold text-white">Capacity Trend</h3>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Capacity Trend</h3>
           </div>
           <TrendLineChart points={capacityHistory} color="var(--purple-light)" emptyLabel="No capacity history logged yet." />
 
@@ -536,7 +537,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
             <div className="mt-5">
               <div className="flex items-center gap-2 mb-1">
                 <TrendingUp className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-sm font-bold text-white">Overall Score Trend</h3>
+                <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Overall Score Trend</h3>
               </div>
               <TrendLineChart
                 points={scoreHistory}
@@ -556,7 +557,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <Award className="w-4 h-4" style={{ color: 'var(--roas-mid)' }} />
-                <h3 className="text-sm font-bold text-white">Growth & Classification Summary</h3>
+                <h3 className="text-sm font-bold" style={{ color: 'var(--text-hi)' }}>Growth & Classification Summary</h3>
               </div>
               <span
                 className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border"
@@ -675,11 +676,11 @@ const StatTile: React.FC<{ label: string; value: string | number; icon: React.Co
   value,
   icon: Icon,
 }) => (
-  <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
-    <div className="flex items-center justify-between text-stone-400 mb-1">
+  <div className="p-3 rounded-xl border" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+    <div className="flex items-center justify-between mb-1" style={{ color: 'var(--text-mid)' }}>
       <span className="text-[10px] font-semibold">{label}</span>
       <Icon className="w-3 h-3" />
     </div>
-    <p className="text-base font-bold text-white">{value}</p>
+    <p className="text-base font-bold" style={{ color: 'var(--text-hi)' }}>{value}</p>
   </div>
 );

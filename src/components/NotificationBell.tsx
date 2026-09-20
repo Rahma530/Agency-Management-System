@@ -89,15 +89,15 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         onClick={() => setIsOpen(!isOpen)}
         className={`relative p-2 rounded-xl border backdrop-blur-md shadow-sm cursor-pointer transition-colors group ${isRinging ? 'animate-bounce bg-amber-500/20' : 'hover:bg-white/10'}`}
         style={{
-          background: isRinging ? undefined : 'rgba(28, 22, 38, 0.85)',
-          borderColor: isRinging ? 'rgba(245, 158, 11, 0.5)' : 'var(--border-soft)',
+          background: isRinging ? undefined : 'var(--surface-2)',
+          borderColor: isRinging ? 'rgba(245, 158, 11, 0.5)' : 'var(--border)',
         }}
         title="الإشعارات"
       >
         <Bell className={`w-5 h-5 transition-colors ${isRinging ? 'text-amber-400 animate-pulse' : 'text-amber-500 group-hover:text-amber-400'}`} />
         
         {unreadCount > 0 && (
-          <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center border-2 border-[#1c1626]">
+          <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center border-2" style={{ borderColor: 'var(--surface)' }}>
             {unreadCount > 9 ? '9+' : unreadCount}
           </div>
         )}
@@ -105,13 +105,13 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div 
+        <div
           className="absolute top-full left-0 mt-2 w-80 rounded-2xl border shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200"
-          style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}
+          style={{ background: 'var(--gradient-card)', borderColor: 'var(--border)' }}
           dir="rtl"
         >
-          <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/20">
-            <h3 className="font-bold text-white text-sm">الإشعارات ({unreadCount})</h3>
+          <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+            <h3 className="font-bold text-sm" style={{ color: 'var(--text-hi)' }}>الإشعارات ({unreadCount})</h3>
             {visibleNotifications.length > 0 && (
               <button 
                 onClick={onMarkAllAsRead}
@@ -124,7 +124,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
 
           <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
             {visibleNotifications.length === 0 ? (
-              <div className="p-8 text-center text-stone-500 text-sm">
+              <div className="p-8 text-center text-sm" style={{ color: 'var(--text-mid)' }}>
                 <Bell className="w-8 h-8 mx-auto mb-2 opacity-20" />
                 لا توجد إشعارات حالياً
               </div>
@@ -139,8 +139,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                         onMarkAsRead(notification.id);
                         onNotificationClick?.(notification);
                       }}
-                      className={`p-4 border-b border-white/5 cursor-pointer transition-colors flex gap-3
-                        ${notification.is_read ? 'hover:bg-white/5 opacity-70' : 'bg-purple-900/10 hover:bg-purple-900/20'}`}
+                      className={`p-4 border-b cursor-pointer transition-colors flex gap-3
+                        ${notification.is_read ? 'opacity-70' : 'bg-purple-900/10 hover:bg-purple-900/20'}`}
+                      style={{ borderColor: 'var(--border)' }}
                     >
                       <div className="shrink-0 mt-1">
                         {notification.type === 'task_assigned' && (
@@ -159,21 +160,21 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                           </div>
                         )}
                       </div>
-                      
+
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <h4 className={`text-sm font-bold truncate ${notification.is_read ? 'text-stone-300' : 'text-white'}`}>
+                          <h4 className="text-sm font-bold truncate" style={{ color: notification.is_read ? 'var(--text-mid)' : 'var(--text-hi)' }}>
                             {notification.title}
                           </h4>
                           {!notification.is_read && (
                             <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0 mt-1.5" />
                           )}
                         </div>
-                        <p className="text-xs text-stone-400 line-clamp-2 mb-2 leading-relaxed">
+                        <p className="text-xs line-clamp-2 mb-2 leading-relaxed" style={{ color: 'var(--text-mid)' }}>
                           {notification.message}
                         </p>
-                        <div className="text-[10px] flex items-center gap-1.5 text-stone-500">
-                          <span className="text-stone-300 font-medium">{sender.name}</span>
+                        <div className="text-[10px] flex items-center gap-1.5" style={{ color: 'var(--text-lo)' }}>
+                          <span className="font-medium" style={{ color: 'var(--text-mid)' }}>{sender.name}</span>
                           <span>•</span>
                           <span>{sender.role}</span>
                         </div>

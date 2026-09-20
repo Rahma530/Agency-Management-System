@@ -118,7 +118,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
           <div className="space-y-1.5">
-            <h2 className="text-xl md:text-2xl font-bold text-white">
+            <h2 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-hi)' }}>
               Client Acquisition & Onboarding Intake
             </h2>
           </div>
@@ -146,36 +146,36 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
 
       {/* Overview Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-4 rounded-xl space-y-1.5 bg-[#161224]/80 border border-purple-900/30">
-          <div className="flex items-center justify-between text-xs text-stone-400">
+        <div className="p-4 rounded-xl space-y-1.5 border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-mid)' }}>
             <span>Registered Clients</span>
             <Building2 className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-bold font-mono text-white">
+          <div className="text-2xl font-bold font-mono" style={{ color: 'var(--text-hi)' }}>
             {personalClients.length}
           </div>
         </div>
 
-        <div className="p-4 rounded-xl space-y-1.5 bg-[#161224]/80 border border-purple-900/30">
-          <div className="flex items-center justify-between text-xs text-stone-400">
+        <div className="p-4 rounded-xl space-y-1.5 border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-mid)' }}>
             <span>Total Contract Value</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold font-mono text-emerald-400">
+          <div className="text-2xl font-bold font-mono" style={{ color: 'var(--success)' }}>
             {totalContractValue.toLocaleString()} SAR
           </div>
         </div>
 
-        <div className="p-4 rounded-xl space-y-1.5 bg-[#161224]/80 border border-purple-900/30">
-          <div className="flex items-center justify-between text-xs text-stone-400">
+        <div className="p-4 rounded-xl space-y-1.5 border" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}>
+          <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-mid)' }}>
             <span>Handoff Workflow</span>
             <Clock className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-sm font-bold text-purple-200 mt-1 flex items-center gap-1.5">
+          <div className="text-sm font-bold mt-1 flex items-center gap-1.5" style={{ color: 'var(--accent)' }}>
             <CheckCircle2 className="w-4 h-4 text-purple-400" />
             <span>Auto-Routed to AM</span>
           </div>
-          <span className="text-[11px] text-stone-400 block">Goes to AM Team Lead</span>
+          <span className="text-[11px] block" style={{ color: 'var(--text-mid)' }}>Goes to AM Team Lead</span>
         </div>
       </div>
 
@@ -189,7 +189,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
       >
         <div className="p-4 border-b border-purple-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text-hi)' }}>
               <Building2 className="w-4 h-4 text-amber-400" />
               <span>Personally Acquired Clients</span>
             </h3>
@@ -202,14 +202,15 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search name, phone, industry, or ID..."
-              className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs bg-black/30 border border-purple-900/40 text-white outline-none focus:border-purple-400"
+              className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs border outline-none focus:border-purple-400"
+              style={{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-hi)' }}
             />
           </div>
         </div>
 
         {filteredClients.length === 0 ? (
           <div className="p-10 text-center space-y-2">
-            <p className="text-xs text-stone-400">
+            <p className="text-xs" style={{ color: 'var(--text-mid)' }}>
               {searchQuery
                 ? 'No clients match your query.'
                 : 'No clients registered yet. Click "Register New Client" to start.'}
@@ -219,7 +220,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-purple-900/30 text-[11px] font-semibold text-stone-400 uppercase tracking-wider bg-black/20">
+                <tr className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-mid)', background: 'var(--surface-2)' }}>
                   <th className="py-3 px-4">Client Name</th>
                   <th className="py-3 px-4">Industry</th>
                   <th className="py-3 px-4">Services</th>
@@ -237,7 +238,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
                       onClick={() => setDashboardClientId(client.id)}
                       className="hover:bg-purple-950/30 transition-colors cursor-pointer group"
                     >
-                      <td className="py-3.5 px-4 font-bold text-white">
+                      <td className="py-3.5 px-4 font-bold" style={{ color: 'var(--text-hi)' }}>
                         <div className="flex items-center gap-2.5">
                           <div className="w-8 h-8 rounded-lg bg-amber-400/10 text-amber-400 border border-amber-400/20 flex items-center justify-center font-bold text-xs">
                             {client.name.charAt(0)}
