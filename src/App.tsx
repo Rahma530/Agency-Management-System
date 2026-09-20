@@ -612,7 +612,13 @@ export default function App() {
     handleHash();
 
     return () => window.removeEventListener('hashchange', handleHash);
-  }, [authenticatedUser]);
+    // authenticatedUser?.id — re-subscribing on every reference change (e.g. a same-person
+    // SIGNED_IN re-notification on tab refocus) just re-ran handleHash() with the same hash,
+    // producing a same-value setActiveTab no-op. Re-subscribing on an actual login/logout/
+    // user-switch is enough; a role change for an already-logged-in user is picked up the next
+    // time they navigate to a new hash anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedUser?.id]);
 
   // Switch tab and keep URL hash synchronized
   const handleTabChange = (newTab: AppModule, prefillAssigneeName?: string) => {
@@ -788,9 +794,15 @@ export default function App() {
   };
 
   // Fetch initial data directly from Supabase (or fallback to initial state)
+  //
+  // Does NOT clear `clients` to [] before refetching (it used to) — that premature wipe
+  // made every ClientDashboard/DynamicBriefForm consumer that does `clients.find(id) || null`
+  // (ServiceBriefsRoutingView, AMQueue, SalesPortalView, CampaignManagementModule) briefly see
+  // no match and unmount, discarding any unsaved brief-form input. `clients` now simply keeps
+  // its last-known-good value until setClients() below replaces it with fresh data — a plain
+  // replace, not a clear-then-refill. No UI depends on clients.length === 0 as a loading signal.
   const loadData = useCallback(async () => {
     setLoading(true);
-    setClients([]);
     setUsersLoadedFromSupabase(false);
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
@@ -968,7 +980,14 @@ export default function App() {
       }
     }
     setLoading(false);
-  }, [authenticatedUser]);
+    // authenticatedUser?.id (not the whole object) — loadData's body only ever checks
+    // `if (authenticatedUser)` truthy, so the only thing that should make it refetch is an
+    // actual login/logout/user-switch. Depending on the full object made it refetch (and, via
+    // the now-removed setClients([]) above, briefly unmount any open brief form) on every
+    // SIGNED_IN/TOKEN_REFRESHED re-notification Supabase's own client fires on tab refocus,
+    // even for the same already-logged-in person — see the effect below that calls loadData().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedUser?.id]);
 
   // chat_messages, chat_directory, and notifications load independently of loadData's big
   // sequential fetch batch above — deliberately not awaited inside it. That batch runs ~20
@@ -1078,10 +1097,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
+  // Split from the loadData-triggering effect below on purpose: this one keeps the module-level
+  // session-user mirror (used outside the React tree) fresh on every authenticatedUser update,
+  // including a same-person refresh that carries genuinely updated fields (role change,
+  // deactivation, a rotated token) — nothing about Supabase's own re-notifications is ignored
+  // here. Only loadData()'s re-run (next effect) is decoupled from harmless reference churn.
   useEffect(() => {
     setSupabaseSessionUser(authenticatedUser);
+  }, [authenticatedUser]);
+
+  useEffect(() => {
     loadData();
-  }, [authenticatedUser, loadData]);
+  }, [loadData]);
 
   // Real-time chat delivery (Phase 2). A demo-mode login never calls
   // supabase.auth.signInWithPassword, so there's no real JWT to open an authenticated
@@ -1428,7 +1455,12 @@ export default function App() {
       clearInterval(heartbeatInterval);
       supabaseRaw.removeChannel(channel);
     };
-  }, [authenticatedUser, supabaseActive]);
+    // authenticatedUser?.id — this effect only ever reads .id, but depending on the full object
+    // tore down and recreated the presence channel (and its heartbeat interval) on every
+    // reference-only update, briefly flickering this user offline/online for everyone else on a
+    // tab refocus. An actual login/logout/user-switch is the only thing that should do that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedUser?.id, supabaseActive]);
 
   const validateClientAssignment = async (id: string | null | undefined, role: 'am_team_lead' | 'am_agent') => {
     if (!id) return null;
