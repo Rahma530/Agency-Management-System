@@ -383,14 +383,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
 
   // "Client Access" tab — portal/platform credentials, ad account access notes, and payment card
-  // details tied to the client's ad accounts. Visibility (including whether the tab even appears
-  // in the tab list) is the single shared canAccessClientSensitiveInfo() check, identical to the
-  // phone number gate above. Edit rights are narrower and mirror clients_update_am_assignment_rls
-  // exactly (executive/head_of_technical/am_team_lead) — am_agent can view but not edit, the same
-  // read/write split already used for Payment Tracking above.
+  // details tied to the client's ad accounts. Both visibility (including whether the tab even
+  // appears in the tab list) AND edit rights are the single shared canAccessClientSensitiveInfo()
+  // check — all four roles (executive/head_of_technical/am_team_lead/am_agent) can both view and
+  // edit. Unlike Payment Tracking above, am_agent's write path here goes through the
+  // update_client_access() RPC (App.tsx's handleUpdateClientAccess), not a direct table update —
+  // that RPC scopes am_agent's write to exactly these four columns on their own assigned client,
+  // since clients_update_am_assignment_rls (the only general UPDATE policy on clients) still
+  // excludes am_agent entirely.
   const canSeeClientAccessTab = canAccessClientSensitiveInfo(currentUser.role);
-  const canEditClientAccess =
-    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+  const canEditClientAccess = canAccessClientSensitiveInfo(currentUser.role);
 
   // Broadened per the final brief-editing decision: executive/head_of_technical/am_team_lead/
   // am_agent (own client) can edit any service's brief; a department team lead can only edit the

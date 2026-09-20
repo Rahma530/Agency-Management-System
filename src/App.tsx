@@ -1931,8 +1931,12 @@ export default function App() {
   };
 
   // 2a-3. "Client Access" tab: agency-held credentials for the client's own external
-  // platforms/ad accounts. Edit rights are gated in ClientDashboard.tsx to
-  // executive/head_of_technical/am_team_lead, matching clients_update_am_assignment_rls exactly.
+  // platforms/ad accounts. All four roles gated in ClientDashboard.tsx's
+  // canAccessClientSensitiveInfo (executive/head_of_technical/am_team_lead/am_agent) can edit —
+  // routed through the update_client_access() RPC rather than a direct table update, since
+  // clients_update_am_assignment_rls (the only general UPDATE policy on clients) doesn't cover
+  // am_agent at all. The RPC re-checks the same four-role/own-client rule server-side and scopes
+  // the write to exactly these four columns.
   const handleUpdateClientAccess = async (
     clientId: string,
     updates: {
@@ -1942,8 +1946,22 @@ export default function App() {
       payment_card_details?: string | null;
     }
   ) => {
+    if (!supabaseActive) {
+      showNotification('Supabase is not configured; the client was not updated.', 'info');
+      return;
+    }
     try {
-      await updatePersistedClient(clientId, updates);
+      const { data, error } = await supabaseRaw.rpc('update_client_access', {
+        p_client_id: clientId,
+        p_access_username: updates.access_username ?? null,
+        p_access_password: updates.access_password ?? null,
+        p_ad_account_access_details: updates.ad_account_access_details ?? null,
+        p_payment_card_details: updates.payment_card_details ?? null,
+      });
+      if (error) throw error;
+      if (!data) throw new Error('Client access update returned no persisted row.');
+      const persistedClient = data as ClientRecord;
+      setClients((prev) => prev.map((client) => (client.id === clientId ? persistedClient : client)));
     } catch (err) {
       console.error('Supabase update client access error:', err);
       showNotification('Unable to save client access details.', 'info');
