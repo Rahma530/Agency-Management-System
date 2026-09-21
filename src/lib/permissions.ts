@@ -27,6 +27,18 @@ export const canSeeContractValue = (role: UserRole, isOwnClient: boolean): boole
   return false;
 };
 
+// Shared gate for the client's phone number AND the "Client Access" tab (portal/platform login
+// credentials, ad account access notes, payment card details tied to those ad accounts) — both
+// are PII/credential-grade data restricted to the roles that own the client relationship
+// end-to-end: Executive, Head of Technical, AM Team Leader, AM Agent. Deliberately excludes every
+// department team lead/agent and sales (unlike CONTRACT_VALUE_ROLES above, sales never sees
+// either of these, even for their own client). One shared list/check since both surfaces use the
+// identical role set — do not fork this into two checks.
+const CLIENT_SENSITIVE_INFO_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
+
+export const canAccessClientSensitiveInfo = (role: UserRole): boolean =>
+  CLIENT_SENSITIVE_INFO_ROLES.includes(role);
+
 // An employee created via the "Add Employee" admin flow (single form or bulk upload) starts with
 // auth_id null — a real Supabase Auth account hasn't been provisioned for them yet (that only
 // happens out-of-band via scripts/provisionAuthUsers.ts, since it needs the service-role key).

@@ -71,7 +71,7 @@ import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo } from '../lib/permissions';
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -151,6 +151,21 @@ interface ClientDashboardProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
+  onUpdateClientAccess?: (
+    clientId: string,
+    updates: {
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
+      payment_card_details?: string | null;
+    }
+  ) => Promise<void>;
 }
 
 type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
@@ -200,6 +215,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUploadClientContract,
   onDeleteClientContract,
   onUpdatePaymentTracking,
+  onUpdateClientAccess,
 }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab || 'overview');
   const [isDeletingClient, setIsDeletingClient] = useState(false);
@@ -230,6 +246,21 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     contract_duration_months: client.contract_duration_months != null ? String(client.contract_duration_months) : '',
   });
   const [isSavingPaymentTracking, setIsSavingPaymentTracking] = useState(false);
+  const [isEditingClientAccess, setIsEditingClientAccess] = useState(false);
+  const [isClientAccessSelected, setIsClientAccessSelected] = useState(false);
+  const [clientAccessDraft, setClientAccessDraft] = useState({
+    general_email: client.general_email || '',
+    general_email_password: client.general_email_password || '',
+    store_platform_username: client.store_platform_username || '',
+    store_platform_password: client.store_platform_password || '',
+    social_media_username: client.social_media_username || '',
+    social_media_password: client.social_media_password || '',
+    ad_account_username: client.ad_account_username || '',
+    ad_account_password: client.ad_account_password || '',
+    ad_account_setup_type: client.ad_account_setup_type || ('' as '' | 'existing' | 'new'),
+    payment_card_details: client.payment_card_details || '',
+  });
+  const [isSavingClientAccess, setIsSavingClientAccess] = useState(false);
 
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
   const services: ServiceType[] = useMemo(() => normalizeClientServices(client.services), [client.services]);
@@ -306,7 +337,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
   // Assigned Specialists
   const assignedAM = users.find((u) => u.id === client.am_agent_id);
-  const salesOwner = users.find((u) => u.id === client.sales_owner_id);
   const amLead = users.find((u) => u.id === client.am_team_lead_id);
 
   const clientAssignments = useMemo(
@@ -364,6 +394,21 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
   const canEditPaymentTracking =
     currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+
+  // "Client Access" — general email, store platform login, social media login, ad account login
+  // + setup type, and payment card details, collected during the Brief phase (rendered as a
+  // selectable section alongside the per-service brief buttons in the Service Briefs tab below,
+  // not a separate top-level dashboard tab). Both visibility (whether the selector even appears)
+  // AND edit rights are the single shared canAccessClientSensitiveInfo() check — all four roles
+  // (executive/head_of_technical/am_team_lead/am_agent) can both view and edit; every field is
+  // independently optional and never blocks saving. Unlike Payment Tracking above, am_agent's
+  // write path here goes through the update_client_access() RPC (App.tsx's
+  // handleUpdateClientAccess), not a direct table update — that RPC scopes am_agent's write to
+  // exactly these Client Access columns on their own assigned client, since
+  // clients_update_am_assignment_rls (the only general UPDATE policy on clients) still excludes
+  // am_agent entirely.
+  const canSeeClientAccessTab = canAccessClientSensitiveInfo(currentUser.role);
+  const canEditClientAccess = canAccessClientSensitiveInfo(currentUser.role);
 
   // Broadened per the final brief-editing decision: executive/head_of_technical/am_team_lead/
   // am_agent (own client) can edit any service's brief; a department team lead can only edit the
@@ -509,6 +554,28 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     }
   };
 
+  const handleSaveClientAccess = async () => {
+    if (!onUpdateClientAccess) return;
+    setIsSavingClientAccess(true);
+    try {
+      await onUpdateClientAccess(client.id, {
+        general_email: clientAccessDraft.general_email || null,
+        general_email_password: clientAccessDraft.general_email_password || null,
+        store_platform_username: clientAccessDraft.store_platform_username || null,
+        store_platform_password: clientAccessDraft.store_platform_password || null,
+        social_media_username: clientAccessDraft.social_media_username || null,
+        social_media_password: clientAccessDraft.social_media_password || null,
+        ad_account_username: clientAccessDraft.ad_account_username || null,
+        ad_account_password: clientAccessDraft.ad_account_password || null,
+        ad_account_setup_type: clientAccessDraft.ad_account_setup_type || null,
+        payment_card_details: clientAccessDraft.payment_card_details || null,
+      });
+      setIsEditingClientAccess(false);
+    } finally {
+      setIsSavingClientAccess(false);
+    }
+  };
+
   const handleGenerateComparison = async () => {
     if (!onGenerateComparison) return;
     if (reportGranularity === 'custom') {
@@ -644,7 +711,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               </div>
               <div className="flex items-center gap-4 text-xs text-stone-300 mt-1 flex-wrap">
                 <span>Industry: <strong className="text-white">{client.industry || 'General Business'}</strong></span>
-                {client.phone_number && (
+                {client.phone_number && canAccessClientSensitiveInfo(currentUser.role) && (
                   <span>Phone: <strong className="text-white">{client.phone_number}</strong></span>
                 )}
                 {showContractValue && (
@@ -1305,22 +1372,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   )}
                 </div>
 
-                {/* Sales Representative Card */}
-                <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-                  <span className="text-xs font-semibold text-amber-300 uppercase tracking-wider block mb-3">
-                    Sales Representative (Acquisition)
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-amber-900/20 border border-amber-700/30 flex items-center justify-center font-bold text-sm text-amber-300">
-                      {salesOwner?.name?.charAt(0) || 'S'}
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">{salesOwner?.name || 'Sales Team'}</p>
-                      <p className="text-xs text-stone-400">{salesOwner?.email || 'sales@agency.com'}</p>
-                    </div>
-                  </div>
-                </div>
-
                 {/* Media Buying Specialist */}
                 {services.includes('media_buying') && (
                   <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
@@ -1459,11 +1510,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
               ) : (
                 <>
-                  {/* Service Sub-tabs */}
-                  <div className="flex items-center gap-2 border-b border-purple-900/30 pb-3">
+                  {/* Service Sub-tabs, plus the Client Access section (Executive/Head of
+                      Technical/AM Team Leader/AM Agent only) as an additional selectable item
+                      alongside them — filled in during this same Brief phase. */}
+                  <div className="flex items-center gap-2 border-b border-purple-900/30 pb-3 flex-wrap">
                     {services.map((srv) => {
                       const brief = clientBriefs.find((b) => b.service_type === srv);
-                      const isSelected = selectedBriefService === srv;
+                      const isSelected = !isClientAccessSelected && selectedBriefService === srv;
                       // Not submitted at all -> amber. Submitted but the review assistant found
                       // issues -> amber (needs follow-up). Submitted and clean -> green.
                       const issueCount = brief ? reviewBrief(brief, briefs, briefFieldSchemas[srv] || []).length : 0;
@@ -1476,7 +1529,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       return (
                         <button
                           key={srv}
-                          onClick={() => setSelectedBriefService(srv)}
+                          onClick={() => {
+                            setIsClientAccessSelected(false);
+                            setSelectedBriefService(srv);
+                          }}
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
                             isSelected
                               ? 'bg-purple-600 text-white shadow'
@@ -1488,9 +1544,277 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         </button>
                       );
                     })}
+                    {canSeeClientAccessTab && (
+                      <button
+                        onClick={() => setIsClientAccessSelected(true)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                          isClientAccessSelected
+                            ? 'bg-purple-600 text-white shadow'
+                            : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                        }`}
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Client Access</span>
+                      </button>
+                    )}
                   </div>
 
-                  {selectedBriefService ? (
+                  {isClientAccessSelected ? (
+                    <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          <KeyRound className="w-4 h-4 text-purple-400" />
+                          <span>Client Access</span>
+                        </h3>
+                        {canEditClientAccess && onUpdateClientAccess && !isEditingClientAccess && (
+                          <button
+                            onClick={() => setIsEditingClientAccess(true)}
+                            className="text-[11px] font-bold text-purple-300 hover:text-white flex items-center gap-1"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Edit</span>
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-stone-500">
+                        All fields below are optional — leaving any of them blank never blocks
+                        saving. Fill in whatever the client has already shared; the rest can be
+                        added later.
+                      </p>
+
+                      {isEditingClientAccess ? (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>General Email (Gmail)</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.general_email}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, general_email: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>General Email Password</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.general_email_password}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, general_email_password: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>Store Platform Username (Salla, Zid, ...)</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.store_platform_username}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, store_platform_username: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>Store Platform Password</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.store_platform_password}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, store_platform_password: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>Social Media Account Username</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.social_media_username}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, social_media_username: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>Social Media Account Password</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.social_media_password}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, social_media_password: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>Advertising Account Username (TikTok, Snapchat, ...)</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.ad_account_username}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, ad_account_username: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                            <label className="text-[11px] text-stone-400 space-y-1 block">
+                              <span>Advertising Account Password</span>
+                              <input
+                                type="text"
+                                value={clientAccessDraft.ad_account_password}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, ad_account_password: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <label className="text-[11px] text-stone-400 space-y-1 block">
+                            <span>Ad Account Setup</span>
+                            <select
+                              value={clientAccessDraft.ad_account_setup_type}
+                              onChange={(e) =>
+                                setClientAccessDraft((prev) => ({
+                                  ...prev,
+                                  ad_account_setup_type: e.target.value as '' | 'existing' | 'new',
+                                }))
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                            >
+                              <option value="">Not decided / unknown</option>
+                              <option value="existing">Rent/use an existing ad account</option>
+                              <option value="new">Create a new ad account</option>
+                            </select>
+                          </label>
+                          <label className="text-[11px] text-stone-400 space-y-1 block">
+                            <span>Payment Method / Card (Visa) Details</span>
+                            <textarea
+                              rows={2}
+                              value={clientAccessDraft.payment_card_details}
+                              onChange={(e) =>
+                                setClientAccessDraft((prev) => ({ ...prev, payment_card_details: e.target.value }))
+                              }
+                              placeholder="Card to later link to ad campaigns..."
+                              className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none resize-y"
+                            />
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleSaveClientAccess}
+                              disabled={isSavingClientAccess}
+                              className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+                            >
+                              {isSavingClientAccess ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setIsEditingClientAccess(false);
+                                setClientAccessDraft({
+                                  general_email: client.general_email || '',
+                                  general_email_password: client.general_email_password || '',
+                                  store_platform_username: client.store_platform_username || '',
+                                  store_platform_password: client.store_platform_password || '',
+                                  social_media_username: client.social_media_username || '',
+                                  social_media_password: client.social_media_password || '',
+                                  ad_account_username: client.ad_account_username || '',
+                                  ad_account_password: client.ad_account_password || '',
+                                  ad_account_setup_type: client.ad_account_setup_type || '',
+                                  payment_card_details: client.payment_card_details || '',
+                                });
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-stone-300 bg-stone-800 hover:bg-stone-700"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">General Email (Gmail)</span>
+                              <p className="text-sm font-bold text-white font-mono">{client.general_email || 'Not set'}</p>
+                            </div>
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">General Email Password</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.general_email_password || 'Not set'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">Store Platform Username</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.store_platform_username || 'Not set'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">Store Platform Password</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.store_platform_password || 'Not set'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">Social Media Account Username</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.social_media_username || 'Not set'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">Social Media Account Password</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.social_media_password || 'Not set'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">Advertising Account Username</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.ad_account_username || 'Not set'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-[11px] text-stone-400 block">Advertising Account Password</span>
+                              <p className="text-sm font-bold text-white font-mono">
+                                {client.ad_account_password || 'Not set'}
+                              </p>
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-stone-400 block">Ad Account Setup</span>
+                            <p className="text-sm font-bold text-white">
+                              {client.ad_account_setup_type === 'existing'
+                                ? 'Rent/use an existing ad account'
+                                : client.ad_account_setup_type === 'new'
+                                ? 'Create a new ad account'
+                                : 'Not decided / unknown'}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-stone-400 block">Payment Method / Card (Visa) Details</span>
+                            <p className="text-xs text-stone-200 whitespace-pre-wrap">
+                              {client.payment_card_details || 'Not set'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : selectedBriefService ? (
                     <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
                       {canEditBriefFieldSchema(currentUser.role, selectedBriefService) && (
                         <div className="flex justify-end">

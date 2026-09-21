@@ -130,6 +130,21 @@ interface AMQueueProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
+  onUpdateClientAccess?: (
+    clientId: string,
+    updates: {
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
+      payment_card_details?: string | null;
+    }
+  ) => Promise<void>;
 }
 
 export const AMQueue: React.FC<AMQueueProps> = ({
@@ -177,6 +192,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUploadClientContract,
   onDeleteClientContract,
   onUpdatePaymentTracking,
+  onUpdateClientAccess,
 }) => {
   const resolvedUser = currentUser || users.find((u) => u.id === currentUserId) || users[0];
   const effectiveUserId = resolvedUser?.id || currentUserId || '';
@@ -714,6 +730,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onUploadClientContract={onUploadClientContract}
           onDeleteClientContract={onDeleteClientContract}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientAccess={onUpdateClientAccess}
         />
       )}
     </div>

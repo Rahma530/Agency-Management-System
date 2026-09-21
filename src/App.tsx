@@ -1134,6 +1134,79 @@ export default function App() {
     loadData();
   }, [loadData]);
 
+  // Automated renewal alert (Module 15 Phase 1): fires through the SAME channel every other
+  // in-app alert already uses — a persisted notifications row surfaced by NotificationBell — for
+  // any client whose renewal_date falls within the next 7 days. Recipients are the roles that
+  // actually own a renewal decision: leadership (executive/head_of_technical) plus this client's
+  // own AM Team Leader/AM Agent plus the team lead of each service this client is actively
+  // subscribed to. Design/Graphics (graphic_designer/video_editor) is explicitly excluded even
+  // though the 'social_media' service bundles design/video work — a renewal alert is never
+  // relevant to that department. The notification id is deterministic (client id + renewal_date +
+  // recipient), so re-running this effect (e.g. after an unrelated client update) never creates a
+  // duplicate for the same still-current renewal date — the unique-violation (23505) from a
+  // second insert attempt is expected and silently ignored, same as the existing task-notification
+  // insert above.
+  const renewalAlertsCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!supabaseActive || renewalAlertsCheckedRef.current) return;
+    if (clients.length === 0 || users.length === 0) return;
+    renewalAlertsCheckedRef.current = true;
+
+    const checkRenewalAlerts = async () => {
+      const now = new Date();
+      const in7Days = new Date(now);
+      in7Days.setDate(in7Days.getDate() + 7);
+
+      for (const client of clients) {
+        if (!client.renewal_date || client.status === 'closed') continue;
+        const renewal = new Date(client.renewal_date);
+        if (Number.isNaN(renewal.getTime()) || renewal < now || renewal > in7Days) continue;
+
+        const activeServiceLeadRoles = client.services
+          .map((service): UserRole | null => {
+            if (service === 'seo') return 'seo_team_lead';
+            if (service === 'media_buying') return 'media_buying_team_lead';
+            if (service === 'social_media') return 'social_media_team_lead';
+            return null;
+          })
+          .filter((role): role is UserRole => role !== null);
+
+        const recipients = users.filter((u) => {
+          if (!isActiveEmployee(u)) return false;
+          if (u.role === 'graphic_designer' || u.role === 'video_editor') return false;
+          return (
+            u.role === 'executive' ||
+            u.role === 'head_of_technical' ||
+            u.id === client.am_team_lead_id ||
+            u.id === client.am_agent_id ||
+            activeServiceLeadRoles.includes(u.role)
+          );
+        });
+
+        for (const recipient of recipients) {
+          try {
+            const { error } = await supabaseRaw.from('notifications').insert({
+              id: `notif-renewal-${client.id}-${client.renewal_date}-${recipient.id}`,
+              user_id: recipient.id,
+              sender_id: null,
+              title: 'Upcoming Client Renewal',
+              message: `${client.name}'s contract is due for renewal on ${client.renewal_date} (within 7 days).`,
+              type: 'general',
+              is_read: false,
+              link_url: null,
+              created_at: new Date().toISOString(),
+            });
+            if (error && error.code !== '23505') throw error;
+          } catch (err) {
+            console.error('Failed to create renewal alert notification:', err);
+          }
+        }
+      }
+    };
+
+    checkRenewalAlerts();
+  }, [clients, users, supabaseActive]);
+
   // Real-time chat delivery (Phase 2). A demo-mode login never calls
   // supabase.auth.signInWithPassword, so there's no real JWT to open an authenticated
   // Realtime channel with — postgres_changes would just receive nothing (no grant for the
@@ -1511,6 +1584,7 @@ export default function App() {
     due_value?: number;
     remaining_value?: number;
     start_date: string;
+    contract_duration_months?: number;
     renewal_date: string;
     am_team_lead_id?: string;
     am_agent_id?: string;
@@ -1545,6 +1619,7 @@ export default function App() {
       due_value: clientData.due_value ?? null,
       remaining_value: clientData.remaining_value ?? null,
       start_date: clientData.start_date,
+      contract_duration_months: clientData.contract_duration_months ?? null,
       renewal_date: clientData.renewal_date,
       created_at: new Date().toISOString(),
     };
@@ -1853,6 +1928,60 @@ export default function App() {
       return;
     }
     showNotification('Payment tracking updated.');
+  };
+
+  // 2a-3. "Client Access": general email, store platform login, social media login, ad account
+  // login + setup type, and payment card details — collected during the Brief phase, rendered in
+  // ClientDashboard.tsx's Service Briefs tab. All four roles gated by
+  // canAccessClientSensitiveInfo (executive/head_of_technical/am_team_lead/am_agent) can edit —
+  // routed through the update_client_access() RPC rather than a direct table update, since
+  // clients_update_am_assignment_rls (the only general UPDATE policy on clients) doesn't cover
+  // am_agent at all. The RPC re-checks the same four-role/own-client rule server-side and scopes
+  // the write to exactly these columns. Every field is optional; leaving any/all blank is expected
+  // (the client often hasn't shared them yet) and never blocks this save or anything downstream.
+  const handleUpdateClientAccess = async (
+    clientId: string,
+    updates: {
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
+      payment_card_details?: string | null;
+    }
+  ) => {
+    if (!supabaseActive) {
+      showNotification('Supabase is not configured; the client was not updated.', 'info');
+      return;
+    }
+    try {
+      const { data, error } = await supabaseRaw.rpc('update_client_access', {
+        p_client_id: clientId,
+        p_general_email: updates.general_email ?? null,
+        p_general_email_password: updates.general_email_password ?? null,
+        p_store_platform_username: updates.store_platform_username ?? null,
+        p_store_platform_password: updates.store_platform_password ?? null,
+        p_social_media_username: updates.social_media_username ?? null,
+        p_social_media_password: updates.social_media_password ?? null,
+        p_ad_account_username: updates.ad_account_username ?? null,
+        p_ad_account_password: updates.ad_account_password ?? null,
+        p_ad_account_setup_type: updates.ad_account_setup_type ?? null,
+        p_payment_card_details: updates.payment_card_details ?? null,
+      });
+      if (error) throw error;
+      if (!data) throw new Error('Client access update returned no persisted row.');
+      const persistedClient = data as ClientRecord;
+      setClients((prev) => prev.map((client) => (client.id === clientId ? persistedClient : client)));
+    } catch (err) {
+      console.error('Supabase update client access error:', err);
+      showNotification('Unable to save client access details.', 'info');
+      return;
+    }
+    showNotification('Client access details updated.');
   };
 
   // 2b-2. Invite a client to the Client Portal: creates the placeholder client_portal_users row
@@ -4107,6 +4236,7 @@ export default function App() {
                     onUploadClientContract={handleUploadClientContract}
                     onDeleteClientContract={handleDeleteClientContract}
                     onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                    onUpdateClientAccess={handleUpdateClientAccess}
                   />
                 )}
               </div>

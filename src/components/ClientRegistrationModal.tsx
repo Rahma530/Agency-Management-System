@@ -21,6 +21,7 @@ interface ClientRegistrationModalProps {
     due_value?: number;
     remaining_value?: number;
     start_date: string;
+    contract_duration_months?: number;
     renewal_date: string;
     am_team_lead_id?: string;
     am_agent_id?: string;
@@ -31,6 +32,13 @@ const addOneYear = (dateStr: string): string => {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
   d.setFullYear(d.getFullYear() + 1);
+  return d.toISOString().split('T')[0];
+};
+
+const addMonths = (dateStr: string, months: number): string => {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  d.setMonth(d.getMonth() + months);
   return d.toISOString().split('T')[0];
 };
 
@@ -63,6 +71,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [dueValue, setDueValue] = useState<number | ''>('');
   const [remainingValue, setRemainingValue] = useState<number | ''>('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [contractDurationMonths, setContractDurationMonths] = useState<number | ''>('');
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
   const [amTeamLeadId, setAmTeamLeadId] = useState('');
@@ -119,6 +128,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
         due_value: dueValue === '' ? undefined : Number(dueValue),
         remaining_value: remainingValue === '' ? undefined : Number(remainingValue),
         start_date: startDate,
+        contract_duration_months: contractDurationMonths === '' ? undefined : Number(contractDurationMonths),
         renewal_date: renewalDate,
         am_team_lead_id: isManagementForm ? (amTeamLeadId || undefined) : soleActiveAmTeamLeadId,
         ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
@@ -136,6 +146,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setContractValue('');
       setDueValue('');
       setRemainingValue('');
+      setContractDurationMonths('');
       if (isManagementForm) {
         setAmTeamLeadId('');
         setAmAgentId('');
@@ -417,7 +428,63 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Monthly Retainer (USD/SAR)
+                Total Contract Value
+              </label>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  value={dueValue}
+                  onChange={(e) => setDueValue(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 60000"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+              <p className="text-[11px] text-stone-400 mt-1">
+                The primary value of this engagement.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Contract Start Date
+              </label>
+              <div className="relative">
+                <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    const newStart = e.target.value;
+                    setStartDate(newStart);
+                    if (!renewalDateTouched) {
+                      setRenewalDate(
+                        contractDurationMonths === ''
+                          ? addOneYear(newStart)
+                          : addMonths(newStart, Number(contractDurationMonths))
+                      );
+                    }
+                  }}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Monthly Retainer (USD/SAR) (optional)
               </label>
               <div className="relative">
                 <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
@@ -438,20 +505,22 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Contract Start Date
+                Contract Duration (months)
               </label>
               <div className="relative">
                 <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
                 <input
-                  type="date"
-                  value={startDate}
+                  type="number"
+                  min={1}
+                  value={contractDurationMonths}
                   onChange={(e) => {
-                    const newStart = e.target.value;
-                    setStartDate(newStart);
+                    const value = e.target.value === '' ? '' : Number(e.target.value);
+                    setContractDurationMonths(value);
                     if (!renewalDateTouched) {
-                      setRenewalDate(addOneYear(newStart));
+                      setRenewalDate(value === '' ? addOneYear(startDate) : addMonths(startDate, Number(value)));
                     }
                   }}
+                  placeholder="e.g. 12"
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
                   style={{
                     background: 'rgba(10, 10, 13, 0.8)',
@@ -464,30 +533,6 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Total Contract Value (optional)
-              </label>
-              <div className="relative">
-                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
-                <input
-                  type="number"
-                  value={dueValue}
-                  onChange={(e) => setDueValue(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="e.g. 60000"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
-                  style={{
-                    background: 'rgba(10, 10, 13, 0.8)',
-                    border: '1px solid var(--border-soft)',
-                    color: 'var(--white)',
-                  }}
-                />
-              </div>
-              <p className="text-[11px] text-stone-400 mt-1">
-                If known now — AM can also fill this in later.
-              </p>
-            </div>
-
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Remaining Amount (optional)
@@ -508,32 +553,33 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 />
               </div>
             </div>
-          </div>
 
-          <div>
-            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              Renewal Date
-            </label>
-            <div className="relative">
-              <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
-              <input
-                type="date"
-                value={renewalDate}
-                onChange={(e) => {
-                  setRenewalDate(e.target.value);
-                  setRenewalDateTouched(true);
-                }}
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
-                style={{
-                  background: 'rgba(10, 10, 13, 0.8)',
-                  border: '1px solid var(--border-soft)',
-                  color: 'var(--white)',
-                }}
-              />
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Renewal Date
+              </label>
+              <div className="relative">
+                <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={renewalDate}
+                  onChange={(e) => {
+                    setRenewalDate(e.target.value);
+                    setRenewalDateTouched(true);
+                  }}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{
+                    background: 'rgba(10, 10, 13, 0.8)',
+                    border: '1px solid var(--border-soft)',
+                    color: 'var(--white)',
+                  }}
+                />
+              </div>
+              <p className="text-[11px] text-stone-400 mt-1">
+                Auto-calculated from Start Date + Contract Duration (or one year, if duration is
+                left blank). Adjust if needed.
+              </p>
             </div>
-            <p className="text-[11px] text-stone-400 mt-1">
-              Defaults to one year from the contract start date. Adjust if needed.
-            </p>
           </div>
 
           <div>

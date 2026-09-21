@@ -128,6 +128,27 @@ export interface ClientRecord {
   // period-scoped gained/lost client metrics in MyWorkHub; not a general "assigned since" display
   // field beyond that.
   am_agent_assigned_at?: string | null;
+  // "Client Access" — collected during the Brief phase (ClientDashboard.tsx's Service Briefs tab,
+  // alongside the per-service brief questions), one shared record per client rather than one per
+  // service, since none of these credentials vary by service. Every field is independently
+  // optional: this data is frequently unavailable when the AM is first talking to the client, and
+  // leaving any/all of it blank must never block saving a brief, submitting a form, or any
+  // downstream workflow. Plain text, same convention as phone_number/UserRecord.password
+  // elsewhere in this schema; visibility and edit rights are gated in the UI via
+  // canAccessClientSensitiveInfo(), not by a DB-level view. Distinct from client_portal_users,
+  // which is the CLIENT's own login into THIS app's portal.
+  general_email?: string | null;
+  general_email_password?: string | null;
+  store_platform_username?: string | null;
+  store_platform_password?: string | null;
+  social_media_username?: string | null;
+  social_media_password?: string | null;
+  ad_account_username?: string | null;
+  ad_account_password?: string | null;
+  // Whether the ad account used for this client's campaigns is an existing one being rented/
+  // reused, or a brand-new one created for them. Null = not yet decided/known.
+  ad_account_setup_type?: 'existing' | 'new' | null;
+  payment_card_details?: string | null;
   created_at?: string;
 }
 
