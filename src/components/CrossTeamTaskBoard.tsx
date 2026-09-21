@@ -53,7 +53,8 @@ import {
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
-import { OPERATIONAL_TEAMS, getEmployeesByDepartment } from '../lib/departmentStaffing';
+import { OPERATIONAL_TEAMS, fetchAssignableEmployees } from '../lib/departmentStaffing';
+import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
@@ -171,6 +172,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [clients, newClientId, addSubtaskParent]);
   const [newTeam, setNewTeam] = useState('SEO');
   const [newAssignedTo, setNewAssignedTo] = useState<string>('');
+  // Fetched via assignable_employees() RPC rather than filtering the local `users` prop — that
+  // array is scoped by users_select_rls to the CURRENT viewer's own visibility, which for most
+  // roles doesn't extend into every other department. See lib/departmentStaffing.ts.
+  const [newTeamAssignees, setNewTeamAssignees] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchAssignableEmployees(newTeam).then((rows) => {
+      if (cancelled) return;
+      setNewTeamAssignees(rows);
+      // Department changed out from under the current selection — never leave a stale
+      // cross-department pick in place once the new department's real roster is in.
+      setNewAssignedTo((current) => (current && !rows.some((u) => u.id === current) ? '' : current));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [newTeam]);
   const [newDueDate, setNewDueDate] = useState(
     new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0]
   );
@@ -186,6 +204,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [editClientId, setEditClientId] = useState('');
   const [editTeam, setEditTeam] = useState('');
   const [editAssignedTo, setEditAssignedTo] = useState<string>('');
+  const [editTeamAssignees, setEditTeamAssignees] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchAssignableEmployees(editTeam).then((rows) => {
+      if (cancelled) return;
+      setEditTeamAssignees(rows);
+      setEditAssignedTo((current) => (current && !rows.some((u) => u.id === current) ? '' : current));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [editTeam]);
   const [editDueDate, setEditDueDate] = useState('');
   const [editPriority, setEditPriority] = useState<TaskPriority>('medium');
   const [editStatus, setEditStatus] = useState<TaskStatus>('todo');
@@ -1655,15 +1685,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </label>
                   <select
                     value={newTeam}
-                    onChange={(e) => {
-                      const nextTeam = e.target.value;
-                      setNewTeam(nextTeam);
-                      // Department-scoped assignee list changed out from under the current
-                      // selection — clear it rather than leave a stale cross-department pick.
-                      if (!getEmployeesByDepartment(users, nextTeam).some((u) => u.id === newAssignedTo)) {
-                        setNewAssignedTo('');
-                      }
-                    }}
+                    onChange={(e) => setNewTeam(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
                     {OPERATIONAL_TEAMS.map((t) => (
@@ -1684,10 +1706,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <option value="" className="bg-stone-900 text-amber-400">
                       -- Unassigned --
                     </option>
-                    {getEmployeesByDepartment(users, newTeam)
-                      .filter(isOperationalAssignee)
+                    {newTeamAssignees
                       .map((u) => {
-                        const capacityData = getUserCapacityData(u, clients, tasks);
+                        const capacityData = getUserCapacityData({ ...u, auth_id: null }, clients, tasks);
                         return (
                           <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                             {u.name} ({u.team || u.role}) {getCapacityIndicator(capacityData)}
@@ -1864,13 +1885,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </label>
                   <select
                     value={editTeam}
-                    onChange={(e) => {
-                      const nextTeam = e.target.value;
-                      setEditTeam(nextTeam);
-                      if (!getEmployeesByDepartment(users, nextTeam).some((u) => u.id === editAssignedTo)) {
-                        setEditAssignedTo('');
-                      }
-                    }}
+                    onChange={(e) => setEditTeam(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
                     {OPERATIONAL_TEAMS.map((t) => (
@@ -1894,10 +1909,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <option value="" className="bg-stone-900 text-amber-400">
                       -- Unassigned --
                     </option>
-                    {getEmployeesByDepartment(users, editTeam)
-                      .filter(isOperationalAssignee)
+                    {editTeamAssignees
                       .map((u) => {
-                        const capacityData = getUserCapacityData(u, clients, tasks);
+                        const capacityData = getUserCapacityData({ ...u, auth_id: null }, clients, tasks);
                         return (
                           <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                             {u.name} ({u.team || u.role}) {getCapacityIndicator(capacityData)}

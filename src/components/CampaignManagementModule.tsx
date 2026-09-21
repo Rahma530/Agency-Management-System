@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Target,
   TrendingUp,
@@ -49,7 +49,8 @@ import {
   BriefFieldSchemaRow,
 } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
-import { getEmployeesByDepartment } from '../lib/departmentStaffing';
+import { fetchAssignableEmployees } from '../lib/departmentStaffing';
+import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getRoleInfo } from '../data/roles';
@@ -276,6 +277,27 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [selectedOwnerId, setSelectedOwnerId] = useState<string>('all');
+  // Fetched via assignable_employees() RPC rather than filtering the local `users` prop — that
+  // array is scoped by users_select_rls to the CURRENT viewer's own visibility, which for most
+  // roles doesn't extend into every other department. See lib/departmentStaffing.ts. Only used
+  // for a specific team (not 'all' — that branch still uses the local list, since it's a browse
+  // filter, not an assignment, and this RPC only accepts one department at a time).
+  const [selectedTeamOwners, setSelectedTeamOwners] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedTeam === 'all') {
+      setSelectedTeamOwners([]);
+      return;
+    }
+    fetchAssignableEmployees(selectedTeam).then((rows) => {
+      if (cancelled) return;
+      setSelectedTeamOwners(rows);
+      setSelectedOwnerId((current) => (current !== 'all' && !rows.some((u) => u.id === current) ? 'all' : current));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTeam]);
   const [selectedDateRange, setSelectedDateRange] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -309,6 +331,28 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     cpc: '',
     cpa: '',
   });
+
+  // Same as selectedTeamOwners above, but for the Create/Edit Campaign form's Responsible
+  // Employee dropdown — re-fetched whenever formData.team changes AND whenever the modal opens
+  // (isCreateModalOpen included below so reopening with the same default team, e.g. Media Buying
+  // twice in a row, still re-validates ownerId against a fresh fetch rather than reusing a stale
+  // cached list from the previous time the modal was open), and corrects a now-invalid ownerId
+  // once the real roster for that team is in.
+  const [formTeamOwners, setFormTeamOwners] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    if (!isCreateModalOpen) return;
+    let cancelled = false;
+    fetchAssignableEmployees(formData.team).then((rows) => {
+      if (cancelled) return;
+      setFormTeamOwners(rows);
+      setFormData((prev) =>
+        prev.ownerId && !rows.some((u) => u.id === prev.ownerId) ? { ...prev, ownerId: rows[0]?.id || '' } : prev
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.team, isCreateModalOpen]);
 
   // -------------------------------------------------------------
   // 1. RLS ACCESS & VISIBILITY ENFORCEMENT
@@ -531,8 +575,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   // Handle open create modal
   const handleOpenCreateModal = () => {
     setActionError(null);
-    const defaultTeam = 'Media Buying';
-    const defaultTeamOwners = getEmployeesByDepartment(users, defaultTeam);
+    // ownerId defaults to currentUser.id here without checking department membership — the
+    // formTeamOwners effect above re-fetches the real roster the moment `team` is set below
+    // (this counts as a change) and corrects ownerId then if currentUser isn't actually on it.
     setFormData({
       clientId: accessibleClients[0]?.id || '',
       name: '',
@@ -543,11 +588,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       spend: 0,
       startDate: new Date().toISOString().split('T')[0],
       endDate: '',
-      // currentUser may not belong to the default team (e.g. an executive) — default to a real
-      // member of that department rather than a selection the Responsible Employee dropdown
-      // (now department-scoped) wouldn't actually show as selected.
-      ownerId: defaultTeamOwners.some((u) => u.id === currentUser.id) ? currentUser.id : defaultTeamOwners[0]?.id || currentUser.id,
-      team: defaultTeam,
+      ownerId: currentUser.id,
+      team: 'Media Buying',
       externalId: '',
       impressions: '',
       clicks: '',
@@ -569,9 +611,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     }
     setActionError(null);
     setCampaignToEdit(campaign);
-    const campaignTeam = getCampaignTeam(campaign);
-    const campaignTeamOwners = getEmployeesByDepartment(users, campaignTeam);
-    const existingOwnerId = getCampaignOwnerId(campaign) || currentUser.id;
+    // ownerId defaults to the stored owner without checking department membership here — same
+    // reasoning as handleOpenCreateModal above: the formTeamOwners effect re-fetches and
+    // corrects it once the real roster for this campaign's team is in, in case the stored owner
+    // was reassigned/deactivated since.
     setFormData({
       clientId: campaign.client_id,
       name: getCampaignName(campaign),
@@ -582,10 +625,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       spend: campaign.spend || 0,
       startDate: getCampaignStartDate(campaign),
       endDate: getCampaignEndDate(campaign) || '',
-      // Fall back to a real member of this campaign's team if the stored owner no longer belongs
-      // to it (reassigned/deactivated since) — same reasoning as handleOpenCreateModal above.
-      ownerId: campaignTeamOwners.some((u) => u.id === existingOwnerId) ? existingOwnerId : campaignTeamOwners[0]?.id || existingOwnerId,
-      team: campaignTeam,
+      ownerId: getCampaignOwnerId(campaign) || currentUser.id,
+      team: getCampaignTeam(campaign),
       externalId: campaign.campaign_id_external || '',
       impressions: campaign.results?.impressions !== undefined ? String(campaign.results.impressions) : '',
       clicks: campaign.results?.clicks !== undefined ? String(campaign.results.clicks) : '',
@@ -1138,16 +1179,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
             </label>
             <select
               value={selectedTeam}
-              onChange={(e) => {
-                const nextTeam = e.target.value;
-                setSelectedTeam(nextTeam);
-                // "All Teams" always keeps every owner selectable; otherwise the owner filter is
-                // now department-scoped, so drop a selection that's no longer in that department.
-                const nextOwners = nextTeam === 'all' ? users.filter(isActiveEmployee) : getEmployeesByDepartment(users, nextTeam);
-                if (selectedOwnerId !== 'all' && !nextOwners.some((u) => u.id === selectedOwnerId)) {
-                  setSelectedOwnerId('all');
-                }
-              }}
+              onChange={(e) => setSelectedTeam(e.target.value)}
               className="w-full px-2.5 py-1.5 rounded-xl text-xs outline-none cursor-pointer"
               style={{
                 background: 'rgba(255, 255, 255, 0.05)',
@@ -1189,7 +1221,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               <option value="all" className="bg-stone-900 text-white">
                 All Owners
               </option>
-              {(selectedTeam === 'all' ? users.filter(isActiveEmployee) : getEmployeesByDepartment(users, selectedTeam))
+              {(selectedTeam === 'all' ? users.filter(isActiveEmployee) : selectedTeamOwners)
                 .map((u) => (
                   <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                     {u.name} ({u.team || u.role})
@@ -1677,7 +1709,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                       border: '1px solid var(--border-medium)',
                     }}
                   >
-                    {getEmployeesByDepartment(users, formData.team).map((u) => (
+                    {formTeamOwners.map((u) => (
                       <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                         {u.name} ({u.team || u.role})
                       </option>
@@ -1689,19 +1721,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                   <label className="text-xs font-bold text-stone-300">Responsible Team:</label>
                   <select
                     value={formData.team}
-                    onChange={(e) => {
-                      const nextTeam = e.target.value;
-                      const nextOwners = getEmployeesByDepartment(users, nextTeam);
-                      setFormData({
-                        ...formData,
-                        team: nextTeam,
-                        // Department changed out from under the current owner — never leave a
-                        // stale cross-department selection in place.
-                        ownerId: nextOwners.some((u) => u.id === formData.ownerId)
-                          ? formData.ownerId
-                          : nextOwners[0]?.id || '',
-                      });
-                    }}
+                    onChange={(e) => setFormData({ ...formData, team: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl text-xs outline-none cursor-pointer"
                     style={{
                       background: 'rgba(255, 255, 255, 0.05)',
