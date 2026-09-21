@@ -127,7 +127,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('am_agent');
   const [team, setTeam] = useState(getRoleInfo('am_agent').team);
-  const [teamTouched, setTeamTouched] = useState(false);
   const [managerId, setManagerId] = useState('');
   const [capacityLimit, setCapacityLimit] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -175,13 +174,19 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     setEmail('');
     setCapacityLimit('');
     setManagerId('');
-    setTeamTouched(false);
     setTeam(getRoleInfo(role).team);
   };
 
+  // Team always follows Role — the admin can still override Team afterward via its own
+  // dropdown for this same Role selection, but picking a different Role always resets Team to
+  // that role's canonical value. (A previous "only auto-fill if untouched" version tracked a
+  // separate teamTouched flag, but that flag never reset except on a successful submit, so a
+  // manual Team override left over from an abandoned or failed attempt would silently suppress
+  // auto-fill for every later Role pick in the same session — this always-follow version has no
+  // such stale flag to get stuck.)
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
-    if (!teamTouched) setTeam(getRoleInfo(newRole).team);
+    setTeam(getRoleInfo(newRole).team);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -567,10 +572,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
               <label className={labelClass}>Team</label>
               <select
                 value={team}
-                onChange={(e) => {
-                  setTeam(e.target.value);
-                  setTeamTouched(true);
-                }}
+                onChange={(e) => setTeam(e.target.value)}
                 disabled={isSubmitting}
                 className={`${inputClass} cursor-pointer`}
               >
