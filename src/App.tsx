@@ -4278,6 +4278,8 @@ export default function App() {
                   onCreatePortalLogin={handleCreatePortalLogin}
                   platformConnections={platformConnections}
                   onSetPlatformConnectionStatus={handleSetPlatformConnectionStatus}
+                  onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                  onUpdateClientAccess={handleUpdateClientAccess}
                 />
               </div>
             )}
@@ -4375,6 +4377,8 @@ export default function App() {
                   briefFieldSchemas={briefFieldSchemas}
                   briefFieldSchemaRows={briefFieldSchemaRows}
                   onDeleteClient={handleDeleteClient}
+                  onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                  onUpdateClientAccess={handleUpdateClientAccess}
                 />
               </div>
             )}
