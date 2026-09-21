@@ -2,8 +2,7 @@ import { ClientRecord, ClientStatus } from '../types/database';
 
 // Module 13: single source of truth for client-status display and status-derived business
 // rules, replacing what used to be two independently-maintained copies of the same label/color
-// map (ClientDashboard.tsx's CLIENT_STATUS_META, SalesPortalView.tsx's STATUS_BADGE_META) —
-// same drift risk performanceScore.ts's STATUS_META was built to avoid for employee status.
+// map (ClientDashboard.tsx's CLIENT_STATUS_META, SalesPortalView.tsx's STATUS_BADGE_META).
 export const CLIENT_STATUS_META: Record<
   ClientStatus,
   { label: string; bg: string; color: string; border: string }
