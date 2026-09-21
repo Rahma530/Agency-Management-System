@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import {
@@ -19,6 +19,16 @@ import {
 import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/database';
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
 import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients } from '../lib/permissions';
+import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
+
+// The Team dropdown must always include whatever team a role auto-fills (handleRoleChange below),
+// even for roles outside the 7 operational departments (Executive, Technical, Sales, AI
+// Engineering, Marketing) — otherwise picking one of those roles would silently produce a Team
+// value with no matching, visibly-selected option in a closed dropdown.
+const teamOptionsFor = (team: string): string[] =>
+  !team || OPERATIONAL_TEAMS.includes(team as (typeof OPERATIONAL_TEAMS)[number])
+    ? [...OPERATIONAL_TEAMS]
+    : [...OPERATIONAL_TEAMS, team];
 
 export interface NewEmployeeInput {
   name: string;
@@ -139,10 +149,24 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [deactivatingId, setDeactivatingId] = useState<string | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
 
+  // Executive/head_of_technical are always eligible managers (org-wide leadership); a team lead
+  // is only eligible for a new hire going into their own department — not every team lead
+  // regardless of which team was picked.
   const managerCandidates = useMemo(
-    () => users.filter((u) => u.role.includes('team_lead') || u.role === 'executive' || u.role === 'head_of_technical'),
-    [users]
+    () =>
+      users.filter(
+        (u) => u.role === 'executive' || u.role === 'head_of_technical' || (u.role.includes('team_lead') && u.team === team)
+      ),
+    [users, team]
   );
+
+  // Team changed out from under the current Manager pick — never leave a stale
+  // cross-department selection in place.
+  useEffect(() => {
+    if (managerId && !managerCandidates.some((m) => m.id === managerId)) {
+      setManagerId('');
+    }
+  }, [managerId, managerCandidates]);
 
   const existingEmailsLower = useMemo(() => new Set(users.map((u) => (u.email || '').toLowerCase())), [users]);
 
@@ -541,15 +565,21 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
             <div>
               <label className={labelClass}>Team</label>
-              <input
+              <select
                 value={team}
                 onChange={(e) => {
                   setTeam(e.target.value);
                   setTeamTouched(true);
                 }}
                 disabled={isSubmitting}
-                className={inputClass}
-              />
+                className={`${inputClass} cursor-pointer`}
+              >
+                {teamOptionsFor(team).map((t) => (
+                  <option key={t} value={t} className="bg-stone-900">
+                    {t}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -753,13 +783,17 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                             <option key={r} value={r} className="bg-stone-900">{getRoleInfo(r).englishTitle}</option>
                           ))}
                         </select>
-                        <input
-                          type="text"
-                          value={editDraft.team || ''}
+                        <select
+                          value={editDraft.team ?? u.team ?? ''}
                           onChange={(e) => setEditDraft((d) => ({ ...d, team: e.target.value }))}
-                          className={inputClass}
-                          placeholder="Team"
-                        />
+                          className={`${inputClass} cursor-pointer`}
+                        >
+                          {teamOptionsFor(editDraft.team ?? u.team ?? '').map((t) => (
+                            <option key={t} value={t} className="bg-stone-900">
+                              {t}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <input
                         type="number"

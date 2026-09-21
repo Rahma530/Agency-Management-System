@@ -53,6 +53,7 @@ import {
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
+import { OPERATIONAL_TEAMS, getEmployeesByDepartment } from '../lib/departmentStaffing';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
@@ -1654,16 +1655,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </label>
                   <select
                     value={newTeam}
-                    onChange={(e) => setNewTeam(e.target.value)}
+                    onChange={(e) => {
+                      const nextTeam = e.target.value;
+                      setNewTeam(nextTeam);
+                      // Department-scoped assignee list changed out from under the current
+                      // selection — clear it rather than leave a stale cross-department pick.
+                      if (!getEmployeesByDepartment(users, nextTeam).some((u) => u.id === newAssignedTo)) {
+                        setNewAssignedTo('');
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
-                    <option value="SEO" className="bg-stone-900 text-white">SEO</option>
-                    <option value="Social Media" className="bg-stone-900 text-white">Social Media</option>
-                    <option value="Media Buying" className="bg-stone-900 text-white">Media Buying</option>
-                    <option value="Creative & Design" className="bg-stone-900 text-white">Creative & Design</option>
-                    <option value="Video Production" className="bg-stone-900 text-white">Video Production</option>
-                    <option value="Programming" className="bg-stone-900 text-white">Programming</option>
-                    <option value="Account Management" className="bg-stone-900 text-white">Account Management</option>
+                    {OPERATIONAL_TEAMS.map((t) => (
+                      <option key={t} value={t} className="bg-stone-900 text-white">{t}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -1679,7 +1684,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <option value="" className="bg-stone-900 text-amber-400">
                       -- Unassigned --
                     </option>
-                    {users
+                    {getEmployeesByDepartment(users, newTeam)
                       .filter(isOperationalAssignee)
                       .map((u) => {
                         const capacityData = getUserCapacityData(u, clients, tasks);
@@ -1859,16 +1864,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </label>
                   <select
                     value={editTeam}
-                    onChange={(e) => setEditTeam(e.target.value)}
+                    onChange={(e) => {
+                      const nextTeam = e.target.value;
+                      setEditTeam(nextTeam);
+                      if (!getEmployeesByDepartment(users, nextTeam).some((u) => u.id === editAssignedTo)) {
+                        setEditAssignedTo('');
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
-                    <option value="SEO" className="bg-stone-900 text-white">SEO</option>
-                    <option value="Social Media" className="bg-stone-900 text-white">Social Media</option>
-                    <option value="Media Buying" className="bg-stone-900 text-white">Media Buying</option>
-                    <option value="Creative & Design" className="bg-stone-900 text-white">Creative & Design</option>
-                    <option value="Video Production" className="bg-stone-900 text-white">Video Production</option>
-                    <option value="Programming" className="bg-stone-900 text-white">Programming</option>
-                    <option value="Account Management" className="bg-stone-900 text-white">Account Management</option>
+                    {OPERATIONAL_TEAMS.map((t) => (
+                      <option key={t} value={t} className="bg-stone-900 text-white">{t}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1887,7 +1894,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <option value="" className="bg-stone-900 text-amber-400">
                       -- Unassigned --
                     </option>
-                    {users
+                    {getEmployeesByDepartment(users, editTeam)
                       .filter(isOperationalAssignee)
                       .map((u) => {
                         const capacityData = getUserCapacityData(u, clients, tasks);
