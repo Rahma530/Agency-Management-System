@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Target,
   TrendingUp,
@@ -49,6 +49,8 @@ import {
   BriefFieldSchemaRow,
 } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
+import { fetchAssignableEmployees } from '../lib/departmentStaffing';
+import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getRoleInfo } from '../data/roles';
@@ -94,6 +96,25 @@ interface CampaignManagementModuleProps {
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onUpdatePaymentTracking?: (
+    clientId: string,
+    updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
+  ) => Promise<void>;
+  onUpdateClientAccess?: (
+    clientId: string,
+    updates: {
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
+      payment_card_details?: string | null;
+    }
+  ) => Promise<void>;
 }
 
 // Helpers to extract campaign attributes safely whether stored at top-level or in results JSON
@@ -245,6 +266,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   briefFieldSchemas,
   briefFieldSchemaRows,
   onDeleteClient,
+  onUpdatePaymentTracking,
+  onUpdateClientAccess,
 }) => {
   const roleInfo = getRoleInfo(currentUser.role);
 
@@ -254,6 +277,27 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [selectedOwnerId, setSelectedOwnerId] = useState<string>('all');
+  // Fetched via assignable_employees() RPC rather than filtering the local `users` prop — that
+  // array is scoped by users_select_rls to the CURRENT viewer's own visibility, which for most
+  // roles doesn't extend into every other department. See lib/departmentStaffing.ts. Only used
+  // for a specific team (not 'all' — that branch still uses the local list, since it's a browse
+  // filter, not an assignment, and this RPC only accepts one department at a time).
+  const [selectedTeamOwners, setSelectedTeamOwners] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedTeam === 'all') {
+      setSelectedTeamOwners([]);
+      return;
+    }
+    fetchAssignableEmployees(selectedTeam).then((rows) => {
+      if (cancelled) return;
+      setSelectedTeamOwners(rows);
+      setSelectedOwnerId((current) => (current !== 'all' && !rows.some((u) => u.id === current) ? 'all' : current));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTeam]);
   const [selectedDateRange, setSelectedDateRange] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -287,6 +331,28 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     cpc: '',
     cpa: '',
   });
+
+  // Same as selectedTeamOwners above, but for the Create/Edit Campaign form's Responsible
+  // Employee dropdown — re-fetched whenever formData.team changes AND whenever the modal opens
+  // (isCreateModalOpen included below so reopening with the same default team, e.g. Media Buying
+  // twice in a row, still re-validates ownerId against a fresh fetch rather than reusing a stale
+  // cached list from the previous time the modal was open), and corrects a now-invalid ownerId
+  // once the real roster for that team is in.
+  const [formTeamOwners, setFormTeamOwners] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    if (!isCreateModalOpen) return;
+    let cancelled = false;
+    fetchAssignableEmployees(formData.team).then((rows) => {
+      if (cancelled) return;
+      setFormTeamOwners(rows);
+      setFormData((prev) =>
+        prev.ownerId && !rows.some((u) => u.id === prev.ownerId) ? { ...prev, ownerId: rows[0]?.id || '' } : prev
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.team, isCreateModalOpen]);
 
   // -------------------------------------------------------------
   // 1. RLS ACCESS & VISIBILITY ENFORCEMENT
@@ -509,6 +575,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   // Handle open create modal
   const handleOpenCreateModal = () => {
     setActionError(null);
+    // ownerId defaults to currentUser.id here without checking department membership — the
+    // formTeamOwners effect above re-fetches the real roster the moment `team` is set below
+    // (this counts as a change) and corrects ownerId then if currentUser isn't actually on it.
     setFormData({
       clientId: accessibleClients[0]?.id || '',
       name: '',
@@ -542,6 +611,10 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     }
     setActionError(null);
     setCampaignToEdit(campaign);
+    // ownerId defaults to the stored owner without checking department membership here — same
+    // reasoning as handleOpenCreateModal above: the formTeamOwners effect re-fetches and
+    // corrects it once the real roster for this campaign's team is in, in case the stored owner
+    // was reassigned/deactivated since.
     setFormData({
       clientId: campaign.client_id,
       name: getCampaignName(campaign),
@@ -1148,8 +1221,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               <option value="all" className="bg-stone-900 text-white">
                 All Owners
               </option>
-              {users
-                .filter((u) => (u.team === 'Media Buying' || u.role.includes('lead') || u.id === currentUser.id) && isActiveEmployee(u))
+              {(selectedTeam === 'all' ? users.filter(isActiveEmployee) : selectedTeamOwners)
                 .map((u) => (
                   <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                     {u.name} ({u.team || u.role})
@@ -1637,13 +1709,11 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
                       border: '1px solid var(--border-medium)',
                     }}
                   >
-                    {users
-                      .filter((u) => (u.team === 'Media Buying' || u.role.includes('lead') || u.id === currentUser.id) && isActiveEmployee(u))
-                      .map((u) => (
-                        <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                          {u.name} ({u.team || u.role})
-                        </option>
-                      ))}
+                    {formTeamOwners.map((u) => (
+                      <option key={u.id} value={u.id} className="bg-stone-900 text-white">
+                        {u.name} ({u.team || u.role})
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -1805,6 +1875,8 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onCreatePortalLogin={onCreatePortalLogin}
           platformConnections={platformConnections}
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+          onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientAccess={onUpdateClientAccess}
         />
       )}
     </div>

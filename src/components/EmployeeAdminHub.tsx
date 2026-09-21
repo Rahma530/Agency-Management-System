@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import {
@@ -19,6 +19,16 @@ import {
 import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/database';
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
 import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients } from '../lib/permissions';
+import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
+
+// The Team dropdown must always include whatever team a role auto-fills (handleRoleChange below),
+// even for roles outside the 7 operational departments (Executive, Technical, Sales, AI
+// Engineering, Marketing) — otherwise picking one of those roles would silently produce a Team
+// value with no matching, visibly-selected option in a closed dropdown.
+const teamOptionsFor = (team: string): string[] =>
+  !team || OPERATIONAL_TEAMS.includes(team as (typeof OPERATIONAL_TEAMS)[number])
+    ? [...OPERATIONAL_TEAMS]
+    : [...OPERATIONAL_TEAMS, team];
 
 export interface NewEmployeeInput {
   name: string;
@@ -117,7 +127,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('am_agent');
   const [team, setTeam] = useState(getRoleInfo('am_agent').team);
-  const [teamTouched, setTeamTouched] = useState(false);
   const [managerId, setManagerId] = useState('');
   const [capacityLimit, setCapacityLimit] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -139,10 +148,24 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [deactivatingId, setDeactivatingId] = useState<string | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
 
+  // Executive/head_of_technical are always eligible managers (org-wide leadership); a team lead
+  // is only eligible for a new hire going into their own department — not every team lead
+  // regardless of which team was picked.
   const managerCandidates = useMemo(
-    () => users.filter((u) => u.role.includes('team_lead') || u.role === 'executive' || u.role === 'head_of_technical'),
-    [users]
+    () =>
+      users.filter(
+        (u) => u.role === 'executive' || u.role === 'head_of_technical' || (u.role.includes('team_lead') && u.team === team)
+      ),
+    [users, team]
   );
+
+  // Team changed out from under the current Manager pick — never leave a stale
+  // cross-department selection in place.
+  useEffect(() => {
+    if (managerId && !managerCandidates.some((m) => m.id === managerId)) {
+      setManagerId('');
+    }
+  }, [managerId, managerCandidates]);
 
   const existingEmailsLower = useMemo(() => new Set(users.map((u) => (u.email || '').toLowerCase())), [users]);
 
@@ -151,13 +174,19 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     setEmail('');
     setCapacityLimit('');
     setManagerId('');
-    setTeamTouched(false);
     setTeam(getRoleInfo(role).team);
   };
 
+  // Team always follows Role — the admin can still override Team afterward via its own
+  // dropdown for this same Role selection, but picking a different Role always resets Team to
+  // that role's canonical value. (A previous "only auto-fill if untouched" version tracked a
+  // separate teamTouched flag, but that flag never reset except on a successful submit, so a
+  // manual Team override left over from an abandoned or failed attempt would silently suppress
+  // auto-fill for every later Role pick in the same session — this always-follow version has no
+  // such stale flag to get stuck.)
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
-    if (!teamTouched) setTeam(getRoleInfo(newRole).team);
+    setTeam(getRoleInfo(newRole).team);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -541,15 +570,18 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
             <div>
               <label className={labelClass}>Team</label>
-              <input
+              <select
                 value={team}
-                onChange={(e) => {
-                  setTeam(e.target.value);
-                  setTeamTouched(true);
-                }}
+                onChange={(e) => setTeam(e.target.value)}
                 disabled={isSubmitting}
-                className={inputClass}
-              />
+                className={`${inputClass} cursor-pointer`}
+              >
+                {teamOptionsFor(team).map((t) => (
+                  <option key={t} value={t} className="bg-stone-900">
+                    {t}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -753,13 +785,17 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                             <option key={r} value={r} className="bg-stone-900">{getRoleInfo(r).englishTitle}</option>
                           ))}
                         </select>
-                        <input
-                          type="text"
-                          value={editDraft.team || ''}
+                        <select
+                          value={editDraft.team ?? u.team ?? ''}
                           onChange={(e) => setEditDraft((d) => ({ ...d, team: e.target.value }))}
-                          className={inputClass}
-                          placeholder="Team"
-                        />
+                          className={`${inputClass} cursor-pointer`}
+                        >
+                          {teamOptionsFor(editDraft.team ?? u.team ?? '').map((t) => (
+                            <option key={t} value={t} className="bg-stone-900">
+                              {t}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <input
                         type="number"

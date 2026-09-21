@@ -112,6 +112,25 @@ interface ServiceBriefsRoutingViewProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onUpdatePaymentTracking?: (
+    clientId: string,
+    updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
+  ) => Promise<void>;
+  onUpdateClientAccess?: (
+    clientId: string,
+    updates: {
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
+      payment_card_details?: string | null;
+    }
+  ) => Promise<void>;
 }
 
 // AM roles (am_team_lead, am_agent) don't work a single service — they need visibility into
@@ -166,6 +185,25 @@ const AMServiceBriefsPanel: React.FC<{
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onUpdatePaymentTracking?: (
+    clientId: string,
+    updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
+  ) => Promise<void>;
+  onUpdateClientAccess?: (
+    clientId: string,
+    updates: {
+      general_email?: string | null;
+      general_email_password?: string | null;
+      store_platform_username?: string | null;
+      store_platform_password?: string | null;
+      social_media_username?: string | null;
+      social_media_password?: string | null;
+      ad_account_username?: string | null;
+      ad_account_password?: string | null;
+      ad_account_setup_type?: 'existing' | 'new' | null;
+      payment_card_details?: string | null;
+    }
+  ) => Promise<void>;
 }> = ({
   currentUser,
   clients,
@@ -195,6 +233,8 @@ const AMServiceBriefsPanel: React.FC<{
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onUpdatePaymentTracking,
+  onUpdateClientAccess,
 }) => {
   const isTeamLead = currentUser.role === 'am_team_lead';
 
@@ -323,6 +363,8 @@ const AMServiceBriefsPanel: React.FC<{
           onCreatePortalLogin={onCreatePortalLogin}
           platformConnections={platformConnections}
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+          onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientAccess={onUpdateClientAccess}
         />
       )}
     </div>
@@ -362,6 +404,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onUpdatePaymentTracking,
+  onUpdateClientAccess,
 }) => {
   // AM roles get a dedicated cross-service overview instead of the single-service specialist
   // workflow below (they manage the overall client relationship, not one department's queue).
@@ -396,6 +440,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
         onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
         onDeleteClient={onDeleteClient}
+        onUpdatePaymentTracking={onUpdatePaymentTracking}
+        onUpdateClientAccess={onUpdateClientAccess}
       />
     );
   }

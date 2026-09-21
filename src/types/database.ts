@@ -49,6 +49,13 @@ export interface UserRecord {
   id: string;
   name: string;
   email?: string;
+  // KNOWN SECURITY DEBT, out of scope for the assignable_employees()/department-staffing work
+  // that flagged it (see that migration's comment for context): this is a REAL plaintext column
+  // on public.users, not just a demo-data artifact — real Supabase Auth (auth_id) is the actual
+  // authentication mechanism, and this field's continued existence/plaintext storage needs its
+  // own dedicated, carefully-scoped fix (proper hashing, likely touching the auth flow broadly)
+  // in a future session. Do not widen any RLS policy that grants row-level access to `users`
+  // without accounting for this column being included via the app's universal select('*').
   password?: string;
   role: UserRole;
   team?: string | null;
