@@ -7,7 +7,6 @@ import {
   SocialInsightRecord,
   AssignmentRecord,
   BriefRecord,
-  KpiScoreRecord,
 } from '../types/database';
 import { AppModuleId } from '../data/roles';
 import { ExecutiveDashboard } from './dashboards/ExecutiveDashboard';
@@ -29,7 +28,6 @@ interface DashboardHubProps {
   socialInsights: SocialInsightRecord[];
   assignments: AssignmentRecord[];
   briefs: BriefRecord[];
-  kpiScores: KpiScoreRecord[];
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
 }
 
@@ -42,7 +40,6 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
   socialInsights,
   assignments,
   briefs,
-  kpiScores,
   onNavigateToModule,
 }) => {
   if (currentUser.role === 'executive') {
@@ -83,7 +80,6 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         assignments={assignments}
         tasks={tasks}
         briefs={briefs}
-        kpiScores={kpiScores}
         onNavigateToModule={onNavigateToModule}
       />
     );

@@ -35,7 +35,6 @@ import {
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
 } from './lib/supabase';
-import { resolvePeriodRange, generateKpiScoreMetrics, suggestClassification } from './lib/performanceScore';
 import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee } from './lib/permissions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices } from './lib/clientServices';
@@ -68,8 +67,6 @@ import {
   CapacityLogRecord,
   DailyLogRecord,
   ExtraNoteRecord,
-  KpiScoreRecord,
-  PerformancePeriodType,
   CampaignRecord,
   AssignmentRecord,
   ServiceType,
@@ -200,7 +197,6 @@ export default function App() {
   const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>(INITIAL_CAPACITY_LOGS);
   const [dailyLogs, setDailyLogs] = useState<DailyLogRecord[]>(INITIAL_DAILY_LOGS);
   const [extraNotes, setExtraNotes] = useState<ExtraNoteRecord[]>(INITIAL_EXTRA_NOTES);
-  const [kpiScores, setKpiScores] = useState<KpiScoreRecord[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>(INITIAL_CAMPAIGNS);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>(INITIAL_ASSIGNMENTS);
   const [socialInsights, setSocialInsights] = useState<SocialInsightRecord[]>([]);
@@ -929,12 +925,6 @@ export default function App() {
         const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
         if (!noteErr && noteData && noteData.length > 0) {
           setExtraNotes(noteData as ExtraNoteRecord[]);
-        }
-
-        // Fetch kpi_scores
-        const { data: kpiData, error: kpiErr } = await supabase.from('kpi_scores').select('*');
-        if (!kpiErr && kpiData && kpiData.length > 0) {
-          setKpiScores(kpiData as KpiScoreRecord[]);
         }
 
         // Fetch campaigns
@@ -2792,61 +2782,6 @@ export default function App() {
     }
   };
 
-  // 8b. Generate (or regenerate) an employee's KPI score for a period —
-  // upserts by (user_id, period), so re-running the same period overwrites
-  // rather than accumulating duplicate rows.
-  const handleGenerateKpiScore = async (
-    userId: string,
-    periodType: PerformancePeriodType,
-    referenceDate: Date
-  ) => {
-    const targetUser = users.find((u) => u.id === userId);
-    if (!targetUser) return;
-
-    const range = resolvePeriodRange(periodType, referenceDate);
-    const { metrics, overallScore } = generateKpiScoreMetrics(targetUser, range, tasks, clients, extraNotes);
-
-    const existing = kpiScores.find((k) => k.user_id === userId && k.period === range.period);
-    const scorePayload: KpiScoreRecord = {
-      id: existing?.id || `kpi-${Date.now().toString().slice(-4)}`,
-      user_id: userId,
-      period: range.period,
-      metrics,
-      overall_score: overallScore,
-      reviewed_by: currentUser.id,
-      created_at: existing?.created_at || new Date().toISOString(),
-    };
-
-    // Classification suggestion (advisory only — see performanceScore.ts): judged against this
-    // period and whatever came before it, never periods that hadn't happened yet from this
-    // period's point of view, so backfilling an earlier period can't retroactively borrow trend
-    // evidence from a later one.
-    const classificationHistory = [...kpiScores.filter((k) => k.user_id === userId && k.period !== range.period), scorePayload]
-      .filter((k) => (k.metrics?.period_start || '') <= range.start)
-      .sort((a, b) => (a.metrics?.period_start || '').localeCompare(b.metrics?.period_start || ''));
-    scorePayload.suggested_status = suggestClassification(classificationHistory).suggestedStatus;
-
-    if (supabaseActive) {
-      try {
-        const { data, error } = await supabase
-          .from('kpi_scores')
-          .upsert([scorePayload], { onConflict: 'user_id,period' })
-          .select();
-        if (error) throw error;
-        const saved = (data?.[0] as KpiScoreRecord) || scorePayload;
-        setKpiScores((prev) => [...prev.filter((k) => k.id !== saved.id), saved]);
-      } catch (err) {
-        console.error('Supabase kpi_scores upsert error:', err);
-        showNotification('Unable to save the performance score.', 'info');
-        return;
-      }
-    } else {
-      setKpiScores((prev) => [...prev.filter((k) => k.id !== scorePayload.id), scorePayload]);
-    }
-
-    showNotification(`Performance score generated for ${targetUser.name} (${range.period}).`);
-  };
-
   // 8b. Generate a period-over-period comparison (Reporting Engine) — either a single client, or
   // an agent's pooled client set (that agent's own "all my clients" report, or a team lead
   // generating one for a specific direct report).
@@ -4148,7 +4083,6 @@ export default function App() {
                   socialInsights={socialInsights}
                   assignments={assignments}
                   briefs={briefs}
-                  kpiScores={kpiScores}
                   onNavigateToModule={handleNavigateToModule}
                 />
               </div>
@@ -4159,18 +4093,15 @@ export default function App() {
               <div className="space-y-6">
                 <MyWorkHub
                   currentUser={currentUser}
-                  users={users}
                   clients={clients}
                   assignments={assignments}
                   tasks={tasks}
                   dailyLogs={dailyLogs}
                   extraNotes={extraNotes}
-                  kpiScores={kpiScores}
                   capacityLogs={capacityLogs}
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onCreateDailyLog={handleCreateDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
-                  onGenerateKpiScore={handleGenerateKpiScore}
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
                 />
@@ -4296,8 +4227,6 @@ export default function App() {
                   onUpdateUserCapacity={handleUpdateUserCapacity}
                   onLogCapacity={handleLogCapacity}
                   onNavigateToModule={handleNavigateToModule}
-                  kpiScores={kpiScores}
-                  onGenerateKpiScore={handleGenerateKpiScore}
                   extraNotes={extraNotes}
                 />
               </div>

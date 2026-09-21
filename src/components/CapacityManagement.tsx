@@ -32,12 +32,10 @@ import {
   ClientRecord,
   TaskRecord,
   CapacityLogRecord,
-  KpiScoreRecord,
   ExtraNoteRecord,
-  PerformancePeriodType,
   UserRole,
 } from '../types/database';
-import { getRoleInfo, AppModuleId, TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
+import { getRoleInfo, AppModuleId } from '../data/roles';
 import { isActiveEmployee } from '../lib/permissions';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { ImportDataModal } from './ImportDataModal';
@@ -51,25 +49,11 @@ interface CapacityManagementProps {
   onUpdateUserCapacity: (userId: string, newLimit: number) => Promise<void>;
   onLogCapacity?: (agentId: string, date: string, count: number) => Promise<void>;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
-  kpiScores?: KpiScoreRecord[];
-  onGenerateKpiScore?: (userId: string, periodType: PerformancePeriodType, referenceDate: Date) => Promise<void>;
   extraNotes?: ExtraNoteRecord[];
 }
 
 export type CapacityStatus = 'all' | 'available' | 'near_capacity' | 'over_capacity';
 export type ViewMode = 'cards' | 'matrix' | 'logs';
-
-// Same relationship direct_report_visible() (RLS) grants: the employee's
-// actual direct team lead, or Head of Technical/Executive. Deliberately NOT
-// isTeamLeadRole(viewer) generically — a team lead who can see another team
-// lead's card (cross-department) or a shared graphic_designer/video_editor
-// card isn't that person's manager, and the RLS would reject the read/write
-// even if this button let them try.
-const canViewPerformance = (viewerRole: UserRole | undefined, employee: UserRecord): boolean => {
-  if (!viewerRole) return false;
-  if (viewerRole === 'executive' || viewerRole === 'head_of_technical') return true;
-  return !!TEAM_LEAD_TO_AGENT_ROLE[viewerRole]?.includes(employee.role);
-};
 
 // Reverse link (point 4): always points to the Tasks module, prefilled with
 // this employee's name — the one place their assigned work is visible
@@ -89,11 +73,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   onUpdateUserCapacity,
   onLogCapacity,
   onNavigateToModule,
-  kpiScores = [],
-  onGenerateKpiScore,
   extraNotes = [],
 }) => {
-  const [performanceEmployeeId, setPerformanceEmployeeId] = useState<string | null>(null);
   // View mode
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
 
@@ -1052,18 +1033,6 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                       );
                     })()}
 
-                    {/* Employee Performance page — same audience as
-                        direct_report_visible() (RLS): the employee's actual
-                        direct team lead, Head of Technical, or Executive. */}
-                    {canViewPerformance(currentUser?.role, item.user) && onGenerateKpiScore && (
-                      <button
-                        onClick={() => setPerformanceEmployeeId(item.user.id)}
-                        className="performance-action mt-1.5 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-emerald-200 bg-emerald-900/20 hover:bg-emerald-800/40 hover:text-white border border-emerald-700/30 transition-all"
-                      >
-                        <Gauge className="w-3.5 h-3.5" />
-                        <span>View Performance</span>
-                      </button>
-                    )}
                   </div>
                 );
               })}

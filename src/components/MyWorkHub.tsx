@@ -23,12 +23,10 @@ import {
   TaskRecord,
   DailyLogRecord,
   ExtraNoteRecord,
-  KpiScoreRecord,
   CapacityLogRecord,
   TaskStatus,
   UserRole,
   ServiceType,
-  PerformancePeriodType,
 } from '../types/database';
 import { getRoleInfo, AppModuleId } from '../data/roles';
 import { getTodayStr, isTaskOverdue, isTaskDueToday, getSortedEmployeeTasks } from '../lib/employeeWork';
@@ -40,13 +38,11 @@ import { EmployeePerformancePage } from './EmployeePerformancePage';
 
 interface MyWorkHubProps {
   currentUser: UserRecord;
-  users: UserRecord[];
   clients: ClientRecord[];
   assignments: AssignmentRecord[];
   tasks: TaskRecord[];
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
-  kpiScores: KpiScoreRecord[];
   capacityLogs: CapacityLogRecord[];
   onUpdateTaskStatus: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onCreateDailyLog: (logData: {
@@ -62,7 +58,6 @@ interface MyWorkHubProps {
     note_text: string;
     category: string;
   }) => Promise<void>;
-  onGenerateKpiScore: (userId: string, periodType: PerformancePeriodType, referenceDate: Date) => Promise<void>;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   onMarkTaskViewed?: (taskId: string) => Promise<void> | void;
 }
@@ -119,18 +114,15 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 
 export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   currentUser,
-  users,
   clients,
   assignments,
   tasks,
   dailyLogs,
   extraNotes,
-  kpiScores,
   capacityLogs,
   onUpdateTaskStatus,
   onCreateDailyLog,
   onCreateExtraNote,
-  onGenerateKpiScore,
   onNavigateToModule,
   onMarkTaskViewed,
 }) => {
@@ -820,15 +812,10 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       {isPerformanceOpen && (
         <EmployeePerformancePage
           employee={currentUser}
-          users={users}
           clients={clients}
           tasks={tasks}
           capacityLogs={capacityLogs}
-          kpiScores={kpiScores}
-          extraNotes={extraNotes}
-          onGenerateKpiScore={onGenerateKpiScore}
           onClose={() => setIsPerformanceOpen(false)}
-          canGenerate={false}
         />
       )}
     </div>

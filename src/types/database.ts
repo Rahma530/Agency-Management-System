@@ -555,14 +555,18 @@ export interface MeetingRecord {
 }
 
 // 15. kpi_scores
+// NOTE: the performance-scoring feature (computation engine, generation UI, and every score/
+// rating display) was removed from the app — see the commit that added this note. These types
+// and the underlying kpi_scores table are kept as-is, unused by any current UI or calculation,
+// solely to preserve historical rows already written; do not delete this table or these types
+// as part of unrelated cleanup.
 export type PerformancePeriodType = 'monthly' | 'quarterly';
 
 // Shape of KpiScoreRecord.metrics (stored as JSONB — untyped at the DB
 // layer, typed here for the app side). client_satisfaction and
-// task_execution_quality stay null until a real data source exists for
-// them (see src/lib/performanceScore.ts) — the overall score is computed
-// only from the three indicators that do have real data, with weights
-// renormalized across those three.
+// task_execution_quality stay null since no real data source for them was ever built — the
+// overall score (when this was still computed) was derived only from the three indicators that
+// do have real data, with weights renormalized across those three.
 export interface KpiScoreMetrics {
   period_type: PerformancePeriodType;
   period_start: string;

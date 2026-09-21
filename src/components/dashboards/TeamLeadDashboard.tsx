@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Building2, Users, Gauge, FileText, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Building2, Gauge, FileText, AlertTriangle, ExternalLink } from 'lucide-react';
 import {
   UserRecord,
   UserRole,
@@ -7,13 +7,11 @@ import {
   AssignmentRecord,
   TaskRecord,
   BriefRecord,
-  KpiScoreRecord,
   ServiceType,
 } from '../../types/database';
 import { AppModuleId } from '../../data/roles';
 import { resolveClientsForSubject } from '../../lib/reportingEngine';
 import { getUserCapacityData } from '../../lib/capacity';
-import { STATUS_META } from '../../lib/performanceScore';
 import { isActiveEmployee } from '../../lib/permissions';
 import { isPausedClient } from '../../lib/clientStatus';
 import { normalizeClientServices } from '../../lib/clientServices';
@@ -70,9 +68,8 @@ export const TeamLeadDashboard: React.FC<{
   assignments: AssignmentRecord[];
   tasks: TaskRecord[];
   briefs: BriefRecord[];
-  kpiScores: KpiScoreRecord[];
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
-}> = ({ currentUser, users, clients, assignments, tasks, briefs, kpiScores, onNavigateToModule }) => {
+}> = ({ currentUser, users, clients, assignments, tasks, briefs, onNavigateToModule }) => {
   const config = TEAM_LEAD_DEPT_CONFIG[currentUser.role];
 
   const deptClients = useMemo(
@@ -118,13 +115,6 @@ export const TeamLeadDashboard: React.FC<{
     () => (config ? users.filter((u) => config.agentRole.includes(u.role) && isActiveEmployee(u)) : []),
     [users, config]
   );
-
-  const latestScoreFor = (userId: string): KpiScoreRecord | null => {
-    const own = kpiScores
-      .filter((k) => k.user_id === userId)
-      .sort((a, b) => (a.metrics?.period_start || '').localeCompare(b.metrics?.period_start || ''));
-    return own[own.length - 1] || null;
-  };
 
   const avgCapacityUtilization = useMemo(() => {
     const rates = deptAgents.map((u) => getUserCapacityData(u, clients, tasks)).filter((d) => !d.isUntracked).map((d) => d.utilizationRate);
@@ -187,37 +177,6 @@ export const TeamLeadDashboard: React.FC<{
                 </span>
               </div>
             ))}
-          </div>
-        )}
-      </SectionCard>
-
-      <SectionCard
-        title="Employee Performance"
-        icon={Users}
-        onOpen={() => onNavigateToModule?.('capacity')}
-        openLabel="Open Capacity & Performance"
-      >
-        {deptAgents.length === 0 ? (
-          <p className="text-xs text-stone-500 py-3 text-center">No agents in this department yet.</p>
-        ) : (
-          <div className="space-y-1.5">
-            {deptAgents.map((u) => {
-              const score = latestScoreFor(u.id);
-              const meta = score?.suggested_status ? STATUS_META[score.suggested_status] : null;
-              return (
-                <div key={u.id} className="flex items-center justify-between p-2 rounded-lg bg-stone-900/60 border border-stone-800 text-xs">
-                  <span className="font-semibold text-white">{u.name}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-stone-300">{score ? `${score.overall_score}/100` : 'No score yet'}</span>
-                    {meta && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ color: meta.color, background: 'rgba(0,0,0,0.25)' }}>
-                        {meta.label}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
           </div>
         )}
       </SectionCard>

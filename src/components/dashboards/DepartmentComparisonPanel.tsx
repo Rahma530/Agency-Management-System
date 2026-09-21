@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, Gauge, Clock } from 'lucide-react';
+import { BarChart3, Gauge } from 'lucide-react';
 import {
   ClientRecord,
   CampaignRecord,
@@ -16,7 +16,6 @@ import {
   aggregateSeoMetrics,
   aggregateSocialMetrics,
 } from '../../lib/reportingEngine';
-import { computeOnTimeCompletionRate, PeriodRange } from '../../lib/performanceScore';
 import { getUserCapacityData } from '../../lib/capacity';
 import { isActiveEmployee } from '../../lib/permissions';
 
@@ -38,17 +37,15 @@ const avg = (values: number[]): number | null =>
 // Every metric a single department's client-facing service produces (spend/ROAS, delivery rate,
 // engagement) uses a different unit, so none of them are directly comparable to another
 // department's — that's what the "headline" card is for (context, not comparison). The actual
-// cross-department comparison uses two metrics normalized to 0-100 that mean the same thing
-// regardless of department: on-time task completion and capacity utilization, both already
-// computed per-employee elsewhere in the app (performanceScore.ts / capacity.ts) and just
-// averaged here across each department's own employees.
+// cross-department comparison uses capacity utilization, normalized to 0-100 and computed
+// per-employee elsewhere in the app (capacity.ts), then averaged here across each department's
+// own employees.
 interface DepartmentRow {
   service: ServiceType;
   label: string;
   accent: string;
   clientCount: number;
   headline: { label: string; value: string }[];
-  avgOnTimeRate: number | null;
   avgCapacityUtilization: number | null;
 }
 
@@ -66,13 +63,6 @@ export const DepartmentComparisonPanel: React.FC<{
   const departments = services ? DEPARTMENTS.filter((d) => services.includes(d.service)) : DEPARTMENTS;
 
   const rows: DepartmentRow[] = useMemo(() => {
-    const periodRange: PeriodRange = {
-      period: period.label,
-      periodType: granularity === 'quarterly' ? 'quarterly' : 'monthly',
-      start: period.range.start,
-      end: period.range.end,
-    };
-
     return departments.map(({ service, team, label, accent }) => {
       const deptClients = resolveDepartmentClients(service, clients);
       const clientIds = deptClients.map((c) => c.id);
@@ -100,9 +90,6 @@ export const DepartmentComparisonPanel: React.FC<{
       }
 
       const deptUsers = users.filter((u) => u.team === team && isActiveEmployee(u));
-      const onTimeRates = deptUsers
-        .map((u) => computeOnTimeCompletionRate(tasks, u.id, periodRange))
-        .filter((v): v is number => v !== null);
       const capacityRates = deptUsers
         .map((u) => getUserCapacityData(u, clients, tasks))
         .filter((d) => !d.isUntracked)
@@ -114,7 +101,6 @@ export const DepartmentComparisonPanel: React.FC<{
         accent,
         clientCount: deptClients.length,
         headline,
-        avgOnTimeRate: avg(onTimeRates),
         avgCapacityUtilization: avg(capacityRates),
       };
     });
@@ -163,14 +149,6 @@ export const DepartmentComparisonPanel: React.FC<{
             </div>
 
             <div className="pt-2 border-t border-stone-800 space-y-1.5">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-stone-400 flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> On-Time Rate
-                </span>
-                <span className="font-mono font-bold text-white">
-                  {row.avgOnTimeRate !== null ? `${row.avgOnTimeRate}%` : 'N/A'}
-                </span>
-              </div>
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-stone-400 flex items-center gap-1">
                   <Gauge className="w-3 h-3" /> Capacity Utilization

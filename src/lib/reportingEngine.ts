@@ -677,9 +677,9 @@ export function detectClientAnomalies(
 
 // ----------------------------------------------------------------------------
 // Task completion stats for one client over a period — the delivery half of a monthly report
-// draft (generatePeriodSummary above covers the analytics half). Deliberately client-scoped: the
-// one existing similar function, performanceScore.ts's computeOnTimeCompletionRate, is
-// employee-scoped (filters by assigned_to) and has no client-scoped equivalent today.
+// draft (generatePeriodSummary above covers the analytics half). Deliberately client-scoped,
+// with no employee-scoped equivalent — this is about a client's delivered work, not staff
+// performance.
 // ----------------------------------------------------------------------------
 export interface ClientTaskCompletionStats {
   totalTasks: number;
