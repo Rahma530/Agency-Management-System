@@ -1,4 +1,4 @@
-import { ServiceType, UserRecord, UserRole } from '../types/database';
+import { ClientRecord, ServiceType, UserRecord, UserRole } from '../types/database';
 
 const CLIENT_REGISTRATION_ROLES: UserRole[] = [
   'executive',
@@ -97,6 +97,26 @@ const CLIENT_ONBOARDING_ROLES: UserRole[] = [
 
 export const canAccessClientOnboarding = (role?: UserRole): boolean =>
   !!role && CLIENT_ONBOARDING_ROLES.includes(role);
+
+// Service Brief CONTENT (the actual filled-in answers on a specific client's brief — Target
+// Website URL, Target Keywords, CMS Platform, etc.), as distinct from canEditBriefFieldSchema
+// below (which governs the QUESTIONS themselves, not the answers). Brief content is captured
+// during the AM's discovery meeting and belongs to Account Management + leadership only:
+// executive/head_of_technical/am_team_lead unconditionally, am_agent scoped to their own assigned
+// client. Every department team lead/agent (SEO/Media Buying/Social Media) — previously able to
+// edit their own department's brief content — is view-only now; they keep full view access via
+// ClientDashboard's separate hasBriefViewAccess check, which this does not affect. Mirrors
+// briefs_update_rls/briefs_write_rls exactly — see those migrations for the DB-level twin of this
+// check.
+export const canEditServiceBrief = (
+  role: UserRole,
+  userId: string,
+  client: Pick<ClientRecord, 'am_agent_id'>
+): boolean => {
+  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead') return true;
+  if (role === 'am_agent') return client.am_agent_id === userId;
+  return false;
+};
 
 // Global brief field schema (brief_field_schemas) write access: executive/head_of_technical/
 // am_team_lead/am_agent unconditionally (including interface briefs, which have no dedicated

@@ -52,7 +52,7 @@ import { BriefRepositoryView } from './BriefRepositoryView';
 import { DynamicBriefForm } from './DynamicBriefForm';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
-import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema, canEditServiceBrief } from '../lib/permissions';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
 
@@ -649,12 +649,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
     }
   };
 
-  // Broadened per the final brief-editing decision: a department team lead can edit their own
-  // service's brief for any of their clients; an agent only for a client they're formally
-  // assigned to for this service (mirrors briefs_update_rls's agent branch, which requires
-  // agent_assigned()) — matches currentAssignment computed above.
-  const canEditThisBrief = isTeamLead || currentAssignment?.agent_id === currentUser.id;
-
   const renderBriefContent = (brief: BriefRecord | undefined) => {
     if (!selectedClient) return null;
     return (
@@ -668,7 +662,9 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
         onSaveBrief={onSaveBrief || (async () => {})}
         currentUserId={currentUser.id}
-        canEdit={canEditThisBrief && typeof onSaveBrief === 'function'}
+        canEdit={
+          canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSaveBrief === 'function'
+        }
       />
     );
   };

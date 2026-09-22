@@ -71,7 +71,7 @@ import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief } from '../lib/permissions';
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -410,20 +410,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const canSeeClientAccessTab = canAccessClientSensitiveInfo(currentUser.role);
   const canEditClientAccess = canAccessClientSensitiveInfo(currentUser.role);
 
-  // Broadened per the final brief-editing decision: executive/head_of_technical/am_team_lead/
-  // am_agent (own client) can edit any service's brief; a department team lead can only edit the
-  // brief for their own service_type (mirrors briefs_update_rls's scoping exactly) — never
-  // without a real save handler actually wired through by the parent screen (never a silent
-  // no-op).
-  const canEditBrief =
-    typeof onSaveBrief === 'function' &&
-    (currentUser.role === 'executive' ||
-      currentUser.role === 'head_of_technical' ||
-      currentUser.role === 'am_team_lead' ||
-      (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id) ||
-      (currentUser.role === 'seo_team_lead' && selectedBriefService === 'seo') ||
-      (currentUser.role === 'media_buying_team_lead' && selectedBriefService === 'media_buying') ||
-      (currentUser.role === 'social_media_team_lead' && selectedBriefService === 'social_media'));
+  // Brief content editing is restricted to Account Management + leadership only — see
+  // canEditServiceBrief's own comment in lib/permissions.ts for why department team leads/agents
+  // (previously allowed here) are view-only now — never without a real save handler actually
+  // wired through by the parent screen (never a silent no-op).
+  const canEditBrief = typeof onSaveBrief === 'function' && canEditServiceBrief(currentUser.role, currentUser.id, client);
 
   // Brief content (answers gathered from the client meeting) is deliberately restricted to the
   // AM department (who capture it), the operational service teams it's written for, and

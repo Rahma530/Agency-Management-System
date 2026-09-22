@@ -2300,25 +2300,22 @@ export default function App() {
     showNotification('Question removed from the global schema.');
   };
 
-  // 3b. Mark a brief as viewed by the relevant service Team Lead (clears its "New" indicator)
+  // 3b. Mark a brief as viewed by the relevant service Team Lead (clears its "New" indicator).
+  // Routed through the mark_brief_viewed() RPC rather than a direct table update — RLS is
+  // row-level, not column-level, so a plain UPDATE policy scoped to "clear this timestamp" can't
+  // stop the same caller from writing `fields` too. The RPC re-checks the same
+  // role/service_type/client_has_service rule server-side and scopes the write to exactly this
+  // one column.
   const handleMarkBriefViewedByTeamLead = async (briefId: string) => {
-    const viewedAt = new Date().toISOString();
-
-    if (supabaseActive) {
-      try {
-        const { error } = await supabase
-          .from('briefs')
-          .update({ team_lead_viewed_at: viewedAt })
-          .eq('id', briefId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase mark brief viewed error:', err);
-      }
+    if (!supabaseActive) return;
+    try {
+      const { data, error } = await supabaseRaw.rpc('mark_brief_viewed', { p_brief_id: briefId });
+      if (error) throw error;
+      const persistedBrief = data as BriefRecord;
+      setBriefs((prev) => prev.map((b) => (b.id === briefId ? persistedBrief : b)));
+    } catch (err) {
+      console.error('Supabase mark brief viewed error:', err);
     }
-
-    setBriefs((prev) =>
-      prev.map((b) => (b.id === briefId ? { ...b, team_lead_viewed_at: viewedAt } : b))
-    );
   };
 
   // 4. Update the employee's capacity limit
