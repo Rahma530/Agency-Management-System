@@ -658,7 +658,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         serviceType={serviceType}
         fieldDefs={briefFieldSchemas[serviceType] || []}
         existingBrief={brief}
-        allBriefs={briefs}
         revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
         onSaveBrief={onSaveBrief || (async () => {})}
         currentUserId={currentUser.id}

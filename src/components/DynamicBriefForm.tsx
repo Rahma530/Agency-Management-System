@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Save,
   CheckCircle2,
@@ -11,14 +11,13 @@ import {
   AlertCircle,
   Lock,
   Palette,
-  ClipboardCheck,
   Plus,
   X,
   Store,
   Fingerprint,
 } from 'lucide-react';
 import { BriefFieldDef, BriefRecord, BriefRevisionRecord, ServiceType } from '../types/database';
-import { reviewBrief, BriefReviewSeverity } from '../lib/briefReview';
+import { SHORT_TEXT_MIN_LENGTH } from '../lib/briefReview';
 import { BriefEditHistory } from './BriefEditHistory';
 
 interface DynamicBriefFormProps {
@@ -30,10 +29,6 @@ interface DynamicBriefFormProps {
   fieldDefs: BriefFieldDef[];
   existingBrief?: BriefRecord;
   revisions?: BriefRevisionRecord[];
-  // Every brief across every client/service, for the review assistant's cross-brief comparison
-  // (lib/briefReview.ts filters this down to the same service_type itself). Optional — omitting
-  // it just disables that one check, not the whole checklist.
-  allBriefs?: BriefRecord[];
   currentUserId: string;
   canEdit: boolean;
   onSaveBrief: (briefData: {
@@ -45,12 +40,6 @@ interface DynamicBriefFormProps {
     custom_field_defs: BriefFieldDef[];
   }) => Promise<void>;
 }
-
-const SEVERITY_STYLES: Record<BriefReviewSeverity, { bg: string; text: string; border: string }> = {
-  missing_required: { bg: 'rgba(245, 163, 163, 0.12)', text: 'var(--roas-bad)', border: 'var(--roas-bad)' },
-  too_short: { bg: 'rgba(245, 226, 154, 0.12)', text: 'var(--roas-mid)', border: 'rgba(245, 226, 154, 0.4)' },
-  unusual_gap: { bg: 'rgba(123, 47, 247, 0.12)', text: 'var(--purple-light)', border: 'var(--border-soft)' },
-};
 
 // Draft safety net: sessionStorage-persist unsaved answers so a remount that isn't the user's
 // own doing (a stale-data refetch, a future bug of the same shape) doesn't silently destroy
@@ -95,7 +84,6 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
   fieldDefs,
   existingBrief,
   revisions = [],
-  allBriefs = [],
   currentUserId,
   canEdit,
   onSaveBrief,
@@ -148,28 +136,6 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
     }, 500);
     return () => clearTimeout(handle);
   }, [formData, customFieldDefs, clientId, serviceType, canEdit]);
-
-  // Review assistant (Module 9, point 1): recomputed live off formData as the author types, not
-  // just the last-saved existingBrief — advisory only, never blocks handleSave below. Only
-  // checked against the global schema, not custom_field_defs — a one-off question has no
-  // `required` concept.
-  const reviewIssues = useMemo(
-    () =>
-      reviewBrief(
-        {
-          id: existingBrief?.id || 'draft',
-          client_id: clientId,
-          service_type: serviceType,
-          fields: formData,
-          version: currentVersion,
-          submitted_by: currentUserId,
-          custom_field_defs: customFieldDefs,
-        },
-        allBriefs,
-        fieldDefs
-      ),
-    [existingBrief?.id, clientId, serviceType, formData, currentVersion, currentUserId, customFieldDefs, allBriefs, fieldDefs]
-  );
 
   const handleFieldChange = (key: string, value: any) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
@@ -367,30 +333,6 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
         </div>
       </div>
 
-      {reviewIssues.length > 0 && (
-        <div
-          className="p-3 mb-4 rounded-xl space-y-1.5"
-          style={{ background: 'rgba(123, 47, 247, 0.06)', border: '1px solid var(--border-soft)' }}
-        >
-          <p className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--lilac)' }}>
-            <ClipboardCheck className="w-3.5 h-3.5" />
-            Review Checklist ({reviewIssues.length}) — advisory only, does not block saving
-          </p>
-          {reviewIssues.map((issue, i) => {
-            const style = SEVERITY_STYLES[issue.severity];
-            return (
-              <p
-                key={i}
-                className="text-[11px] px-2.5 py-1.5 rounded-lg"
-                style={{ background: style.bg, color: style.text, border: `1px solid ${style.border}` }}
-              >
-                {issue.message}
-              </p>
-            );
-          })}
-        </div>
-      )}
-
       <div className="mb-4">
         <BriefEditHistory revisions={revisions} fieldDefs={fieldDefs} customFieldDefs={customFieldDefs} />
       </div>
@@ -424,11 +366,18 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {allFieldDefs.map((field) => {
               const isCustom = customFieldDefs.some((f) => f.key === field.key);
+              const fieldValue = formData[field.key];
+              const trimmedLength = typeof fieldValue === 'string' ? fieldValue.trim().length : 0;
+              const isTooShort =
+                (field.type === 'text' || field.type === 'textarea') &&
+                trimmedLength > 0 &&
+                trimmedLength < SHORT_TEXT_MIN_LENGTH;
               return (
               <div key={field.key} className={field.span === 'full' ? 'md:col-span-2' : ''}>
                 <label className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-xs font-semibold" style={{ color: 'var(--lilac)' }}>
                     {field.label}
+                    {field.required && <span className="ml-1.5 text-[10px] text-red-400">*</span>}
                     {isCustom && (
                       <span
                         className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
@@ -494,6 +443,11 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                       color: 'var(--white)',
                     }}
                   />
+                )}
+                {isTooShort && (
+                  <p className="mt-1 text-[10px] text-stone-500">
+                    {field.label} looks unusually short — consider adding more detail.
+                  </p>
                 )}
               </div>
               );
