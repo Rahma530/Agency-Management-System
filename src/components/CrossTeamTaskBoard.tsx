@@ -55,7 +55,6 @@ import { isActiveEmployee } from '../lib/permissions';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { OPERATIONAL_TEAMS, fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
-import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
@@ -133,10 +132,28 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   // Employee-name filter: a discrete "view exactly what one person is working on" picker,
-  // separate from the free-text search box above. Its option list is role-scoped (see
-  // assigneeFilterOptions below) so a viewer can only ever select someone whose tasks
-  // task_visible()/isTaskAccessibleUnderRLS already lets them see.
+  // separate from the free-text search box above. Its option list depends on the Team filter
+  // (see employeeFilterOptions below) — a real department selected there fetches that
+  // department's roster via fetchAssignableEmployees(), same RPC the New/Edit Task modals use.
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('all');
+  // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
+  // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
+  // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
+  // scoped by users_select_rls to the viewer's own visibility, not the selected department's.
+  const [teamFilterEmployees, setTeamFilterEmployees] = useState<AssignableEmployee[]>([]);
+  useEffect(() => {
+    if (selectedTeam === 'all' || selectedTeam === 'Creative') {
+      setTeamFilterEmployees([]);
+      return;
+    }
+    let cancelled = false;
+    fetchAssignableEmployees(selectedTeam).then((rows) => {
+      if (!cancelled) setTeamFilterEmployees(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTeam]);
 
   // Pre-fill the assignee search when navigated here from a specific
   // employee's "Assign via Task Board" link.
@@ -279,16 +296,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     { id: 'Account Management', label: 'Account Management' },
   ];
 
-  // Employee-name filter options: a role-scoped list of employees the viewer may pick from to
-  // see exactly what one person is working on.
-  // - executive/head_of_technical: everyone org-wide, any role (same as getAllowedEmployeeRolesUnderRLS).
-  // - Team leads: ONLY their own department's agents (TEAM_LEAD_TO_AGENT_ROLE) — not themselves,
-  //   not the shared graphic_designer/video_editor pool, not other teams' leads.
+  // Employee-name filter options when the Team filter is at "All Teams" (or, for
+  // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so
+  // fetchAssignableEmployees has nothing to fetch for it). Only two roles get a real fallback list
+  // here rather than the disabled "Select a team first" state (see employeeFilterDisabled below):
+  // - executive/head_of_technical: everyone org-wide, any role (same as
+  //   getAllowedEmployeeRolesUnderRLS) — their existing capability to browse any employee without
+  //   picking a team first, preserved so it doesn't regress.
   // - marketing_manager: ONLY graphic_designer/video_editor, matching its existing narrow
-  //   Creative-pool scope (see isAssignableForCurrentUser above).
-  // - Everyone else gets no dropdown at all — they only ever see their own tasks anyway
-  //   (task_visible() scoping), so a picker would offer nothing beyond themselves.
-  const assigneeFilterRoles: string[] = useMemo(() => {
+  //   Creative-pool scope (see isAssignableForCurrentUser above) — used whenever selectedTeam is
+  //   'Creative', which for this role is functionally "no real department selected" too.
+  // Every other role (team leads included) gets no fallback list — they must pick a real
+  // department first, at which point teamFilterEmployees (below) takes over.
+  const noTeamSelectedFallbackRoles: string[] = useMemo(() => {
     const role = currentUser?.role;
     if (!role) return [];
     if (role === 'executive' || role === 'head_of_technical') {
@@ -297,17 +317,38 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     if (role === 'marketing_manager') {
       return ['graphic_designer', 'video_editor'];
     }
-    return TEAM_LEAD_TO_AGENT_ROLE[role] || [];
+    return [];
   }, [currentUser?.role]);
 
-  const showAssigneeFilter = assigneeFilterRoles.length > 0;
-
-  const assigneeFilterOptions = useMemo(() => {
-    if (!showAssigneeFilter) return [];
+  const noTeamSelectedFallbackOptions = useMemo(() => {
+    if (noTeamSelectedFallbackRoles.length === 0) return [];
     return users
-      .filter((u) => assigneeFilterRoles.includes(u.role) && isActiveEmployee(u))
+      .filter((u) => noTeamSelectedFallbackRoles.includes(u.role) && isActiveEmployee(u))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, assigneeFilterRoles, showAssigneeFilter]);
+  }, [users, noTeamSelectedFallbackRoles]);
+
+  // "All Teams" is disabled for everyone except executive/head_of_technical — every other role
+  // must pick a real department before the Employee filter offers anything (marketing_manager's
+  // 'Creative' counts as "picked", so it's excluded from this check too).
+  const employeeFilterDisabled =
+    selectedTeam === 'all' && currentUser?.role !== 'executive' && currentUser?.role !== 'head_of_technical';
+
+  // The Employee filter's actual rendered option list: a real department's fetched roster, or the
+  // no-team-selected fallback for 'all'/'Creative'. UserRecord and AssignableEmployee both carry
+  // id/name, which is all the <option> rendering below needs.
+  const employeeFilterOptions: { id: string; name: string }[] = useMemo(() => {
+    if (selectedTeam !== 'all' && selectedTeam !== 'Creative') return teamFilterEmployees;
+    return noTeamSelectedFallbackOptions;
+  }, [selectedTeam, teamFilterEmployees, noTeamSelectedFallbackOptions]);
+
+  // Team changed out from under the current selection (or the filter just became disabled) —
+  // never leave a stale pick in place, mirroring newAssignedTo/editAssignedTo's reset effect.
+  useEffect(() => {
+    if (selectedAssigneeId === 'all') return;
+    if (employeeFilterDisabled || !employeeFilterOptions.some((u) => u.id === selectedAssigneeId)) {
+      setSelectedAssigneeId('all');
+    }
+  }, [employeeFilterDisabled, employeeFilterOptions]);
 
   // Kanban Columns configuration
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
@@ -966,11 +1007,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div
-          className={`grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 ${
-            showAssigneeFilter ? 'md:grid-cols-6' : 'md:grid-cols-5'
-          }`}
-        >
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 pt-2">
           {/* Team Filter */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Team:</label>
@@ -985,6 +1022,33 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Employee Filter — depends on the Team filter above (see employeeFilterOptions) */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Employee:</label>
+            {employeeFilterDisabled ? (
+              <select
+                disabled
+                value="all"
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/40 border border-stone-800 text-stone-500 cursor-not-allowed"
+              >
+                <option value="all">Select a team first</option>
+              </select>
+            ) : (
+              <select
+                value={selectedAssigneeId}
+                onChange={(e) => setSelectedAssigneeId(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+              >
+                <option value="all" className="bg-stone-900 text-white">All Employees</option>
+                {employeeFilterOptions.map((u) => (
+                  <option key={u.id} value={u.id} className="bg-stone-900 text-white">
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Client Filter */}
@@ -1036,25 +1100,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
             </select>
           </div>
-
-          {/* Employee Filter — role-scoped, see assigneeFilterOptions above */}
-          {showAssigneeFilter && (
-            <div>
-              <label className="text-[11px] font-semibold block mb-1 text-stone-400">Employee:</label>
-              <select
-                value={selectedAssigneeId}
-                onChange={(e) => setSelectedAssigneeId(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-              >
-                <option value="all" className="bg-stone-900 text-white">All Employees</option>
-                {assigneeFilterOptions.map((u) => (
-                  <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           {/* Search Input */}
           <div>
