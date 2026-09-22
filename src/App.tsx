@@ -35,7 +35,7 @@ import {
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
 } from './lib/supabase';
-import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee } from './lib/permissions';
+import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices } from './lib/clientServices';
@@ -3836,8 +3836,10 @@ export default function App() {
               </button>
             )}
 
-            {/* Tab 1: Onboarding & Briefs */}
-            {userRoleInfo.allowedModules.includes('onboarding') && (
+            {/* Tab 1: Onboarding & Briefs — gated by canAccessClientOnboarding (not
+                allowedModules), the same check AMQueue.tsx enforces, so this item is never shown
+                to a role that would land on "Access Restricted" after clicking it. */}
+            {canAccessClientOnboarding(currentUser.role) && (
               <button
                 onClick={() => handleTabChange('onboarding')}
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${

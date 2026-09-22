@@ -31,7 +31,7 @@ import {
 import { getRoleInfo, AppModuleId } from '../data/roles';
 import { getTodayStr, isTaskOverdue, isTaskDueToday, getSortedEmployeeTasks } from '../lib/employeeWork';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
-import { canSeeContractValue } from '../lib/permissions';
+import { canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { EmployeePerformancePage } from './EmployeePerformancePage';
@@ -286,7 +286,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   // rather than a wrong one. graphic_designer/video_editor have neither, so
   // this My Clients card is the only client view they get, full stop.
   const clientEscapeModule: AppModuleId | null = CLIENT_FIRST_LAYOUT_ROLES.includes(currentUser.role)
-    ? roleInfo.allowedModules.includes('onboarding')
+    ? canAccessClientOnboarding(currentUser.role)
       ? 'onboarding'
       : null
     : roleInfo.allowedModules.includes('service_briefs')

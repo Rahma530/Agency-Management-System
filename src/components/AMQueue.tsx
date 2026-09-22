@@ -51,7 +51,7 @@ import {
 } from '../types/database';
 import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
-import { isActiveEmployee, canSeeContractValue } from '../lib/permissions';
+import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
@@ -201,8 +201,9 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const isAMAgent = currentRole === 'am_agent';
   const isExecutive = currentRole === 'executive' || currentRole === 'head_of_technical';
 
-  // Role Security Check
-  if (!isAMTeamLead && !isAMAgent && !isExecutive) {
+  // Role Security Check — same canAccessClientOnboarding() check that gates the "Client
+  // Onboarding" sidebar nav item in App.tsx, so the two can never drift out of sync.
+  if (!canAccessClientOnboarding(currentRole)) {
     return (
       <div className="p-8 rounded-2xl bg-red-950/30 border border-red-800/40 text-center space-y-3">
         <Shield className="w-10 h-10 text-red-400 mx-auto" />
