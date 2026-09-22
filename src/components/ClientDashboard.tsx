@@ -1838,7 +1838,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         serviceType={selectedBriefService}
                         fieldDefs={briefFieldSchemas[selectedBriefService] || []}
                         existingBrief={clientBriefs.find((b) => b.service_type === selectedBriefService)}
-                        allBriefs={briefs}
                         revisions={briefRevisions.filter(
                           (r) =>
                             r.client_id === client.id && r.service_type === selectedBriefService
