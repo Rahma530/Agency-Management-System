@@ -248,6 +248,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   );
 
   const amAgents = users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u));
+  const amTeamLeaders = users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u));
   const salesUsers = users.filter((u) => u.role === 'sales' && isActiveEmployee(u));
 
   const activeDashboardClient = useMemo(
@@ -633,6 +634,14 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                               className="px-2 py-1 rounded-lg text-xs bg-[#120d1e] border border-purple-900/40 text-white focus:outline-none focus:border-purple-400"
                             >
                               <option value="">-- Assign AM --</option>
+                              {amTeamLeaders.map((lead) => {
+                                const capacityData = getUserCapacityData(lead, clients);
+                                return (
+                                  <option key={lead.id} value={lead.id}>
+                                    {lead.name} (Team Leader) {getCapacityIndicator(capacityData)}
+                                  </option>
+                                );
+                              })}
                               {amAgents.map((ag) => {
                                 const capacityData = getUserCapacityData(ag, clients);
                                 return (

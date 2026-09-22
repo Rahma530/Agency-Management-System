@@ -652,8 +652,15 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Account Manager (optional)</label>
               <select value={amAgentId} onChange={(e) => setAmAgentId(e.target.value)} className="w-full px-3 py-2.5 rounded-xl text-sm bg-stone-950 text-white border border-purple-900/40">
                 <option value="">-- Unassigned --</option>
+                {amTeamLeaders.map((leader) => (
+                  <option key={leader.id} value={leader.id}>{leader.name} (Team Leader)</option>
+                ))}
                 {amAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
               </select>
+              <p className="text-[11px] text-stone-400 mt-1">
+                The person actually responsible for this account's day-to-day work — an AM Team
+                Leader can self-assign here instead of delegating to an Agent.
+              </p>
             </div>
           )}
 
