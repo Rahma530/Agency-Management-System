@@ -279,6 +279,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // tasks anyway, so every other team's filter would just show zero results. "Creative" is
   // assignee-ROLE-scoped (see filteredTasks below), not the literal task.team column — that
   // column already splits across "Creative & Design"/"Video Production" for these two roles.
+  //
+  // Everyone else's list is derived from the shared OPERATIONAL_TEAMS constant (departmentStaffing.ts)
+  // rather than a second hardcoded copy — this used to duplicate that list by hand, which is
+  // exactly how it silently drifted out of sync (AI Engineering was added to OPERATIONAL_TEAMS but
+  // missed here until this fix). "All Teams" is prepended explicitly since OPERATIONAL_TEAMS is a
+  // real-departments-only list, deliberately without a catch-all value baked in.
   const teams =
     currentUser?.role === 'marketing_manager'
       ? [
@@ -286,15 +292,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           { id: 'Creative', label: 'Creative' },
         ]
       : [
-    { id: 'all', label: 'All Teams' },
-    { id: 'SEO', label: 'SEO' },
-    { id: 'Social Media', label: 'Social Media' },
-    { id: 'Media Buying', label: 'Media Buying' },
-    { id: 'Creative & Design', label: 'Creative & Design' },
-    { id: 'Video Production', label: 'Video Production' },
-    { id: 'Programming', label: 'Programming' },
-    { id: 'Account Management', label: 'Account Management' },
-  ];
+          { id: 'all', label: 'All Teams' },
+          ...OPERATIONAL_TEAMS.map((t) => ({ id: t, label: t })),
+        ];
 
   // Employee-name filter options when the Team filter is at "All Teams" (or, for
   // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so

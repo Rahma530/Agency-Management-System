@@ -4,13 +4,17 @@ import { isActiveEmployee } from './permissions';
 import { supabaseRaw } from './supabase';
 
 // The operational departments assignable via a Team/Department dropdown that's paired with an
-// employee/assignee picker (task assignment, campaign ownership, new-hire team). Deliberately
-// excludes the non-operational team values that also exist on UserRecord.team (Executive,
-// Technical, Sales, AI Engineering, Marketing) — those roles are never the target of a
-// department-scoped staffing picker, the same reason CrossTeamTaskBoard's isOperationalAssignee
-// already excludes executive/head_of_technical from task assignment. This is the single shared
-// list — every department dropdown that pairs with an employee picker should render its options
-// from this array rather than hardcoding its own copy.
+// employee/assignee picker (task assignment, campaign ownership, new-hire team, Task Board's Team
+// filter). AI Engineering was deliberately excluded when this list was first built, on the
+// reasoning that it wasn't a department a staffing picker would ever target — that's since been
+// reversed: ai_engineer is a real, task-assigned operational role (Rahma Ehab et al.) and needs to
+// be selectable the same way every other department is. Executive, Technical, Sales, and Marketing
+// remain excluded — those still aren't staffing-picker targets, the same reason
+// CrossTeamTaskBoard's isOperationalAssignee excludes executive/head_of_technical from task
+// assignment. This is the single shared list — every department dropdown that pairs with an
+// employee picker (including an "All Teams"/"all" catch-all where relevant, added separately by
+// the caller — this array is real departments only) should render its options from this array
+// rather than hardcoding its own copy.
 export const OPERATIONAL_TEAMS = [
   'SEO',
   'Social Media',
@@ -19,6 +23,7 @@ export const OPERATIONAL_TEAMS = [
   'Video Production',
   'Programming',
   'Account Management',
+  'AI Engineering',
 ] as const;
 
 export type OperationalTeam = (typeof OPERATIONAL_TEAMS)[number];
