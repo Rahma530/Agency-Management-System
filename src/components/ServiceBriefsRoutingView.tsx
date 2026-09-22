@@ -52,7 +52,7 @@ import { BriefRepositoryView } from './BriefRepositoryView';
 import { DynamicBriefForm } from './DynamicBriefForm';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
-import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema, canEditServiceBrief } from '../lib/permissions';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
 
@@ -452,6 +452,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       return {
         serviceType: 'seo' as ServiceType,
         isTeamLead: role === 'seo_team_lead',
+        teamLeadRole: 'seo_team_lead' as UserRole,
         agentRole: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'] as UserRole[],
         serviceNameEn: 'Search Engine Optimization (SEO)',
         departmentName: 'SEO & Organic Growth Department',
@@ -467,6 +468,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       return {
         serviceType: 'media_buying' as ServiceType,
         isTeamLead: role === 'media_buying_team_lead',
+        teamLeadRole: 'media_buying_team_lead' as UserRole,
         agentRole: ['media_buying_agent'] as UserRole[],
         serviceNameEn: 'Paid Advertising (Media Buying)',
         departmentName: 'Digital Media Buying Department',
@@ -482,6 +484,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       return {
         serviceType: 'social_media' as ServiceType,
         isTeamLead: role === 'social_media_team_lead',
+        teamLeadRole: 'social_media_team_lead' as UserRole,
         agentRole: ['social_media_agent'] as UserRole[],
         serviceNameEn: 'Social Media Management',
         departmentName: 'Social Media & Community Department',
@@ -513,6 +516,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   const {
     serviceType,
     isTeamLead,
+    teamLeadRole,
     agentRole,
     serviceNameEn,
     departmentName,
@@ -557,7 +561,11 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSchemaEditorOpen, setIsSchemaEditorOpen] = useState(false);
 
-  const eligibleAgents = users.filter((u) => agentRole.includes(u.role) && isActiveEmployee(u));
+  // Includes the department's own Team Leader alongside its Agents — a Team Leader must be able
+  // to self-assign as the responsible person for their department, not just delegate to an Agent.
+  const eligibleAgents = users.filter(
+    (u) => (agentRole.includes(u.role) || u.role === teamLeadRole) && isActiveEmployee(u)
+  );
 
   const selectedClient =
     authorizedClients.find((c) => c.id === selectedClientId) || authorizedClients[0] || null;
@@ -641,12 +649,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
     }
   };
 
-  // Broadened per the final brief-editing decision: a department team lead can edit their own
-  // service's brief for any of their clients; an agent only for a client they're formally
-  // assigned to for this service (mirrors briefs_update_rls's agent branch, which requires
-  // agent_assigned()) — matches currentAssignment computed above.
-  const canEditThisBrief = isTeamLead || currentAssignment?.agent_id === currentUser.id;
-
   const renderBriefContent = (brief: BriefRecord | undefined) => {
     if (!selectedClient) return null;
     return (
@@ -660,7 +662,9 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
         onSaveBrief={onSaveBrief || (async () => {})}
         currentUserId={currentUser.id}
-        canEdit={canEditThisBrief && typeof onSaveBrief === 'function'}
+        canEdit={
+          canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSaveBrief === 'function'
+        }
       />
     );
   };
@@ -1003,7 +1007,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                           const capacityData = getUserCapacityData(ag, clients, tasks);
                           return (
                             <option key={ag.id} value={ag.id}>
-                              {ag.name} ({ag.email}) {getCapacityIndicator(capacityData)}
+                              {ag.name} ({ag.email}){ag.role === teamLeadRole ? ' (Team Leader)' : ''} {getCapacityIndicator(capacityData)}
                             </option>
                           );
                         })}

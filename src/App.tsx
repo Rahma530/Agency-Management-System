@@ -35,7 +35,8 @@ import {
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
 } from './lib/supabase';
-import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee } from './lib/permissions';
+import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
+import { isTeamLeadRole } from './lib/capacity';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices } from './lib/clientServices';
 import {
@@ -1549,12 +1550,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
-  const validateClientAssignment = async (id: string | null | undefined, role: 'am_team_lead' | 'am_agent') => {
+  // allowedRoles is a list rather than a single role because the "Account Manager" slot accepts
+  // either an am_agent OR an am_team_lead self-assigning as the responsible person — the
+  // "Account Management Lead" slot still only ever passes ['am_team_lead'].
+  const validateClientAssignment = async (
+    id: string | null | undefined,
+    allowedRoles: UserRole[],
+    fieldLabel: string
+  ) => {
     if (!id) return null;
     const { data, error } = await supabaseRaw.from('users').select('id, role, auth_id, deactivated_at').eq('id', id).single();
     if (error) throw error;
-    if (!data || data.role !== role || !isActiveEmployee(data as UserRecord)) {
-      throw new Error(`Selected ${role === 'am_team_lead' ? 'AM Team Leader' : 'AM Agent'} is not an active employee.`);
+    if (!data || !allowedRoles.includes(data.role as UserRole) || !isActiveEmployee(data as UserRecord)) {
+      throw new Error(`Selected ${fieldLabel} is not an active employee.`);
     }
     return data.id as string;
   };
@@ -1587,9 +1595,9 @@ export default function App() {
     // soleActiveAmTeamLeadId logic rather than picking manually — validate it exactly like a
     // management-picked one rather than trusting it, closing the previous unvalidated
     // hardcoded-placeholder fallback.
-    const leadId = await validateClientAssignment(clientData.am_team_lead_id, 'am_team_lead');
+    const leadId = await validateClientAssignment(clientData.am_team_lead_id, ['am_team_lead'], 'AM Team Leader');
     const agentId = isManagementRegistration
-      ? await validateClientAssignment(clientData.am_agent_id, 'am_agent')
+      ? await validateClientAssignment(clientData.am_agent_id, ['am_team_lead', 'am_agent'], 'Account Manager')
       : currentUser.role === 'am_agent' ? currentUser.id : null;
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}`,
@@ -1673,10 +1681,10 @@ export default function App() {
     const isManagementUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
     if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
     const leadId = isManagementUpload
-      ? await validateClientAssignment(clientData.am_team_lead_id, 'am_team_lead')
+      ? await validateClientAssignment(clientData.am_team_lead_id, ['am_team_lead'], 'AM Team Leader')
       : clientData.am_team_lead_id;
     const agentId = isManagementUpload
-      ? await validateClientAssignment(clientData.am_agent_id, 'am_agent')
+      ? await validateClientAssignment(clientData.am_agent_id, ['am_team_lead', 'am_agent'], 'Account Manager')
       : currentUser.role === 'am_agent' ? currentUser.id : null;
     const newClientPayload: Partial<ClientRecord> = {
       id: `cl-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1822,7 +1830,7 @@ export default function App() {
     if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
       throw new Error('You do not have permission to assign an AM Team Leader.');
     }
-    const validatedId = await validateClientAssignment(leadId, 'am_team_lead');
+    const validatedId = await validateClientAssignment(leadId, ['am_team_lead'], 'AM Team Leader');
     await updatePersistedClient(clientId, { am_team_lead_id: validatedId, am_team_lead_viewed_at: null });
     showNotification(validatedId ? 'AM Team Leader assignment updated.' : 'AM Team Leader assignment cleared.');
   };
@@ -1831,7 +1839,7 @@ export default function App() {
     if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
       throw new Error('You do not have permission to assign an AM Agent.');
     }
-    const validatedId = await validateClientAssignment(agentId, 'am_agent');
+    const validatedId = await validateClientAssignment(agentId, ['am_team_lead', 'am_agent'], 'Account Manager');
     // Module 13 Phase 4: only bump am_agent_assigned_at on an actual change of agent — a no-op
     // resubmission of the same agent shouldn't re-date the "gained" moment. Mirrors the
     // reassignment-clears-viewed_at convention from Module 12 Phase 5.
@@ -2065,7 +2073,11 @@ export default function App() {
     reasonNotes?: string
   ) => {
     const existing = assignments.find((a) => a.client_id === clientId && a.service_type === serviceType);
-    const teamLeadId = users.find((u) => u.id === agentId)?.manager_id || currentUser.id;
+    const assignedUser = users.find((u) => u.id === agentId);
+    // A department's own Team Leader can self-assign as the responsible person (see
+    // ServiceBriefsRoutingView's eligibleAgents) — in that case team_lead_id should point at
+    // them, not their own manager, which manager_id would otherwise resolve to.
+    const teamLeadId = isTeamLeadRole(assignedUser?.role) ? agentId : assignedUser?.manager_id || currentUser.id;
 
     if (existing) {
       // Reassigning to a different agent is a fresh "new client" for them — clears the
@@ -2288,25 +2300,22 @@ export default function App() {
     showNotification('Question removed from the global schema.');
   };
 
-  // 3b. Mark a brief as viewed by the relevant service Team Lead (clears its "New" indicator)
+  // 3b. Mark a brief as viewed by the relevant service Team Lead (clears its "New" indicator).
+  // Routed through the mark_brief_viewed() RPC rather than a direct table update — RLS is
+  // row-level, not column-level, so a plain UPDATE policy scoped to "clear this timestamp" can't
+  // stop the same caller from writing `fields` too. The RPC re-checks the same
+  // role/service_type/client_has_service rule server-side and scopes the write to exactly this
+  // one column.
   const handleMarkBriefViewedByTeamLead = async (briefId: string) => {
-    const viewedAt = new Date().toISOString();
-
-    if (supabaseActive) {
-      try {
-        const { error } = await supabase
-          .from('briefs')
-          .update({ team_lead_viewed_at: viewedAt })
-          .eq('id', briefId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase mark brief viewed error:', err);
-      }
+    if (!supabaseActive) return;
+    try {
+      const { data, error } = await supabaseRaw.rpc('mark_brief_viewed', { p_brief_id: briefId });
+      if (error) throw error;
+      const persistedBrief = data as BriefRecord;
+      setBriefs((prev) => prev.map((b) => (b.id === briefId ? persistedBrief : b)));
+    } catch (err) {
+      console.error('Supabase mark brief viewed error:', err);
     }
-
-    setBriefs((prev) =>
-      prev.map((b) => (b.id === briefId ? { ...b, team_lead_viewed_at: viewedAt } : b))
-    );
   };
 
   // 4. Update the employee's capacity limit
@@ -3824,8 +3833,10 @@ export default function App() {
               </button>
             )}
 
-            {/* Tab 1: Onboarding & Briefs */}
-            {userRoleInfo.allowedModules.includes('onboarding') && (
+            {/* Tab 1: Onboarding & Briefs — gated by canAccessClientOnboarding (not
+                allowedModules), the same check AMQueue.tsx enforces, so this item is never shown
+                to a role that would land on "Access Restricted" after clicking it. */}
+            {canAccessClientOnboarding(currentUser.role) && (
               <button
                 onClick={() => handleTabChange('onboarding')}
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${

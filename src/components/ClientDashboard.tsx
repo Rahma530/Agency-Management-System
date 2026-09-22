@@ -71,7 +71,7 @@ import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief } from '../lib/permissions';
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -410,20 +410,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const canSeeClientAccessTab = canAccessClientSensitiveInfo(currentUser.role);
   const canEditClientAccess = canAccessClientSensitiveInfo(currentUser.role);
 
-  // Broadened per the final brief-editing decision: executive/head_of_technical/am_team_lead/
-  // am_agent (own client) can edit any service's brief; a department team lead can only edit the
-  // brief for their own service_type (mirrors briefs_update_rls's scoping exactly) — never
-  // without a real save handler actually wired through by the parent screen (never a silent
-  // no-op).
-  const canEditBrief =
-    typeof onSaveBrief === 'function' &&
-    (currentUser.role === 'executive' ||
-      currentUser.role === 'head_of_technical' ||
-      currentUser.role === 'am_team_lead' ||
-      (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id) ||
-      (currentUser.role === 'seo_team_lead' && selectedBriefService === 'seo') ||
-      (currentUser.role === 'media_buying_team_lead' && selectedBriefService === 'media_buying') ||
-      (currentUser.role === 'social_media_team_lead' && selectedBriefService === 'social_media'));
+  // Brief content editing is restricted to Account Management + leadership only — see
+  // canEditServiceBrief's own comment in lib/permissions.ts for why department team leads/agents
+  // (previously allowed here) are view-only now — never without a real save handler actually
+  // wired through by the parent screen (never a silent no-op).
+  const canEditBrief = typeof onSaveBrief === 'function' && canEditServiceBrief(currentUser.role, currentUser.id, client);
 
   // Brief content (answers gathered from the client meeting) is deliberately restricted to the
   // AM department (who capture it), the operational service teams it's written for, and
@@ -1347,6 +1338,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
                       >
                         <option value="">-- Unassigned --</option>
+                        {amTeamLeaders.map((lead) => (
+                          <option key={lead.id} value={lead.id}>
+                            {lead.name} (Team Leader)
+                          </option>
+                        ))}
                         {amAgents.map((agent) => (
                           <option key={agent.id} value={agent.id}>
                             {agent.name} ({agent.email})
@@ -1383,7 +1379,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         {assignedMediaBuyer?.name?.charAt(0) || 'M'}
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-white">{assignedMediaBuyer?.name || 'Assigned per Campaign'}</p>
+                        <p className="text-sm font-bold text-white">
+                          {assignedMediaBuyer?.name || 'Assigned per Campaign'}
+                          {assignedMediaBuyer?.role === 'media_buying_team_lead' && ' (Team Leader)'}
+                        </p>
                         <p className="text-xs text-stone-400">{assignedMediaBuyer?.email || 'Paid Media Department'}</p>
                       </div>
                     </div>
@@ -1401,7 +1400,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         {assignedSEOSpecialist?.name?.charAt(0) || 'S'}
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-white">{assignedSEOSpecialist?.name || 'Assigned per Brief'}</p>
+                        <p className="text-sm font-bold text-white">
+                          {assignedSEOSpecialist?.name || 'Assigned per Brief'}
+                          {assignedSEOSpecialist?.role === 'seo_team_lead' && ' (Team Leader)'}
+                        </p>
                         <p className="text-xs text-stone-400">{assignedSEOSpecialist?.email || 'Organic Search Department'}</p>
                       </div>
                     </div>
@@ -1419,7 +1421,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         {assignedSocialSpecialist?.name?.charAt(0) || 'C'}
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-white">{assignedSocialSpecialist?.name || 'Assigned per Calendar'}</p>
+                        <p className="text-sm font-bold text-white">
+                          {assignedSocialSpecialist?.name || 'Assigned per Calendar'}
+                          {assignedSocialSpecialist?.role === 'social_media_team_lead' && ' (Team Leader)'}
+                        </p>
                         <p className="text-xs text-stone-400">{assignedSocialSpecialist?.email || 'Social Media Department'}</p>
                       </div>
                     </div>

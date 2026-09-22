@@ -51,7 +51,7 @@ import {
 } from '../types/database';
 import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
-import { isActiveEmployee, canSeeContractValue } from '../lib/permissions';
+import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
@@ -201,8 +201,9 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const isAMAgent = currentRole === 'am_agent';
   const isExecutive = currentRole === 'executive' || currentRole === 'head_of_technical';
 
-  // Role Security Check
-  if (!isAMTeamLead && !isAMAgent && !isExecutive) {
+  // Role Security Check — same canAccessClientOnboarding() check that gates the "Client
+  // Onboarding" sidebar nav item in App.tsx, so the two can never drift out of sync.
+  if (!canAccessClientOnboarding(currentRole)) {
     return (
       <div className="p-8 rounded-2xl bg-red-950/30 border border-red-800/40 text-center space-y-3">
         <Shield className="w-10 h-10 text-red-400 mx-auto" />
@@ -248,6 +249,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   );
 
   const amAgents = users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u));
+  const amTeamLeaders = users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u));
   const salesUsers = users.filter((u) => u.role === 'sales' && isActiveEmployee(u));
 
   const activeDashboardClient = useMemo(
@@ -633,6 +635,14 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                               className="px-2 py-1 rounded-lg text-xs bg-[#120d1e] border border-purple-900/40 text-white focus:outline-none focus:border-purple-400"
                             >
                               <option value="">-- Assign AM --</option>
+                              {amTeamLeaders.map((lead) => {
+                                const capacityData = getUserCapacityData(lead, clients);
+                                return (
+                                  <option key={lead.id} value={lead.id}>
+                                    {lead.name} (Team Leader) {getCapacityIndicator(capacityData)}
+                                  </option>
+                                );
+                              })}
                               {amAgents.map((ag) => {
                                 const capacityData = getUserCapacityData(ag, clients);
                                 return (

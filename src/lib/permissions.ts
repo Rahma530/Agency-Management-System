@@ -1,4 +1,4 @@
-import { ServiceType, UserRecord, UserRole } from '../types/database';
+import { ClientRecord, ServiceType, UserRecord, UserRole } from '../types/database';
 
 const CLIENT_REGISTRATION_ROLES: UserRole[] = [
   'executive',
@@ -79,6 +79,44 @@ export const DEPARTMENT_TEAM_LEAD_ROLES: UserRole[] = [
 // narrow a team lead's actual reach further — this is just the role-level gate).
 export const canManageEmployeesOrClients = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
+
+// Who can access the "Client Onboarding" sidebar tab at all: sales sees SalesPortalView there,
+// every other role in this list sees AMQueue's onboarding & reassignment queue. Shared by both
+// App.tsx's sidebar nav visibility and AMQueue's own "Access Restricted" gate, so a role that
+// isn't authorized never even sees the nav item in the first place — previously the nav item was
+// shown to every role whose roles.ts allowedModules happened to include 'onboarding' (nearly
+// everyone), while AMQueue's actual check only ever allowed these five, so most roles saw the nav
+// item highlighted and active but landed on "Access Restricted" when they clicked it.
+const CLIENT_ONBOARDING_ROLES: UserRole[] = [
+  'executive',
+  'head_of_technical',
+  'sales',
+  'am_team_lead',
+  'am_agent',
+];
+
+export const canAccessClientOnboarding = (role?: UserRole): boolean =>
+  !!role && CLIENT_ONBOARDING_ROLES.includes(role);
+
+// Service Brief CONTENT (the actual filled-in answers on a specific client's brief — Target
+// Website URL, Target Keywords, CMS Platform, etc.), as distinct from canEditBriefFieldSchema
+// below (which governs the QUESTIONS themselves, not the answers). Brief content is captured
+// during the AM's discovery meeting and belongs to Account Management + leadership only:
+// executive/head_of_technical/am_team_lead unconditionally, am_agent scoped to their own assigned
+// client. Every department team lead/agent (SEO/Media Buying/Social Media) — previously able to
+// edit their own department's brief content — is view-only now; they keep full view access via
+// ClientDashboard's separate hasBriefViewAccess check, which this does not affect. Mirrors
+// briefs_update_rls/briefs_write_rls exactly — see those migrations for the DB-level twin of this
+// check.
+export const canEditServiceBrief = (
+  role: UserRole,
+  userId: string,
+  client: Pick<ClientRecord, 'am_agent_id'>
+): boolean => {
+  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead') return true;
+  if (role === 'am_agent') return client.am_agent_id === userId;
+  return false;
+};
 
 // Global brief field schema (brief_field_schemas) write access: executive/head_of_technical/
 // am_team_lead/am_agent unconditionally (including interface briefs, which have no dedicated
