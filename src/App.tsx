@@ -1670,7 +1670,7 @@ export default function App() {
     am_team_lead_id?: string;
     am_agent_id?: string;
     notes?: string;
-  }, contractFile: File) => {
+  }, contractFile: File | null) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
     const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
@@ -1719,12 +1719,16 @@ export default function App() {
     setClients((prev) => [persistedClient, ...prev]);
     await notifyOnClientRegistration(persistedClient);
 
-    // Required contract file — reuses the exact same upload path (Storage bucket + client_contracts
-    // table insert) every post-registration "Signed Contract" upload already goes through. Left
-    // un-caught here on purpose: the file is required, so a failure must surface to the modal's
-    // own error banner rather than being silently swallowed like the notification side-effects
-    // above — the client row and notifications have already succeeded either way.
-    await handleUploadClientContract(persistedClient.id, contractFile);
+    // Optional contract file — if the AM/Sales rep already has it in hand, this reuses the exact
+    // same upload path (Storage bucket + client_contracts table insert) every post-registration
+    // "Signed Contract" upload already goes through, so nothing is added or duplicated to add it
+    // later instead. Left un-caught here on purpose when a file was provided: a failure must
+    // surface to the modal's own error banner rather than being silently swallowed like the
+    // notification side-effects above — the client row and notifications have already succeeded
+    // either way, and the contract can still be added afterward from the client dashboard.
+    if (contractFile) {
+      await handleUploadClientContract(persistedClient.id, contractFile);
+    }
 
     await logActivity('create', 'client', persistedClient.id, persistedClient.name, `Registered new client in ${persistedClient.industry}`);
 

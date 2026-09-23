@@ -29,7 +29,7 @@ interface ClientRegistrationModalProps {
       am_agent_id?: string;
       notes?: string;
     },
-    contractFile: File
+    contractFile: File | null
   ) => Promise<void>;
 }
 
@@ -117,10 +117,6 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
     }
     if (selectedServices.length === 0) {
       setErrorMsg('Please select at least one service.');
-      return;
-    }
-    if (!contractFile) {
-      setErrorMsg('Please upload the signed contract file.');
       return;
     }
 
@@ -690,7 +686,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              Signed Contract <span className="text-red-400">*</span>
+              Signed Contract (optional)
             </label>
             <input
               ref={contractFileInputRef}
@@ -710,7 +706,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             >
               <FileSignature className="w-4 h-4 shrink-0" />
               <span className="truncate">
-                {contractFile ? contractFile.name : 'Upload the signed contract (PDF, Word, or scanned image)...'}
+                {contractFile ? contractFile.name : 'Upload the signed contract now, or add it later from the client dashboard...'}
               </span>
             </button>
             {contractFileError && <p className="text-[11px] text-red-400 mt-1">{contractFileError}</p>}
