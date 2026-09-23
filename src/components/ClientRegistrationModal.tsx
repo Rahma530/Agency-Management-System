@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers, Globe, ChevronDown, FileSignature, StickyNote } from 'lucide-react';
+import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Phone, Layers, Globe, ChevronDown, FileSignature, StickyNote } from 'lucide-react';
 import { ClientSector, ServiceType, UserRecord } from '../types/database';
 import { COMPREHENSIVE_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
 import { CONTRACT_ALLOWED_MIME_TYPES, CONTRACT_MAX_FILE_SIZE_BYTES, formatContractFileSize } from '../lib/clientContracts';
@@ -79,7 +79,6 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [contractDurationMonths, setContractDurationMonths] = useState<number | ''>('');
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
-  const [amTeamLeadId, setAmTeamLeadId] = useState('');
   const [amAgentId, setAmAgentId] = useState('');
   const [notes, setNotes] = useState('');
   const [contractFile, setContractFile] = useState<File | null>(null);
@@ -87,14 +86,13 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const contractFileInputRef = useRef<HTMLInputElement>(null);
   React.useEffect(() => {
     if (isManagementForm) {
-      setAmTeamLeadId('');
       setAmAgentId('');
     }
   }, [isOpen, currentUser.id, isManagementForm]);
-  // Sales/AM Agent never pick an AM Team Lead manually (the field is hidden for them below) —
-  // instead this auto-resolves to the one real, currently-active am_team_lead if there's exactly
-  // one. Zero or more than one active lead falls back to genuinely unassigned (null) rather than
-  // guessing, so this keeps working correctly once a second AM Team Lead exists — at that point
+  // No role ever picks an AM Team Lead manually anymore — this auto-resolves to the one real,
+  // currently-active am_team_lead if there's exactly one. Zero or more than one active lead falls
+  // back to genuinely unassigned (null) rather than guessing, so this keeps working correctly
+  // once a second AM Team Lead exists — at that point
   // AMQueue's unfiltered "Client Onboarding & Reception" queue is the existing safety net that
   // lets any am_team_lead claim it. Never a hardcoded placeholder id.
   const soleActiveAmTeamLeadId = amTeamLeaders.length === 1 ? amTeamLeaders[0].id : undefined;
@@ -144,7 +142,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           start_date: startDate,
           contract_duration_months: contractDurationMonths === '' ? undefined : Number(contractDurationMonths),
           renewal_date: renewalDate,
-          am_team_lead_id: isManagementForm ? (amTeamLeadId || undefined) : soleActiveAmTeamLeadId,
+          am_team_lead_id: soleActiveAmTeamLeadId,
           ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
           notes: notes.trim() || undefined,
         },
@@ -165,7 +163,6 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setRemainingValue('');
       setContractDurationMonths('');
       if (isManagementForm) {
-        setAmTeamLeadId('');
         setAmAgentId('');
       }
       setNotes('');
@@ -740,41 +737,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          {/* Assign / Transfer to AM Team Leader — Sales/AM Agent never pick this manually; it's
-              auto-resolved on submit (see soleActiveAmTeamLeadId above) and this field is simply
-              hidden for them. */}
-          {isManagementForm && (
-            <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                {isAmForm ? 'Account Management Lead' : 'Route to Account Management Lead'}
-              </label>
-              <div className="relative">
-                <Users className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
-                <select
-                  value={amTeamLeadId}
-                  onChange={(e) => setAmTeamLeadId(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
-                  style={{
-                    background: 'rgba(10, 10, 13, 0.9)',
-                    border: '1px solid var(--border-soft)',
-                    color: 'var(--white)',
-                  }}
-                >
-                  <option value="" className="bg-stone-900 text-white">-- Unassigned --</option>
-                  {amTeamLeaders.map((leader) => (
-                    <option key={leader.id} value={leader.id} className="bg-stone-900 text-white">
-                      {leader.name} — ({leader.team || 'Account Management Lead'})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <p className="text-[11px] text-stone-400 mt-1">
-                {isAmForm
-                  ? 'The team lead of record for this client.'
-                  : 'Client record will be routed to AM lead for account assignment and service kickoff.'}
-              </p>
-            </div>
-          )}
+          {/* Account Management Lead is no longer manually pickable by any role — it always
+              auto-resolves via soleActiveAmTeamLeadId (see above). */}
 
           {isManagementForm && (
             <div>

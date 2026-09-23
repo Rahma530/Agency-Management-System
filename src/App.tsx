@@ -1675,10 +1675,9 @@ export default function App() {
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
     const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
     if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
-    // Sales/AM Agent submit an auto-resolved id (or none) from ClientRegistrationModal's
-    // soleActiveAmTeamLeadId logic rather than picking manually — validate it exactly like a
-    // management-picked one rather than trusting it, closing the previous unvalidated
-    // hardcoded-placeholder fallback.
+    // Every role submits an auto-resolved id (or none) from ClientRegistrationModal's
+    // soleActiveAmTeamLeadId logic now — no role picks an AM Team Lead manually anymore. Still
+    // validated rather than trusted, same defensive reasoning as any other client-submitted id.
     const leadId = await validateClientAssignment(clientData.am_team_lead_id, ['am_team_lead'], 'AM Team Leader');
     const agentId = isManagementRegistration
       ? await validateClientAssignment(clientData.am_agent_id, ['am_team_lead', 'am_agent'], 'Account Manager')

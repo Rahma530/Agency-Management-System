@@ -14,30 +14,31 @@ export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATIO
 export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical';
 
-// contract_value is financial/commercial data: full visibility stays with the roles who own the
-// client relationship end-to-end (leadership + AM), everyone else never sees it — except sales,
-// who entered the figure themselves at registration and may see it only for their own clients
-// (sales_owner_id === them), never anyone else's. isOwnClient is the caller's job to compute
-// (e.g. client.sales_owner_id === currentUser.id) since this function has no client in scope.
-const CONTRACT_VALUE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
-
-export const canSeeContractValue = (role: UserRole, isOwnClient: boolean): boolean => {
-  if (CONTRACT_VALUE_ROLES.includes(role)) return true;
-  if (role === 'sales' && isOwnClient) return true;
-  return false;
-};
-
-// Shared gate for the client's phone number AND the "Client Access" tab (portal/platform login
-// credentials, ad account access notes, payment card details tied to those ad accounts) — both
-// are PII/credential-grade data restricted to the roles that own the client relationship
+// Shared gate for the client's phone number, the "Client Access" tab (portal/platform login
+// credentials, ad account access notes, payment card details tied to those ad accounts),
+// contract_value, the Signed Contract file (ClientContractsPanel), Payment Tracking
+// (due_value/remaining_value/contract_duration_months), and the Notes field — all financial/
+// PII/credential-grade client data restricted to the roles that own the client relationship
 // end-to-end: Executive, Head of Technical, AM Team Leader, AM Agent. Deliberately excludes every
-// department team lead/agent and sales (unlike CONTRACT_VALUE_ROLES above, sales never sees
-// either of these, even for their own client). One shared list/check since both surfaces use the
-// identical role set — do not fork this into two checks.
+// department team lead/agent and (for all of the above except contract_value/Signed Contract,
+// which have their own sales-owns-it exception in canSeeContractValue below) Sales too. One
+// shared list/check so every consumer of this role set can't drift apart.
 const CLIENT_SENSITIVE_INFO_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
 
 export const canAccessClientSensitiveInfo = (role: UserRole): boolean =>
   CLIENT_SENSITIVE_INFO_ROLES.includes(role);
+
+// contract_value AND the Signed Contract file share this exact gate. Built on top of
+// canAccessClientSensitiveInfo's role set — Sales is the one deliberate addition: they entered
+// the figure and uploaded the file themselves at registration, and may see either only for their
+// own clients (sales_owner_id === them), never anyone else's. isOwnClient is the caller's job to
+// compute (e.g. client.sales_owner_id === currentUser.id) since this function has no client in
+// scope.
+export const canSeeContractValue = (role: UserRole, isOwnClient: boolean): boolean => {
+  if (canAccessClientSensitiveInfo(role)) return true;
+  if (role === 'sales' && isOwnClient) return true;
+  return false;
+};
 
 // An employee created via the "Add Employee" admin flow (single form or bulk upload) starts with
 // auth_id null — a real Supabase Auth account hasn't been provisioned for them yet (that only
