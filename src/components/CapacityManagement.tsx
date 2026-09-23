@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users,
   Gauge,
@@ -94,7 +94,9 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
 
   // New Capacity Log modal state
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
-  const [logAgentId, setLogAgentId] = useState(users[0]?.id || '');
+  // No longer defaults to the unscoped users[0] — synced to logCapacityEmployees by the effect
+  // below whenever the modal opens.
+  const [logAgentId, setLogAgentId] = useState('');
   const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
   const [logCount, setLogCount] = useState<number>(4);
   const [isLoggingSubmitting, setIsLoggingSubmitting] = useState(false);
@@ -225,6 +227,19 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     }
     return getEmployeesByDepartment(users, currentUser?.team);
   }, [users, currentUser]);
+
+  // logAgentId used to default to the unscoped users[0] at mount, which often wasn't even a
+  // member of logCapacityEmployees (e.g. a team lead's default could be an employee in a
+  // different department entirely) — the dropdown would then silently show no real selection.
+  // Two separate buttons open this modal, so a single onClick fix would be easy to miss updating
+  // on the other one; resetting here instead covers both, and self-heals if the underlying list
+  // ever changes while the modal happens to be open.
+  useEffect(() => {
+    if (!isLogModalOpen) return;
+    if (!logCapacityEmployees.some((u) => u.id === logAgentId)) {
+      setLogAgentId(logCapacityEmployees[0]?.id || '');
+    }
+  }, [isLogModalOpen, logCapacityEmployees]);
 
   // Dynamically derived departments list reflecting only visible employees under RLS
   const availableTeams = useMemo(() => {
