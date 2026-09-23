@@ -71,7 +71,7 @@ import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -102,6 +102,7 @@ interface ClientDashboardProps {
     submitted_by: string;
     custom_field_defs: BriefFieldDef[];
   }) => Promise<void>;
+  onSubmitBrief?: (briefId: string) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
   onCreateBriefFieldSchema?: (row: Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
@@ -187,6 +188,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   initialTab,
   onClose,
   onSaveBrief,
+  onSubmitBrief,
   briefFieldSchemas,
   briefFieldSchemaRows,
   onCreateBriefFieldSchema,
@@ -415,6 +417,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // (previously allowed here) are view-only now — never without a real save handler actually
   // wired through by the parent screen (never a silent no-op).
   const canEditBrief = typeof onSaveBrief === 'function' && canEditServiceBrief(currentUser.role, currentUser.id, client);
+
+  // Submit/Publish is the same role gate as editing — it's the deliberate publish action that
+  // flips a brief from AM-only draft to visible-to-department-roles (see canViewBriefContent).
+  const canSubmitBrief = typeof onSubmitBrief === 'function' && canEditServiceBrief(currentUser.role, currentUser.id, client);
 
   // Brief content (answers gathered from the client meeting) is deliberately restricted to the
   // AM department (who capture it), the operational service teams it's written for, and
@@ -1522,15 +1528,31 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                     {services.map((srv) => {
                       const brief = clientBriefs.find((b) => b.service_type === srv);
                       const isSelected = !isClientAccessSelected && selectedBriefService === srv;
-                      // Not submitted at all -> amber. Submitted but the review assistant found
-                      // issues -> amber (needs follow-up). Submitted and clean -> green.
-                      const issueCount = brief ? reviewBrief(brief, briefs, briefFieldSchemas[srv] || []).length : 0;
-                      const dotColor = !brief ? 'bg-amber-400' : issueCount > 0 ? 'bg-amber-400' : 'bg-emerald-400';
-                      const dotTitle = !brief
-                        ? 'Pending'
-                        : issueCount > 0
-                        ? `Submitted — ${issueCount} review issue${issueCount === 1 ? '' : 's'} (${briefCompletenessScore(brief, briefFieldSchemas[srv] || [])}% complete)`
-                        : 'Submitted — no review issues';
+                      // A department viewer who can't see this specific brief's content yet
+                      // (canViewBriefContent false — not yet submitted) gets a plain "Pending" dot,
+                      // same as if no brief existed at all — no completeness/review detail is
+                      // computed or leaked for a draft they're not allowed to see. AM/leadership
+                      // always pass canViewBriefContent, so they still see their own draft's real
+                      // progress (issue count / completeness) even before submitting it.
+                      const canSeeThisBriefContent = canViewBriefContent(currentUser.role, brief);
+                      const issueCount =
+                        canSeeThisBriefContent && brief ? reviewBrief(brief, briefs, briefFieldSchemas[srv] || []).length : 0;
+                      const dotColor =
+                        !canSeeThisBriefContent || !brief
+                          ? 'bg-amber-400'
+                          : !brief.submitted_at
+                          ? 'bg-amber-400'
+                          : issueCount > 0
+                          ? 'bg-amber-400'
+                          : 'bg-emerald-400';
+                      const dotTitle =
+                        !canSeeThisBriefContent || !brief
+                          ? 'Pending'
+                          : !brief.submitted_at
+                          ? 'Draft in progress (not yet submitted)'
+                          : issueCount > 0
+                          ? `Submitted — ${issueCount} review issue${issueCount === 1 ? '' : 's'} (${briefCompletenessScore(brief, briefFieldSchemas[srv] || [])}% complete)`
+                          : 'Submitted — no review issues';
                       return (
                         <button
                           key={srv}
@@ -1820,33 +1842,56 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       )}
                     </div>
                   ) : selectedBriefService ? (
-                    <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
-                      {canEditBriefFieldSchema(currentUser.role, selectedBriefService) && (
-                        <div className="flex justify-end">
-                          <button
-                            onClick={() => setIsSchemaEditorOpen(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all"
-                          >
-                            <ClipboardCheck className="w-3.5 h-3.5" />
-                            Manage Brief Questions ({selectedBriefService})
-                          </button>
+                    (() => {
+                      const selectedBrief = clientBriefs.find((b) => b.service_type === selectedBriefService);
+                      // Department roles (hasBriefViewAccess allows them onto this tab) still
+                      // cannot see this specific brief's content until the AM submits it — the
+                      // tab/service-selector stays reachable (per point 4: broad cross-service
+                      // eligibility is unchanged), only the content itself is gated per brief.
+                      if (!canViewBriefContent(currentUser.role, selectedBrief)) {
+                        return (
+                          <div className="p-8 text-center rounded-xl bg-amber-950/20 border border-amber-900/30">
+                            <Clock className="w-10 h-10 text-amber-400 mx-auto mb-2" />
+                            <h3 className="text-sm font-bold text-white">Brief Not Yet Submitted</h3>
+                            <p className="text-xs text-stone-400 max-w-md mx-auto mt-1">
+                              The Account Manager is still preparing this brief. It will become
+                              available here once they submit it.
+                            </p>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
+                          {canEditBriefFieldSchema(currentUser.role, selectedBriefService) && (
+                            <div className="flex justify-end">
+                              <button
+                                onClick={() => setIsSchemaEditorOpen(true)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 hover:text-white border border-purple-700/40 transition-all"
+                              >
+                                <ClipboardCheck className="w-3.5 h-3.5" />
+                                Manage Brief Questions ({selectedBriefService})
+                              </button>
+                            </div>
+                          )}
+                          <DynamicBriefForm
+                            clientId={client.id}
+                            clientName={client.name}
+                            serviceType={selectedBriefService}
+                            fieldDefs={briefFieldSchemas[selectedBriefService] || []}
+                            existingBrief={selectedBrief}
+                            revisions={briefRevisions.filter(
+                              (r) =>
+                                r.client_id === client.id && r.service_type === selectedBriefService
+                            )}
+                            onSaveBrief={onSaveBrief || (async () => {})}
+                            onSubmitBrief={onSubmitBrief}
+                            canSubmit={canSubmitBrief}
+                            currentUserId={currentUser.id}
+                            canEdit={canEditBrief}
+                          />
                         </div>
-                      )}
-                      <DynamicBriefForm
-                        clientId={client.id}
-                        clientName={client.name}
-                        serviceType={selectedBriefService}
-                        fieldDefs={briefFieldSchemas[selectedBriefService] || []}
-                        existingBrief={clientBriefs.find((b) => b.service_type === selectedBriefService)}
-                        revisions={briefRevisions.filter(
-                          (r) =>
-                            r.client_id === client.id && r.service_type === selectedBriefService
-                        )}
-                        onSaveBrief={onSaveBrief || (async () => {})}
-                        currentUserId={currentUser.id}
-                        canEdit={canEditBrief}
-                      />
-                    </div>
+                      );
+                    })()
                   ) : (
                     <p className="text-xs text-stone-400">No service brief selected.</p>
                   )}

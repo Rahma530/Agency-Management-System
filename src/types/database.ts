@@ -184,6 +184,12 @@ export interface BriefRecord {
   // Shared per-role (no per-client "assigned service team lead" concept exists), unlike the
   // per-individual am_team_lead_viewed_at on ClientRecord.
   team_lead_viewed_at?: string | null;
+  // null = still an AM-only draft; set once the AM/leadership deliberately publishes it via the
+  // Submit/Publish action (never automatic completeness detection). Gates department team-lead/
+  // agent read access at both the RLS layer (briefs_select_rls) and the UI layer
+  // (canViewBriefContent in lib/permissions.ts) — AM/leadership always see the brief regardless.
+  // Left untouched by later edits after submission — it does not revert to draft.
+  submitted_at?: string | null;
   // One-off questions added to THIS client's brief only — never appear on any other client's
   // brief for this service, and never touch the global per-service question list in
   // brief_field_schemas. Rendered appended after that global list's fields. The answer to a

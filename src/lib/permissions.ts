@@ -1,4 +1,4 @@
-import { ClientRecord, ServiceType, UserRecord, UserRole } from '../types/database';
+import { BriefRecord, ClientRecord, ServiceType, UserRecord, UserRole } from '../types/database';
 
 const CLIENT_REGISTRATION_ROLES: UserRole[] = [
   'executive',
@@ -132,6 +132,27 @@ export const canManageClientsFromCapacity = (role?: UserRole): boolean =>
 
 export const canManageEmployeesFromCapacity = (role?: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical';
+
+// Whether `role` may see a SPECIFIC brief's actual field content — distinct from whether the
+// Service Briefs tab/screen is reachable at all (that's hasBriefViewAccess in ClientDashboard.tsx
+// and the role-based routing in ServiceBriefsRoutingView.tsx). AM/leadership author the brief, so
+// there's nothing to gate for them. Every other role that's otherwise eligible for brief access
+// must wait for brief.submitted_at — before that, it's a private AM-in-progress draft, invisible
+// even if the surrounding tab is already reachable. Mirrors briefs_select_rls's own
+// "and submitted_at is not null" condition on the department team-lead/agent branches — that RLS
+// check is the real security boundary; this is the matching UI-layer check for correct
+// empty-state rendering. Deliberately NOT scoped by the viewer's own department/service: a
+// submitted brief stays visible to every role hasBriefViewAccess already allows onto the tab,
+// exactly as broad as before this change — only the WHEN changed, not the WHICH.
+const BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
+
+export const canViewBriefContent = (
+  role: UserRole,
+  brief: Pick<BriefRecord, 'submitted_at'> | undefined
+): boolean => {
+  if (BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES.includes(role)) return true;
+  return !!brief?.submitted_at;
+};
 
 // Global brief field schema (brief_field_schemas) write access: executive/head_of_technical/
 // am_team_lead/am_agent unconditionally (including interface briefs, which have no dedicated

@@ -83,6 +83,7 @@ interface AMQueueProps {
     submitted_by: string;
     custom_field_defs: BriefFieldDef[];
   }) => Promise<void>;
+  onSubmitBrief?: (briefId: string) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
   onCreateBriefFieldSchema?: (row: Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
@@ -166,6 +167,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onAssignAMAgent,
   onAssignAMTeamLead,
   onSaveBrief,
+  onSubmitBrief,
   briefFieldSchemas,
   briefFieldSchemaRows,
   onCreateBriefFieldSchema,
@@ -715,6 +717,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           onClose={() => setDashboardClientId(null)}
           onSaveBrief={onSaveBrief}
+          onSubmitBrief={onSubmitBrief}
           briefFieldSchemas={briefFieldSchemas}
           briefFieldSchemaRows={briefFieldSchemaRows}
           onCreateBriefFieldSchema={onCreateBriefFieldSchema}

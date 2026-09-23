@@ -15,6 +15,7 @@ import {
   X,
   Store,
   Fingerprint,
+  Send,
 } from 'lucide-react';
 import { BriefFieldDef, BriefRecord, BriefRevisionRecord, ServiceType } from '../types/database';
 import { SHORT_TEXT_MIN_LENGTH } from '../lib/briefReview';
@@ -39,6 +40,12 @@ interface DynamicBriefFormProps {
     submitted_by: string;
     custom_field_defs: BriefFieldDef[];
   }) => Promise<void>;
+  // Separate from onSaveBrief/canEdit: saving persists a draft (invisible to department roles
+  // until submitted), submitting is the deliberate, one-way publish action that makes it visible
+  // to them. Same role gate as canEdit (canEditServiceBrief) — only AM/leadership ever get this.
+  // Omitted/false hides the control entirely rather than rendering it disabled.
+  onSubmitBrief?: (briefId: string) => Promise<void>;
+  canSubmit?: boolean;
 }
 
 // Draft safety net: sessionStorage-persist unsaved answers so a remount that isn't the user's
@@ -87,6 +94,8 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
   currentUserId,
   canEdit,
   onSaveBrief,
+  onSubmitBrief,
+  canSubmit,
 }) => {
   const [activeView, setActiveView] = useState<'edit' | 'spreadsheet'>('edit');
   const [formData, setFormData] = useState<Record<string, any>>(
@@ -100,6 +109,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const currentVersion = existingBrief?.version || 1;
 
@@ -193,6 +203,19 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
     }
   };
 
+  const handleSubmit = async () => {
+    if (!canSubmit || !onSubmitBrief || !existingBrief) return;
+    setIsSubmitting(true);
+    setErrorMsg('');
+    try {
+      await onSubmitBrief(existingBrief.id);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'An error occurred while submitting the brief');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const renderServiceIcon = () => {
     switch (serviceType) {
       case 'seo':
@@ -265,6 +288,20 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
               >
                 Version v{currentVersion}
               </span>
+              {existingBrief?.submitted_at && (
+                <span
+                  className="text-[11px] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1"
+                  style={{
+                    background: 'rgba(169, 245, 193, 0.15)',
+                    color: 'var(--roas-good)',
+                    border: '1px solid var(--roas-good)',
+                  }}
+                  title={`Submitted on ${new Date(existingBrief.submitted_at).toLocaleString()}`}
+                >
+                  <CheckCircle2 className="w-3 h-3" />
+                  Submitted
+                </span>
+              )}
             </div>
             <p className="text-xs mt-0.5" style={{ color: 'var(--grey)' }}>
               Client: {clientName} — filled in by the Account Manager (AM Agent)
@@ -316,7 +353,27 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
               <Save className="w-3.5 h-3.5" />
               {isSaving ? 'Saving...' : 'Save as New Version'}
             </button>
-          ) : (
+          ) : null}
+
+          {canSubmit && onSubmitBrief && !existingBrief?.submitted_at ? (
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || !existingBrief}
+              title={!existingBrief ? 'Save the brief at least once before submitting it' : undefined}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md"
+              style={{
+                background: 'rgba(169, 245, 193, 0.15)',
+                color: 'var(--roas-good)',
+                border: '1px solid var(--roas-good)',
+                opacity: isSubmitting || !existingBrief ? 0.5 : 1,
+              }}
+            >
+              <Send className="w-3.5 h-3.5" />
+              {isSubmitting ? 'Submitting...' : 'Submit / Publish Brief'}
+            </button>
+          ) : null}
+
+          {!canEdit && (
             <span
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
               style={{

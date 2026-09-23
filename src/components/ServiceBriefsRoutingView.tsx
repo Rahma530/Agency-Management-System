@@ -52,7 +52,7 @@ import { BriefRepositoryView } from './BriefRepositoryView';
 import { DynamicBriefForm } from './DynamicBriefForm';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
-import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema, canEditServiceBrief } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
 
@@ -106,6 +106,7 @@ interface ServiceBriefsRoutingViewProps {
     submitted_by: string;
     custom_field_defs: BriefFieldDef[];
   }) => Promise<void>;
+  onSubmitBrief?: (briefId: string) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
   onCreateBriefFieldSchema?: (row: Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
@@ -179,6 +180,7 @@ const AMServiceBriefsPanel: React.FC<{
     submitted_by: string;
     custom_field_defs: BriefFieldDef[];
   }) => Promise<void>;
+  onSubmitBrief?: (briefId: string) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
   onCreateBriefFieldSchema?: (row: Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
@@ -227,6 +229,7 @@ const AMServiceBriefsPanel: React.FC<{
   platformConnections,
   onSetPlatformConnectionStatus,
   onSaveBrief,
+  onSubmitBrief,
   briefFieldSchemas,
   briefFieldSchemaRows,
   onCreateBriefFieldSchema,
@@ -350,6 +353,7 @@ const AMServiceBriefsPanel: React.FC<{
           initialTab="briefs"
           onClose={() => setDashboardClientId(null)}
           onSaveBrief={onSaveBrief}
+          onSubmitBrief={onSubmitBrief}
           briefFieldSchemas={briefFieldSchemas}
           briefFieldSchemaRows={briefFieldSchemaRows}
           onCreateBriefFieldSchema={onCreateBriefFieldSchema}
@@ -398,6 +402,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   platformConnections = [],
   onSetPlatformConnectionStatus,
   onSaveBrief,
+  onSubmitBrief,
   briefFieldSchemas,
   briefFieldSchemaRows,
   onCreateBriefFieldSchema,
@@ -434,6 +439,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         platformConnections={platformConnections}
         onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
         onSaveBrief={onSaveBrief}
+        onSubmitBrief={onSubmitBrief}
         briefFieldSchemas={briefFieldSchemas}
         briefFieldSchemaRows={briefFieldSchemaRows}
         onCreateBriefFieldSchema={onCreateBriefFieldSchema}
@@ -575,12 +581,15 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   );
 
   // Clear the "New" indicator on the currently-open brief once the relevant Team Lead sees it.
+  // Gated on submitted_at too — selecting a client whose brief is still an AM-only draft must
+  // never mark it "viewed", since the Team Lead never actually saw any content (renderBriefContent
+  // shows the "not submitted yet" placeholder instead of the real form in that case).
   React.useEffect(() => {
-    if (isTeamLead && onMarkBriefViewed && serviceBrief && !serviceBrief.team_lead_viewed_at) {
+    if (isTeamLead && onMarkBriefViewed && serviceBrief?.submitted_at && !serviceBrief.team_lead_viewed_at) {
       onMarkBriefViewed(serviceBrief.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTeamLead, serviceBrief?.id, serviceBrief?.team_lead_viewed_at]);
+  }, [isTeamLead, serviceBrief?.id, serviceBrief?.submitted_at, serviceBrief?.team_lead_viewed_at]);
 
   const currentAssignment = assignments.find(
     (a) => a.client_id === selectedClient?.id && a.service_type === serviceType
@@ -591,7 +600,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
     const brf = briefs.find((b) => b.client_id === client.id && b.service_type === serviceType);
     const asg = assignments.find((a) => a.client_id === client.id && a.service_type === serviceType);
 
-    if (!brf || brf.version === 0) {
+    if (!brf || !brf.submitted_at) {
       return {
         key: 'brief_in_progress',
         label: 'Brief in Progress',
@@ -651,6 +660,21 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
 
   const renderBriefContent = (brief: BriefRecord | undefined) => {
     if (!selectedClient) return null;
+    // This queue is always a department team-lead/agent view (AM has its own separate branch
+    // above), so canViewBriefContent boils down to "has the AM submitted it" — but the shared
+    // check is used for consistency with ClientDashboard's identical gate.
+    if (!canViewBriefContent(currentUser.role, brief)) {
+      return (
+        <div className="p-8 text-center rounded-xl bg-amber-950/20 border border-amber-900/30">
+          <Clock className="w-10 h-10 text-amber-400 mx-auto mb-2" />
+          <h3 className="text-sm font-bold text-white">Brief Not Yet Submitted</h3>
+          <p className="text-xs text-stone-400 max-w-md mx-auto mt-1">
+            The Account Manager is still preparing this brief. It will become available here once
+            they submit it.
+          </p>
+        </div>
+      );
+    }
     return (
       <DynamicBriefForm
         clientId={selectedClient.id}
@@ -660,9 +684,13 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         existingBrief={brief}
         revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
         onSaveBrief={onSaveBrief || (async () => {})}
+        onSubmitBrief={onSubmitBrief}
         currentUserId={currentUser.id}
         canEdit={
           canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSaveBrief === 'function'
+        }
+        canSubmit={
+          canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSubmitBrief === 'function'
         }
       />
     );
@@ -840,10 +868,15 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                 const asg = assignments.find((a) => a.client_id === client.id && a.service_type === serviceType);
                 const assignedPerson = users.find((u) => u.id === asg?.agent_id);
                 const clientBrief = briefs.find((b) => b.client_id === client.id && b.service_type === serviceType);
-                const isNewBrief = isTeamLead && !!clientBrief && !clientBrief.team_lead_viewed_at;
+                // "New"/completeness badges require submitted_at — an unsubmitted draft is
+                // invisible to this Team Lead (renderBriefContent shows a placeholder for it), so
+                // neither its existence-as-"New" nor its completeness score should leak here either.
+                const isNewBrief = isTeamLead && !!clientBrief?.submitted_at && !clientBrief.team_lead_viewed_at;
                 // Module 12 Phase 5: "New" badge for the agent's own freshly (re)assigned client.
                 const isNewAssignment = !isTeamLead && !!asg && asg.agent_id === currentUser.id && !asg.viewed_at;
-                const briefIssueCount = clientBrief ? reviewBrief(clientBrief, briefs, briefFieldSchemas[serviceType] || []).length : 0;
+                const briefIssueCount = clientBrief?.submitted_at
+                  ? reviewBrief(clientBrief, briefs, briefFieldSchemas[serviceType] || []).length
+                  : 0;
 
                 return (
                   <div
@@ -877,7 +910,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                                 New
                               </span>
                             )}
-                            {clientBrief && (
+                            {clientBrief?.submitted_at && (
                               <span
                                 className="px-1.5 py-0.2 rounded-full text-[9px] font-bold"
                                 style={
@@ -1085,6 +1118,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onMarkAssignmentViewed={onMarkAssignmentViewed}
           onClose={() => setDashboardClientId(null)}
           onSaveBrief={onSaveBrief}
+          onSubmitBrief={onSubmitBrief}
           briefFieldSchemas={briefFieldSchemas}
           briefFieldSchemaRows={briefFieldSchemaRows}
           onCreateBriefFieldSchema={onCreateBriefFieldSchema}
