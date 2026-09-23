@@ -62,12 +62,19 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     department: 'Sales & Business Development',
     badgeBg: 'rgba(245, 226, 154, 0.2)',
     badgeText: 'var(--roas-mid)',
-    defaultModule: 'my_work',
-    allowedModules: ['my_work', 'onboarding'],
+    // My Work removed (confirmed): its Tasks section never applied to sales anyway, and its My
+    // Clients section duplicated — in a strictly narrower form — what SalesPortalView.tsx (the
+    // Onboarding module) already shows: the same sales_owner_id-scoped client list, plus the
+    // Register/Bulk-Upload actions and a Total Contract Value KPI My Work never had. The one thing
+    // uniquely reachable through My Work was its "My Performance" button (EmployeePerformancePage);
+    // since that page's metrics are task/capacity-based and sales has neither, its practical value
+    // was already negligible. Onboarding is now sales's only module and default landing screen.
+    defaultModule: 'onboarding',
+    allowedModules: ['onboarding'],
     canCreateCampaign: false,
     canManageCapacity: false,
     canAssignAM: true,
-    description: 'Client registration, agreement setup, handoff to Account Management, and personal pipeline.',
+    description: 'Client registration, agreement setup, and handoff to Account Management.',
   },
   am_team_lead: {
     role: 'am_team_lead',

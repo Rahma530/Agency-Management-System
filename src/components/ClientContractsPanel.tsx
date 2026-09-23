@@ -2,24 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FileSignature, Download, Trash2, FileText, Loader2 } from 'lucide-react';
 import { ClientContractRecord, UserRecord } from '../types/database';
 import { supabase } from '../lib/supabase';
+import { CONTRACT_ALLOWED_MIME_TYPES, CONTRACT_MAX_FILE_SIZE_BYTES, formatContractFileSize } from '../lib/clientContracts';
 
-// Mirrors the client-contracts bucket's own allowed_mime_types / file_size_limit (see
-// 20260922100000_client_contracts.sql) — client-side feedback only, Storage enforces both
-// server-side regardless.
-const ALLOWED_MIME_TYPES = [
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'image/jpeg', 'image/png', 'image/webp',
-];
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 const SIGNED_URL_TTL_SECONDS = 300;
-
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
 
 interface ClientContractsPanelProps {
   clientId: string;
@@ -79,12 +64,12 @@ export const ClientContractsPanel: React.FC<ClientContractsPanelProps> = ({
     if (!file) return;
     setError(null);
 
-    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    if (!CONTRACT_ALLOWED_MIME_TYPES.includes(file.type)) {
       setError(`File type not allowed (${file.type || 'unknown'}). Allowed: PDF, Word documents, or scanned images.`);
       return;
     }
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setError(`File too large (${formatFileSize(file.size)}) — the limit is 20MB.`);
+    if (file.size > CONTRACT_MAX_FILE_SIZE_BYTES) {
+      setError(`File too large (${formatContractFileSize(file.size)}) — the limit is 20MB.`);
       return;
     }
 
@@ -131,7 +116,7 @@ export const ClientContractsPanel: React.FC<ClientContractsPanelProps> = ({
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-white truncate">{c.filename}</p>
                   <p className="text-[10px] text-stone-400">
-                    {uploader?.name || 'Unknown'} • {formatFileSize(c.file_size)} • {c.uploaded_at.slice(0, 10)}
+                    {uploader?.name || 'Unknown'} • {formatContractFileSize(c.file_size)} • {c.uploaded_at.slice(0, 10)}
                   </p>
                 </div>
 

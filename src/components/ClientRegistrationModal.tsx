@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers, Globe, ChevronDown } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Users, Phone, Layers, Globe, ChevronDown, FileSignature, StickyNote } from 'lucide-react';
 import { ClientSector, ServiceType, UserRecord } from '../types/database';
-import { CLIENT_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
+import { COMPREHENSIVE_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
+import { CONTRACT_ALLOWED_MIME_TYPES, CONTRACT_MAX_FILE_SIZE_BYTES, formatContractFileSize } from '../lib/clientContracts';
 
 interface ClientRegistrationModalProps {
   isOpen: boolean;
@@ -9,23 +10,27 @@ interface ClientRegistrationModalProps {
   currentUser: UserRecord;
   amTeamLeaders?: UserRecord[];
   amAgents?: UserRecord[];
-  onSubmit: (clientData: {
-    name: string;
-    client_contact_name?: string;
-    sector: ClientSector;
-    industry: string;
-    services: ServiceType[];
-    phone_number?: string;
-    website_or_social_link?: string;
-    contract_value: number;
-    due_value?: number;
-    remaining_value?: number;
-    start_date: string;
-    contract_duration_months?: number;
-    renewal_date: string;
-    am_team_lead_id?: string;
-    am_agent_id?: string;
-  }) => Promise<void>;
+  onSubmit: (
+    clientData: {
+      name: string;
+      client_contact_name?: string;
+      sector: ClientSector;
+      industry: string;
+      services: ServiceType[];
+      phone_number?: string;
+      website_or_social_link?: string;
+      contract_value: number;
+      due_value?: number;
+      remaining_value?: number;
+      start_date: string;
+      contract_duration_months?: number;
+      renewal_date: string;
+      am_team_lead_id?: string;
+      am_agent_id?: string;
+      notes?: string;
+    },
+    contractFile: File
+  ) => Promise<void>;
 }
 
 const addOneYear = (dateStr: string): string => {
@@ -76,6 +81,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
   const [amTeamLeadId, setAmTeamLeadId] = useState('');
   const [amAgentId, setAmAgentId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [contractFile, setContractFile] = useState<File | null>(null);
+  const [contractFileError, setContractFileError] = useState('');
+  const contractFileInputRef = useRef<HTMLInputElement>(null);
   React.useEffect(() => {
     if (isManagementForm) {
       setAmTeamLeadId('');
@@ -112,27 +121,35 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setErrorMsg('Please select at least one service.');
       return;
     }
+    if (!contractFile) {
+      setErrorMsg('Please upload the signed contract file.');
+      return;
+    }
 
     setIsSubmitting(true);
     setErrorMsg('');
     try {
-      await onSubmit({
-        name: name.trim(),
-        client_contact_name: contactName.trim() || undefined,
-        sector,
-        industry: industry.trim(),
-        services: selectedServices,
-        phone_number: phoneNumber.trim() || undefined,
-        website_or_social_link: websiteOrSocialLink.trim() || undefined,
-        contract_value: contractValue ? Number(contractValue) : 0,
-        due_value: dueValue === '' ? undefined : Number(dueValue),
-        remaining_value: remainingValue === '' ? undefined : Number(remainingValue),
-        start_date: startDate,
-        contract_duration_months: contractDurationMonths === '' ? undefined : Number(contractDurationMonths),
-        renewal_date: renewalDate,
-        am_team_lead_id: isManagementForm ? (amTeamLeadId || undefined) : soleActiveAmTeamLeadId,
-        ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
-      });
+      await onSubmit(
+        {
+          name: name.trim(),
+          client_contact_name: contactName.trim() || undefined,
+          sector,
+          industry: industry.trim(),
+          services: selectedServices,
+          phone_number: phoneNumber.trim() || undefined,
+          website_or_social_link: websiteOrSocialLink.trim() || undefined,
+          contract_value: contractValue ? Number(contractValue) : 0,
+          due_value: dueValue === '' ? undefined : Number(dueValue),
+          remaining_value: remainingValue === '' ? undefined : Number(remainingValue),
+          start_date: startDate,
+          contract_duration_months: contractDurationMonths === '' ? undefined : Number(contractDurationMonths),
+          renewal_date: renewalDate,
+          am_team_lead_id: isManagementForm ? (amTeamLeadId || undefined) : soleActiveAmTeamLeadId,
+          ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
+          notes: notes.trim() || undefined,
+        },
+        contractFile
+      );
       // reset
       setName('');
       setContactName('');
@@ -151,6 +168,9 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
         setAmTeamLeadId('');
         setAmAgentId('');
       }
+      setNotes('');
+      setContractFile(null);
+      setContractFileError('');
       setRenewalDateTouched(false);
       onClose();
     } catch (err: any) {
@@ -162,12 +182,42 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
   const toggleService = (service: ClientServiceOption) => {
     if (service === 'comprehensive') {
-      setSelectedServices((prev) => prev.length === CLIENT_SERVICES.length ? [] : [...CLIENT_SERVICES]);
+      // Orthogonal to Creation/Branding (the "Additional Services" section below) — only ever
+      // adds/removes the 4 COMPREHENSIVE_SERVICES, never touching whatever additional-service
+      // selections already exist, so a client can be شاملة + Branding at the same time.
+      setSelectedServices((prev) => {
+        const allCoreSelected = COMPREHENSIVE_SERVICES.every((s) => prev.includes(s));
+        return allCoreSelected
+          ? prev.filter((s) => !COMPREHENSIVE_SERVICES.includes(s))
+          : Array.from(new Set([...prev, ...COMPREHENSIVE_SERVICES]));
+      });
       return;
     }
     setSelectedServices((prev) =>
       prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]
     );
+  };
+
+  // Client-side validation only, mirroring ClientContractsPanel.tsx's own check exactly (same
+  // shared constants) — Storage enforces both server-side regardless. The actual upload happens
+  // after the client row is created (App.tsx's handleRegisterClient calls the same
+  // handleUploadClientContract this whole app already uses post-registration), since the storage
+  // path needs a real client id.
+  const handleContractFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setContractFileError('');
+
+    if (!CONTRACT_ALLOWED_MIME_TYPES.includes(file.type)) {
+      setContractFileError(`File type not allowed (${file.type || 'unknown'}). Allowed: PDF, Word documents, or scanned images.`);
+      return;
+    }
+    if (file.size > CONTRACT_MAX_FILE_SIZE_BYTES) {
+      setContractFileError(`File too large (${formatContractFileSize(file.size)}) — the limit is 20MB.`);
+      return;
+    }
+    setContractFile(file);
   };
 
   return (
@@ -587,9 +637,9 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
               Services <span className="text-red-400">*</span>
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {CLIENT_SERVICE_OPTIONS.map((opt) => {
+              {CLIENT_SERVICE_OPTIONS.filter((opt) => opt.group === 'main').map((opt) => {
                 const isSelected = opt.value === 'comprehensive'
-                  ? selectedServices.length === CLIENT_SERVICES.length
+                  ? COMPREHENSIVE_SERVICES.every((s) => selectedServices.includes(s))
                   : selectedServices.includes(opt.value);
                 return (
                   <button
@@ -608,6 +658,85 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Additional Services
+            </label>
+            <p className="text-[11px] text-stone-400 mb-1.5">
+              Optional add-ons — independent of شاملة and every other service above.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {CLIENT_SERVICE_OPTIONS.filter((opt) => opt.group === 'additional').map((opt) => {
+                const isSelected = selectedServices.includes(opt.value as ServiceType);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => toggleService(opt.value)}
+                    className="px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 justify-center"
+                    style={
+                      isSelected
+                        ? { background: 'rgba(123, 47, 247, 0.3)', color: 'var(--purple-light)', border: '1px solid var(--purple)' }
+                        : { background: 'rgba(10, 10, 13, 0.8)', color: 'var(--grey)', border: '1px solid var(--border-soft)' }
+                    }
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Signed Contract <span className="text-red-400">*</span>
+            </label>
+            <input
+              ref={contractFileInputRef}
+              type="file"
+              onChange={handleContractFileSelect}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => contractFileInputRef.current?.click()}
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm transition-all"
+              style={{
+                background: 'rgba(10, 10, 13, 0.9)',
+                border: contractFile ? '1px solid var(--purple)' : '1px solid var(--border-soft)',
+                color: contractFile ? 'var(--purple-light)' : 'var(--grey)',
+              }}
+            >
+              <FileSignature className="w-4 h-4 shrink-0" />
+              <span className="truncate">
+                {contractFile ? contractFile.name : 'Upload the signed contract (PDF, Word, or scanned image)...'}
+              </span>
+            </button>
+            {contractFileError && <p className="text-[11px] text-red-400 mt-1">{contractFileError}</p>}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Notes (optional)
+            </label>
+            <div className="relative">
+              <StickyNote className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                placeholder="Any extra info about this client..."
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                style={{
+                  background: 'rgba(10, 10, 13, 0.9)',
+                  border: '1px solid var(--border-soft)',
+                  color: 'var(--white)',
+                }}
+              />
             </div>
           </div>
 

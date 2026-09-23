@@ -1,16 +1,28 @@
 import type { ServiceType } from '../types/database';
 
 export const CLIENT_SERVICES: ServiceType[] = ['seo', 'social_media', 'media_buying', 'interface', 'creation', 'branding'];
+
+// What "شاملة" (Comprehensive) expands to — a strict 4-item subset of CLIENT_SERVICES. Creation
+// and Branding are deliberately excluded: they're orthogonal add-ons a client can have
+// independently of (or alongside) the comprehensive bundle, never implied by it. Kept as its own
+// constant rather than reusing CLIENT_SERVICES directly, since CLIENT_SERVICES still separately
+// means "every valid service type" (used by normalizeClientServices' own dedup/ordering below,
+// unrelated to what شاملة specifically expands to).
+export const COMPREHENSIVE_SERVICES: ServiceType[] = ['seo', 'social_media', 'media_buying', 'interface'];
+
 export type ClientServiceOption = ServiceType | 'comprehensive';
 
-export const CLIENT_SERVICE_OPTIONS: { value: ClientServiceOption; label: string }[] = [
-  { value: 'seo', label: 'SEO' },
-  { value: 'social_media', label: 'Social Media (designs & videos)' },
-  { value: 'media_buying', label: 'Media Buying' },
-  { value: 'interface', label: 'واجهة' },
-  { value: 'creation', label: 'Creation (Store/Website Setup) — إنشاء' },
-  { value: 'branding', label: 'Branding — الهوية البصرية' },
-  { value: 'comprehensive', label: 'شاملة' },
+// `group` drives the Register New Client form's two sections: 'main' renders alongside the شاملة
+// toggle, 'additional' renders in its own separate "Additional Services" section — Creation/
+// Branding are optional add-ons, orthogonal to whichever main service(s) or شاملة is selected.
+export const CLIENT_SERVICE_OPTIONS: { value: ClientServiceOption; label: string; group: 'main' | 'additional' }[] = [
+  { value: 'seo', label: 'SEO', group: 'main' },
+  { value: 'social_media', label: 'Social Media (designs & videos)', group: 'main' },
+  { value: 'media_buying', label: 'Media Buying', group: 'main' },
+  { value: 'interface', label: 'واجهة', group: 'main' },
+  { value: 'comprehensive', label: 'شاملة', group: 'main' },
+  { value: 'creation', label: 'Creation (Store/Website Setup) — إنشاء', group: 'additional' },
+  { value: 'branding', label: 'Branding — الهوية البصرية', group: 'additional' },
 ];
 
 /** Expand the bundle and map historical Creative subscriptions to Social Media. */
@@ -19,7 +31,7 @@ export function normalizeClientServices(values: readonly string[] | null | undef
   for (const value of values || []) {
     const service = value.trim().toLowerCase();
     if (service === 'comprehensive' || service === 'شاملة') {
-      CLIENT_SERVICES.forEach((item) => selected.add(item));
+      COMPREHENSIVE_SERVICES.forEach((item) => selected.add(item));
     } else if (service === 'creative') {
       selected.add('social_media');
     } else if (service === 'واجهة' || service === 'ui/ux' || service === 'ui_ux') {

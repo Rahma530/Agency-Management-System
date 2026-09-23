@@ -130,6 +130,11 @@ export interface ClientRecord {
   due_value?: number | null;
   remaining_value?: number | null;
   contract_duration_months?: number | null;
+  // Free-text, collected at registration (Sales or leadership — whoever registers the client).
+  // Content visibility is restricted app-side to the same role set as the financial fields above
+  // (canAccessClientSensitiveInfo) — Sales can write it at registration but never read it back
+  // afterward. Optional; never blocks registration.
+  notes?: string | null;
   // Module 13 Phase 4: cleared to null whenever am_agent_id changes, set to now() when it's
   // assigned — mirrors the viewed_at-clearing convention from Module 12 Phase 5. Drives the
   // period-scoped gained/lost client metrics in MyWorkHub; not a general "assigned since" display
