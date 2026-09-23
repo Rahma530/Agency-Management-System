@@ -10,7 +10,9 @@ interface ClientContractsPanelProps {
   clientId: string;
   contracts: ClientContractRecord[];
   users: UserRecord[];
-  currentUserId: string;
+  // Same boolean gates both upload AND delete now — the caller passes showContractValue, the
+  // unified view/upload/delete scope (see ClientDashboard.tsx). No longer "uploader only": anyone
+  // currently responsible for this client can delete a contract regardless of who uploaded it.
   canUpload: boolean;
   onUpload: (clientId: string, file: File) => Promise<void>;
   onDelete: (contractId: string) => Promise<void>;
@@ -22,7 +24,6 @@ export const ClientContractsPanel: React.FC<ClientContractsPanelProps> = ({
   clientId,
   contracts,
   users,
-  currentUserId,
   canUpload,
   onUpload,
   onDelete,
@@ -100,7 +101,6 @@ export const ClientContractsPanel: React.FC<ClientContractsPanelProps> = ({
         <div className="space-y-1.5">
           {clientContracts.map((c) => {
             const uploader = users.find((u) => u.id === c.uploaded_by);
-            const isOwn = c.uploaded_by === currentUserId;
             const url = signedUrls[c.id];
 
             return (
@@ -133,7 +133,7 @@ export const ClientContractsPanel: React.FC<ClientContractsPanelProps> = ({
                   >
                     <Download className="w-3.5 h-3.5" />
                   </a>
-                  {isOwn && (
+                  {canUpload && (
                     <button
                       onClick={() => onDelete(c.id)}
                       className="p-1.5 rounded-lg bg-stone-900 text-stone-300 hover:text-red-400"

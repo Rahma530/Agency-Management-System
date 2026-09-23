@@ -940,16 +940,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
               {/* Signed Contract (Module 12 Phase 6) — now optional at registration, so this is
                   the primary way it gets attached for most clients, not just a rare edit. Upload
-                  rights match view rights exactly (showContractValue) — not limited to whoever
-                  originally registered the client: any currently-responsible person (AM Team
-                  Lead, the specific AM Agent now assigned, leadership, or Sales for their own
-                  client) can add or replace it. */}
+                  AND delete rights both match view rights exactly (showContractValue) — not
+                  limited to whoever originally registered/uploaded it: any currently-responsible
+                  person (AM Team Lead, the specific AM Agent now assigned, leadership, or Sales
+                  for their own client) can add, replace, or remove it. */}
               {showContractValue && onUploadClientContract && onDeleteClientContract && (
                 <ClientContractsPanel
                   clientId={client.id}
                   contracts={clientContracts}
                   users={users}
-                  currentUserId={currentUser.id}
                   canUpload={showContractValue}
                   onUpload={onUploadClientContract}
                   onDelete={onDeleteClientContract}
