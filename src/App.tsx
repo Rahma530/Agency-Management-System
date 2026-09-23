@@ -1567,6 +1567,89 @@ export default function App() {
     return data.id as string;
   };
 
+  // Shared by both registration paths below (single + bulk): fires the two registration-time
+  // notifications neither path had before. (1) the assigned AM Team Lead/Agent, if one was set at
+  // registration — skipped when that person is the one who just registered/self-assigned the
+  // client, since notifying someone about their own action is noise, not signal. (2) every active
+  // Team Lead of each service this client subscribed to — since neither registration form collects
+  // a service-specific (SEO/Media Buying/Social Media) assignment, every such service starts
+  // unassigned every time, so this always fires for every active service. Reuses the exact
+  // service_type -> team_lead role mapping the renewal-alert effect and the brief-submission
+  // notification (handleSubmitBrief) already established, and the same deterministic-id +
+  // swallowed-23505 idempotency pattern so a retried registration call can never double-notify.
+  const notifyOnClientRegistration = async (client: ClientRecord) => {
+    if (!supabaseActive) return;
+
+    if (client.am_team_lead_id && client.am_team_lead_id !== currentUser.id) {
+      try {
+        const { error } = await supabaseRaw.from('notifications').insert({
+          id: `notif-client-registered-am-lead-${client.id}-${client.am_team_lead_id}`,
+          user_id: client.am_team_lead_id,
+          sender_id: currentUser.id,
+          title: 'New Client Assigned',
+          message: `You have been assigned as AM Team Leader for the new client "${client.name}".`,
+          type: 'general',
+          is_read: false,
+          link_url: 'module:onboarding',
+          created_at: new Date().toISOString(),
+        });
+        if (error && error.code !== '23505') throw error;
+      } catch (err) {
+        console.error('Failed to create client-registration AM Team Lead notification:', err);
+      }
+    }
+
+    if (client.am_agent_id && client.am_agent_id !== currentUser.id) {
+      try {
+        const { error } = await supabaseRaw.from('notifications').insert({
+          id: `notif-client-registered-am-agent-${client.id}-${client.am_agent_id}`,
+          user_id: client.am_agent_id,
+          sender_id: currentUser.id,
+          title: 'New Client Assigned',
+          message: `You have been assigned as Account Manager for the new client "${client.name}".`,
+          type: 'general',
+          is_read: false,
+          link_url: 'module:onboarding',
+          created_at: new Date().toISOString(),
+        });
+        if (error && error.code !== '23505') throw error;
+      } catch (err) {
+        console.error('Failed to create client-registration AM Agent notification:', err);
+      }
+    }
+
+    const activeServiceLeadRoles = normalizeClientServices(client.services)
+      .map((service): UserRole | null => {
+        if (service === 'seo') return 'seo_team_lead';
+        if (service === 'media_buying') return 'media_buying_team_lead';
+        if (service === 'social_media') return 'social_media_team_lead';
+        return null;
+      })
+      .filter((role): role is UserRole => role !== null);
+
+    for (const teamLeadRole of activeServiceLeadRoles) {
+      const recipients = users.filter((u) => u.role === teamLeadRole && isActiveEmployee(u));
+      for (const recipient of recipients) {
+        try {
+          const { error } = await supabaseRaw.from('notifications').insert({
+            id: `notif-client-registered-service-${client.id}-${teamLeadRole}-${recipient.id}`,
+            user_id: recipient.id,
+            sender_id: currentUser.id,
+            title: 'New Client Needs a Specialist',
+            message: `New client "${client.name}" subscribed to your department's service and has no specialist assigned yet.`,
+            type: 'general',
+            is_read: false,
+            link_url: 'module:service_briefs',
+            created_at: new Date().toISOString(),
+          });
+          if (error && error.code !== '23505') throw error;
+        } catch (err) {
+          console.error('Failed to create client-registration Team Lead notification:', err);
+        }
+      }
+    }
+  };
+
   // 1. Single-client registration (ClientRegistrationModal.tsx) — shared by permitted roles.
   // Sales retains its onboarding handoff. Management may register an onboarding client
   // with either AM assignment, both, or neither. AM Agents retain their active-client path.
@@ -1633,6 +1716,7 @@ export default function App() {
       throw err;
     }
     setClients((prev) => [persistedClient, ...prev]);
+    await notifyOnClientRegistration(persistedClient);
 
     await logActivity('create', 'client', persistedClient.id, persistedClient.name, `Registered new client in ${persistedClient.industry}`);
 
@@ -1712,7 +1796,9 @@ export default function App() {
       const { data, error } = await supabaseRaw.from('clients').insert([newClientPayload]).select();
       if (error) throw error;
       if (!data?.[0]) throw new Error('Client creation returned no persisted row.');
-      setClients((prev) => [data[0] as ClientRecord, ...prev]);
+      const persistedClient = data[0] as ClientRecord;
+      setClients((prev) => [persistedClient, ...prev]);
+      await notifyOnClientRegistration(persistedClient);
     } catch (err) {
       console.error('Supabase bulk client insert error:', err);
       throw err;
