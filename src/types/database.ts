@@ -131,9 +131,10 @@ export interface ClientRecord {
   remaining_value?: number | null;
   contract_duration_months?: number | null;
   // Free-text, collected at registration (Sales or leadership — whoever registers the client).
-  // Content visibility is restricted app-side to the same role set as the financial fields above
-  // (canAccessClientSensitiveInfo) — Sales can write it at registration but never read it back
-  // afterward. Optional; never blocks registration.
+  // Content visibility mirrors contract_value/the Signed Contract file exactly (see
+  // canSeeContractValue): Executive/Head of Technical/AM Team Lead/the specific responsible AM
+  // Agent, plus Sales for their own registered clients only (sales_owner_id === them). Optional;
+  // never blocks registration.
   notes?: string | null;
   // Module 13 Phase 4: cleared to null whenever am_agent_id changes, set to now() when it's
   // assigned — mirrors the viewed_at-clearing convention from Module 12 Phase 5. Drives the

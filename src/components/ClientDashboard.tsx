@@ -1069,10 +1069,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
               )}
 
-              {/* Notes (Module 16) — collected at registration, same restricted role set as
-                  Payment Tracking/contract data above: Sales can write it at registration but
-                  never reads it back here. */}
-              {client.notes && canAccessClientSensitiveInfo(currentUser.role) && (
+              {/* Notes (Module 16) — collected at registration. Reuses showContractValue exactly:
+                  the final rule is identical to contract_value/the Signed Contract file —
+                  Executive/Head of Technical/AM Team Lead/the specific responsible AM Agent, PLUS
+                  Sales for their own registered clients only (sales_owner_id === them). */}
+              {client.notes && showContractValue && (
                 <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-2">
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
                     <StickyNote className="w-4 h-4 text-purple-400" />
