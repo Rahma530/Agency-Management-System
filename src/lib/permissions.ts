@@ -10,9 +10,13 @@ const CLIENT_REGISTRATION_ROLES: UserRole[] = [
 
 export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
 
-// Temporary portal preview is available only to an authenticated leadership account.
+// Temporary account setup / real-login handoff (EmployeeTestingMode.tsx) — deliberately narrower
+// than the general leadership set: Head of Technical + AI Engineer only. Executive lost access
+// here on purpose (confirmed) — this is not part of ai_engineer's broader executive/
+// head_of_technical/am_team_lead equivalence grant elsewhere in this file; it has its own,
+// separate final role set.
 export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical';
+  role === 'head_of_technical' || role === 'ai_engineer';
 
 // Shared gate for the client's phone number, the "Client Access" tab (portal/platform login
 // credentials, ad account access notes, payment card details tied to those ad accounts),
