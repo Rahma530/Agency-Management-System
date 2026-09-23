@@ -6,6 +6,7 @@ const CLIENT_REGISTRATION_ROLES: UserRole[] = [
   'sales',
   'am_team_lead',
   'am_agent',
+  'ai_engineer',
 ];
 
 export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
@@ -27,7 +28,7 @@ export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
 // department team lead/agent and (for all of the above except contract_value/Signed Contract,
 // which have their own sales-owns-it exception in canSeeContractValue below) Sales too. One
 // shared list/check so every consumer of this role set can't drift apart.
-const CLIENT_SENSITIVE_INFO_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
+const CLIENT_SENSITIVE_INFO_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent', 'ai_engineer'];
 
 export const canAccessClientSensitiveInfo = (role: UserRole): boolean =>
   CLIENT_SENSITIVE_INFO_ROLES.includes(role);
@@ -83,7 +84,7 @@ export const DEPARTMENT_TEAM_LEAD_ROLES: UserRole[] = [
 // or a team lead acting on their own department (RLS's employee_visible()/client visibility rules
 // narrow a team lead's actual reach further — this is just the role-level gate).
 export const canManageEmployeesOrClients = (role: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
+  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
 
 // Who can access the "Client Onboarding" sidebar tab at all: sales sees SalesPortalView there,
 // every other role in this list sees AMQueue's onboarding & reassignment queue. Shared by both
@@ -98,6 +99,7 @@ const CLIENT_ONBOARDING_ROLES: UserRole[] = [
   'sales',
   'am_team_lead',
   'am_agent',
+  'ai_engineer',
 ];
 
 export const canAccessClientOnboarding = (role?: UserRole): boolean =>
@@ -118,7 +120,7 @@ export const canEditServiceBrief = (
   userId: string,
   client: Pick<ClientRecord, 'am_agent_id'>
 ): boolean => {
-  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead') return true;
+  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'ai_engineer') return true;
   if (role === 'am_agent') return client.am_agent_id === userId;
   return false;
 };
@@ -133,10 +135,10 @@ export const canEditServiceBrief = (
 // a real client/employee write path (a separate, already-flagged incomplete-feature gap, not
 // something either of these functions needs to account for).
 export const canManageClientsFromCapacity = (role?: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead';
+  role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'ai_engineer';
 
 export const canManageEmployeesFromCapacity = (role?: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical';
+  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
 
 // Whether `role` may see a SPECIFIC brief's actual field content — distinct from whether the
 // Service Briefs tab/screen is reachable at all (that's hasBriefViewAccess in ClientDashboard.tsx
@@ -149,7 +151,7 @@ export const canManageEmployeesFromCapacity = (role?: UserRole): boolean =>
 // empty-state rendering. Deliberately NOT scoped by the viewer's own department/service: a
 // submitted brief stays visible to every role hasBriefViewAccess already allows onto the tab,
 // exactly as broad as before this change — only the WHEN changed, not the WHICH.
-const BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
+const BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent', 'ai_engineer'];
 
 export const canViewBriefContent = (
   role: UserRole,
@@ -164,7 +166,7 @@ export const canViewBriefContent = (
 // service team lead), plus each department team lead scoped to only their own
 // service_type.
 export const canEditBriefFieldSchema = (role: UserRole, serviceType: ServiceType): boolean => {
-  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'am_agent') {
+  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'am_agent' || role === 'ai_engineer') {
     return true;
   }
   if (role === 'seo_team_lead') return serviceType === 'seo';
