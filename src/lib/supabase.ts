@@ -93,7 +93,7 @@ export function getSupabaseSessionUser(): UserRecord | null {
 /**
  * RLS Authorization Policy for Employee/User Records:
  * 1. Executive Management (C-level): Can see ALL employees across the entire organization.
- * 2. Head of Technical: Can see ALL employees across the entire organization.
+ * 2. Head of Technical and AI Engineer: Can see ALL employees across the entire organization.
  * 3. Team Leaders: Can see ONLY employees of their own team (AM -> AM, MB -> MB, SEO -> SEO, Social -> Social).
  *    Cannot see Agents from other teams.
  * 4. Graphic Designers & Video Editors: Shared resources, visible to ALL roles where employee/team visibility is displayed.
@@ -112,8 +112,8 @@ export function isEmployeeAccessibleUnderRLS(
   // 1. Executive Management (C-level): complete organization-wide visibility
   if (viewer.role === 'executive') return true;
 
-  // 2. Head of Technical: complete organization-wide visibility
-  if (viewer.role === 'head_of_technical') return true;
+  // 2. Head of Technical and AI Engineer: complete organization-wide visibility
+  if (viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') return true;
 
   // User's own record is always accessible to themselves
   if (viewer.id && targetEmployee.id === viewer.id) return true;
@@ -185,7 +185,7 @@ export function isEmployeeAccessibleUnderRLS(
  * Returns the exact list of allowed roles for a given viewer role
  */
 export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[] {
-  if (viewerRole === 'executive' || viewerRole === 'head_of_technical') {
+  if (viewerRole === 'executive' || viewerRole === 'head_of_technical' || viewerRole === 'ai_engineer') {
     return [
       'executive',
       'head_of_technical',
@@ -198,10 +198,13 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
       'seo_agent',
       'seo_content_agent',
       'seo_backlink_agent',
+      'programming_agent',
       'social_media_team_lead',
       'social_media_agent',
       'graphic_designer',
       'video_editor',
+      'ai_engineer',
+      'marketing_manager',
     ];
   }
 
@@ -249,7 +252,7 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
 /**
  * RLS Authorization Policy for Clients:
  * - Sales: ONLY clients personally submitted (sales_owner_id === viewer.id)
- * - Executive & Head of Technical: ALL clients
+ * - Executive, Head of Technical, and AI Engineer: ALL clients
  * - AM Team Lead: ALL clients in agency
  * - AM Agent: ONLY assigned clients (am_agent_id === viewer.id)
  * - Media Buying Team Lead: ALL clients
@@ -266,8 +269,8 @@ export function isClientAccessibleUnderRLS(
     return client.sales_owner_id === viewer.id;
   }
 
-  // 2. Executive Management & Head of Technical: Full visibility
-  if (viewer.role === 'executive' || viewer.role === 'head_of_technical') {
+  // 2. Executive Management, Head of Technical, and AI Engineer: Full visibility
+  if (viewer.role === 'executive' || viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') {
     return true;
   }
 
@@ -319,7 +322,7 @@ export function isClientAccessibleUnderRLS(
  * RLS Authorization Policy for Campaigns:
  * - Sales: Strictly FORBIDDEN (returns false)
  * - Executive: View-only all campaigns
- * - Head of Technical: View-only all campaigns
+ * - Head of Technical and AI Engineer: View-only all campaigns
  * - AM Team Lead: View-only all client campaigns
  * - AM Agent: View-only campaigns of assigned clients
  * - Media Buying Team Lead: Full access to all campaigns
@@ -341,8 +344,8 @@ export function isCampaignAccessibleUnderRLS(
     return true;
   }
 
-  // 3. Head of Technical: View-only all campaigns
-  if (viewer.role === 'head_of_technical') {
+  // 3. Head of Technical and AI Engineer: View-only all campaigns
+  if (viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') {
     return true;
   }
 
@@ -376,7 +379,7 @@ export function isCampaignAccessibleUnderRLS(
 /**
  * RLS Authorization Policy for Tasks:
  * - Sales: Strictly FORBIDDEN (returns false)
- * - Executive & Head of Technical: All tasks (cross-team monitoring)
+ * - Executive, Head of Technical, and AI Engineer: All tasks (cross-team monitoring)
  * - Team Leads: Full team tasks
  * - marketing_manager: NOT a team lead — narrow, cross-cutting visibility into ONLY
  *   graphic_designer/video_editor's tasks (by assignee role). No broader access.
@@ -408,8 +411,8 @@ export function isTaskAccessibleUnderRLS(
     return false;
   }
 
-  // 2. Executive & Head of Technical: Full cross-team visibility
-  if (viewer.role === 'executive' || viewer.role === 'head_of_technical') {
+  // 2. Executive, Head of Technical, and AI Engineer: Full cross-team visibility
+  if (viewer.role === 'executive' || viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') {
     return true;
   }
 
@@ -731,7 +734,7 @@ function createUsersRLSQueryBuilder(initialRawBuilder?: any) {
         if (isSupabaseConfigured() && rawBuilder) {
           try {
             const allowedRoles = getAllowedEmployeeRolesUnderRLS(viewer.role);
-            if (viewer.role !== 'executive' && viewer.role !== 'head_of_technical') {
+            if (viewer.role !== 'executive' && viewer.role !== 'head_of_technical' && viewer.role !== 'ai_engineer') {
               rawBuilder.in('role', allowedRoles);
             }
             const liveRes = await rawBuilder;
