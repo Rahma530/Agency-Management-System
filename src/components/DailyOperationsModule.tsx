@@ -142,6 +142,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     const managerRoles: UserRole[] = [
       'executive',
       'head_of_technical',
+      'ai_engineer',
       'marketing_manager',
       ...TEAM_LEAD_ROLES,
     ];

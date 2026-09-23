@@ -398,7 +398,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       return [];
     }
     // 2. Executive & Head of Technical: see all campaigns (view-only)
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') {
+    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
       return campaigns;
     }
     // 3. Media Buying Lead: see all campaigns

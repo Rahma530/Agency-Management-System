@@ -201,7 +201,9 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const currentRole = resolvedUser?.role || 'am_agent';
   const isAMTeamLead = currentRole === 'am_team_lead';
   const isAMAgent = currentRole === 'am_agent';
-  const isExecutive = currentRole === 'executive' || currentRole === 'head_of_technical';
+  // Only referenced by handleAssign's guard below — safe to add ai_engineer here directly without
+  // touching any of isAMTeamLead's separate cosmetic label branches elsewhere in this file.
+  const isExecutive = currentRole === 'executive' || currentRole === 'head_of_technical' || currentRole === 'ai_engineer';
 
   // Role Security Check — same canAccessClientOnboarding() check that gates the "Client
   // Onboarding" sidebar nav item in App.tsx, so the two can never drift out of sync.

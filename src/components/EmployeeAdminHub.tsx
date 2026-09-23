@@ -114,10 +114,10 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onUpdateEmployee,
   onDeactivateEmployee,
 }) => {
-  // Add Employee (single + bulk) stays executive/head_of_technical only — matches
-  // users_insert_admin_rls exactly, unchanged by this feature. Manage Employees (edit/deactivate)
-  // below is the newly-broadened section: exec/HoT + all 5 team leads.
-  const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  // Add Employee (single + bulk) stays executive/head_of_technical(+ai_engineer, Request 1) only —
+  // matches users_insert_admin_rls (Phase E will add ai_engineer there too). Manage Employees
+  // (edit/deactivate) below is the newly-broadened section: exec/HoT + all 5 team leads.
+  const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const canManageEmployees = canManageEmployeesOrClients(currentUser.role);
 
   const [mode, setMode] = useState<'single' | 'bulk'>('single');

@@ -377,12 +377,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
+    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
   const canEditAM =
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'executive' ||
-    currentUser.role === 'head_of_technical';
+    currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'ai_engineer';
 
   const showContractValue = canSeeContractValue(currentUser.role, client.sales_owner_id === currentUser.id);
 
@@ -394,9 +396,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
+    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
   const canEditPaymentTracking =
-    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead' || currentUser.role === 'ai_engineer';
 
   // "Client Access" — general email, store platform login, social media login, ad account login
   // + setup type, and payment card details, collected during the Brief phase (rendered as a
@@ -433,6 +436,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'ai_engineer' ||
     currentUser.role === 'seo_team_lead' ||
     currentUser.role === 'seo_agent' ||
     currentUser.role === 'seo_content_agent' ||
@@ -454,6 +458,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
+    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
   const clientComparisonsForClient = useMemo(
@@ -650,6 +655,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
   const handleTransition = async (newStatus: ClientStatus, options?: { churn_reason?: string; renewal_date?: string }) => {
