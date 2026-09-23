@@ -88,8 +88,8 @@ Deno.serve(async (req) => {
   const { data: tester, error: testerError } = await admin.from('users')
     .select('id, role, deactivated_at').eq('auth_id', caller.id).maybeSingle();
   if (testerError || !tester || tester.deactivated_at
-    || !['executive', 'head_of_technical'].includes(tester.role)) {
-    return response({ error: 'Only active Executive Management or Head of Technical may set up test accounts.' }, 403);
+    || !['head_of_technical', 'ai_engineer'].includes(tester.role)) {
+    return response({ error: 'Only active Head of Technical or AI Engineer users may set up test accounts.' }, 403);
   }
 
   let input: { action?: string; employeeId?: string; password?: string };

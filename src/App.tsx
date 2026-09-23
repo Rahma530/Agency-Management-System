@@ -1168,6 +1168,7 @@ export default function App() {
           return (
             u.role === 'executive' ||
             u.role === 'head_of_technical' ||
+            u.role === 'ai_engineer' ||
             u.id === client.am_team_lead_id ||
             u.id === client.am_agent_id ||
             activeServiceLeadRoles.includes(u.role)
@@ -1673,7 +1674,7 @@ export default function App() {
   }, contractFile: File | null) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
-    const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+    const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || currentUser.role === 'am_team_lead';
     if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
     // Every role submits an auto-resolved id (or none) from ClientRegistrationModal's
     // soleActiveAmTeamLeadId logic now — no role picks an AM Team Lead manually anymore. Still
@@ -1774,7 +1775,7 @@ export default function App() {
   }) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmUpload = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
-    const isManagementUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
+    const isManagementUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || currentUser.role === 'am_team_lead';
     if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
     const leadId = isManagementUpload
       ? await validateClientAssignment(clientData.am_team_lead_id, ['am_team_lead'], 'AM Team Leader')
@@ -1925,7 +1926,7 @@ export default function App() {
 
   // 2. Assign the client to an Account Manager (AM Agent)
   const handleAssignAMTeamLead = async (clientId: string, leadId: string) => {
-    if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
+    if (!['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead'].includes(currentUser.role)) {
       throw new Error('You do not have permission to assign an AM Team Leader.');
     }
     const validatedId = await validateClientAssignment(leadId, ['am_team_lead'], 'AM Team Leader');
@@ -1934,7 +1935,7 @@ export default function App() {
   };
 
   const handleAssignAMAgent = async (clientId: string, agentId: string) => {
-    if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
+    if (!['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead'].includes(currentUser.role)) {
       throw new Error('You do not have permission to assign an AM Agent.');
     }
     const validatedId = await validateClientAssignment(agentId, ['am_team_lead', 'am_agent'], 'Account Manager');
@@ -3834,7 +3835,7 @@ export default function App() {
               </button>
             )}
             {/* زر النشاط الحي للمديرين — hidden below md: a desk-admin convenience, not essential mobile nav */}
-            {['executive', 'head_of_technical'].includes(currentUser.role) && (
+            {['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role) && (
               <button
                 onClick={() => setIsActivityFeedOpen(!isActivityFeedOpen)}
                 className="hidden md:flex text-xs px-4 py-2 rounded-xl font-bold items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
@@ -4208,7 +4209,7 @@ export default function App() {
 
             {/* Live Activity Feed — mobile only; desktop keeps its own header button
                 (hidden md:flex above) instead of duplicating it here. */}
-            {['executive', 'head_of_technical'].includes(currentUser.role) && (
+            {['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role) && (
               <div className="md:hidden mt-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
                 <button
                   onClick={() => {

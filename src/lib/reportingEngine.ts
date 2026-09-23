@@ -145,6 +145,7 @@ export function resolveClientsForSubject(
   switch (subject.role) {
     case 'executive':
     case 'head_of_technical':
+    case 'ai_engineer':
     case 'am_team_lead':
       // Module 13: 'lead' no longer exists as a status — client creation is now the onboarding
       // handoff itself, so every client is visible to these roles from creation onward.

@@ -54,7 +54,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
     );
   }
 
-  if (currentUser.role === 'head_of_technical') {
+  if (currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
     return (
       <HeadOfTechnicalDashboard
         clients={clients}

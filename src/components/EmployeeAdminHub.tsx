@@ -154,7 +154,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const managerCandidates = useMemo(
     () =>
       users.filter(
-        (u) => u.role === 'executive' || u.role === 'head_of_technical' || (u.role.includes('team_lead') && u.team === team)
+        (u) => u.role === 'executive' || u.role === 'head_of_technical' || u.role === 'ai_engineer' || (u.role.includes('team_lead') && u.team === team)
       ),
     [users, team]
   );
@@ -423,7 +423,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const manageableEmployees = useMemo(() => {
     const active = users.filter(isActiveEmployee);
     const scoped =
-      currentUser.role === 'executive' || currentUser.role === 'head_of_technical'
+      currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer'
         ? active
         : active.filter((u) => u.team === currentUser.team || u.manager_id === currentUser.id || u.id === currentUser.id);
     // TEMPORARY DIAGNOSTIC LOGGING — remove once the duplicate-key warning is root-caused.

@@ -60,7 +60,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 }) => {
   // Management assignments start empty; Sales and AM Agent retain their lead picker default.
   const isAmForm = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
-  const isLeadershipForm = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  const isLeadershipForm = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const isManagementForm = isLeadershipForm || currentUser.role === 'am_team_lead';
 
   const [name, setName] = useState('');

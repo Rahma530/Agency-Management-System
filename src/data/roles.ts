@@ -302,13 +302,10 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     department: 'AI & Automation',
     badgeBg: 'rgba(45, 212, 191, 0.2)',
     badgeText: '#2dd4bf',
-    // Full executive/head_of_technical/am_team_lead equivalence (Request 1, Phase A): allowedModules
-    // is the union of all three roles' lists — which happens to be every AppModuleId that exists —
-    // and canManageCapacity/canAssignAM match all three (both true). defaultModule intentionally
-    // left as 'my_work' (still a valid member of the expanded allowedModules) — not part of the
-    // explicitly requested change.
-    defaultModule: 'my_work',
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees'],
+    // Application authorization intentionally mirrors head_of_technical. Role identity and
+    // presentation remain distinct, but this role must not receive modules HoT cannot access.
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,

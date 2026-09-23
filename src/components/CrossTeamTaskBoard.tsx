@@ -252,7 +252,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // whose task marketing_manager wouldn't be able to see afterward.
   const isOperationalAssignee = (u: UserRecord) => {
     if (!u) return false;
-    if (u.role === 'executive' || u.role === 'head_of_technical') return false;
+    if (u.role === 'executive' || u.role === 'head_of_technical' || u.role === 'ai_engineer') return false;
     return true;
   };
 
@@ -311,7 +311,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const noTeamSelectedFallbackRoles: string[] = useMemo(() => {
     const role = currentUser?.role;
     if (!role) return [];
-    if (role === 'executive' || role === 'head_of_technical') {
+    if (role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer') {
       return getAllowedEmployeeRolesUnderRLS(role);
     }
     if (role === 'marketing_manager') {
@@ -331,7 +331,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // must pick a real department before the Employee filter offers anything (marketing_manager's
   // 'Creative' counts as "picked", so it's excluded from this check too).
   const employeeFilterDisabled =
-    selectedTeam === 'all' && currentUser?.role !== 'executive' && currentUser?.role !== 'head_of_technical';
+    selectedTeam === 'all' && currentUser?.role !== 'executive' && currentUser?.role !== 'head_of_technical' && currentUser?.role !== 'ai_engineer';
 
   // The Employee filter's actual rendered option list: a real department's fetched roster, or the
   // no-team-selected fallback for 'all'/'Creative'. UserRecord and AssignableEmployee both carry

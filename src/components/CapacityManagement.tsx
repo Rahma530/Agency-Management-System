@@ -112,6 +112,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     const allowedRoles: UserRole[] = [
       'executive',
       'head_of_technical',
+      'ai_engineer',
       'am_team_lead',
       'media_buying_team_lead',
       'seo_team_lead',
@@ -125,6 +126,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   const operationalRoles: UserRole[] = [
     'executive',
     'head_of_technical',
+    'ai_engineer',
     'marketing_manager',
     'sales',
     'am_team_lead',
@@ -183,7 +185,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     // viewer is one of them. Pending employees (no Auth account yet, added via
     // the Add Employee admin screen) are excluded too — they can't be assigned
     // capacity or workload until scripts/provisionAuthUsers.ts activates them.
-    return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
+    return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && u.role !== 'ai_engineer' && isActiveEmployee(u));
   }, [users, currentUser]);
 
   // "Log New Capacity Reading" gets its OWN, narrower employee list — deliberately separate from
@@ -194,8 +196,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   // department-scoped picker used elsewhere — New Task, campaign assignment), while
   // executive/head_of_technical still see every active employee company-wide.
   const logCapacityEmployees = useMemo(() => {
-    if (currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical') {
-      return users.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
+    if (currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical' || currentUser?.role === 'ai_engineer') {
+      return users.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && u.role !== 'ai_engineer' && isActiveEmployee(u));
     }
     return getEmployeesByDepartment(users, currentUser?.team);
   }, [users, currentUser]);

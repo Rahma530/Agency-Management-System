@@ -137,7 +137,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
 
   // Sales and AM Agent retain a required AM lead; management may leave both AM assignments empty.
   const isSalesUpload = currentUser.role === 'sales';
-  const isLeadershipUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  const isLeadershipUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const isManagementUpload = isLeadershipUpload || currentUser.role === 'am_team_lead';
 
   const amTeamLeads = useMemo(

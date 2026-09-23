@@ -268,7 +268,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Team members accessible under current user's RLS scope
   const teamMembers = useMemo(() => {
     let result: UserRecord[];
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') {
+    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
       result = users.filter((u) => u.role !== 'client');
     } else if (currentUser.role === 'am_team_lead') {
       result = users.filter(
@@ -308,7 +308,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     // is one of them. Pending and deactivated employees are excluded too —
     // neither can ever be the logged-in currentUser, so this never filters out
     // "yourself".
-    return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
+    return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && u.role !== 'ai_engineer' && isActiveEmployee(u));
   }, [users, currentUser]);
 
   // All blockers across visible tasks for Blockers Hub
