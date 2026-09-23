@@ -38,7 +38,7 @@ import {
 import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
-import { normalizeClientServices } from './lib/clientServices';
+import { normalizeClientServices, SERVICE_LABELS } from './lib/clientServices';
 import {
   ComparisonGranularity,
   ComparisonPeriod,
@@ -2130,6 +2130,37 @@ export default function App() {
       }
     }
 
+    // Persistent notification to the newly-assigned agent — previously missing entirely (only the
+    // ephemeral showNotification toast below existed). Fires only on an actual new assignment or a
+    // reassignment to a different agent (not a no-op re-save of the same agent), and only once the
+    // brief is already submitted — per the confirmed design, assigning before the AM has submitted
+    // fires no notification yet, since there's nothing for the agent to view (canViewBriefContent
+    // would still hide it from them regardless).
+    const isNewOrReassignedAgent = !existing || existing.agent_id !== agentId;
+    if (supabaseActive && isNewOrReassignedAgent && assignedUser && isActiveEmployee(assignedUser)) {
+      const assignedBrief = briefs.find((b) => b.client_id === clientId && b.service_type === serviceType);
+      if (assignedBrief?.submitted_at) {
+        try {
+          const { error } = await supabaseRaw.from('notifications').insert({
+            id: `notif-brief-assigned-${clientId}-${serviceType}-${agentId}-${Date.now()}`,
+            user_id: agentId,
+            sender_id: currentUser.id,
+            title: 'New Service Brief Assignment',
+            message: `You have been assigned to handle the ${
+              SERVICE_LABELS[serviceType] || serviceType
+            } brief for a client. Check your Service Briefs queue.`,
+            type: 'general',
+            is_read: false,
+            link_url: 'module:service_briefs',
+            created_at: new Date().toISOString(),
+          });
+          if (error && error.code !== '23505') throw error;
+        } catch (err) {
+          console.error('Failed to create brief assignment notification:', err);
+        }
+      }
+    }
+
     const agent = users.find((u) => u.id === agentId);
     showNotification(`Service brief assigned to specialist: ${agent?.name || agentId}`);
   };
@@ -2241,6 +2272,69 @@ export default function App() {
 
     setBriefRevisions((prev) => [revision, ...prev]);
     showNotification('Brief documented and saved as an official version successfully.');
+  };
+
+  // 3a-1b. Explicit AM "Submit/Publish Brief" action — separate from handleSaveBrief above, which
+  // only ever persists a draft. This is the one-way event that flips briefs.submitted_at, which is
+  // what actually unlocks department Team Lead/Agent visibility (canViewBriefContent in
+  // lib/permissions.ts, and briefs_select_rls's own "and submitted_at is not null" condition on
+  // their branches — the real security boundary this UI action triggers). Left untouched by any
+  // later edit to the brief (handleSaveBrief never clears it) — submitting is one-way.
+  const handleSubmitBrief = async (briefId: string) => {
+    const brief = briefs.find((b) => b.id === briefId);
+    if (!brief) return;
+
+    const submittedAt = new Date().toISOString();
+
+    if (supabaseActive) {
+      try {
+        const { error } = await supabase.from('briefs').update({ submitted_at: submittedAt }).eq('id', briefId);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Supabase brief submit error:', err);
+        throw err;
+      }
+    }
+
+    setBriefs((prev) => prev.map((b) => (b.id === briefId ? { ...b, submitted_at: submittedAt } : b)));
+    showNotification('Brief submitted — the relevant Team Leader has been notified.');
+
+    // Notify the relevant department's Team Leader only — reuses the service_type -> team_lead
+    // role mapping the renewal-alert effect already established, scoped to this one brief's
+    // service_type. Never the agent — that only happens on assignment, see handleAssignServiceAgent.
+    const teamLeadRole: UserRole | null =
+      brief.service_type === 'seo'
+        ? 'seo_team_lead'
+        : brief.service_type === 'media_buying'
+        ? 'media_buying_team_lead'
+        : brief.service_type === 'social_media'
+        ? 'social_media_team_lead'
+        : null;
+
+    if (teamLeadRole && supabaseActive) {
+      const client = clients.find((c) => c.id === brief.client_id);
+      const recipients = users.filter((u) => u.role === teamLeadRole && isActiveEmployee(u));
+      for (const recipient of recipients) {
+        try {
+          const { error } = await supabaseRaw.from('notifications').insert({
+            id: `notif-brief-submitted-${briefId}-${recipient.id}`,
+            user_id: recipient.id,
+            sender_id: currentUser.id,
+            title: 'Service Brief Submitted',
+            message: `The ${SERVICE_LABELS[brief.service_type] || brief.service_type} brief for ${
+              client?.name || 'a client'
+            } has been submitted and is ready for review.`,
+            type: 'general',
+            is_read: false,
+            link_url: 'module:service_briefs',
+            created_at: submittedAt,
+          });
+          if (error && error.code !== '23505') throw error;
+        } catch (err) {
+          console.error('Failed to create brief submission notification:', err);
+        }
+      }
+    }
   };
 
   // 3a-2. Global brief field schema CRUD (point 10) — brief_field_schemas_write_rls scopes who can
@@ -4153,6 +4247,7 @@ export default function App() {
                     onAssignAMAgent={handleAssignAMAgent}
                     onAssignAMTeamLead={handleAssignAMTeamLead}
                     onSaveBrief={handleSaveBrief}
+                    onSubmitBrief={handleSubmitBrief}
                     briefFieldSchemas={briefFieldSchemas}
                     briefFieldSchemaRows={briefFieldSchemaRows}
                     onCreateBriefFieldSchema={handleCreateBriefFieldSchema}
@@ -4204,6 +4299,7 @@ export default function App() {
                   clientPortalUsers={clientPortalUsers}
                   onAssignServiceAgent={handleAssignServiceAgent}
                   onSaveBrief={handleSaveBrief}
+                  onSubmitBrief={handleSubmitBrief}
                   briefFieldSchemas={briefFieldSchemas}
                   briefFieldSchemaRows={briefFieldSchemaRows}
                   onCreateBriefFieldSchema={handleCreateBriefFieldSchema}
