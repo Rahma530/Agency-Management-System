@@ -118,6 +118,21 @@ export const canEditServiceBrief = (
   return false;
 };
 
+// CapacityManagement.tsx's "إدارة العملاء"/"إدارة الموظفين" buttons — deliberately separate from
+// canManageEmployeesOrClients above, which already has two different, real consumers
+// (EmployeeAdminHub.tsx's edit/deactivate rights, ClientDashboard.tsx's hard-delete rights) with a
+// broader role set (all four department team leads). These two buttons need narrower, asymmetric
+// role sets of their own: client management includes only AM Team Leader among team leads, and
+// employee management excludes every team lead entirely. Both buttons are visibility-only checks
+// today — clicking either opens ImportDataModal, whose onImport handler is a no-op simulation, not
+// a real client/employee write path (a separate, already-flagged incomplete-feature gap, not
+// something either of these functions needs to account for).
+export const canManageClientsFromCapacity = (role?: UserRole): boolean =>
+  role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead';
+
+export const canManageEmployeesFromCapacity = (role?: UserRole): boolean =>
+  role === 'executive' || role === 'head_of_technical';
+
 // Global brief field schema (brief_field_schemas) write access: executive/head_of_technical/
 // am_team_lead/am_agent unconditionally (including interface briefs, which have no dedicated
 // service team lead), plus each department team lead scoped to only their own
