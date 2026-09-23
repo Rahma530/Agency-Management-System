@@ -144,26 +144,17 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   const operationalUsers = useMemo(() => {
     // Under Supabase RLS, `users` is scoped by the backend data access layer.
     // For Team Leaders, the Detailed Team Matrix & Employee Cards reflect:
-    // Team Leader -> Team Agents + the shared Creative & Design pool (graphic_designer/
-    // video_editor), and nothing from any other department — a team lead no longer sees other
-    // departments' team leads/agents at all. That prior cross-linking (OTHER_TEAM_LEAD_ROLES) was
-    // removed entirely; it wasn't load-bearing for anything else in this file.
+    // Team Leader -> Team Agents ONLY — no other department, and no Creative & Design pool either
+    // (that pool's capacity is already visible inline everywhere it matters — e.g. the Task Board's
+    // assignee dropdown — so it doesn't need a standing presence on this dashboard too). That prior
+    // cross-linking (OTHER_TEAM_LEAD_ROLES) was removed entirely; it wasn't load-bearing for
+    // anything else in this file.
     const role = currentUser?.role;
     let result: UserRecord[];
     if (role === 'am_team_lead') {
-      result = users.filter(
-        (u) =>
-          u.role === 'am_agent' ||
-          u.role === 'graphic_designer' ||
-          u.role === 'video_editor'
-      );
+      result = users.filter((u) => u.role === 'am_agent');
     } else if (role === 'media_buying_team_lead') {
-      result = users.filter(
-        (u) =>
-          u.role === 'media_buying_agent' ||
-          u.role === 'graphic_designer' ||
-          u.role === 'video_editor'
-      );
+      result = users.filter((u) => u.role === 'media_buying_agent');
     } else if (role === 'seo_team_lead') {
       result = users.filter(
         (u) =>
@@ -171,18 +162,11 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           u.role === 'seo_content_agent' ||
           u.role === 'seo_backlink_agent' ||
           // programming_agent has no dedicated team lead of its own — exclusively managed by
-          // seo_team_lead (not a shared pool like graphic_designer/video_editor below).
-          u.role === 'programming_agent' ||
-          u.role === 'graphic_designer' ||
-          u.role === 'video_editor'
+          // seo_team_lead.
+          u.role === 'programming_agent'
       );
     } else if (role === 'social_media_team_lead') {
-      result = users.filter(
-        (u) =>
-          u.role === 'social_media_agent' ||
-          u.role === 'graphic_designer' ||
-          u.role === 'video_editor'
-      );
+      result = users.filter((u) => u.role === 'social_media_agent');
     } else if (role === 'marketing_manager') {
       // NOT a team lead — narrow, read-only view of ONLY the shared creative pool (no other
       // team lead cross-visibility the way the branches above get). canModifyCapacity's
