@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users,
   Gauge,
@@ -36,8 +36,9 @@ import {
   UserRole,
 } from '../types/database';
 import { getRoleInfo, AppModuleId } from '../data/roles';
-import { isActiveEmployee } from '../lib/permissions';
+import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity } from '../lib/permissions';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
+import { getEmployeesByDepartment } from '../lib/departmentStaffing';
 import { ImportDataModal } from './ImportDataModal';
 
 interface CapacityManagementProps {
@@ -93,7 +94,9 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
 
   // New Capacity Log modal state
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
-  const [logAgentId, setLogAgentId] = useState(users[0]?.id || '');
+  // No longer defaults to the unscoped users[0] — synced to logCapacityEmployees by the effect
+  // below whenever the modal opens.
+  const [logAgentId, setLogAgentId] = useState('');
   const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
   const [logCount, setLogCount] = useState<number>(4);
   const [isLoggingSubmitting, setIsLoggingSubmitting] = useState(false);
@@ -210,6 +213,33 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     // capacity or workload until scripts/provisionAuthUsers.ts activates them.
     return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
   }, [users, currentUser]);
+
+  // "Log New Capacity Reading" gets its OWN, narrower employee list — deliberately separate from
+  // operationalUsers above. That broader list's cross-team visibility (shared Creative pool, other
+  // team leads) is intentional and correct for VIEWING capacity on this screen, but logging a new
+  // reading is a write action that should stay inside the target employee's own management chain:
+  // a team lead sees only their own department (reusing the same getEmployeesByDepartment()
+  // department-scoped picker used elsewhere — New Task, campaign assignment), while
+  // executive/head_of_technical still see every active employee company-wide.
+  const logCapacityEmployees = useMemo(() => {
+    if (currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical') {
+      return users.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
+    }
+    return getEmployeesByDepartment(users, currentUser?.team);
+  }, [users, currentUser]);
+
+  // logAgentId used to default to the unscoped users[0] at mount, which often wasn't even a
+  // member of logCapacityEmployees (e.g. a team lead's default could be an employee in a
+  // different department entirely) — the dropdown would then silently show no real selection.
+  // Two separate buttons open this modal, so a single onClick fix would be easy to miss updating
+  // on the other one; resetting here instead covers both, and self-heals if the underlying list
+  // ever changes while the modal happens to be open.
+  useEffect(() => {
+    if (!isLogModalOpen) return;
+    if (!logCapacityEmployees.some((u) => u.id === logAgentId)) {
+      setLogAgentId(logCapacityEmployees[0]?.id || '');
+    }
+  }, [isLogModalOpen, logCapacityEmployees]);
 
   // Dynamically derived departments list reflecting only visible employees under RLS
   const availableTeams = useMemo(() => {
@@ -1169,28 +1199,32 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
             </div>
             {canModifyCapacity && (
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setImportType('clients');
-                    setIsImportModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-white"
-                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                >
-                  <Building2 className="w-4 h-4" />
-                  <span>إدارة العملاء</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setImportType('users');
-                    setIsImportModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-white"
-                  style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-                >
-                  <Users className="w-4 h-4" />
-                  <span>إدارة الموظفين</span>
-                </button>
+                {canManageClientsFromCapacity(currentUser?.role) && (
+                  <button
+                    onClick={() => {
+                      setImportType('clients');
+                      setIsImportModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-white"
+                    style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                  >
+                    <Building2 className="w-4 h-4" />
+                    <span>إدارة العملاء</span>
+                  </button>
+                )}
+                {canManageEmployeesFromCapacity(currentUser?.role) && (
+                  <button
+                    onClick={() => {
+                      setImportType('users');
+                      setIsImportModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-white"
+                    style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>إدارة الموظفين</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setIsLogModalOpen(true)}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0"
@@ -1300,7 +1334,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                   className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   required
                 >
-                  {operationalUsers.map((u) => (
+                  {logCapacityEmployees.map((u) => (
                     <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                       {u.name} ({u.team || u.role}) - Limit: {resolveCapacityLimit(u)}
                     </option>

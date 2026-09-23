@@ -45,6 +45,7 @@ import {
 } from '../types/database';
 import { getTodayStr, isTaskOverdue, isTaskDueToday, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
 import { isActiveEmployee } from '../lib/permissions';
+import { TEAM_LEAD_ROLES, resolveCapacityLimit } from '../lib/capacity';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
@@ -133,15 +134,16 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     setTimeout(() => setNotification(null), 3800);
   };
 
-  // Determine permissions: Is current user a Team Lead or Manager?
+  // Determine permissions: Is current user a Team Lead or Manager? marketing_manager included —
+  // its cross-cutting Creative-pool oversight (see teamMembers below) is manager-shaped access
+  // too, matching the same pattern already established for it elsewhere (Task Board's
+  // Creative-only filter, assignable_employees()-scoped access).
   const isManagerOrLead = useMemo(() => {
     const managerRoles: UserRole[] = [
       'executive',
       'head_of_technical',
-      'am_team_lead',
-      'media_buying_team_lead',
-      'seo_team_lead',
-      'social_media_team_lead',
+      'marketing_manager',
+      ...TEAM_LEAD_ROLES,
     ];
     return managerRoles.includes(currentUser.role);
   }, [currentUser.role]);
@@ -261,14 +263,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return relevantTasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
   }, [sortedEmployeeTasks, todayStr]);
 
-  // Team leads don't carry a tracked capacity buffer the way agents do — a
-  // capacity_limit of 0 is a normal, intentional value for these 4 roles
-  // (not missing data), so workload math treats them differently from agents.
-  const TEAM_LEAD_ROLES: UserRole[] = ['am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'];
-  const isTeamLeadRole = (role?: UserRole) => !!role && TEAM_LEAD_ROLES.includes(role);
-  const resolveCapacityLimit = (u: UserRecord) =>
-    isTeamLeadRole(u.role) ? (u.capacity_limit ?? 0) : (u.capacity_limit || 8);
-
   // 3. TEAM / MANAGER VIEW CALCULATIONS
   // Team members accessible under current user's RLS scope
   const teamMembers = useMemo(() => {
@@ -299,6 +293,11 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       );
     } else if (currentUser.role === 'graphic_designer' || currentUser.role === 'video_editor') {
       // Shared creative peers for Graphic Designer & Video Editor
+      result = users.filter((u) => u.role === 'graphic_designer' || u.role === 'video_editor' || u.id === currentUser.id);
+    } else if (currentUser.role === 'marketing_manager') {
+      // Cross-cutting Creative-pool oversight — not a team lead of graphic_designer/video_editor,
+      // but has manager-shaped access to that pool the same way it does elsewhere (Task Board's
+      // Creative-only filter, assignable_employees()-scoped assignment rights).
       result = users.filter((u) => u.role === 'graphic_designer' || u.role === 'video_editor' || u.id === currentUser.id);
     } else {
       result = [currentUser];
@@ -724,21 +723,24 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           </span>
         </button>
 
-        {/* Manager View Tab (Always accessible to managers, or when in preview to inspect supervisor controls) */}
-        <button
-          onClick={() => setActiveSubTab('manager_view')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
-            activeSubTab === 'manager_view'
-              ? 'bg-purple-600/30 text-white border border-purple-500/50 shadow-md'
-              : 'text-stone-400 hover:text-white border border-transparent'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5 text-purple-400" />
-          <span>Manager View</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-300 border border-purple-800 font-mono">
-            {teamMembers.length} members
-          </span>
-        </button>
+        {/* Manager View Tab — restricted to isManagerOrLead (team leads, executive,
+            head_of_technical, marketing_manager); a plain agent must never see this tab at all. */}
+        {isManagerOrLead && (
+          <button
+            onClick={() => setActiveSubTab('manager_view')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+              activeSubTab === 'manager_view'
+                ? 'bg-purple-600/30 text-white border border-purple-500/50 shadow-md'
+                : 'text-stone-400 hover:text-white border border-transparent'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-purple-400" />
+            <span>Manager View</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-300 border border-purple-800 font-mono">
+              {teamMembers.length} members
+            </span>
+          </button>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -1524,7 +1526,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       {/* ========================================================================= */}
       {/* 5. MANAGER / TEAM LEAD VIEW                                               */}
       {/* ========================================================================= */}
-      {activeSubTab === 'manager_view' && (
+      {activeSubTab === 'manager_view' && isManagerOrLead && (
         <div className="space-y-5">
           <div
             className="p-4 rounded-[18px] flex items-center justify-between"
