@@ -141,21 +141,13 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     'video_editor',
   ];
 
-  // Other team-lead roles besides the viewer's own — every team lead can see
-  // every other team lead's card (cross-department), the same way they can
-  // already see the shared graphic_designer/video_editor pool, so the
-  // "Assign via Task Board" reverse link (point 4) has a card to render on.
-  const OTHER_TEAM_LEAD_ROLES: Record<string, UserRole[]> = {
-    am_team_lead: ['media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'],
-    media_buying_team_lead: ['am_team_lead', 'seo_team_lead', 'social_media_team_lead'],
-    seo_team_lead: ['am_team_lead', 'media_buying_team_lead', 'social_media_team_lead'],
-    social_media_team_lead: ['am_team_lead', 'media_buying_team_lead', 'seo_team_lead'],
-  };
-
   const operationalUsers = useMemo(() => {
     // Under Supabase RLS, `users` is scoped by the backend data access layer.
     // For Team Leaders, the Detailed Team Matrix & Employee Cards reflect:
-    // Team Leader -> Team Agents + Graphic Designers + Video Editors + other Team Leads
+    // Team Leader -> Team Agents + the shared Creative & Design pool (graphic_designer/
+    // video_editor), and nothing from any other department — a team lead no longer sees other
+    // departments' team leads/agents at all. That prior cross-linking (OTHER_TEAM_LEAD_ROLES) was
+    // removed entirely; it wasn't load-bearing for anything else in this file.
     const role = currentUser?.role;
     let result: UserRecord[];
     if (role === 'am_team_lead') {
@@ -163,16 +155,14 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
         (u) =>
           u.role === 'am_agent' ||
           u.role === 'graphic_designer' ||
-          u.role === 'video_editor' ||
-          OTHER_TEAM_LEAD_ROLES.am_team_lead.includes(u.role)
+          u.role === 'video_editor'
       );
     } else if (role === 'media_buying_team_lead') {
       result = users.filter(
         (u) =>
           u.role === 'media_buying_agent' ||
           u.role === 'graphic_designer' ||
-          u.role === 'video_editor' ||
-          OTHER_TEAM_LEAD_ROLES.media_buying_team_lead.includes(u.role)
+          u.role === 'video_editor'
       );
     } else if (role === 'seo_team_lead') {
       result = users.filter(
@@ -184,16 +174,14 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           // seo_team_lead (not a shared pool like graphic_designer/video_editor below).
           u.role === 'programming_agent' ||
           u.role === 'graphic_designer' ||
-          u.role === 'video_editor' ||
-          OTHER_TEAM_LEAD_ROLES.seo_team_lead.includes(u.role)
+          u.role === 'video_editor'
       );
     } else if (role === 'social_media_team_lead') {
       result = users.filter(
         (u) =>
           u.role === 'social_media_agent' ||
           u.role === 'graphic_designer' ||
-          u.role === 'video_editor' ||
-          OTHER_TEAM_LEAD_ROLES.social_media_team_lead.includes(u.role)
+          u.role === 'video_editor'
       );
     } else if (role === 'marketing_manager') {
       // NOT a team lead — narrow, read-only view of ONLY the shared creative pool (no other
@@ -364,6 +352,19 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   const nearCapacityCount = allUserData.filter((u) => u.status === 'near_capacity').length;
   const overCapacityCount = allUserData.filter((u) => u.status === 'over_capacity').length;
   const totalBuffer = Math.max(0, totalCapacitySum - totalUsedSum);
+
+  // Log Capacity modal: non-blocking over-capacity warning. Logging a reading for an
+  // already-over-capacity employee (or a reading that would itself push them over their
+  // capacityLimit) is still allowed to proceed — this only surfaces a visible alert, it never
+  // gates handleLogCapacitySubmit below. isUntracked (capacityLimit === 0, normal for team
+  // leads) has no over-capacity concept, so it's excluded from the "new reading" check.
+  const selectedLogEmployeeData = allUserData.find((d) => d.user.id === logAgentId);
+  const willExceedCapacityWithNewReading =
+    !!selectedLogEmployeeData &&
+    !selectedLogEmployeeData.isUntracked &&
+    logCount > selectedLogEmployeeData.capacityLimit;
+  const showLogCapacityOverCapacityWarning =
+    selectedLogEmployeeData?.status === 'over_capacity' || willExceedCapacityWithNewReading;
 
   // Handlers
   const handleStartEdit = (user: UserRecord) => {
@@ -1371,6 +1372,21 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                   />
                 </div>
               </div>
+
+              {showLogCapacityOverCapacityWarning && selectedLogEmployeeData && (
+                <div
+                  className="p-3 rounded-xl text-xs flex items-start gap-2 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)]"
+                  style={{ color: 'var(--roas-bad)' }}
+                >
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    {selectedLogEmployeeData.status === 'over_capacity'
+                      ? `${selectedLogEmployeeData.user.name} is already over capacity.`
+                      : `This reading (${logCount}) would put ${selectedLogEmployeeData.user.name} over their capacity limit (${selectedLogEmployeeData.capacityLimit}).`}{' '}
+                    You can still log this reading — it will not be blocked.
+                  </span>
+                </div>
+              )}
 
               <div className="pt-3 border-t border-stone-800 flex items-center justify-end gap-2">
                 <button
