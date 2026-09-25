@@ -19,6 +19,24 @@ export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATIO
 export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
   role === 'head_of_technical' || role === 'ai_engineer';
 
+// TEMPORARY TRANSITION FEATURE (EmployeeImpersonation.tsx / supabase/functions/
+// employee-impersonation) — intended for removal once every employee has adopted their own real,
+// self-set password. Currently the same two roles as canUseEmployeeTestingMode above, but tracked
+// as its own function rather than reused directly: impersonation needs no password knowledge at
+// all (a magic link, not a real login), a materially different and more sensitive capability than
+// Testing Mode's real-credentials flow, so the two role sets are free to diverge later without
+// entangling one decision with the other.
+export const canImpersonateEmployees = (role: UserRole): boolean =>
+  role === 'head_of_technical' || role === 'ai_engineer';
+
+// Impersonation targets: rank-and-file employees only. Leadership can never impersonate one
+// another (or themselves) through this tool, on top of the server-side protected-account
+// exclusion (two hardcoded Auth IDs) enforced only in the Edge Function, which has no client-side
+// equivalent since the browser is never told which accounts those are.
+export const NON_IMPERSONATABLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'ai_engineer'];
+
+export const canBeImpersonated = (role: UserRole): boolean => !NON_IMPERSONATABLE_ROLES.includes(role);
+
 // Shared gate for the client's phone number, the "Client Access" tab (portal/platform login
 // credentials, ad account access notes, payment card details tied to those ad accounts),
 // contract_value, the Signed Contract file (ClientContractsPanel), Payment Tracking

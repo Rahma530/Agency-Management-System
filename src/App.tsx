@@ -35,7 +35,7 @@ import {
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
 } from './lib/supabase';
-import { canRegisterClient, canUseEmployeeTestingMode, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
+import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices, SERVICE_LABELS } from './lib/clientServices';
@@ -108,6 +108,7 @@ import {
 } from './data/roles';
 import { EmployeeLogin } from './components/EmployeeLogin';
 import { EmployeeTestingMode, type GeneratedTestPassword, type TestAccountStatus } from './components/EmployeeTestingMode';
+import { EmployeeImpersonation } from './components/EmployeeImpersonation';
 import { SetPasswordScreen } from './components/SetPasswordScreen';
 import { ClientRegistrationModal } from './components/ClientRegistrationModal';
 import { BulkClientUploadModal } from './components/BulkClientUploadModal';
@@ -142,6 +143,24 @@ function readTestHandoff(): TestHandoff | null {
     const parsed = JSON.parse(sessionStorage.getItem(TEST_SESSION_KEY) || 'null');
     return parsed && typeof parsed.employeeId === 'string' && typeof parsed.authId === 'string'
       && typeof parsed.email === 'string' ? parsed as TestHandoff : null;
+  } catch { return null; }
+}
+
+// TEMPORARY TRANSITION FEATURE — intended for removal once every employee has adopted their own
+// real, self-set password. See supabase/functions/employee-impersonation/index.ts and
+// src/components/EmployeeImpersonation.tsx for the full picture; this is just this file's slice
+// of the same bridge tool, kept as isolated from the rest of App.tsx as Testing Mode's own
+// handoff below, for the same reason: easy to delete outright later, not entangled with anything
+// else.
+const EMPLOYEE_IMPERSONATION_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_EMPLOYEE_IMPERSONATION === 'true';
+const IMPERSONATION_SESSION_KEY = 'agency_employee_impersonation_handoff';
+type ImpersonationHandoff = { employeeId: string; authId: string; email: string; sessionId: string };
+
+function readImpersonationHandoff(): ImpersonationHandoff | null {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(IMPERSONATION_SESSION_KEY) || 'null');
+    return parsed && typeof parsed.employeeId === 'string' && typeof parsed.authId === 'string'
+      && typeof parsed.email === 'string' && typeof parsed.sessionId === 'string' ? parsed as ImpersonationHandoff : null;
   } catch { return null; }
 }
 
@@ -310,13 +329,26 @@ export default function App() {
   const [verifiedTestAuthId, setVerifiedTestAuthId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
 
+  // TEMPORARY TRANSITION FEATURE — see the constants above and EmployeeImpersonation.tsx.
+  const [verifiedImpersonatorId, setVerifiedImpersonatorId] = useState<string | null>(null);
+  const [isImpersonationSelectorOpen, setIsImpersonationSelectorOpen] = useState(false);
+  // Non-secret UI marker only, same as testHandoff above. Auth and RLS always come from
+  // Supabase's actual session.
+  const [impersonationHandoff, setImpersonationHandoff] = useState<ImpersonationHandoff | null>(readImpersonationHandoff);
+  const [verifiedImpersonationAuthId, setVerifiedImpersonationAuthId] = useState<string | null>(null);
+
   // Current active user based on authenticated session
-  const canAccessTestingMode = EMPLOYEE_TESTING_MODE_ENABLED && !testHandoff && !!authenticatedUser && verifiedTesterId === authenticatedUser.id
-    && canUseEmployeeTestingMode(authenticatedUser.role);
+  const canAccessTestingMode = EMPLOYEE_TESTING_MODE_ENABLED && !testHandoff && !impersonationHandoff && !!authenticatedUser
+    && verifiedTesterId === authenticatedUser.id && canUseEmployeeTestingMode(authenticatedUser.role);
+  const canAccessImpersonation = EMPLOYEE_IMPERSONATION_ENABLED && !testHandoff && !impersonationHandoff && !!authenticatedUser
+    && verifiedImpersonatorId === authenticatedUser.id && canImpersonateEmployees(authenticatedUser.role);
   const currentUser: UserRecord = authenticatedUser || (users && users.length > 0 ? users[0] : INITIAL_USERS[0]);
   const isRealTestSession = !!testHandoff && !!authenticatedUser
     && verifiedTestAuthId === testHandoff.authId && authenticatedUser.auth_id === testHandoff.authId
     && authenticatedUser.id === testHandoff.employeeId;
+  const isRealImpersonationSession = !!impersonationHandoff && !!authenticatedUser
+    && verifiedImpersonationAuthId === impersonationHandoff.authId && authenticatedUser.auth_id === impersonationHandoff.authId
+    && authenticatedUser.id === impersonationHandoff.employeeId;
   const canRegisterClients = canRegisterClient(currentUser.role);
   const userRoleInfo = getRoleInfo(currentUser?.role || 'sales');
 
@@ -574,6 +606,61 @@ export default function App() {
     return () => { cancelled = true; };
   }, [testHandoff, authenticatedUser?.id, authenticatedUser?.auth_id]);
 
+  // TEMPORARY TRANSITION FEATURE — validates the real Supabase JWT and the linked public.users
+  // row before exposing the impersonation selector, same reasoning as the Testing Mode effect
+  // above: cached/demo employee state is insufficient.
+  useEffect(() => {
+    let cancelled = false;
+    setVerifiedImpersonatorId(null);
+    setIsImpersonationSelectorOpen(false);
+    if (!EMPLOYEE_IMPERSONATION_ENABLED || !authenticatedUser || !isSupabaseConfigured()
+      || !canImpersonateEmployees(authenticatedUser.role)) {
+      return;
+    }
+    (async () => {
+      const { data: { user }, error: authError } = await supabaseRaw.auth.getUser();
+      if (cancelled || authError || !user) return;
+      const { data: admin, error } = await supabaseRaw.from('users')
+        .select('id, role, auth_id, deactivated_at')
+        .eq('auth_id', user.id)
+        .maybeSingle();
+      if (!cancelled && !error && admin && admin.id === authenticatedUser.id
+        && admin.role === authenticatedUser.role
+        && !admin.deactivated_at && canImpersonateEmployees(admin.role as UserRole)) {
+        setVerifiedImpersonatorId(admin.id);
+      }
+    })().catch((err) => console.warn('Impersonation authorization check failed:', err));
+    return () => { cancelled = true; };
+  }, [authenticatedUser?.id, authenticatedUser?.role]);
+
+  // TEMPORARY TRANSITION FEATURE — confirms a restored impersonationHandoff (e.g. after a page
+  // refresh) still matches a real, live employee Auth session and RLS identity, same reasoning as
+  // the Testing Mode effect above. A stale or tampered sessionStorage marker with no matching
+  // session is cleared rather than trusted.
+  useEffect(() => {
+    setVerifiedImpersonationAuthId(null);
+    if (!impersonationHandoff || !authenticatedUser) return;
+    let cancelled = false;
+    supabaseRaw.auth.getUser().then(async ({ data: { user }, error }) => {
+      if (cancelled) return;
+      if (!error && user?.id === impersonationHandoff.authId
+        && authenticatedUser.auth_id === user.id && authenticatedUser.id === impersonationHandoff.employeeId) {
+        const { data: rlsEmployeeId, error: rlsError } = await supabaseRaw.rpc('app_user_id');
+        if (!cancelled && !rlsError && rlsEmployeeId === authenticatedUser.id) {
+          setVerifiedImpersonationAuthId(user.id);
+        } else if (!cancelled) {
+          setVerifiedImpersonationAuthId(null);
+        }
+      } else {
+        sessionStorage.removeItem(IMPERSONATION_SESSION_KEY);
+        setImpersonationHandoff(null);
+      }
+    }).catch(() => {
+      if (!cancelled) setVerifiedImpersonationAuthId(null);
+    });
+    return () => { cancelled = true; };
+  }, [impersonationHandoff, authenticatedUser?.id, authenticatedUser?.auth_id]);
+
   // 2. Hash routing & unauthorized route protection
   useEffect(() => {
     if (!authenticatedUser) return;
@@ -712,6 +799,44 @@ export default function App() {
     return result as GeneratedTestPassword;
   };
 
+  // TEMPORARY TRANSITION FEATURE — see the constants near the top of this file. Same
+  // error-shaping pattern as invokeTestAccount above, against the separate
+  // employee-impersonation function.
+  const invokeImpersonation = async (
+    employeeId: string
+  ): Promise<{ sessionId: string; hashedToken: string; employeeAuthId: string; employeeEmail: string }> => {
+    if (!canAccessImpersonation || !usersLoadedFromSupabase) {
+      throw new Error('A verified leadership session and the live employee directory are required.');
+    }
+    const { data, error } = await supabaseRaw.functions.invoke('employee-impersonation', {
+      body: { action: 'start', employeeId },
+    });
+    if (error) {
+      const context = error.context;
+      const status = context instanceof Response ? context.status : undefined;
+      let detail: string | undefined;
+      if (context instanceof Response) {
+        try {
+          const body: unknown = await context.clone().json();
+          if (body && typeof body === 'object') {
+            const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+            if (typeof value === 'string') detail = value;
+          }
+        } catch { /* A gateway error may not have a JSON body. */ }
+      }
+      console.error('Employee impersonation request failed:', {
+        status, detail, errorName: error.name, errorMessage: error.message,
+      });
+      throw new Error(status
+        ? `Impersonation request failed (HTTP ${status}): ${detail || error.message}`
+        : `Impersonation request failed before an HTTP response: ${error.message}`);
+    }
+    if (!data?.sessionId || !data?.hashedToken || !data?.employeeAuthId || !data?.employeeEmail) {
+      throw new Error('Unexpected impersonation response.');
+    }
+    return data as { sessionId: string; hashedToken: string; employeeAuthId: string; employeeEmail: string };
+  };
+
   const handleStartEmployeeTest = async (employee: UserRecord, account: TestAccountStatus) => {
     if (!canAccessTestingMode || !account.authId || !account.authEmail) throw new Error('Account is not ready.');
     const fresh = await invokeTestAccount('status', employee.id);
@@ -753,8 +878,68 @@ export default function App() {
     window.location.hash = '#login';
   };
 
+  // TEMPORARY TRANSITION FEATURE — see the constants near the top of this file. Unlike Testing
+  // Mode's start (which requires the admin to sign out and manually re-authenticate as the
+  // employee on the normal login screen with a real password), verifyOtp establishes the
+  // employee's session directly: there is no password step at all, and no intermediate
+  // "signed out of everything" state — if the magic link fails to verify, the admin's own session
+  // is simply left untouched.
+  const handleStartImpersonation = async (employee: UserRecord) => {
+    if (!canAccessImpersonation) throw new Error('Not authorized to impersonate employees.');
+    const { sessionId, hashedToken, employeeAuthId, employeeEmail } = await invokeImpersonation(employee.id);
+    const { error: otpError } = await supabase.auth.verifyOtp({ token_hash: hashedToken, type: 'magiclink' });
+    if (otpError) {
+      throw new Error(`Could not start the impersonation session: ${otpError.message}`);
+    }
+    // This marker only controls the impersonation banner. It contains no token.
+    const handoff: ImpersonationHandoff = { employeeId: employee.id, authId: employeeAuthId, email: employeeEmail, sessionId };
+    sessionStorage.setItem(IMPERSONATION_SESSION_KEY, JSON.stringify(handoff));
+    setImpersonationHandoff(handoff);
+    setIsImpersonationSelectorOpen(false);
+    setUnauthorizedRoute(null);
+    // onAuthStateChange's SIGNED_IN handler resolves authenticatedUser to the employee's own row
+    // once the new session lands; jump straight to their default portal rather than leaving the
+    // admin's last-viewed tab showing (which the employee's role may not even have access to).
+    const roleMeta = getRoleInfo(employee.role);
+    setActiveTab(roleMeta.defaultModule);
+    window.location.hash = `#/portal/${roleMeta.portalSlug}/${roleMeta.defaultModule}`;
+  };
+
+  // TEMPORARY TRANSITION FEATURE — closes the impersonation_sessions audit row while still
+  // authenticated AS the employee (the one moment this app's single Auth session can satisfy
+  // impersonation_sessions_close_rls's employee_auth_id branch — see that migration's comment),
+  // then signs out and returns to the login screen for the admin to sign back in with their own
+  // real password, exactly like Testing Mode's own exit.
+  const handleExitImpersonation = async () => {
+    if (!impersonationHandoff || !authenticatedUser) return;
+    try {
+      await supabaseRaw.from('impersonation_sessions')
+        .update({ ended_at: new Date().toISOString(), ended_reason: 'manual_exit' })
+        .eq('id', impersonationHandoff.sessionId)
+        .is('ended_at', null);
+    } catch (err) {
+      // Best-effort: the admin's own next login self-heals any row left open (see
+      // handleLoginSuccess below) via impersonation_sessions_close_rls's admin_auth_id branch.
+      console.warn('Could not close impersonation audit record:', err);
+    }
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      showNotification('Could not sign out of the impersonation session. Please retry.', 'info');
+      return;
+    }
+    sessionStorage.removeItem(IMPERSONATION_SESSION_KEY);
+    localStorage.removeItem('agency_auth_user_id');
+    setImpersonationHandoff(null);
+    setVerifiedImpersonationAuthId(null);
+    setAuthenticatedUser(null);
+    setSupabaseSessionUser(null);
+    setUnauthorizedRoute(null);
+    window.location.hash = '#login';
+  };
+
   const handleLoginSuccess = (user: UserRecord) => {
     setVerifiedTesterId(null);
+    setVerifiedImpersonatorId(null);
     setAuthenticatedUser(user);
     setSupabaseSessionUser(user);
     setUnauthorizedRoute(null);
@@ -762,6 +947,19 @@ export default function App() {
     setActiveTab(roleMeta.defaultModule);
     window.location.hash = `#/portal/${roleMeta.portalSlug}/${roleMeta.defaultModule}`;
     showNotification(`Welcome, ${user.name} (${roleMeta.portalTitleEn})`);
+    // TEMPORARY TRANSITION FEATURE self-heal: impersonation has no auto-expiry, so a session left
+    // open by a closed tab (Exit never clicked) would otherwise stay open forever. This admin's
+    // own next real login is the one other moment impersonation_sessions_close_rls's identity
+    // check can be satisfied (its admin_auth_id branch) — best-effort, never blocks login.
+    if (EMPLOYEE_IMPERSONATION_ENABLED && canImpersonateEmployees(user.role) && isSupabaseConfigured()) {
+      supabaseRaw.from('impersonation_sessions')
+        .update({ ended_at: new Date().toISOString(), ended_reason: 'admin_override' })
+        .eq('admin_user_id', user.id)
+        .is('ended_at', null)
+        .then(({ error }) => {
+          if (error) console.warn('Could not self-heal stale impersonation sessions:', error);
+        });
+    }
   };
 
   // SetPasswordScreen's onComplete: supabase.auth.updateUser({ password })
@@ -800,6 +998,11 @@ export default function App() {
     setVerifiedTestAuthId(null);
     setVerifiedTesterId(null);
     setIsTestingSelectorOpen(false);
+    sessionStorage.removeItem(IMPERSONATION_SESSION_KEY);
+    setImpersonationHandoff(null);
+    setVerifiedImpersonationAuthId(null);
+    setVerifiedImpersonatorId(null);
+    setIsImpersonationSelectorOpen(false);
     try {
       if (isSupabaseConfigured()) {
         await supabase.auth.signOut();
@@ -3837,6 +4040,16 @@ export default function App() {
                 Employee Testing Mode
               </button>
             )}
+            {/* TEMPORARY TRANSITION FEATURE — see the constants near the top of this file. */}
+            {canAccessImpersonation && usersLoadedFromSupabase && (
+              <button
+                onClick={() => setIsImpersonationSelectorOpen(true)}
+                className="employee-impersonation-action hidden md:block rounded-xl border border-red-600/60 bg-red-950/40 px-3 py-2 text-xs font-bold text-red-200 hover:bg-red-900/60"
+                title="Temporary transition tool — log in as an employee without their password"
+              >
+                Impersonate Employee
+              </button>
+            )}
             {/* زر النشاط الحي للمديرين — hidden below md: a desk-admin convenience, not essential mobile nav */}
             {['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role) && (
               <button
@@ -3957,6 +4170,18 @@ export default function App() {
             </button>
           </div>
         )}
+        {impersonationHandoff && authenticatedUser && (
+          <div className="mx-auto mt-3 flex max-w-screen-2xl flex-wrap items-center justify-between gap-2 rounded-xl border border-red-500 bg-red-950/80 px-4 py-2 text-xs text-red-100" role="status">
+            <span className="font-bold">
+              {isRealImpersonationSession
+                ? `IMPERSONATING — Logged in as ${authenticatedUser.name} — ${getRoleInfo(authenticatedUser.role).englishTitle} (temporary transition tool, not a permanent feature)`
+                : 'IMPERSONATING — Verifying employee Auth identity and RLS; do not act until verified'}
+            </span>
+            <button onClick={() => void handleExitImpersonation()} className="rounded-lg bg-red-300 px-3 py-1 font-bold text-black hover:bg-red-200">
+              Exit Impersonation
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Sidebar + Content shell */}
@@ -3982,7 +4207,7 @@ export default function App() {
         <aside
           className={`fixed md:sticky left-0 z-[96] md:z-auto w-60 shrink-0 border-r overflow-y-auto backdrop-blur-md transition-transform duration-200 ease-in-out md:translate-x-0 ${
             isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } ${testHandoff ? 'top-[110px] h-[calc(100dvh-110px)]' : 'top-[65px] h-[calc(100dvh-65px)]'}`}
+          } ${(testHandoff || impersonationHandoff) ? 'top-[110px] h-[calc(100dvh-110px)]' : 'top-[65px] h-[calc(100dvh-65px)]'}`}
           style={{
             background: 'var(--navigation-surface)',
             borderColor: 'var(--nav-border)',
@@ -4566,6 +4791,14 @@ export default function App() {
           onSetup={(employeeId, password) => invokeTestAccount('setup', employeeId, password)}
           onGenerateTestPassword={generateTestPassword}
           onStart={handleStartEmployeeTest}
+        />
+      )}
+      {/* TEMPORARY TRANSITION FEATURE — see the constants near the top of this file. */}
+      {canAccessImpersonation && isImpersonationSelectorOpen && usersLoadedFromSupabase && (
+        <EmployeeImpersonation
+          employees={users}
+          onClose={() => setIsImpersonationSelectorOpen(false)}
+          onStart={handleStartImpersonation}
         />
       )}
       <ClientRegistrationModal

@@ -1,2 +1,5 @@
 [functions.employee-test-account]
 verify_jwt = true
+
+[functions.employee-impersonation]
+verify_jwt = true
