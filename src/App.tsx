@@ -773,7 +773,10 @@ export default function App() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data: dbUser } = await supabase
+        // This lookup happens before the employee-shaped client-side session
+        // has been established. Use the raw client so the legacy users proxy
+        // cannot fall back to INITIAL_USERS and miss a real production user.
+        const { data: dbUser } = await supabaseRaw
           .from('users')
           .select('*')
           .eq('auth_id', session.user.id)
