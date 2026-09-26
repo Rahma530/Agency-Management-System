@@ -13,6 +13,7 @@ import {
   Edit2,
 } from 'lucide-react';
 import { TaskRecord, TaskStatus, TaskPriority, ClientRecord, UserRecord } from '../types/database';
+import { isTaskDone } from '../lib/taskLifecycle';
 
 export interface KanbanColumnMeta {
   id: TaskStatus;
@@ -243,7 +244,7 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
                 <ChevronLeft className="w-3 h-3" />
               </button>
             )}
-            {task.status !== 'completed' && (
+            {!isTaskDone(task.status) && (
               <button
                 onClick={() => {
                   const nextIdx = columns.findIndex((c) => c.id === task.status) + 1;

@@ -15,6 +15,7 @@ import {
 } from '../types/database';
 import { getCampaignStartDate, getCampaignEndDate } from '../components/CampaignManagementModule';
 import { normalizeClientServices } from './clientServices';
+import { isTaskDone } from './taskLifecycle';
 
 // ----------------------------------------------------------------------------
 // Period boundaries
@@ -252,7 +253,7 @@ export function aggregateSeoMetrics(tasks: TaskRecord[], clientIds: string[], ra
     (t) =>
       clientIds.includes(t.client_id) &&
       t.team === 'SEO' &&
-      t.status === 'completed' &&
+      isTaskDone(t.status) &&
       t.completed_at &&
       inRange(t.completed_at.split('T')[0], range)
   );
@@ -695,7 +696,7 @@ export function computeClientTaskCompletionStats(
 ): ClientTaskCompletionStats {
   const clientTasks = tasks.filter((t) => t.client_id === clientId);
   const completed = clientTasks.filter(
-    (t) => t.status === 'completed' && t.completed_at && inRange(t.completed_at.split('T')[0], range)
+    (t) => isTaskDone(t.status) && t.completed_at && inRange(t.completed_at.split('T')[0], range)
   );
   const onTimeRate =
     completed.length === 0

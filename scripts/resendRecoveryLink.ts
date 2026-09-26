@@ -1,4 +1,10 @@
 /**
+ * FALLBACK — the primary path is now the same "Send/Resend Invitation" in-app action described in
+ * scripts/provisionAuthUsers.ts's header (supabase/functions/employee-invitation): it already
+ * covers this exact resend case (an employee with auth_id set but no last_seen_at yet) from
+ * EmployeeAdminHub.tsx, one employee at a time. Keep this script for a batch resend across every
+ * already-provisioned employee at once, or when the Edge Function isn't deployed.
+ *
  * Re-issues a fresh one-time password-recovery link for an employee who
  * already has a real Supabase Auth account (public.users.auth_id is
  * already set) but never received or used their original link.
@@ -25,14 +31,28 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const AUTH_REDIRECT_URL = process.env.AUTH_REDIRECT_URL || process.env.APP_URL;
 
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !AUTH_REDIRECT_URL) {
   console.error(
-    'Missing SUPABASE_URL (or VITE_SUPABASE_URL) and/or SUPABASE_SERVICE_ROLE_KEY.\n' +
+    'Missing SUPABASE_URL (or VITE_SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY, and/or AUTH_REDIRECT_URL (or APP_URL).\n' +
       'See the terminal commands in the chat message for how to set these for this run only.'
   );
   process.exit(1);
 }
+
+function normalizeAuthRedirectUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported protocol');
+    return url.origin;
+  } catch {
+    console.error('AUTH_REDIRECT_URL must be a valid http(s) origin, for example https://agency.example.com.');
+    process.exit(1);
+  }
+}
+
+const authRedirectUrl = normalizeAuthRedirectUrl(AUTH_REDIRECT_URL);
 
 const [, , rawEmail] = process.argv;
 
@@ -64,6 +84,7 @@ async function generateLinkFor(employee: Pick<Employee, 'name' | 'email'>): Prom
     const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
       type: 'recovery',
       email: employee.email,
+      options: { redirectTo: authRedirectUrl },
     });
     if (linkErr) throw linkErr;
     return { name: employee.name, email: employee.email, link: linkData.properties.action_link };

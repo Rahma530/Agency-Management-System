@@ -77,6 +77,7 @@ import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
 import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { isTaskDone } from '../lib/taskLifecycle';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
 interface ClientDashboardProps {
@@ -502,10 +503,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       .map(([team, teamTasks]) => ({
         team,
         tasks: teamTasks.slice().sort((a, b) => (a.due_date || '').localeCompare(b.due_date || '')),
-        activeCount: teamTasks.filter((t) => t.status !== 'completed').length,
+        activeCount: teamTasks.filter((t) => !isTaskDone(t.status)).length,
         blockedCount: teamTasks.filter((t) => t.status === 'blocked').length,
         overdueCount: teamTasks.filter(
-          (t) => t.status !== 'completed' && t.due_date && t.due_date < new Date().toISOString().slice(0, 10)
+          (t) => !isTaskDone(t.status) && t.due_date && t.due_date < new Date().toISOString().slice(0, 10)
         ).length,
       }))
       .sort((a, b) => a.team.localeCompare(b.team));
@@ -1251,7 +1252,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       <span>Pending Deliverables</span>
                     </h3>
                     <span className="text-xs text-purple-300">
-                      {clientTasks.filter((t) => t.status !== 'completed').length} Active Tasks
+                      {clientTasks.filter((t) => !isTaskDone(t.status)).length} Active Tasks
                     </span>
                   </div>
                   <div className="space-y-2">
@@ -2155,7 +2156,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   <div className="divide-y divide-purple-900/20">
                     {group.tasks.map((t) => {
                       const assignee = users.find((u) => u.id === t.assigned_to);
-                      const isOverdue = t.status !== 'completed' && t.due_date && t.due_date < new Date().toISOString().slice(0, 10);
+                      const isOverdue = !isTaskDone(t.status) && t.due_date && t.due_date < new Date().toISOString().slice(0, 10);
                       return (
                         <div key={t.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
                           <div className="min-w-0">
@@ -2169,7 +2170,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider whitespace-nowrap"
                             style={{
                               background:
-                                t.status === 'completed'
+                                isTaskDone(t.status)
                                   ? 'rgba(169, 245, 193, 0.15)'
                                   : t.status === 'blocked'
                                   ? 'rgba(245, 163, 163, 0.15)'
@@ -2177,7 +2178,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                                   ? 'rgba(245, 226, 154, 0.15)'
                                   : 'rgba(168, 155, 184, 0.15)',
                               color:
-                                t.status === 'completed'
+                                isTaskDone(t.status)
                                   ? 'var(--roas-good)'
                                   : t.status === 'blocked'
                                   ? 'var(--roas-bad)'

@@ -10,6 +10,7 @@ import {
 import { UserRecord, TaskRecord, ClientRecord } from '../types/database';
 import { getRoleInfo } from '../data/roles';
 import { isCurrentlyActiveClient } from '../lib/clientStatus';
+import { isTaskDone } from '../lib/taskLifecycle';
 
 interface RolePortalHeaderProps {
   currentUser: UserRecord;
@@ -28,7 +29,7 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
   // Compute quick dynamic KPIs based on the employee's role
   const currentUserId = currentUser?.id || '';
   const myTasks = currentUserId ? tasks.filter((t) => t.assigned_to === currentUserId) : [];
-  const myActiveTasks = myTasks.filter((t) => t.status !== 'completed');
+  const myActiveTasks = myTasks.filter((t) => !isTaskDone(t.status));
   const myBlockedTasks = myTasks.filter((t) => t.status === 'blocked');
 
   const myClients = currentUserId

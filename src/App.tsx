@@ -37,6 +37,7 @@ import {
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
+import { isTaskDone } from './lib/taskLifecycle';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices, SERVICE_LABELS } from './lib/clientServices';
 import {
@@ -53,7 +54,7 @@ import {
   serviceFilterForRole,
 } from './lib/reportingEngine';
 import { ReportsHub } from './components/ReportsHub';
-import { EmployeeAdminHub, NewEmployeeInput } from './components/EmployeeAdminHub';
+import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
 import { DashboardHub } from './components/DashboardHub';
 import {
   ClientRecord,
@@ -842,6 +843,39 @@ export default function App() {
       throw new Error('Unexpected impersonation response.');
     }
     return data as { sessionId: string; hashedToken: string; employeeAuthId: string; employeeEmail: string };
+  };
+
+  // In-app replacement for manually running scripts/provisionAuthUsers.ts / resendRecoveryLink.ts.
+  // Same error-shaping pattern as invokeImpersonation above, against the separate
+  // employee-invitation function.
+  const handleSendInvitation = async (employeeId: string): Promise<SendInvitationResult> => {
+    const { data, error } = await supabaseRaw.functions.invoke('employee-invitation', {
+      body: { employeeId },
+    });
+    if (error) {
+      const context = error.context;
+      const status = context instanceof Response ? context.status : undefined;
+      let detail: string | undefined;
+      if (context instanceof Response) {
+        try {
+          const body: unknown = await context.clone().json();
+          if (body && typeof body === 'object') {
+            const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+            if (typeof value === 'string') detail = value;
+          }
+        } catch { /* A gateway error may not have a JSON body. */ }
+      }
+      console.error('Employee invitation request failed:', {
+        status, detail, errorName: error.name, errorMessage: error.message,
+      });
+      throw new Error(status
+        ? `Invitation request failed (HTTP ${status}): ${detail || error.message}`
+        : `Invitation request failed before an HTTP response: ${error.message}`);
+    }
+    if (!data?.actionLink || !data?.authId || typeof data?.wasNewAccount !== 'boolean') {
+      throw new Error('Unexpected invitation response.');
+    }
+    return data as SendInvitationResult;
   };
 
   const handleStartEmployeeTest = async (employee: UserRecord, account: TestAccountStatus) => {
@@ -2086,32 +2120,12 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      // TEMPORARY DIAGNOSTIC LOGGING — remove once the 409 conflict is root-caused.
-      console.log('[IMPORT-PAYLOAD] insert payload (safe fields)', {
-        id: newUserPayload.id,
-        email: newUserPayload.email,
-        auth_id: newUserPayload.auth_id,
-        name: newUserPayload.name,
-        role: newUserPayload.role,
-        team: newUserPayload.team,
-        manager_id: newUserPayload.manager_id,
-        capacity_limit: newUserPayload.capacity_limit,
-      });
       // supabaseRaw bypasses the legacy client-side users proxy — that proxy's
       // fallback path can swallow a real Postgres error (e.g. an RLS rejection)
       // and report a false success backed by mock data instead. Real RLS on
       // public.users is what actually enforces this insert.
       const { data, error } = await supabaseRaw.from('users').insert([newUserPayload]).select();
       if (error) {
-        // TEMPORARY DIAGNOSTIC LOGGING — remove once the 409 conflict is root-caused.
-        console.log('[IMPORT-PGERR] Postgres/PostgREST error on insert', {
-          code: (error as any).code,
-          message: error.message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-          email: newUserPayload.email,
-          id: newUserPayload.id,
-        });
         throw error;
       }
       if (!data || data.length === 0) {
@@ -2822,10 +2836,14 @@ export default function App() {
 
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
-    // completed_at is the only reliable signal for "completed today" (the
-    // Daily Work Log's auto-suggestion) — status alone carries no timing
-    // information, so it's set/cleared here rather than left to drift.
-    const completedAt = newStatus === 'completed' ? new Date().toISOString() : null;
+    const existingTask = tasks.find((t) => t.id === taskId);
+    // completed_at is the only reliable signal for "completed today" (the Daily Work Log's
+    // auto-suggestion) and for every completion-rate/performance metric in reportingEngine.ts —
+    // status alone carries no timing information. Set once when the task first becomes done
+    // ('completed' or 'closed'), preserved across a later completed -> closed confirmation
+    // (never overwritten or cleared by that transition), and cleared only by a real regression
+    // back to a not-done status.
+    const completedAt = isTaskDone(newStatus) ? existingTask?.completed_at || new Date().toISOString() : null;
     const updates = { status: newStatus, completed_at: completedAt };
 
     if (supabaseActive) {
@@ -2842,8 +2860,8 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
     );
-    
-    const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
+
+    const taskTitle = existingTask?.title || 'Task';
     await logActivity('status_change', 'task', taskId, taskTitle, `Status updated to ${newStatus}`);
 
     showNotification('Task status moved and the shared board updated.');
@@ -2862,17 +2880,18 @@ export default function App() {
 
   // Update task details and hours
   const handleUpdateTask = async (taskId: string, updates: Partial<TaskRecord>) => {
-    // Same completed_at bookkeeping as handleUpdateTaskStatus, but only when
-    // this edit actually touches status — editing title/description alone
-    // shouldn't disturb it.
+    const existingTask = tasks.find((t) => t.id === taskId);
+    // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
+    // actually touches status — editing title/description/done_link alone shouldn't disturb it.
     const finalUpdates: Partial<TaskRecord> = { ...updates };
     if ('status' in updates) {
-      finalUpdates.completed_at = updates.status === 'completed' ? new Date().toISOString() : null;
+      finalUpdates.completed_at = isTaskDone(updates.status as TaskStatus)
+        ? existingTask?.completed_at || new Date().toISOString()
+        : null;
     }
     // Reassigning a task to a different person is a fresh "new task" for them (Module 12
     // Phase 5's programming_agent notification badge, since that role has no assignments row).
     if ('assigned_to' in updates) {
-      const existingTask = tasks.find((t) => t.id === taskId);
       if (existingTask && existingTask.assigned_to !== updates.assigned_to) {
         finalUpdates.assignee_viewed_at = null;
       }
@@ -2897,7 +2916,43 @@ export default function App() {
     }
 
     setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
-    
+
+    // Notify the task's creator once the assignee submits a Done Link while the task is at
+    // 'completed' — the review-before-closing trigger. Fires only on the empty/null -> real
+    // value transition (a stable, task-scoped id makes the insert a no-op on retry), never on a
+    // later correction to an already-set link, so the creator isn't spammed.
+    const submittedDoneLink =
+      'done_link' in updates &&
+      !existingTask?.done_link?.trim() &&
+      !!persistedTask.done_link?.trim() &&
+      persistedTask.status === 'completed';
+    if (submittedDoneLink && persistedTask.created_by && persistedTask.created_by !== currentUser.id) {
+      try {
+        const { data: recipient, error: recipientError } = await supabaseRaw
+          .from('users')
+          .select('id, auth_id, deactivated_at')
+          .eq('id', persistedTask.created_by)
+          .maybeSingle();
+        if (recipientError) throw recipientError;
+        if (recipient && isActiveEmployee(recipient)) {
+          const { error: notificationError } = await supabaseRaw.from('notifications').insert({
+            id: `notif-donelink-${persistedTask.id}`,
+            user_id: recipient.id,
+            sender_id: currentUser.id,
+            title: 'Done Link Submitted',
+            message: `${currentUser.name} submitted a completion link for task "${persistedTask.title}" — ready for your review.`,
+            type: 'task_updated',
+            is_read: false,
+            link_url: 'module:tasks',
+            created_at: new Date().toISOString(),
+          });
+          if (notificationError && notificationError.code !== '23505') throw notificationError;
+        }
+      } catch (err) {
+        console.error('Supabase done-link notification error:', err);
+      }
+    }
+
     const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
     await logActivity('update', 'task', taskId, taskTitle, 'Task details updated');
 
@@ -3684,7 +3739,7 @@ export default function App() {
   };
 
   // Stats for badge counters
-  const activeTasksCount = tasks.filter((t) => t.status !== 'completed').length;
+  const activeTasksCount = tasks.filter((t) => !isTaskDone(t.status)).length;
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 
@@ -4781,6 +4836,7 @@ export default function App() {
                   onAddEmployee={handleAddEmployee}
                   onUpdateEmployee={handleUpdateEmployee}
                   onDeactivateEmployee={handleDeactivateEmployee}
+                  onSendInvitation={handleSendInvitation}
                 />
               </div>
             )}
