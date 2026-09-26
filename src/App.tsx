@@ -54,7 +54,7 @@ import {
   serviceFilterForRole,
 } from './lib/reportingEngine';
 import { ReportsHub } from './components/ReportsHub';
-import { EmployeeAdminHub, NewEmployeeInput } from './components/EmployeeAdminHub';
+import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
 import { DashboardHub } from './components/DashboardHub';
 import {
   ClientRecord,
@@ -843,6 +843,39 @@ export default function App() {
       throw new Error('Unexpected impersonation response.');
     }
     return data as { sessionId: string; hashedToken: string; employeeAuthId: string; employeeEmail: string };
+  };
+
+  // In-app replacement for manually running scripts/provisionAuthUsers.ts / resendRecoveryLink.ts.
+  // Same error-shaping pattern as invokeImpersonation above, against the separate
+  // employee-invitation function.
+  const handleSendInvitation = async (employeeId: string): Promise<SendInvitationResult> => {
+    const { data, error } = await supabaseRaw.functions.invoke('employee-invitation', {
+      body: { employeeId },
+    });
+    if (error) {
+      const context = error.context;
+      const status = context instanceof Response ? context.status : undefined;
+      let detail: string | undefined;
+      if (context instanceof Response) {
+        try {
+          const body: unknown = await context.clone().json();
+          if (body && typeof body === 'object') {
+            const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+            if (typeof value === 'string') detail = value;
+          }
+        } catch { /* A gateway error may not have a JSON body. */ }
+      }
+      console.error('Employee invitation request failed:', {
+        status, detail, errorName: error.name, errorMessage: error.message,
+      });
+      throw new Error(status
+        ? `Invitation request failed (HTTP ${status}): ${detail || error.message}`
+        : `Invitation request failed before an HTTP response: ${error.message}`);
+    }
+    if (!data?.actionLink || !data?.authId || typeof data?.wasNewAccount !== 'boolean') {
+      throw new Error('Unexpected invitation response.');
+    }
+    return data as SendInvitationResult;
   };
 
   const handleStartEmployeeTest = async (employee: UserRecord, account: TestAccountStatus) => {
@@ -2087,32 +2120,12 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      // TEMPORARY DIAGNOSTIC LOGGING — remove once the 409 conflict is root-caused.
-      console.log('[IMPORT-PAYLOAD] insert payload (safe fields)', {
-        id: newUserPayload.id,
-        email: newUserPayload.email,
-        auth_id: newUserPayload.auth_id,
-        name: newUserPayload.name,
-        role: newUserPayload.role,
-        team: newUserPayload.team,
-        manager_id: newUserPayload.manager_id,
-        capacity_limit: newUserPayload.capacity_limit,
-      });
       // supabaseRaw bypasses the legacy client-side users proxy — that proxy's
       // fallback path can swallow a real Postgres error (e.g. an RLS rejection)
       // and report a false success backed by mock data instead. Real RLS on
       // public.users is what actually enforces this insert.
       const { data, error } = await supabaseRaw.from('users').insert([newUserPayload]).select();
       if (error) {
-        // TEMPORARY DIAGNOSTIC LOGGING — remove once the 409 conflict is root-caused.
-        console.log('[IMPORT-PGERR] Postgres/PostgREST error on insert', {
-          code: (error as any).code,
-          message: error.message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-          email: newUserPayload.email,
-          id: newUserPayload.id,
-        });
         throw error;
       }
       if (!data || data.length === 0) {
@@ -4823,6 +4836,7 @@ export default function App() {
                   onAddEmployee={handleAddEmployee}
                   onUpdateEmployee={handleUpdateEmployee}
                   onDeactivateEmployee={handleDeactivateEmployee}
+                  onSendInvitation={handleSendInvitation}
                 />
               </div>
             )}

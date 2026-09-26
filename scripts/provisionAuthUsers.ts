@@ -1,4 +1,11 @@
 /**
+ * FALLBACK — the primary path is now the in-app "Send Invitation" action in
+ * EmployeeAdminHub.tsx (supabase/functions/employee-invitation), which does the same
+ * find-or-create-Auth-account + generateLink({type: 'recovery'}) per employee, one at a time,
+ * without touching the terminal. Keep this script for cases the in-app action doesn't cover: a
+ * bulk one-off sweep of every pending employee at once, or the Edge Function not being deployed
+ * yet in a given environment.
+ *
  * Ongoing provisioning tool: create real Supabase Auth accounts for every
  * "pending" employee in the LIVE public.users table (auth_id is null), and
  * link each one back to their row. Re-run this any time new employees are

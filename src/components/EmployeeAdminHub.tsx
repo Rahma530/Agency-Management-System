@@ -48,6 +48,12 @@ export interface EmployeeUpdateInput {
   capacity_limit?: number | null;
 }
 
+export interface SendInvitationResult {
+  actionLink: string;
+  authId: string;
+  wasNewAccount: boolean;
+}
+
 interface EmployeeAdminHubProps {
   currentUser: UserRecord;
   users: UserRecord[];
@@ -56,6 +62,7 @@ interface EmployeeAdminHubProps {
   onAddEmployee: (employee: NewEmployeeInput) => Promise<void>;
   onUpdateEmployee: (userId: string, updates: EmployeeUpdateInput) => Promise<void>;
   onDeactivateEmployee: (userId: string) => Promise<void>;
+  onSendInvitation: (employeeId: string) => Promise<SendInvitationResult>;
 }
 
 const VALID_ROLES = Object.keys(AGENCY_ROLES) as UserRole[];
@@ -114,6 +121,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onAddEmployee,
   onUpdateEmployee,
   onDeactivateEmployee,
+  onSendInvitation,
 }) => {
   // Add Employee (single + bulk) stays executive/head_of_technical(+ai_engineer, Request 1) only —
   // matches users_insert_admin_rls (Phase E will add ai_engineer there too). Manage Employees
@@ -139,6 +147,50 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [bulkResults, setBulkResults] = useState<RowResult[] | null>(null);
   const [bulkFileError, setBulkFileError] = useState<string | null>(null);
+
+  // --- Send/Resend Invitation state ---
+  const [sendingInvitationId, setSendingInvitationId] = useState<string | null>(null);
+  const [invitationError, setInvitationError] = useState<string | null>(null);
+  const [invitationResult, setInvitationResult] = useState<{ employee: UserRecord } & SendInvitationResult | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  const handleSendInvitation = async (employee: UserRecord) => {
+    setSendingInvitationId(employee.id);
+    setInvitationError(null);
+    setLinkCopied(false);
+    try {
+      const result = await onSendInvitation(employee.id);
+      setInvitationResult({ employee, ...result });
+    } catch (err) {
+      setInvitationError(err instanceof Error ? err.message : 'Could not send the invitation.');
+    } finally {
+      setSendingInvitationId(null);
+    }
+  };
+
+  const copyInvitationLink = async () => {
+    if (!invitationResult) return;
+    let success = false;
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(invitationResult.actionLink);
+        success = true;
+      } catch { /* Fall through to the manual-select fallback below. */ }
+    }
+    if (!success) {
+      const textarea = document.createElement('textarea');
+      textarea.value = invitationResult.actionLink;
+      textarea.setAttribute('aria-hidden', 'true');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try { success = document.execCommand('copy'); } catch { success = false; }
+      textarea.remove();
+    }
+    setLinkCopied(success);
+  };
 
   // --- Manage Employees (edit/deactivate) state ---
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -254,8 +306,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     });
 
   const parseFile = (file: File): Promise<Record<string, string>[]> => {
-    // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
-    console.log('[IMPORT-3] file read started');
     const isCsv = file.name.toLowerCase().endsWith('.csv');
     if (isCsv) {
       return new Promise((resolve, reject) => {
@@ -263,44 +313,30 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           header: true,
           skipEmptyLines: true,
           complete: (results) => {
-            console.log('[IMPORT-4] file read completed (csv)', { rawRowCount: results.data?.length });
-            console.log('[IMPORT-5] parsing started');
             const normalized = normalizeRows(results.data);
-            console.log('[IMPORT-6] parsing completed', { normalizedRowCount: normalized.length });
             resolve(normalized);
           },
           error: (err) => {
-            console.log('[IMPORT-EXC] Papa.parse error (csv):', err);
             reject(err);
           },
         });
       });
     }
     return file.arrayBuffer().then((buffer) => {
-      console.log('[IMPORT-4] file read completed (xlsx)', { byteLength: buffer.byteLength });
-      console.log('[IMPORT-5] parsing started');
       const workbook = XLSX.read(buffer, { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, any>>(firstSheet, { defval: '' });
       const normalized = normalizeRows(rows);
-      console.log('[IMPORT-6] parsing completed', { normalizedRowCount: normalized.length });
       return normalized;
-    }).catch((err) => {
-      console.log('[IMPORT-EXC] file.arrayBuffer()/XLSX.read error:', err);
-      throw err;
     });
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
-    console.log('[IMPORT-2] handleFileSelect started');
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) {
-      console.log('[IMPORT-EXC] handleFileSelect returned early — no file on the change event');
       return;
     }
-    console.log('[IMPORT-1] file selected', { name: file.name, size: file.size, type: file.type });
 
     setBulkFileError(null);
     setBulkResults(null);
@@ -308,7 +344,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
     try {
       const rows = await parseFile(file);
-      console.log('[IMPORT-7] rows prepared:', rows.length);
       if (rows.length === 0) {
         setBulkFileError('That file has no data rows.');
         return;
@@ -320,16 +355,9 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       // failure) so the results table fills in live during the import instead of appearing
       // frozen until the whole file finishes.
       const pushResult = (result: RowResult) => {
-        // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
-        if (results.length === 0) {
-          console.log('[IMPORT-10] first pushResult', result);
-        }
         results.push(result);
         setBulkResults([...results]);
       };
-
-      // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
-      console.log('[IMPORT-8] entering loop', { rowCount: rows.length });
 
       // Row-by-row, not batched: one bad/duplicate row is skipped and reported without
       // aborting the rest of the file, and each insert is its own real DB round-trip so a
@@ -337,9 +365,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       for (let i = 0; i < rows.length; i++) {
         const rowNum = i + 2; // +1 for 1-indexing, +1 for the header row
         const raw = rows[i];
-        if (i === 0) {
-          console.log('[IMPORT-9] first row about to process', raw);
-        }
         const rowName = (raw.name || '').trim();
         const rowEmail = (raw.email || '').trim().toLowerCase();
         const rowRole = (raw.role || '').trim();
@@ -369,8 +394,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
         }
 
         seenEmailsThisFile.add(rowEmail);
-        // TEMPORARY DIAGNOSTIC LOGGING — remove once the CSV import hang is root-caused.
-        console.log('[IMPORT-11] before onAddEmployee', { rowNum, rowEmail });
         try {
           await withTimeout(
             onAddEmployee({
@@ -384,15 +407,12 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             ROW_TIMEOUT_MS,
             `Timed out after ${ROW_TIMEOUT_MS / 1000}s waiting for the server — the row was not saved.`
           );
-          console.log('[IMPORT-12] onAddEmployee resolved', { rowNum, rowEmail });
           pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'added' });
         } catch (err: any) {
-          console.log('[IMPORT-EXC] caught error in row loop before existing handling:', { rowNum, rowEmail, err });
           pushResult({ row: rowNum, name: rowName, email: rowEmail, status: 'failed', reason: err?.message || 'Insert failed' });
         }
       }
     } catch (err: any) {
-      console.log('[IMPORT-EXC] caught in outer try/catch before existing error handling:', err);
       setBulkFileError(err?.message || 'Unable to parse this file. Confirm it\'s a valid .csv or .xlsx file.');
     } finally {
       setIsProcessingFile(false);
@@ -401,6 +421,14 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
   const pendingEmployees = useMemo(() => users.filter(isPendingEmployee), [users]);
   const deactivatedEmployees = useMemo(() => users.filter(isDeactivatedEmployee), [users]);
+  // Invited but never actually signed in yet: a real Auth account exists (auth_id set — so they're
+  // no longer "pending"), but last_seen_at (App.tsx's login heartbeat) has never been set, which
+  // only happens once someone completes a real authenticated session. No new column: fully derived
+  // from two fields that already exist for other reasons.
+  const awaitingSetupEmployees = useMemo(
+    () => users.filter((u) => !isPendingEmployee(u) && !isDeactivatedEmployee(u) && !u.last_seen_at),
+    [users]
+  );
 
   // TEMPORARY DIAGNOSTIC LOGGING — remove once the duplicate-key warning is root-caused.
   // Checks the raw `users` prop itself (the single common source for every derived list
@@ -728,9 +756,97 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-amber-400 bg-amber-500/10">Pending</span>
+                  {canAddEmployees && (
+                    <button
+                      onClick={() => handleSendInvitation(u)}
+                      disabled={sendingInvitationId === u.id}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
+                    >
+                      {sendingInvitationId === u.id ? 'Sending...' : 'Send Invitation'}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Real Auth account exists but this employee has never actually signed in yet — derived
+          from auth_id !== null && !last_seen_at, no new column. */}
+      {awaitingSetupEmployees.length > 0 && (
+        <div className="p-4 rounded-2xl border border-sky-700/30 bg-[#161224]/80">
+          <h3 className="text-xs font-bold text-white flex items-center gap-2 mb-3">
+            <Clock className="w-4 h-4 text-sky-400" />
+            Awaiting Setup ({awaitingSetupEmployees.length})
+          </h3>
+          <div className="space-y-1.5">
+            {awaitingSetupEmployees.map((u) => (
+              <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/20 text-xs">
+                <div>
+                  <span className="text-white font-semibold">{u.name}</span>
+                  <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-sky-400 bg-sky-500/10">Awaiting Setup</span>
+                  {canAddEmployees && (
+                    <button
+                      onClick={() => handleSendInvitation(u)}
+                      disabled={sendingInvitationId === u.id}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
+                    >
+                      {sendingInvitationId === u.id ? 'Sending...' : 'Resend Invitation'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {invitationError && (
+        <div className="p-3 rounded-xl text-xs flex items-center gap-2" style={{ background: 'rgba(245,163,163,0.12)', color: 'var(--roas-bad)', border: '1px solid var(--roas-bad)' }}>
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          {invitationError}
+        </div>
+      )}
+
+      {invitationResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg rounded-2xl border border-purple-600/50 bg-[#1b1428] p-6 text-white shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-bold">
+                {invitationResult.wasNewAccount ? 'Invitation ready' : 'New invitation link ready'}
+              </h3>
+              <button
+                onClick={() => setInvitationResult(null)}
+                className="p-1 rounded-lg text-stone-400 hover:text-white"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-stone-300">
+              For <strong>{invitationResult.employee.name}</strong> ({invitationResult.employee.email}). Copy this
+              link and send it to them yourself (WhatsApp, email, etc.) — it is single-use and does not expose or
+              change their password.
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                readOnly
+                value={invitationResult.actionLink}
+                onFocus={(e) => e.currentTarget.select()}
+                className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none"
+              />
+              <button
+                onClick={() => void copyInvitationLink()}
+                className="px-3 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 shrink-0"
+              >
+                {linkCopied ? 'Copied ✓' : 'Copy'}
+              </button>
+            </div>
           </div>
         </div>
       )}

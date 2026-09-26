@@ -1,4 +1,10 @@
 /**
+ * FALLBACK — the primary path is now the same "Send/Resend Invitation" in-app action described in
+ * scripts/provisionAuthUsers.ts's header (supabase/functions/employee-invitation): it already
+ * covers this exact resend case (an employee with auth_id set but no last_seen_at yet) from
+ * EmployeeAdminHub.tsx, one employee at a time. Keep this script for a batch resend across every
+ * already-provisioned employee at once, or when the Edge Function isn't deployed.
+ *
  * Re-issues a fresh one-time password-recovery link for an employee who
  * already has a real Supabase Auth account (public.users.auth_id is
  * already set) but never received or used their original link.
