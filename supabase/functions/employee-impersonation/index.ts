@@ -106,16 +106,7 @@ Deno.serve(async (req) => {
     employee_auth_id: employee.auth_id,
   });
   if (insertError) {
-    // TEMPORARY DEBUG — surfaces the real Postgres/Postgrest error to diagnose the live insert
-    // failure. Revert to the generic message-only response as soon as the root cause is
-    // identified; never ship this detail to the real user-facing error path.
-    return response({
-      error: 'Could not record the impersonation session; nothing was started.',
-      debugMessage: insertError.message,
-      debugCode: insertError.code,
-      debugDetails: insertError.details,
-      debugHint: insertError.hint,
-    }, 500);
+    return response({ error: 'Could not record the impersonation session; nothing was started.' }, 500);
   }
 
   return response({
