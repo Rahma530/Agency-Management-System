@@ -2131,7 +2131,10 @@ export default function App() {
       if (!data || data.length === 0) {
         throw new Error('Supabase did not return the inserted employee — the record may not have been saved.');
       }
-      setUsers((prev) => [...prev, data[0] as UserRecord]);
+      // Idempotent append — closes a race where a concurrent loadData() full refetch (e.g. the
+      // manual header Refresh button) already fetched this same row from the DB before this
+      // insert's own optimistic append runs, which would otherwise add it to `users` twice.
+      setUsers((prev) => (prev.some((u) => u.id === data[0].id) ? prev : [...prev, data[0] as UserRecord]));
     } else {
       setUsers((prev) => [...prev, newUserPayload]);
     }

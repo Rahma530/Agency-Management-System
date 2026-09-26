@@ -430,22 +430,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     [users]
   );
 
-  // TEMPORARY DIAGNOSTIC LOGGING — remove once the duplicate-key warning is root-caused.
-  // Checks the raw `users` prop itself (the single common source for every derived list
-  // below) so we can tell whether the duplicate id is already present before any
-  // filtering, rather than introduced by one of the useMemo derivations.
-  useMemo(() => {
-    const byId = new Map<string, UserRecord[]>();
-    for (const u of users) {
-      byId.set(u.id, [...(byId.get(u.id) || []), u]);
-    }
-    for (const [id, group] of byId) {
-      if (group.length > 1) {
-        console.log('[IMPORT-DUPKEY] duplicate id in users prop', id, group);
-      }
-    }
-  }, [users]);
-
   // Team leads see only their own department here (a client-side approximation of what
   // employee_visible() already enforces server-side on every actual read/write) — exec/HoT see
   // everyone. Not a security boundary (RLS is), just keeping the list relevant to who's viewing.
@@ -455,16 +439,6 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer'
         ? active
         : active.filter((u) => u.team === currentUser.team || u.manager_id === currentUser.id || u.id === currentUser.id);
-    // TEMPORARY DIAGNOSTIC LOGGING — remove once the duplicate-key warning is root-caused.
-    const byId = new Map<string, UserRecord[]>();
-    for (const u of scoped) {
-      byId.set(u.id, [...(byId.get(u.id) || []), u]);
-    }
-    for (const [id, group] of byId) {
-      if (group.length > 1) {
-        console.log('[IMPORT-DUPKEY] duplicate id in manageableEmployees', id, group);
-      }
-    }
     return scoped;
   }, [users, currentUser]);
 
