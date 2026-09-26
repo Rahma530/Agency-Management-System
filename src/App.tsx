@@ -2903,7 +2903,43 @@ export default function App() {
     }
 
     setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
-    
+
+    // Notify the task's creator once the assignee submits a Done Link while the task is at
+    // 'completed' — the review-before-closing trigger. Fires only on the empty/null -> real
+    // value transition (a stable, task-scoped id makes the insert a no-op on retry), never on a
+    // later correction to an already-set link, so the creator isn't spammed.
+    const submittedDoneLink =
+      'done_link' in updates &&
+      !existingTask?.done_link?.trim() &&
+      !!persistedTask.done_link?.trim() &&
+      persistedTask.status === 'completed';
+    if (submittedDoneLink && persistedTask.created_by && persistedTask.created_by !== currentUser.id) {
+      try {
+        const { data: recipient, error: recipientError } = await supabaseRaw
+          .from('users')
+          .select('id, auth_id, deactivated_at')
+          .eq('id', persistedTask.created_by)
+          .maybeSingle();
+        if (recipientError) throw recipientError;
+        if (recipient && isActiveEmployee(recipient)) {
+          const { error: notificationError } = await supabaseRaw.from('notifications').insert({
+            id: `notif-donelink-${persistedTask.id}`,
+            user_id: recipient.id,
+            sender_id: currentUser.id,
+            title: 'Done Link Submitted',
+            message: `${currentUser.name} submitted a completion link for task "${persistedTask.title}" — ready for your review.`,
+            type: 'task_updated',
+            is_read: false,
+            link_url: 'module:tasks',
+            created_at: new Date().toISOString(),
+          });
+          if (notificationError && notificationError.code !== '23505') throw notificationError;
+        }
+      } catch (err) {
+        console.error('Supabase done-link notification error:', err);
+      }
+    }
+
     const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
     await logActivity('update', 'task', taskId, taskTitle, 'Task details updated');
 
