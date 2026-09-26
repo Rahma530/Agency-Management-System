@@ -19,6 +19,24 @@ export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATIO
 export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
   role === 'head_of_technical' || role === 'ai_engineer';
 
+// TEMPORARY TRANSITION FEATURE (EmployeeImpersonation.tsx / supabase/functions/
+// employee-impersonation) — intended for removal once every employee has adopted their own real,
+// self-set password. Currently the same two roles as canUseEmployeeTestingMode above, but tracked
+// as its own function rather than reused directly: impersonation needs no password knowledge at
+// all (a magic link, not a real login), a materially different and more sensitive capability than
+// Testing Mode's real-credentials flow, so the two role sets are free to diverge later without
+// entangling one decision with the other.
+export const canImpersonateEmployees = (role: UserRole): boolean =>
+  role === 'head_of_technical' || role === 'ai_engineer';
+
+// Impersonation targets: confirmed no role-based exclusion — head_of_technical/ai_engineer can
+// impersonate any active, non-deactivated employee, including each other, executive, and any
+// team lead, full stop. (An earlier version of this tool excluded leadership and two specific
+// "protected" accounts; both exclusions were explicitly reversed once every employee, including
+// those two, started receiving real password-setup links like anyone else — there was no longer
+// a reason to treat any account differently here.) The only remaining gate is isActiveEmployee
+// (a real linked Auth account, not deactivated), applied directly where employees are listed.
+
 // Shared gate for the client's phone number, the "Client Access" tab (portal/platform login
 // credentials, ad account access notes, payment card details tied to those ad accounts),
 // contract_value, the Signed Contract file (ClientContractsPanel), Payment Tracking
