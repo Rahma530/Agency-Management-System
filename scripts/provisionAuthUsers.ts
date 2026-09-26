@@ -55,14 +55,28 @@ import { UserRecord } from '../src/types/database';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const AUTH_REDIRECT_URL = process.env.AUTH_REDIRECT_URL || process.env.APP_URL;
 
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !AUTH_REDIRECT_URL) {
   console.error(
-    'Missing SUPABASE_URL (or VITE_SUPABASE_URL) and/or SUPABASE_SERVICE_ROLE_KEY.\n' +
+    'Missing SUPABASE_URL (or VITE_SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY, and/or AUTH_REDIRECT_URL (or APP_URL).\n' +
       'See the terminal commands in the chat message for how to set these for this run only.'
   );
   process.exit(1);
 }
+
+function normalizeAuthRedirectUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported protocol');
+    return url.origin;
+  } catch {
+    console.error('AUTH_REDIRECT_URL must be a valid http(s) origin, for example https://agency.example.com.');
+    process.exit(1);
+  }
+}
+
+const authRedirectUrl = normalizeAuthRedirectUrl(AUTH_REDIRECT_URL);
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -120,6 +134,7 @@ async function provisionOne(pendingUser: UserRecord): Promise<ResultRow> {
   const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
     type: 'recovery',
     email: pendingUser.email!,
+    options: { redirectTo: authRedirectUrl },
   });
   if (linkErr) throw linkErr;
 
