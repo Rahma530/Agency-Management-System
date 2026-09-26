@@ -29,13 +29,13 @@ export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
 export const canImpersonateEmployees = (role: UserRole): boolean =>
   role === 'head_of_technical' || role === 'ai_engineer';
 
-// Impersonation targets: rank-and-file employees only. Leadership can never impersonate one
-// another (or themselves) through this tool, on top of the server-side protected-account
-// exclusion (two hardcoded Auth IDs) enforced only in the Edge Function, which has no client-side
-// equivalent since the browser is never told which accounts those are.
-export const NON_IMPERSONATABLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'ai_engineer'];
-
-export const canBeImpersonated = (role: UserRole): boolean => !NON_IMPERSONATABLE_ROLES.includes(role);
+// Impersonation targets: confirmed no role-based exclusion — head_of_technical/ai_engineer can
+// impersonate any active, non-deactivated employee, including each other, executive, and any
+// team lead, full stop. (An earlier version of this tool excluded leadership and two specific
+// "protected" accounts; both exclusions were explicitly reversed once every employee, including
+// those two, started receiving real password-setup links like anyone else — there was no longer
+// a reason to treat any account differently here.) The only remaining gate is isActiveEmployee
+// (a real linked Auth account, not deactivated), applied directly where employees are listed.
 
 // Shared gate for the client's phone number, the "Client Access" tab (portal/platform login
 // credentials, ad account access notes, payment card details tied to those ad accounts),

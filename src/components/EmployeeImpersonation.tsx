@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { getRoleInfo } from '../data/roles';
-import { isActiveEmployee, canBeImpersonated } from '../lib/permissions';
+import { isActiveEmployee } from '../lib/permissions';
 import type { UserRecord } from '../types/database';
 
 interface Props {
@@ -13,9 +13,10 @@ interface Props {
 /**
  * TEMPORARY TRANSITION FEATURE — intended for removal once every employee has adopted their own
  * real, self-set password (distributed via scripts/provisionAuthUsers.ts). Lets an active Head of
- * Technical or AI Engineer log into a rank-and-file employee's account via a one-time Supabase
- * Auth magic link, without ever seeing or resetting that employee's real password. This is a
- * bridge for the window until the team has fully transitioned off shared/admin-known credentials
+ * Technical or AI Engineer log into any other employee's account — no exclusions, including each
+ * other, executive, and any team lead — via a one-time Supabase Auth magic link, without ever
+ * seeing or resetting that employee's real password. This is a bridge for the window until the
+ * team has fully transitioned off shared/admin-known credentials
  * — do not build new permanent features on top of this component; when leadership decides the
  * transition is done, delete this file, EmployeeImpersonation's App.tsx wiring, the
  * employee-impersonation Edge Function, and the impersonation_sessions table together.
@@ -24,11 +25,12 @@ export function EmployeeImpersonation({ employees, onClose, onStart }: Props) {
   const [employeeId, setEmployeeId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  // Auth account already linked (isActiveEmployee) and not a leadership role this tool can never
-  // target — the server independently re-checks both, plus a protected-account list the browser
-  // is never told about.
+  // Only gate: a real linked Auth account, not deactivated (isActiveEmployee). No role-based
+  // exclusion — head_of_technical/ai_engineer can impersonate any active employee, including each
+  // other and executive; the server independently re-checks the same isActiveEmployee-equivalent
+  // condition.
   const available = employees
-    .filter((employee) => isActiveEmployee(employee) && canBeImpersonated(employee.role))
+    .filter((employee) => isActiveEmployee(employee))
     .sort((a, b) => a.name.localeCompare(b.name));
   const employee = available.find((item) => item.id === employeeId);
 

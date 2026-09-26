@@ -1,8 +1,9 @@
 // TEMPORARY TRANSITION FEATURE — intended for removal once every employee has adopted their own
 // real, self-set password (distributed via scripts/provisionAuthUsers.ts). This function lets an
-// active Head of Technical or AI Engineer log into a rank-and-file employee's account via a
-// Supabase Auth magic link, without ever seeing or resetting that employee's real password — a
-// bridge for the window until the team has fully transitioned off shared/admin-known credentials.
+// active Head of Technical or AI Engineer log into any other employee's account — with no
+// exclusions, including each other, executive, and any team lead — via a Supabase Auth magic
+// link, without ever seeing or resetting that employee's real password — a bridge for the window
+// until the team has fully transitioned off shared/admin-known credentials.
 // Do not build new permanent features on top of this; when leadership decides the transition is
 // done, this function (and its impersonation_sessions table / EmployeeImpersonation.tsx UI) should
 // be deleted outright, not folded into something else.
@@ -21,23 +22,11 @@ const supportedOrigins = new Set([
 const allowedOrigins = new Set((Deno.env.get('EMPLOYEE_IMPERSONATION_ALLOWED_ORIGIN') || 'http://localhost:3000')
   .split(',').map((origin) => origin.trim()).filter((origin) => supportedOrigins.has(origin)));
 
-// Same two accounts, same protection level, as employee-test-account's password-reset guard:
-// these Auth IDs can never be impersonated, exactly as they can never have their password reset.
-// Shared project-level secrets, not duplicated per function.
-const protectedAuthIds = [
-  Deno.env.get('EMPLOYEE_TEST_PROTECTED_TOQA_AUTH_ID')?.trim().toLowerCase(),
-  Deno.env.get('EMPLOYEE_TEST_PROTECTED_SHAHD_AUTH_ID')?.trim().toLowerCase(),
-];
-const protectedIdsConfigured = protectedAuthIds.every((id) =>
-  !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))
-  && protectedAuthIds[0] !== protectedAuthIds[1];
-
-// Leadership can never impersonate one another (or themselves) through this tool — only
-// rank-and-file employees are valid targets. Kept as a literal list here, not imported from
-// src/lib/permissions.ts: this function is deployed independently of the app bundle, same as
-// employee-test-account's own inline role check.
-const NON_IMPERSONATABLE_ROLES = new Set(['executive', 'head_of_technical', 'ai_engineer']);
-
+// No target-role or protected-account exclusion here (confirmed, final): head_of_technical/
+// ai_engineer can impersonate any active, non-deactivated employee, including each other,
+// executive, and any team lead — every account now receives a real password-setup link like
+// anyone else, so there is no remaining reason to exclude any of them here. The only eligibility
+// check left is the employee/auth-account validity checks further below.
 const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -61,7 +50,6 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return response({ ok: true });
   if (req.method !== 'POST') return response({ error: 'Method not allowed.' }, 405);
   if (!enabled || !supabaseUrl || !anonKey || !serviceKey) return response({ error: 'Impersonation is disabled.' }, 503);
-  if (!protectedIdsConfigured) return response({ error: 'Protected employee Auth IDs are not configured.' }, 503);
 
   const bearer = req.headers.get('Authorization') || '';
   if (!bearer.startsWith('Bearer ')) return response({ error: 'Authentication required.' }, 401);
@@ -91,12 +79,6 @@ Deno.serve(async (req) => {
   if (employeeError || !employee) return response({ error: 'Employee not found.' }, 404);
   if (employee.deactivated_at) return response({ error: 'Disabled employees cannot be impersonated.' }, 409);
   if (!employee.auth_id) return response({ error: 'Employee has no linked Auth account yet.' }, 409);
-  if (NON_IMPERSONATABLE_ROLES.has(employee.role)) {
-    return response({ error: 'Leadership accounts cannot be impersonated through this tool.' }, 403);
-  }
-  if (protectedAuthIds.includes(employee.auth_id.toLowerCase())) {
-    return response({ error: 'This employee\'s account is protected and cannot be impersonated.' }, 403);
-  }
   if (!employee.email) return response({ error: 'Employee has no work email on file.' }, 409);
 
   const { data: linked, error: linkedError } = await admin.auth.admin.getUserById(employee.auth_id);
