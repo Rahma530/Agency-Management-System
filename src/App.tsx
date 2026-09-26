@@ -132,9 +132,16 @@ import { AIAssistantWidget } from './components/AIAssistantWidget';
 
 export type AppModule = AppModuleId;
 
-// Temporary feature switch. Production builds require an explicit opt-in;
-// the real Auth + public.users role checks below remain mandatory either way.
-const EMPLOYEE_TESTING_MODE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_EMPLOYEE_TESTING_MODE === 'true';
+// DISABLED — superseded by the Impersonation tool below (EMPLOYEE_IMPERSONATION_ENABLED), which
+// covers the same "access an employee's account without knowing their password" need without
+// ever touching the employee's real password. Testing Mode's "Set Up Test Account" action
+// generates and overwrites a real Supabase Auth password — a genuine risk of breaking an
+// employee's actual login now that real per-employee passwords are being distributed
+// (scripts/provisionAuthUsers.ts). Hardcoded off rather than left keyed to DEV/an env var, so no
+// build mode can make this reachable again by accident. Kept unreachable, not deleted: this flag,
+// the UI trigger below, EmployeeTestingMode.tsx, the employee-test-account Edge Function, and its
+// migration history are all still in the repo for a dedicated future removal task, not this one.
+const EMPLOYEE_TESTING_MODE_ENABLED = false;
 const TEST_SESSION_KEY = 'agency_employee_test_handoff';
 type TestHandoff = { employeeId: string; authId: string; email: string };
 
