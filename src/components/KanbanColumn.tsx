@@ -2,6 +2,7 @@ import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { TaskRecord, TaskStatus, ClientRecord, UserRecord } from '../types/database';
 import { KanbanTaskCard, KanbanColumnMeta } from './KanbanTaskCard';
+import { isTaskDone } from '../lib/taskLifecycle';
 
 interface KanbanColumnProps {
   column: KanbanColumnMeta;
@@ -73,7 +74,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
             const client = clients.find((c) => c.id === task.client_id);
             const assignee = users.find((u) => u.id === task.assigned_to);
             const subtasks = allTasks.filter((t) => t.parent_task_id === task.id);
-            const subtaskDone = subtasks.filter((t) => t.status === 'completed').length;
+            const subtaskDone = subtasks.filter((t) => isTaskDone(t.status)).length;
 
             return (
               <KanbanTaskCard

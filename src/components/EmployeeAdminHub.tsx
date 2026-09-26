@@ -20,6 +20,7 @@ import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/databas
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
 import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients } from '../lib/permissions';
 import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
+import { isTaskDone } from '../lib/taskLifecycle';
 
 // The Team dropdown must always include whatever team a role auto-fills (handleRoleChange below),
 // even for roles outside the 7 operational departments (Executive, Technical, Sales, AI
@@ -443,7 +444,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   // role differs from the employee's current one, right before actually saving.
   const liveAssignmentCounts = (userId: string) => {
     const activeClients = clients.filter((c) => c.am_agent_id === userId).length;
-    const openTasks = tasks.filter((t) => t.assigned_to === userId && t.status !== 'completed').length;
+    const openTasks = tasks.filter((t) => t.assigned_to === userId && !isTaskDone(t.status)).length;
     return { activeClients, openTasks };
   };
 

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, X, AlertTriangle } from 'lucide-react';
 import { TaskRecord, TaskPriority, ClientRecord, UserRecord } from '../types/database';
+import { isTaskDone } from '../lib/taskLifecycle';
 
 interface TaskCalendarViewProps {
   tasks: TaskRecord[];
@@ -144,7 +145,7 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({ tasks, clien
               <div className="space-y-1">
                 {visibleTasks.map((task) => {
                   const priority = priorityStyle(task.priority);
-                  const overdue = task.due_date < todayStr && task.status !== 'completed';
+                  const overdue = task.due_date < todayStr && !isTaskDone(task.status);
                   return (
                     <button
                       key={task.id}

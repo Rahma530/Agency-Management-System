@@ -37,6 +37,7 @@ import {
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
+import { isTaskDone } from './lib/taskLifecycle';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices, SERVICE_LABELS } from './lib/clientServices';
 import {
@@ -2822,10 +2823,14 @@ export default function App() {
 
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
-    // completed_at is the only reliable signal for "completed today" (the
-    // Daily Work Log's auto-suggestion) — status alone carries no timing
-    // information, so it's set/cleared here rather than left to drift.
-    const completedAt = newStatus === 'completed' ? new Date().toISOString() : null;
+    const existingTask = tasks.find((t) => t.id === taskId);
+    // completed_at is the only reliable signal for "completed today" (the Daily Work Log's
+    // auto-suggestion) and for every completion-rate/performance metric in reportingEngine.ts —
+    // status alone carries no timing information. Set once when the task first becomes done
+    // ('completed' or 'closed'), preserved across a later completed -> closed confirmation
+    // (never overwritten or cleared by that transition), and cleared only by a real regression
+    // back to a not-done status.
+    const completedAt = isTaskDone(newStatus) ? existingTask?.completed_at || new Date().toISOString() : null;
     const updates = { status: newStatus, completed_at: completedAt };
 
     if (supabaseActive) {
@@ -2842,8 +2847,8 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
     );
-    
-    const taskTitle = tasks.find(t => t.id === taskId)?.title || 'Task';
+
+    const taskTitle = existingTask?.title || 'Task';
     await logActivity('status_change', 'task', taskId, taskTitle, `Status updated to ${newStatus}`);
 
     showNotification('Task status moved and the shared board updated.');
@@ -2862,17 +2867,18 @@ export default function App() {
 
   // Update task details and hours
   const handleUpdateTask = async (taskId: string, updates: Partial<TaskRecord>) => {
-    // Same completed_at bookkeeping as handleUpdateTaskStatus, but only when
-    // this edit actually touches status — editing title/description alone
-    // shouldn't disturb it.
+    const existingTask = tasks.find((t) => t.id === taskId);
+    // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
+    // actually touches status — editing title/description/done_link alone shouldn't disturb it.
     const finalUpdates: Partial<TaskRecord> = { ...updates };
     if ('status' in updates) {
-      finalUpdates.completed_at = updates.status === 'completed' ? new Date().toISOString() : null;
+      finalUpdates.completed_at = isTaskDone(updates.status as TaskStatus)
+        ? existingTask?.completed_at || new Date().toISOString()
+        : null;
     }
     // Reassigning a task to a different person is a fresh "new task" for them (Module 12
     // Phase 5's programming_agent notification badge, since that role has no assignments row).
     if ('assigned_to' in updates) {
-      const existingTask = tasks.find((t) => t.id === taskId);
       if (existingTask && existingTask.assigned_to !== updates.assigned_to) {
         finalUpdates.assignee_viewed_at = null;
       }
@@ -3684,7 +3690,7 @@ export default function App() {
   };
 
   // Stats for badge counters
-  const activeTasksCount = tasks.filter((t) => t.status !== 'completed').length;
+  const activeTasksCount = tasks.filter((t) => !isTaskDone(t.status)).length;
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 

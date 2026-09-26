@@ -52,6 +52,7 @@ import {
 } from '@dnd-kit/core';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
+import { isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { OPERATIONAL_TEAMS, fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
@@ -172,6 +173,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isSavingDriveLink, setIsSavingDriveLink] = useState(false);
   useEffect(() => {
     setDriveLinkDraft(selectedTaskDetails?.drive_link || '');
+  }, [selectedTaskDetails?.id]);
+  // Done Link draft — same pattern as Drive Link above, distinct field: the assignee's finished-
+  // work link, submitted once the task reaches 'completed', reviewed before closing.
+  const [doneLinkDraft, setDoneLinkDraft] = useState('');
+  const [isSavingDoneLink, setIsSavingDoneLink] = useState(false);
+  useEffect(() => {
+    setDoneLinkDraft(selectedTaskDetails?.done_link || '');
   }, [selectedTaskDetails?.id]);
   const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
   // Set when the Create Task modal was opened via "+ Add Subtask" — locks
@@ -356,6 +364,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'rgba(123, 47, 247, 0.25)' },
     { id: 'in_review', label: 'In Review', color: 'var(--roas-mid)', badgeBg: 'rgba(245, 226, 154, 0.2)' },
     { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'rgba(169, 245, 193, 0.2)' },
+    { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'rgba(168, 155, 184, 0.2)' },
     { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'rgba(245, 163, 163, 0.2)' },
   ];
 
@@ -364,13 +373,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   
   const isOverdue = (task: TaskRecord) => {
     if (!task.due_date) return false;
-    if (task.status === 'completed') return false;
+    if (isTaskDone(task.status)) return false;
     return task.due_date < todayStr;
   };
 
   const isDueSoon = (task: TaskRecord) => {
     if (!task.due_date) return false;
-    if (task.status === 'completed') return false;
+    if (isTaskDone(task.status)) return false;
     const dueDate = new Date(task.due_date).getTime();
     const now = new Date(todayStr).getTime();
     const diffDays = (dueDate - now) / (1000 * 3600 * 24);
@@ -405,7 +414,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // - Unassigned
   // - Capacity utilization
   const totalTasksCount = userVisibleTasks.length;
-  const completedTasksCount = userVisibleTasks.filter((t) => t.status === 'completed').length;
+  const completedTasksCount = userVisibleTasks.filter((t) => isTaskDone(t.status)).length;
   const inProgressTasksCount = userVisibleTasks.filter((t) => t.status === 'in_progress').length;
   const pendingTasksCount = userVisibleTasks.filter((t) => t.status === 'todo').length;
   const overdueTasksCount = userVisibleTasks.filter(isOverdue).length;
@@ -415,7 +424,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const capacityUtilization = useMemo(() => {
     const operational = users.filter((u) => u.capacity_limit && u.capacity_limit > 0);
     const totalLimits = operational.reduce((acc, u) => acc + (u.capacity_limit || 8), 0);
-    const activeTasksAssigned = tasks.filter((t) => t.status !== 'completed' && t.assigned_to).length;
+    const activeTasksAssigned = tasks.filter((t) => !isTaskDone(t.status) && t.assigned_to).length;
     return totalLimits > 0 ? Math.round((activeTasksAssigned / totalLimits) * 100) : 0;
   }, [users, tasks]);
 
@@ -620,6 +629,26 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   };
 
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
+    // 'closed' is the one transition every other status change here is deliberately NOT gated
+    // for: it requires the assignee's done_link to already be submitted and the mover to be the
+    // task's creator, its assignee, or head_of_technical (canCloseTask/canSubmitTaskForClosing in
+    // lib/taskLifecycle.ts) — matched server-side by tasks_update_rls. Every other target status
+    // is unrestricted, same as before.
+    if (targetStatus === 'closed') {
+      const task = tasks.find((t) => t.id === taskId);
+      const denyReason = !task
+        ? 'Task not found.'
+        : !currentUser || !canCloseTask(task, currentUser)
+        ? 'Only the task\'s creator, its assignee, or Head of Technical can close it.'
+        : !canSubmitTaskForClosing(task)
+        ? 'This task needs a Done Link before it can be closed.'
+        : null;
+      if (denyReason) {
+        setNotification({ text: denyReason, type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+        return;
+      }
+    }
     try {
       await onUpdateTaskStatus(taskId, targetStatus);
       if (selectedTaskDetails && selectedTaskDetails.id === taskId) {
@@ -640,6 +669,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setSelectedTaskDetails({ ...selectedTaskDetails, drive_link: nextValue });
     } finally {
       setIsSavingDriveLink(false);
+    }
+  };
+
+  // Done Link: same save pattern as Drive Link above, distinct field.
+  const handleSaveDoneLink = async () => {
+    if (!selectedTaskDetails || !onUpdateTask) return;
+    const nextValue = doneLinkDraft.trim() || null;
+    setIsSavingDoneLink(true);
+    try {
+      await onUpdateTask(selectedTaskDetails.id, { done_link: nextValue });
+      setSelectedTaskDetails({ ...selectedTaskDetails, done_link: nextValue });
+    } finally {
+      setIsSavingDoneLink(false);
     }
   };
 
@@ -1121,7 +1163,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {/* VIEW 1: KANBAN BOARD */}
       {viewMode === 'kanban' && (
         <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-start">
             {columns.map((column) => {
               const columnTasks = filteredTasks.filter((t) => t.status === column.id);
               return (
@@ -1152,7 +1194,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     task={draggingTask}
                     client={clients.find((c) => c.id === draggingTask.client_id)}
                     assignee={users.find((u) => u.id === draggingTask.assigned_to)}
-                    subtaskDone={subtasks.filter((t) => t.status === 'completed').length}
+                    subtaskDone={subtasks.filter((t) => isTaskDone(t.status)).length}
                     subtaskTotal={subtasks.length}
                     overdue={isOverdue(draggingTask)}
                     dueSoon={isDueSoon(draggingTask)}
@@ -1226,7 +1268,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           {(() => {
                             const subtasks = tasks.filter((t) => t.parent_task_id === task.id);
                             if (subtasks.length === 0) return null;
-                            const done = subtasks.filter((t) => t.status === 'completed').length;
+                            const done = subtasks.filter((t) => isTaskDone(t.status)).length;
                             return (
                               <p className="text-[10px] text-purple-300 mt-0.5 flex items-center gap-1">
                                 <CheckSquare className="w-3 h-3" />
@@ -1505,12 +1547,64 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {/* Done Link — surfaced once the task reaches 'completed': the assignee's link to
+                  their finished work, for the creator/assignee/head_of_technical to review before
+                  closing. Distinct from Drive Link above (always-visible general reference). */}
+              {isTaskDone(selectedTaskDetails.status) && (
+                <div>
+                  <label className="text-[11px] font-semibold text-stone-400 mb-1.5 flex items-center gap-1.5">
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>Done Link:</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={doneLinkDraft}
+                      onChange={(e) => setDoneLinkDraft(e.target.value)}
+                      placeholder="Link to the finished work (Drive, Figma, ...)"
+                      disabled={selectedTaskDetails.status === 'closed'}
+                      className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 disabled:opacity-60"
+                    />
+                    {onUpdateTask && selectedTaskDetails.status !== 'closed' && doneLinkDraft !== (selectedTaskDetails.done_link || '') && (
+                      <button
+                        onClick={handleSaveDoneLink}
+                        disabled={isSavingDoneLink}
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
+                      >
+                        {isSavingDoneLink ? 'Saving...' : 'Save'}
+                      </button>
+                    )}
+                    {selectedTaskDetails.done_link && (
+                      <a
+                        href={selectedTaskDetails.done_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 rounded-xl bg-stone-900/80 border border-stone-800 text-purple-300 hover:text-white shrink-0"
+                        title="Open in new tab"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                  {selectedTaskDetails.status === 'completed' && currentUser && canCloseTask(selectedTaskDetails, currentUser) && (
+                    <button
+                      onClick={() => handleMoveStatus(selectedTaskDetails.id, 'closed')}
+                      disabled={!canSubmitTaskForClosing(selectedTaskDetails)}
+                      title={!canSubmitTaskForClosing(selectedTaskDetails) ? 'Add a Done Link before closing this task.' : undefined}
+                      className="mt-2 px-3 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Close Task
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Move Status directly from details */}
               <div>
                 <label className="text-[11px] font-semibold text-stone-400 block mb-1.5">
                   Update Status:
                 </label>
-                <div className="grid grid-cols-5 gap-1.5">
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                   {columns.map((col) => (
                     <button
                       key={col.id}
@@ -1536,8 +1630,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               {(() => {
                 const directSubtasks = tasks.filter((t) => t.parent_task_id === selectedTaskDetails.id);
                 const allSubtasksDone =
-                  directSubtasks.length > 0 && directSubtasks.every((t) => t.status === 'completed');
-                if (!allSubtasksDone || selectedTaskDetails.status === 'completed') return null;
+                  directSubtasks.length > 0 && directSubtasks.every((t) => isTaskDone(t.status));
+                if (!allSubtasksDone || isTaskDone(selectedTaskDetails.status)) return null;
                 return (
                   <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/40 flex items-center justify-between gap-3">
                     <span className="text-xs text-emerald-300 font-semibold">

@@ -41,7 +41,12 @@ export type ClientSector = 'E-Commerce' | 'Service';
 // renamed 'closed'. 'paused' is new: a temporary halt, can return to 'active'.
 export type ClientStatus = 'onboarding' | 'active' | 'paused' | 'renewal' | 'closed';
 
-export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'completed' | 'blocked';
+// 'closed' is a manual confirmation step after 'completed' — the task's creator, its assignee, or
+// head_of_technical reviews the assignee's done_link and closes it out themselves (never
+// automatic). Functionally identical to 'completed' for every downstream calculation (capacity,
+// overdue, completion metrics) — see isTaskDone() in lib/taskLifecycle.ts, the single source of
+// truth for that equivalence instead of checking either value inline.
+export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'completed' | 'blocked' | 'closed';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 // 1. users
@@ -293,9 +298,10 @@ export interface TaskRecord {
   // Self-reference for subtasks. Nesting is capped at 3 levels
   // (task -> subtask -> sub-subtask) by a DB trigger.
   parent_task_id?: string | null;
-  // Set when status becomes 'completed', cleared otherwise (see
-  // handleUpdateTaskStatus/handleUpdateTask in App.tsx). Needed to filter
-  // "completed today" — status alone carries no timing information.
+  // Set when status first becomes 'completed'; never cleared by a later 'closed' transition (see
+  // handleUpdateTaskStatus/handleUpdateTask in App.tsx) — it records when the work was actually
+  // finished, independent of the separate manual closing action. Needed to filter "completed
+  // today" — status alone carries no timing information.
   completed_at?: string | null;
   // Module 12 Phase 5: notification-badge equivalent of assignments.viewed_at
   // for roles with no AssignmentRecord relationship (programming_agent).
@@ -303,8 +309,13 @@ export interface TaskRecord {
   // opens the client this task belongs to.
   assignee_viewed_at?: string | null;
   // Module 12 Phase 9: manually-pasted Google Drive URL — no real Drive API integration,
-  // same scaffolding-only posture as Module 6's other integration points.
+  // same scaffolding-only posture as Module 6's other integration points. General-purpose
+  // reference link, always visible/editable regardless of status — distinct from done_link below.
   drive_link?: string | null;
+  // The assignee's link to their finished work (e.g. Google Drive/Figma), submitted once the task
+  // reaches 'completed' and reviewed by the creator/assignee/head_of_technical before manually
+  // closing the task — see canCloseTask() in lib/taskLifecycle.ts.
+  done_link?: string | null;
 }
 
 // 6b. task_comments — threaded comments on a task, capped at 3 levels

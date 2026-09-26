@@ -31,6 +31,7 @@ import {
   ArrowUpRight,
   Check,
   Star,
+  Link2,
 } from 'lucide-react';
 import {
   TaskRecord,
@@ -46,6 +47,7 @@ import {
 import { getTodayStr, isTaskOverdue, isTaskDueToday, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
 import { isActiveEmployee } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveCapacityLimit } from '../lib/capacity';
+import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
@@ -101,6 +103,13 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Modals state
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
   const [blockerModalTask, setBlockerModalTask] = useState<TaskRecord | null>(null);
+  // Done Link draft, synced whenever a different task's details open — same pattern as
+  // CrossTeamTaskBoard.tsx's own Drive/Done Link drafts.
+  const [doneLinkDraft, setDoneLinkDraft] = useState('');
+  const [isSavingDoneLink, setIsSavingDoneLink] = useState(false);
+  useEffect(() => {
+    setDoneLinkDraft(selectedTaskDetails?.done_link || '');
+  }, [selectedTaskDetails?.id]);
   const [blockerReason, setBlockerReason] = useState('');
   const [isLoggingDailyActivity, setIsLoggingDailyActivity] = useState(false);
 
@@ -175,7 +184,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // checklist highlight/pre-check and the auto-suggested summary draft.
   const tasksCompletedOnLogDate = useMemo(() => {
     return employeeTasks.filter(
-      (t) => t.status === 'completed' && t.completed_at?.split('T')[0] === logDate
+      (t) => isTaskDone(t.status) && t.completed_at?.split('T')[0] === logDate
     );
   }, [employeeTasks, logDate]);
 
@@ -234,7 +243,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
   const priorityFirstTasks = useMemo(() => {
     return sortedEmployeeTasks.filter(
-      (t) => (t.priority === 'urgent' || t.priority === 'high') && t.status !== 'completed'
+      (t) => (t.priority === 'urgent' || t.priority === 'high') && !isTaskDone(t.status)
     );
   }, [sortedEmployeeTasks]);
 
@@ -248,7 +257,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
   // Total daily estimated hours & active workload
   const totalActiveEstimatedHours = useMemo(() => {
-    const activeTasks = sortedEmployeeTasks.filter((t) => t.status !== 'completed');
+    const activeTasks = sortedEmployeeTasks.filter((t) => !isTaskDone(t.status));
     return activeTasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
   }, [sortedEmployeeTasks]);
 
@@ -321,8 +330,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const teamWorkloadSummary = useMemo(() => {
     return teamMembers.map((member) => {
       const memberTasks = tasks.filter((t) => t.assigned_to === member.id);
-      const active = memberTasks.filter((t) => t.status !== 'completed');
-      const completed = memberTasks.filter((t) => t.status === 'completed');
+      const active = memberTasks.filter((t) => !isTaskDone(t.status));
+      const completed = memberTasks.filter((t) => isTaskDone(t.status));
       const overdue = memberTasks.filter(isOverdue);
       const blocked = memberTasks.filter((t) => t.status === 'blocked');
       const totalEstimated = active.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
@@ -360,10 +369,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
   // Handlers for task status
   const handleAdvanceStatus = async (taskId: string, currentStatus: TaskStatus) => {
-    const statusOrder: TaskStatus[] = ['todo', 'in_progress', 'in_review', 'completed'];
-    const currentIndex = statusOrder.indexOf(currentStatus);
-    if (currentIndex >= 0 && currentIndex < statusOrder.length - 1) {
-      const nextStatus = statusOrder[currentIndex + 1];
+    // Never advances into 'closed' — isTaskDone(currentStatus) already excludes 'completed' from
+    // ever reaching this point via the render-side guards below, so this only ever walks
+    // todo -> in_progress -> in_review -> completed. Closing is a separate, gated action (see
+    // handleCloseTask below), not something this generic advance button can reach.
+    const currentIndex = TASK_STATUS_ORDER.indexOf(currentStatus);
+    if (currentIndex >= 0 && currentIndex < TASK_STATUS_ORDER.length - 1) {
+      const nextStatus = TASK_STATUS_ORDER[currentIndex + 1];
+      if (nextStatus === 'closed') return;
       try {
         await onUpdateTaskStatus(taskId, nextStatus);
         showNotification(`Task status updated to "${getStatusLabel(nextStatus)}".`);
@@ -379,6 +392,42 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       showNotification(`Task status changed to "${getStatusLabel(targetStatus)}".`);
     } catch (err) {
       showNotification('Unable to update task status.', 'error');
+    }
+  };
+
+  // Dedicated, gated action for the one transition every other status change above is NOT gated
+  // for — matches CrossTeamTaskBoard.tsx's own handleMoveStatus 'closed' guard and
+  // tasks_update_rls's server-side check.
+  const handleCloseTask = async (task: TaskRecord) => {
+    if (!canCloseTask(task, currentUser) || !canSubmitTaskForClosing(task)) {
+      showNotification(
+        !canSubmitTaskForClosing(task)
+          ? 'This task needs a Done Link before it can be closed.'
+          : "Only the task's creator, its assignee, or Head of Technical can close it.",
+        'error'
+      );
+      return;
+    }
+    try {
+      await onUpdateTaskStatus(task.id, 'closed');
+      showNotification(`"${task.title}" closed.`);
+    } catch (err) {
+      showNotification('Unable to close the task.', 'error');
+    }
+  };
+
+  const handleSaveDoneLink = async () => {
+    if (!selectedTaskDetails) return;
+    const nextValue = doneLinkDraft.trim() || null;
+    setIsSavingDoneLink(true);
+    try {
+      await onUpdateTask(selectedTaskDetails.id, { done_link: nextValue });
+      setSelectedTaskDetails({ ...selectedTaskDetails, done_link: nextValue });
+      showNotification('Done Link saved.');
+    } catch (err) {
+      showNotification('Unable to save the Done Link.', 'error');
+    } finally {
+      setIsSavingDoneLink(false);
     }
   };
 
@@ -501,6 +550,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       case 'in_review': return 'In Review';
       case 'completed': return 'Completed';
       case 'blocked': return 'Blocked';
+      case 'closed': return 'Closed';
       default: return status;
     }
   };
@@ -508,6 +558,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const getStatusBadge = (status: TaskStatus) => {
     switch (status) {
       case 'completed':
+      case 'closed':
         return { bg: 'rgba(169, 245, 193, 0.15)', text: 'var(--roas-good)', border: 'rgba(169, 245, 193, 0.3)' };
       case 'in_progress':
         return { bg: 'rgba(123, 47, 247, 0.25)', text: 'var(--purple-light)', border: 'rgba(123, 47, 247, 0.4)' };
@@ -878,12 +929,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                       <div className="flex items-center justify-between pt-2 border-t border-stone-800 text-[11px]">
                         <span className="text-stone-400">Est: {task.estimated_hours || 0}h • Actual: {task.actual_hours || 0}h</span>
                         <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleAdvanceStatus(task.id, task.status)}
-                            className="px-2.5 py-1 rounded bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 font-semibold text-[11px] transition-colors"
-                          >
-                            Advance Status
-                          </button>
+                          {!isTaskDone(task.status) && (
+                            <button
+                              onClick={() => handleAdvanceStatus(task.id, task.status)}
+                              className="px-2.5 py-1 rounded bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 font-semibold text-[11px] transition-colors"
+                            >
+                              Advance Status
+                            </button>
+                          )}
                           <button
                             onClick={() => setBlockerModalTask(task)}
                             className="px-2.5 py-1 rounded bg-red-950/80 text-red-400 hover:bg-red-900/80 font-semibold text-[11px] transition-colors"
@@ -913,7 +966,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
               </div>
 
-              {sortedEmployeeTasks.filter((t) => t.status !== 'completed').length === 0 ? (
+              {sortedEmployeeTasks.filter((t) => !isTaskDone(t.status)).length === 0 ? (
                 <div className="p-8 text-center text-stone-400 text-xs border border-dashed border-stone-800 rounded-xl">
                   <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
                   <p className="font-bold text-white text-sm">All clear! No active tasks pending for you today.</p>
@@ -921,7 +974,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               ) : (
                 <div className="space-y-3">
                   {sortedEmployeeTasks
-                    .filter((t) => t.status !== 'completed')
+                    .filter((t) => !isTaskDone(t.status))
                     .map((task) => {
                       const client = clients.find((c) => c.id === task.client_id);
                       const priority = getPriorityBadge(task.priority);
@@ -996,7 +1049,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                             </button>
 
                             {/* Status Advancement Button */}
-                            {task.status !== 'completed' && task.status !== 'blocked' && (
+                            {!isTaskDone(task.status) && task.status !== 'blocked' && (
                               <button
                                 onClick={() => handleAdvanceStatus(task.id, task.status)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 transition-colors flex items-center gap-1"
@@ -1703,6 +1756,58 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800 text-xs text-stone-300 leading-relaxed">
                   <span className="font-bold text-stone-400 block mb-1">Task description and required deliverables:</span>
                   <p className="whitespace-pre-wrap">{selectedTaskDetails.description}</p>
+                </div>
+              )}
+
+              {/* Done Link — surfaced once the task reaches 'completed': the assignee's link to
+                  their finished work, for the creator/assignee/head_of_technical to review before
+                  closing. Same pattern as CrossTeamTaskBoard.tsx's own Done Link field. */}
+              {isTaskDone(selectedTaskDetails.status) && (
+                <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800">
+                  <label className="text-[11px] font-semibold text-stone-400 mb-1.5 flex items-center gap-1.5">
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>Done Link:</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={doneLinkDraft}
+                      onChange={(e) => setDoneLinkDraft(e.target.value)}
+                      placeholder="Link to the finished work (Drive, Figma, ...)"
+                      disabled={selectedTaskDetails.status === 'closed'}
+                      className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-950/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 disabled:opacity-60"
+                    />
+                    {selectedTaskDetails.status !== 'closed' && doneLinkDraft !== (selectedTaskDetails.done_link || '') && (
+                      <button
+                        onClick={handleSaveDoneLink}
+                        disabled={isSavingDoneLink}
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
+                      >
+                        {isSavingDoneLink ? 'Saving...' : 'Save'}
+                      </button>
+                    )}
+                    {selectedTaskDetails.done_link && (
+                      <a
+                        href={selectedTaskDetails.done_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 rounded-xl bg-stone-950/80 border border-stone-800 text-purple-300 hover:text-white shrink-0"
+                        title="Open in new tab"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                  {selectedTaskDetails.status === 'completed' && canCloseTask(selectedTaskDetails, currentUser) && (
+                    <button
+                      onClick={() => handleCloseTask(selectedTaskDetails)}
+                      disabled={!canSubmitTaskForClosing(selectedTaskDetails)}
+                      title={!canSubmitTaskForClosing(selectedTaskDetails) ? 'Add a Done Link before closing this task.' : undefined}
+                      className="mt-2 px-3 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Close Task
+                    </button>
+                  )}
                 </div>
               )}
 

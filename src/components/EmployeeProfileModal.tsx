@@ -2,6 +2,7 @@ import React from 'react';
 import { UserRecord, TaskRecord, ClientRecord } from '../types/database';
 import { X, Mail, Shield, CheckCircle2, Clock, PlayCircle, Users } from 'lucide-react';
 import { getRoleInfo } from '../data/roles';
+import { isTaskDone } from '../lib/taskLifecycle';
 import { createPortal } from 'react-dom';
 
 interface EmployeeProfileModalProps {
@@ -24,7 +25,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   const todoTasks = assignedTasks.filter((t) => t.status === 'todo');
   const inProgressTasks = assignedTasks.filter((t) => t.status === 'in_progress');
   const reviewTasks = assignedTasks.filter((t) => t.status === 'review');
-  const completedTasks = assignedTasks.filter((t) => t.status === 'completed');
+  const completedTasks = assignedTasks.filter((t) => isTaskDone(t.status));
 
   const assignedClients = clients.filter(
     (c) => c.am_agent_id === user.id || c.sales_owner_id === user.id
@@ -112,14 +113,14 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
               المهام المفتوحة الحالية ({todoTasks.length + inProgressTasks.length + reviewTasks.length})
             </h3>
             
-            {assignedTasks.filter(t => t.status !== 'completed').length === 0 ? (
+            {assignedTasks.filter(t => !isTaskDone(t.status)).length === 0 ? (
               <div className="text-center p-8 text-stone-500 border border-dashed border-stone-700/50 rounded-xl">
                 لا توجد مهام مفتوحة حالياً لهذا الموظف.
               </div>
             ) : (
               <div className="space-y-3">
                 {assignedTasks
-                  .filter((t) => t.status !== 'completed')
+                  .filter((t) => !isTaskDone(t.status))
                   .sort((a, b) => (a.status === 'in_progress' ? -1 : 1)) // Bring In-Progress to top
                   .map((task) => (
                     <div

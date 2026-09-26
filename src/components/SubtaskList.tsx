@@ -20,6 +20,8 @@ const statusBadge = (status: TaskStatus) => {
   switch (status) {
     case 'completed':
       return { label: 'Completed', bg: 'rgba(169, 245, 193, 0.2)', text: 'var(--roas-good)' };
+    case 'closed':
+      return { label: 'Closed', bg: 'rgba(169, 245, 193, 0.2)', text: 'var(--roas-good)' };
     case 'in_progress':
       return { label: 'In Progress', bg: 'rgba(123, 47, 247, 0.25)', text: 'var(--purple-light)' };
     case 'in_review':

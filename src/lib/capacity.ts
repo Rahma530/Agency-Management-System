@@ -1,5 +1,6 @@
 import { UserRecord, ClientRecord, TaskRecord, UserRole } from '../types/database';
 import { isPausedClient } from './clientStatus';
+import { isTaskDone } from './taskLifecycle';
 
 // Team leads don't carry a tracked capacity buffer the way agents do — a
 // capacity_limit of 0 is a normal, intentional value for these 4 roles
@@ -45,7 +46,7 @@ export function getUserCapacityData(
   const assignedClients = clients.filter(
     (c) => c.am_agent_id === user.id && c.status !== 'closed' && !isPausedClient(c)
   );
-  const activeTasks = tasks.filter((t) => t.assigned_to === user.id && t.status !== 'completed');
+  const activeTasks = tasks.filter((t) => t.assigned_to === user.id && !isTaskDone(t.status));
 
   const isAm = user.role === 'am_agent' || user.role === 'am_team_lead';
   const usedCapacity = isAm ? assignedClients.length : activeTasks.length;

@@ -30,6 +30,7 @@ import {
 } from '../types/database';
 import { getRoleInfo, AppModuleId } from '../data/roles';
 import { getTodayStr, isTaskOverdue, isTaskDueToday, getSortedEmployeeTasks } from '../lib/employeeWork';
+import { TASK_STATUS_ORDER, isTaskDone } from '../lib/taskLifecycle';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
 import { canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
@@ -110,6 +111,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   in_review: 'In Review',
   completed: 'Completed',
   blocked: 'Blocked',
+  closed: 'Closed',
 };
 
 export const MyWorkHub: React.FC<MyWorkHubProps> = ({
@@ -268,7 +270,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   );
   const overdueTasks = useMemo(() => sortedTasks.filter((t) => isTaskOverdue(t, todayStr)), [sortedTasks, todayStr]);
   const dueTodayTasks = useMemo(() => sortedTasks.filter((t) => isTaskDueToday(t, todayStr)), [sortedTasks, todayStr]);
-  const activeTasks = useMemo(() => sortedTasks.filter((t) => t.status !== 'completed'), [sortedTasks]);
+  const activeTasks = useMemo(() => sortedTasks.filter((t) => !isTaskDone(t.status)), [sortedTasks]);
 
   // Deep-work escape hatch: whichever of the role's task-shaped modules is
   // actually available, preferring the richer Daily Operations board.
@@ -294,12 +296,11 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
     : null;
 
   const handleAdvanceStatus = async (task: TaskRecord) => {
-    const order: TaskStatus[] = ['todo', 'in_progress', 'in_review', 'completed'];
-    const idx = order.indexOf(task.status);
-    if (idx < 0 || idx >= order.length - 1) return;
+    const idx = TASK_STATUS_ORDER.indexOf(task.status);
+    if (idx < 0 || idx >= TASK_STATUS_ORDER.length - 1) return;
     try {
-      await onUpdateTaskStatus(task.id, order[idx + 1]);
-      showNotification(`"${task.title}" moved to ${STATUS_LABELS[order[idx + 1]]}.`);
+      await onUpdateTaskStatus(task.id, TASK_STATUS_ORDER[idx + 1]);
+      showNotification(`"${task.title}" moved to ${STATUS_LABELS[TASK_STATUS_ORDER[idx + 1]]}.`);
     } catch {
       showNotification('Unable to update task status.', 'error');
     }
@@ -551,7 +552,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                     </span>
                   </div>
                 </div>
-                {task.status !== 'completed' && task.status !== 'blocked' && (
+                {!isTaskDone(task.status) && task.status !== 'blocked' && (
                   <button
                     onClick={() => handleAdvanceStatus(task)}
                     className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 transition-colors"

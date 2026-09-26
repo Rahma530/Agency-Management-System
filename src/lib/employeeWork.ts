@@ -1,4 +1,5 @@
 import { TaskRecord, TaskPriority } from '../types/database';
+import { isTaskDone } from './taskLifecycle';
 
 // Shared by DailyOperationsModule.tsx and MyWorkHub.tsx so both compute
 // "overdue"/"due today"/priority order identically instead of drifting.
@@ -7,13 +8,13 @@ export const getTodayStr = (): string => new Date().toISOString().split('T')[0];
 
 export const isTaskOverdue = (task: TaskRecord, todayStr: string): boolean => {
   if (!task.due_date) return false;
-  if (task.status === 'completed') return false;
+  if (isTaskDone(task.status)) return false;
   return task.due_date < todayStr;
 };
 
 export const isTaskDueToday = (task: TaskRecord, todayStr: string): boolean => {
   if (!task.due_date) return false;
-  if (task.status === 'completed') return false;
+  if (isTaskDone(task.status)) return false;
   return task.due_date === todayStr;
 };
 
