@@ -1,8 +1,15 @@
 // AI Orchestrator — Phase 1 of 6 (see the design conversation for the full architecture: Task
 // Registry -> AI Router -> Provider Adapter -> Usage Tracking + Rate-Limit State -> result
-// validation). This is deliberately a thin skeleton: the two provider adapters (./providers/) wired
-// behind the same auth/CORS/enable-flag scaffold every Edge Function in this repo already uses
-// (employee-invitation, employee-impersonation), callable with a fixed test prompt via curl.
+// validation). This is deliberately a thin skeleton: three providers (Gemini for extraction; Groq
+// for analysis, primary; OpenRouter free models for analysis, emergency-fallback only — its free
+// tier is roughly 50 requests/day unless the account has purchased credits) across two adapter
+// files (./providers/gemini.ts; ./providers/openaiCompatible.ts, shared by Groq/OpenRouter since
+// both are OpenAI-compatible REST), wired behind the same auth/CORS/enable-flag scaffold every
+// Edge Function in this repo already uses (employee-invitation, employee-impersonation), callable
+// with a fixed test prompt via curl.
+//
+// Grok/xAI was evaluated and deliberately dropped: it has no renewing free tier (a one-time $25
+// signup credit, then real paid charges), which doesn't fit this project's zero-AI-cost goal.
 //
 // NOT yet implemented (Phases 2-4, in order):
 //  - The real Task Registry (prompt templates, per-task provider assignment, fallback rules).
@@ -15,8 +22,8 @@
 // Deploy with JWT verification enabled. Provider API keys are used only here, never in React.
 import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
 import { callGemini } from './providers/gemini.ts';
-import { callGrok } from './providers/grok.ts';
-import { AiProvider, AiProviderError } from './types.ts';
+import { callOpenAiCompatible } from './providers/openaiCompatible.ts';
+import { AiCallSuccess, AiProvider, AiProviderError } from './types.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
@@ -38,8 +45,29 @@ const cors = {
 // Phase-1-only stand-in for the Task Registry — replaced wholesale in Phase 2, not extended here.
 const PHASE1_TASK_MAP: Record<string, AiProvider> = {
   PHASE1_TEST_GEMINI: 'gemini',
-  PHASE1_TEST_GROK: 'grok',
+  PHASE1_TEST_GROQ: 'groq',
+  PHASE1_TEST_OPENROUTER: 'openrouter',
 };
+
+const GROQ_CONFIG = {
+  provider: 'groq' as const,
+  baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+  apiKeyEnvVar: 'GROQ_API_KEY',
+  modelEnvVar: 'GROQ_MODEL',
+};
+
+const OPENROUTER_CONFIG = {
+  provider: 'openrouter' as const,
+  baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+  apiKeyEnvVar: 'OPENROUTER_API_KEY',
+  modelEnvVar: 'OPENROUTER_MODEL',
+};
+
+function callProvider(provider: AiProvider, input: { prompt: string; systemPrompt?: string }): Promise<AiCallSuccess> {
+  if (provider === 'gemini') return callGemini(input);
+  if (provider === 'groq') return callOpenAiCompatible(GROQ_CONFIG, input);
+  return callOpenAiCompatible(OPENROUTER_CONFIG, input);
+}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('Origin');
@@ -90,8 +118,7 @@ Deno.serve(async (req) => {
   if (!provider) return response({ error: `Unknown task "${input.task}".` }, 400);
 
   try {
-    const call = provider === 'gemini' ? callGemini : callGrok;
-    const result = await call({ prompt: input.prompt, systemPrompt: input.systemPrompt });
+    const result = await callProvider(provider, { prompt: input.prompt, systemPrompt: input.systemPrompt });
     return response({ ok: true, ...result });
   } catch (err) {
     // A rate-limit or provider-side failure is an anticipated outcome this router is built to
@@ -99,7 +126,13 @@ Deno.serve(async (req) => {
     // branch on the body, while genuine request/auth problems above still use real HTTP statuses.
     if (err instanceof AiProviderError) {
       console.error(`ai-router ${provider} error (${err.kind}):`, err.message);
-      return response({ ok: false, kind: err.kind, reason: err.reason, message: err.message });
+      return response({
+        ok: false,
+        kind: err.kind,
+        reason: err.reason,
+        message: err.message,
+        rateLimitHeaders: err.rateLimitHeaders,
+      });
     }
     console.error('ai-router unexpected error:', err);
     return response({ ok: false, kind: 'error', message: 'Unexpected error.' });

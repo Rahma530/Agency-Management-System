@@ -3,8 +3,9 @@
 // audit). Every existing Edge Function in this repo imports only @supabase/supabase-js via a
 // npm: specifier; @google/genai pulls in google-auth-library/protobufjs/ws — heavier
 // Node-oriented machinery built for OAuth/service-account flows this single-API-key call doesn't
-// need, and an unverified risk in Deno's npm compat layer for no benefit here. Groq/OpenRouter/xAI
-// are all plain OpenAI-compatible REST too — this keeps every adapter the same shape.
+// need, and an unverified risk in Deno's npm compat layer for no benefit here. Groq/OpenRouter are
+// both plain OpenAI-compatible REST too (see ../providers/openaiCompatible.ts) — this keeps every
+// adapter the same shape.
 import { AiCallInput, AiCallSuccess, AiProviderError } from '../types.ts';
 
 // Verify against Google's current free-tier model list before relying on this default — free-tier
@@ -35,14 +36,22 @@ export async function callGemini(input: AiCallInput): Promise<AiCallSuccess> {
     throw new AiProviderError('error', `Gemini request failed before a response: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // Gemini's REST API doesn't document per-request rate-limit headers the way Groq/OpenRouter do;
+  // only `retry-after` (a generic, widely-used HTTP convention) is opportunistically captured —
+  // harmless to read even if Google doesn't actually send it.
+  const rateLimitHeaders = { retryAfter: res.headers.get('retry-after') ?? undefined };
+
   if (res.status === 429) {
     // Gemini's 429 body doesn't reliably distinguish RPM vs RPD in a way worth parsing — see the
     // 'rpm' default reasoning in types.ts.
-    throw new AiProviderError('rate_limit', 'Gemini rate limit hit.', { reason: 'rpm', statusCode: 429 });
+    throw new AiProviderError('rate_limit', 'Gemini rate limit hit.', { reason: 'rpm', statusCode: 429, rateLimitHeaders });
   }
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    throw new AiProviderError('error', `Gemini request failed (HTTP ${res.status}): ${detail.slice(0, 300)}`, { statusCode: res.status });
+    throw new AiProviderError('error', `Gemini request failed (HTTP ${res.status}): ${detail.slice(0, 300)}`, {
+      statusCode: res.status,
+      rateLimitHeaders,
+    });
   }
 
   const data = await res.json().catch(() => null);
@@ -51,5 +60,5 @@ export async function callGemini(input: AiCallInput): Promise<AiCallSuccess> {
     .join('');
   if (!text) throw new AiProviderError('error', 'Gemini returned no usable text.');
 
-  return { text, provider: 'gemini', model: GEMINI_MODEL };
+  return { text, provider: 'gemini', model: GEMINI_MODEL, rateLimitHeaders };
 }
