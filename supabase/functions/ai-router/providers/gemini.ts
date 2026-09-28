@@ -7,6 +7,7 @@
 // both plain OpenAI-compatible REST too (see ../providers/openaiCompatible.ts) — this keeps every
 // adapter the same shape.
 import { AiCallInput, AiCallSuccess, AiProviderError } from '../types.ts';
+import { sanitizeProviderErrorBody } from './sanitize.ts';
 
 // Verify against Google's current free-tier model list before relying on this default — free-tier
 // model names and quotas already changed twice in 2026 (a 50-80% quota cut in Dec 2025, Pro models
@@ -42,13 +43,16 @@ export async function callGemini(input: AiCallInput): Promise<AiCallSuccess> {
   const rateLimitHeaders = { retryAfter: res.headers.get('retry-after') ?? undefined };
 
   if (res.status === 429) {
-    // Gemini's 429 body doesn't reliably distinguish RPM vs RPD in a way worth parsing — see the
-    // 'rpm' default reasoning in types.ts.
-    throw new AiProviderError('rate_limit', 'Gemini rate limit hit.', { reason: 'rpm', statusCode: 429, rateLimitHeaders });
+    const detail = sanitizeProviderErrorBody(await res.text().catch(() => ''), [GEMINI_API_KEY]).slice(0, 300);
+    // Gemini's REST API has no documented header or body field that identifies which limit (RPM,
+    // RPD, TPM) actually fired — 'unknown' is the honest answer, not a guessed 'rpm' default; see
+    // AiRateLimitReason's comment in types.ts for why guessing wrong here is worse than admitting
+    // we don't know.
+    throw new AiProviderError('rate_limit', `Gemini rate limit hit: ${detail}`, { reason: 'unknown', statusCode: 429, rateLimitHeaders });
   }
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new AiProviderError('error', `Gemini request failed (HTTP ${res.status}): ${detail.slice(0, 300)}`, {
+    const detail = sanitizeProviderErrorBody(await res.text().catch(() => ''), [GEMINI_API_KEY]).slice(0, 300);
+    throw new AiProviderError('error', `Gemini request failed (HTTP ${res.status}): ${detail}`, {
       statusCode: res.status,
       rateLimitHeaders,
     });

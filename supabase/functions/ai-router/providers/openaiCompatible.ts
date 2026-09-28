@@ -13,13 +13,44 @@
 // to a paid/unavailable model, GROQ_MODEL/OPENROUTER_MODEL are REQUIRED env vars — deploying this
 // fails closed with a clear error until someone checks each provider's current free-model list
 // live and sets the exact id.
-import { AiCallInput, AiCallSuccess, AiProvider, AiProviderError, RateLimitHeaders } from '../types.ts';
+import { AiCallInput, AiCallSuccess, AiProvider, AiProviderError, AiRateLimitReason, RateLimitHeaders } from '../types.ts';
+import { sanitizeProviderErrorBody } from './sanitize.ts';
 
 export interface OpenAiCompatibleConfig {
   provider: Extract<AiProvider, 'groq' | 'openrouter'>;
   baseUrl: string;
   apiKeyEnvVar: string;
   modelEnvVar: string;
+}
+
+// limit_source's existence and value were confirmed against a real captured OpenRouter 429 (per
+// the field names reported from live testing); its exact nesting under error.metadata is this
+// adapter's best-effort match to OpenRouter's typical error envelope shape, not itself verified
+// against an official schema — the two fallback locations checked below exist in case that
+// nesting isn't always consistent. Returns undefined (never throws) if the body isn't JSON or
+// doesn't contain the field at all, which is the normal case for Groq.
+function extractLimitSource(rawText: string): string | undefined {
+  try {
+    const parsed = JSON.parse(rawText);
+    const candidate = parsed?.error?.metadata?.limit_source ?? parsed?.error?.limit_source ?? parsed?.limit_source;
+    return typeof candidate === 'string' ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Groq's own documented header semantics let us tell which limit actually fired:
+// remaining-requests counts down a DAILY allowance, remaining-tokens a per-minute rolling window
+// — so whichever hit exactly zero identifies the limit. OpenRouter's headers are a single generic
+// Limit/Remaining/Reset with no requests-vs-tokens split, so there's nothing here to safely
+// attribute to rpm/rpd/tpm for it — 'unknown' is the honest answer there, and extractLimitSource
+// above carries OpenRouter's actual, more specific signal instead.
+function inferRateLimitReason(config: OpenAiCompatibleConfig, headers: RateLimitHeaders): AiRateLimitReason {
+  if (config.provider === 'groq') {
+    if (headers.remainingRequests === '0') return 'rpd';
+    if (headers.remainingTokens === '0') return 'tpm';
+  }
+  return 'unknown';
 }
 
 // Checked defensively regardless of which provider this call is for — reading a header that
@@ -76,15 +107,19 @@ export async function callOpenAiCompatible(
   const rateLimitHeaders = extractRateLimitHeaders(res.headers);
 
   if (res.status === 429) {
-    throw new AiProviderError('rate_limit', `${config.provider} rate limit hit.`, {
-      reason: 'rpm',
+    const rawText = await res.text().catch(() => '');
+    const limitSource = extractLimitSource(rawText);
+    const detail = sanitizeProviderErrorBody(rawText, [apiKey]).slice(0, 300);
+    throw new AiProviderError('rate_limit', `${config.provider} rate limit hit: ${detail}`, {
+      reason: inferRateLimitReason(config, rateLimitHeaders),
       statusCode: 429,
       rateLimitHeaders,
+      limitSource,
     });
   }
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new AiProviderError('error', `${config.provider} request failed (HTTP ${res.status}): ${detail.slice(0, 300)}`, {
+    const detail = sanitizeProviderErrorBody(await res.text().catch(() => ''), [apiKey]).slice(0, 300);
+    throw new AiProviderError('error', `${config.provider} request failed (HTTP ${res.status}): ${detail}`, {
       statusCode: res.status,
       rateLimitHeaders,
     });

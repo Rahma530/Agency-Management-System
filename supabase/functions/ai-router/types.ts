@@ -39,28 +39,36 @@ export interface AiCallSuccess {
 
 export type AiErrorKind = 'rate_limit' | 'error';
 // Best-effort classification, kept alongside the raw headers above (not a replacement for them):
-// useful where a provider's headers don't cleanly separate requests-per-minute from
-// requests-per-day (Gemini), so the Phase 3 router still has something to key a cooldown off of.
-// An adapter that can't tell which kind a given 429 was should pick 'rpm' (the shorter cooldown)
-// — retrying a few seconds too early and getting another 429 is a cheap mistake; waiting a full
-// day when only a minute was needed is not.
-export type AiRateLimitReason = 'rpm' | 'rpd' | 'tpm';
+// useful only where a provider's own response actually identifies which limit was hit (e.g. Groq's
+// remaining-requests vs remaining-tokens headers hitting zero). 'unknown' is the honest answer when
+// nothing in the response says which limit fired — never guess 'rpm' as a default; a wrong guess
+// here means the Phase 3 router either retries too soon against a still-exhausted daily quota, or
+// waits a full day against a limit that would have reset in a minute. Prefer a provider-specific
+// field over this whenever one exists (see AiProviderError.limitSource for OpenRouter).
+export type AiRateLimitReason = 'rpm' | 'rpd' | 'tpm' | 'unknown';
 
 export class AiProviderError extends Error {
   kind: AiErrorKind;
   reason?: AiRateLimitReason;
   statusCode?: number;
   rateLimitHeaders?: RateLimitHeaders;
+  // OpenRouter-specific: its 429 body's `limit_source` (e.g. "upstream_provider_shared_pool")
+  // distinguishes a shared-pool limit (often clears in seconds, safe to retry soon) from the
+  // account's own daily cap (won't clear until the provider's reset) — a more specific signal than
+  // the generic rpm/rpd/tpm taxonomy above, so it's kept as its own field rather than forced into
+  // `reason`.
+  limitSource?: string;
 
   constructor(
     kind: AiErrorKind,
     message: string,
-    opts?: { reason?: AiRateLimitReason; statusCode?: number; rateLimitHeaders?: RateLimitHeaders }
+    opts?: { reason?: AiRateLimitReason; statusCode?: number; rateLimitHeaders?: RateLimitHeaders; limitSource?: string }
   ) {
     super(message);
     this.kind = kind;
     this.reason = opts?.reason;
     this.statusCode = opts?.statusCode;
     this.rateLimitHeaders = opts?.rateLimitHeaders;
+    this.limitSource = opts?.limitSource;
   }
 }

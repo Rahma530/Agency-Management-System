@@ -132,6 +132,7 @@ Deno.serve(async (req) => {
         reason: err.reason,
         message: err.message,
         rateLimitHeaders: err.rateLimitHeaders,
+        limitSource: err.limitSource,
       });
     }
     console.error('ai-router unexpected error:', err);
