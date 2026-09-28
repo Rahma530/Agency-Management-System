@@ -178,9 +178,21 @@ const EXTRACT_SYSTEM_PROMPT =
   'that is not already present. Respond with ONLY the JSON object — no markdown code fences, no ' +
   'explanation, no extra text before or after it.';
 
-// Stage 2 (ANALYZE, Groq primary / OpenRouter fallback).
+// Stage 2 (ANALYZE, Groq primary / OpenRouter fallback). Arabic-specific wording rules
+// (grammar/phrasing) are appended only when language === 'ar', so the English variant stays as
+// short as before — refined after live testing surfaced small but real Arabic-quality issues
+// (gender-agreement errors, a minus sign clashing with a word-stated direction, an awkward
+// "مسبقاً").
 function buildAnalyzeSystemPrompt(language: SupportedLanguage): string {
   const languageName = LANGUAGE_NAMES[language];
+  const arabicRules =
+    language === 'ar'
+      ? `- Arabic grammar: match the verb/adjective's gender to the noun it describes (e.g. ` +
+        `"ارتفعت تكلفة الاكتساب", not "ارتفع تكلفة الاكتساب").\n` +
+        `- When the direction is already stated in words (ارتفع/انخفض/تراجع/تحسّن), write the ` +
+        `percentage as a plain positive number (e.g. 26.2%) — never with a minus sign.\n` +
+        `- Avoid "مسبقاً"; refer to the previous period as "في الشهر السابق".\n`
+      : '';
   return (
     `You are a marketing performance analyst writing for an internal agency dashboard. You will ` +
     `receive a JSON object of already-verified metrics comparing two periods (service, metric, ` +
@@ -192,12 +204,15 @@ function buildAnalyzeSystemPrompt(language: SupportedLanguage): string {
     `{"findings": string[], "recommendations": string[]}\n\n` +
     `Rules:\n` +
     `- findings: at most 3 short sentences. Prioritize the largest percentage changes or a metric ` +
-    `moving in an unfavorable direction. Cite the actual current/previous value or delta_pct from ` +
-    `the input in each one.\n` +
-    `- recommendations: at most 3 short, actionable sentences, each grounded in a finding above. ` +
-    `Return an empty array if nothing in the data warrants a recommendation — do not invent one.\n` +
+    `moving in an unfavorable direction; include at most one positive finding when the data shows a ` +
+    `clear improvement, only if it still fits within the 3-finding limit. Cite the actual ` +
+    `current/previous value or delta_pct from the input in each one.\n` +
+    `- recommendations: at most 3 short, actionable sentences, each tied to a specific finding above ` +
+    `and grounded only in the input's numbers — never invent a fact or number not present in it. ` +
+    `Return an empty array if nothing in the data warrants a recommendation.\n` +
     `- If a metric's current_value or previous_value is null, say so explicitly instead of ` +
     `guessing a number.\n` +
+    arabicRules +
     `- If metrics is empty, respond with {"findings": ["<one sentence in ${languageName} saying no ` +
     `metrics were provided for this period>"], "recommendations": []}.\n` +
     `- Every number you write must exactly match a number present in the input JSON.`
