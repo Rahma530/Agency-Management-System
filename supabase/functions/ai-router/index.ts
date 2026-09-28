@@ -28,7 +28,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
 import { callProvider } from './providers/dispatch.ts';
 import { AiProvider, AiProviderError } from './types.ts';
-import { isSupportedLanguage, TASK_REGISTRY } from './taskRegistry.ts';
+import { isDetailLevel, isSupportedLanguage, TASK_REGISTRY } from './taskRegistry.ts';
 import { runRegistryTask } from './taskRunner.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
     return response({ error: 'Only active employees may use the AI router.' }, 403);
   }
 
-  let input: { task?: string; prompt?: string; systemPrompt?: string; payload?: unknown; language?: string };
+  let input: { task?: string; prompt?: string; systemPrompt?: string; payload?: unknown; language?: string; detail?: string };
   try { input = await req.json(); } catch { return response({ error: 'Invalid request.' }, 400); }
   if (!input || typeof input !== 'object' || typeof input.task !== 'string' || !input.task) {
     return response({ error: 'Invalid request.' }, 400);
@@ -132,10 +132,18 @@ Deno.serve(async (req) => {
   const task = TASK_REGISTRY[input.task];
   if (!task) return response({ error: `Unknown task "${input.task}".` }, 400);
 
+  // detail is a request-level option, not payload data — it's never added to a task's input
+  // allowlist. Unset defaults to 'brief' (unchanged prior behavior); anything else is rejected
+  // rather than silently falling back, since a typo'd value should be visible, not swallowed.
+  if (input.detail !== undefined && !isDetailLevel(input.detail)) {
+    return response({ error: 'detail must be "brief" or "detailed".' }, 400);
+  }
+  const detail = isDetailLevel(input.detail) ? input.detail : 'brief';
+
   const language = isSupportedLanguage(input.language) ? input.language : 'ar';
-  const result = await runRegistryTask(task, input.payload, language);
+  const result = await runRegistryTask(task, input.payload, language, detail);
   if (result.ok) {
-    return response({ ok: true, task: result.task, result: result.result, stages: result.stages });
+    return response({ ok: true, task: result.task, detail, result: result.result, stages: result.stages });
   }
   console.error(`ai-router ${result.task}/${result.stage} error (${result.kind}):`, result.message);
   return response({

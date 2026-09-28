@@ -17,13 +17,34 @@ export function isSupportedLanguage(value: unknown): value is SupportedLanguage 
   return value === 'ar' || value === 'en';
 }
 
+// Per-request detail level for CAMPAIGN_SUMMARY's ANALYZE stage. 'brief' is the default and its
+// prompt/schema/token budget are unchanged from before this was added — EXTRACT never reads this at
+// all, and it isn't part of the input payload allowlist (it's a request-level option, not data).
+export type DetailLevel = 'brief' | 'detailed';
+export function isDetailLevel(value: unknown): value is DetailLevel {
+  return value === 'brief' || value === 'detailed';
+}
+
+// A stage's JSON output is well-formed (JSON.parse succeeds) but that alone doesn't mean it has the
+// keys/types the next stage (or the caller) expects — a fallback model in particular can easily
+// produce syntactically valid JSON in the wrong shape. validateOutput on TaskStageDefinition below
+// checks the parsed value's shape and returns a normalized/cleaned version of it; `ok: false` means
+// reject the whole stage rather than pass a malformed result onward.
+export interface StageValidationResult {
+  ok: boolean;
+  value?: unknown;
+}
+
 export interface TaskStageDefinition {
   name: string;
   provider: AiProvider;
   fallbackProvider?: AiProvider;
-  systemPrompt: (language: SupportedLanguage) => string;
-  maxOutputTokens: number;
+  systemPrompt: (language: SupportedLanguage, detail: DetailLevel) => string;
+  maxOutputTokens: (detail: DetailLevel) => number;
   outputFormat: 'json' | 'text';
+  // Only meaningful when outputFormat is 'json'; undefined means "valid JSON is enough, no shape
+  // check" (EXTRACT's current behavior, unchanged by this task).
+  validateOutput?: (parsed: unknown, detail: DetailLevel) => StageValidationResult;
 }
 
 export interface TaskDefinition {
@@ -182,8 +203,10 @@ const EXTRACT_SYSTEM_PROMPT =
 // (grammar/phrasing) are appended only when language === 'ar', so the English variant stays as
 // short as before — refined after live testing surfaced small but real Arabic-quality issues
 // (gender-agreement errors, a minus sign clashing with a word-stated direction, an awkward
-// "مسبقاً").
-function buildAnalyzeSystemPrompt(language: SupportedLanguage): string {
+// "مسبقاً"). `intro` and `arabicRules` are shared between 'brief' and 'detailed' so the two schemas
+// stay consistent on the parts that don't differ; 'brief'`s own text below is byte-for-byte what it
+// was before "detailed" existed.
+function buildAnalyzeSystemPrompt(language: SupportedLanguage, detail: DetailLevel): string {
   const languageName = LANGUAGE_NAMES[language];
   const arabicRules =
     language === 'ar'
@@ -193,13 +216,40 @@ function buildAnalyzeSystemPrompt(language: SupportedLanguage): string {
         `percentage as a plain positive number (e.g. 26.2%) — never with a minus sign.\n` +
         `- Avoid "مسبقاً"; refer to the previous period as "في الشهر السابق".\n`
       : '';
-  return (
+  const intro =
     `You are a marketing performance analyst writing for an internal agency dashboard. You will ` +
     `receive a JSON object of already-verified metrics comparing two periods (service, metric, ` +
     `current_value, previous_value, delta_pct, unit). Analyze ONLY this data — never invent, ` +
     `estimate, or reference any number, client, platform, or fact that is not present in it.\n\n` +
     `Write in ${languageName}, using simple, professional wording suitable for a short business ` +
-    `report. Metric names (e.g. ROAS, CPA) may stay in English even inside a ${languageName} sentence.\n\n` +
+    `report. Metric names (e.g. ROAS, CPA) may stay in English even inside a ${languageName} sentence.\n\n`;
+
+  if (detail === 'detailed') {
+    return (
+      intro +
+      `Respond with ONLY this JSON object — no markdown code fences, no explanation:\n` +
+      `{"summary": string, "by_service": [{"service": string, "text": string}], "recommendations": string[]}\n\n` +
+      `Rules:\n` +
+      `- summary: exactly 2 sentences giving the overall picture across all services present.\n` +
+      `- by_service: one entry per service that actually appears in the input metrics ` +
+      `(media_buying, social_media, and/or seo) — omit any service with no metrics in the input. ` +
+      `Each entry's text is one short paragraph covering that service's findings, citing the actual ` +
+      `current/previous value or delta_pct from the input.\n` +
+      `- recommendations: at most 5 short, actionable sentences, ordered by priority (most important ` +
+      `first), each tied to a specific finding in a by_service paragraph and grounded only in the ` +
+      `input's numbers — never invent a fact or number not present in it. Return an empty array if ` +
+      `nothing in the data warrants a recommendation.\n` +
+      `- If a metric's current_value or previous_value is null, say so explicitly instead of ` +
+      `guessing a number.\n` +
+      arabicRules +
+      `- If metrics is empty, respond with {"summary": "<one sentence in ${languageName} saying no ` +
+      `metrics were provided for this period>", "by_service": [], "recommendations": []}.\n` +
+      `- Every number you write must exactly match a number present in the input JSON.`
+    );
+  }
+
+  return (
+    intro +
     `Respond with ONLY this JSON object — no markdown code fences, no explanation:\n` +
     `{"findings": string[], "recommendations": string[]}\n\n` +
     `Rules:\n` +
@@ -220,6 +270,72 @@ function buildAnalyzeSystemPrompt(language: SupportedLanguage): string {
 }
 
 // ----------------------------------------------------------------------------
+// ANALYZE output validation — checked after JSON.parse succeeds, for BOTH the primary provider's
+// output and any fallback's (taskRunner.ts applies this uniformly regardless of which one actually
+// answered). Also does the whitespace/punctuation cleanup a live test surfaced (e.g. "37% ."):
+// stray space before a percent sign or before sentence punctuation, and repeated whitespace.
+// ----------------------------------------------------------------------------
+function cleanText(text: string): string {
+  return text
+    .replace(/\s+%/g, '%')
+    .replace(/\s+([.,،؛؟!:])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+function validateBriefAnalyzeOutput(parsed: unknown): StageValidationResult {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
+  const p = parsed as Record<string, unknown>;
+  if (!isStringArray(p.findings) || !isStringArray(p.recommendations)) return { ok: false };
+  return {
+    ok: true,
+    value: {
+      findings: p.findings.slice(0, 3).map(cleanText),
+      recommendations: p.recommendations.slice(0, 3).map(cleanText),
+    },
+  };
+}
+
+function validateDetailedAnalyzeOutput(parsed: unknown): StageValidationResult {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
+  const p = parsed as Record<string, unknown>;
+  const rawByService = p.by_service;
+  if (!isNonEmptyString(p.summary) || !Array.isArray(rawByService) || !isStringArray(p.recommendations)) {
+    return { ok: false };
+  }
+  const byService: { service: string; text: string }[] = [];
+  for (const entry of rawByService) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { ok: false };
+    const e = entry as Record<string, unknown>;
+    if (typeof e.service !== 'string' || !(CAMPAIGN_SUMMARY_SERVICES as readonly string[]).includes(e.service)) {
+      return { ok: false };
+    }
+    if (!isNonEmptyString(e.text)) return { ok: false };
+    byService.push({ service: e.service, text: cleanText(e.text) });
+  }
+  return {
+    ok: true,
+    value: {
+      summary: cleanText(p.summary),
+      by_service: byService.slice(0, 3),
+      recommendations: p.recommendations.slice(0, 5).map(cleanText),
+    },
+  };
+}
+
+function validateAnalyzeOutput(parsed: unknown, detail: DetailLevel): StageValidationResult {
+  return detail === 'detailed' ? validateDetailedAnalyzeOutput(parsed) : validateBriefAnalyzeOutput(parsed);
+}
+
+// ----------------------------------------------------------------------------
 // The registry itself
 // ----------------------------------------------------------------------------
 export const TASK_REGISTRY: Record<string, TaskDefinition> = {
@@ -235,8 +351,9 @@ export const TASK_REGISTRY: Record<string, TaskDefinition> = {
         // Groq's own free-tier reasoning overhead was observed at ~423 tokens for a trivial
         // one-word reply (unconfirmed root cause: likely gpt-oss's internal reasoning pass before
         // the visible answer) — sized to cover that overhead plus this stage's actual JSON output
-        // if EXTRACT falls back to Groq, comfortably under its 8,000 TPM cap for one call.
-        maxOutputTokens: 1200,
+        // if EXTRACT falls back to Groq, comfortably under its 8,000 TPM cap for one call. Detail
+        // level doesn't affect EXTRACT at all, so this ignores it.
+        maxOutputTokens: () => 1200,
         outputFormat: 'json',
       },
       {
@@ -244,8 +361,13 @@ export const TASK_REGISTRY: Record<string, TaskDefinition> = {
         provider: 'groq',
         fallbackProvider: 'openrouter',
         systemPrompt: buildAnalyzeSystemPrompt,
-        maxOutputTokens: 1500,
+        // 'detailed' needs real headroom (summary + up to 3 by_service paragraphs + up to 5
+        // recommendations, plus Groq's own reasoning overhead) — see the commit/report for the
+        // full token-budget arithmetic against Groq's 8,000 TPM free-tier cap. 'brief' is
+        // unchanged from before "detailed" existed.
+        maxOutputTokens: (detail) => (detail === 'detailed' ? 3000 : 1500),
         outputFormat: 'json',
+        validateOutput: validateAnalyzeOutput,
       },
     ],
   },

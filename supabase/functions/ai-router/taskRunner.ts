@@ -6,7 +6,7 @@
 // is retried again on the very next call regardless of how recently it failed.
 import { callProvider } from './providers/dispatch.ts';
 import { AiProviderError, AiProvider, RateLimitHeaders } from './types.ts';
-import { SupportedLanguage, TaskDefinition, TaskStageDefinition } from './taskRegistry.ts';
+import { DetailLevel, SupportedLanguage, TaskDefinition, TaskStageDefinition } from './taskRegistry.ts';
 
 export interface StageOutcome {
   stage: string;
@@ -50,10 +50,16 @@ function toFailure(err: unknown): Extract<StageAttemptResult, { ok: false }> {
   return { ok: false, kind: 'error', message: err instanceof Error ? err.message : String(err) };
 }
 
-async function runStage(stage: TaskStageDefinition, inputText: string, language: SupportedLanguage): Promise<StageAttemptResult> {
-  const systemPrompt = stage.systemPrompt(language);
+async function runStage(
+  stage: TaskStageDefinition,
+  inputText: string,
+  language: SupportedLanguage,
+  detail: DetailLevel
+): Promise<StageAttemptResult> {
+  const systemPrompt = stage.systemPrompt(language, detail);
+  const maxOutputTokens = stage.maxOutputTokens(detail);
   const attempt = (provider: AiProvider) =>
-    callProvider(provider, { prompt: inputText, systemPrompt, maxOutputTokens: stage.maxOutputTokens });
+    callProvider(provider, { prompt: inputText, systemPrompt, maxOutputTokens });
 
   try {
     const result = await attempt(stage.provider);
@@ -71,7 +77,12 @@ async function runStage(stage: TaskStageDefinition, inputText: string, language:
   }
 }
 
-export async function runRegistryTask(task: TaskDefinition, rawPayload: unknown, language: SupportedLanguage): Promise<RunTaskResult> {
+export async function runRegistryTask(
+  task: TaskDefinition,
+  rawPayload: unknown,
+  language: SupportedLanguage,
+  detail: DetailLevel
+): Promise<RunTaskResult> {
   let currentInput: unknown;
   try {
     currentInput = task.buildInitialInput(rawPayload);
@@ -89,7 +100,7 @@ export async function runRegistryTask(task: TaskDefinition, rawPayload: unknown,
 
   for (const stage of task.stages) {
     const inputText = JSON.stringify(currentInput);
-    const outcome = await runStage(stage, inputText, language);
+    const outcome = await runStage(stage, inputText, language, detail);
 
     if (!outcome.ok) {
       return { ok: false, task: task.name, stage: stage.name, ...outcome };
@@ -97,8 +108,9 @@ export async function runRegistryTask(task: TaskDefinition, rawPayload: unknown,
     stages.push({ stage: stage.name, provider: outcome.provider, model: outcome.model, usedFallback: outcome.usedFallback });
 
     if (stage.outputFormat === 'json') {
+      let parsed: unknown;
       try {
-        currentInput = JSON.parse(stripCodeFence(outcome.text));
+        parsed = JSON.parse(stripCodeFence(outcome.text));
       } catch {
         return {
           ok: false,
@@ -107,6 +119,24 @@ export async function runRegistryTask(task: TaskDefinition, rawPayload: unknown,
           kind: 'error',
           message: `${stage.name} stage produced invalid JSON.`,
         };
+      }
+      // Applies to whichever provider actually answered — primary or fallback — since a fallback
+      // model can just as easily produce syntactically valid but wrongly-shaped JSON. Never passes
+      // an unvalidated result on to the next stage or back to the caller.
+      if (stage.validateOutput) {
+        const validation = stage.validateOutput(parsed, detail);
+        if (!validation.ok) {
+          return {
+            ok: false,
+            task: task.name,
+            stage: stage.name,
+            kind: 'error',
+            message: `${stage.name} stage produced output that did not match the expected schema.`,
+          };
+        }
+        currentInput = validation.value;
+      } else {
+        currentInput = parsed;
       }
     } else {
       currentInput = outcome.text;
