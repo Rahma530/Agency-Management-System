@@ -6,3 +6,6 @@ verify_jwt = true
 
 [functions.employee-invitation]
 verify_jwt = true
+
+[functions.ai-router]
+verify_jwt = true
