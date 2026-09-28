@@ -1,11 +1,16 @@
-// Shared types for every provider adapter under ./providers/. Phase 1 only — no Task Registry,
-// no rotation/cooldown state, no usage logging yet (see index.ts's header comment).
+// Shared types for every provider adapter under ./providers/, and for the Phase 2 Task Registry
+// (taskRegistry.ts) / runner (taskRunner.ts). Still no rotation/cooldown state or usage logging
+// (Phases 3-4) — see index.ts's header comment.
 
 export type AiProvider = 'gemini' | 'groq' | 'openrouter';
 
 export interface AiCallInput {
   prompt: string;
   systemPrompt?: string;
+  // Per-stage cap from the Task Registry (undefined for the Phase 1 PHASE1_TEST_* path, which
+  // has no registry entry to read one from). Each adapter sends this under whichever field name
+  // its own API expects.
+  maxOutputTokens?: number;
 }
 
 // Raw rate-limit-related response headers, surfaced exactly as the provider returned them — no

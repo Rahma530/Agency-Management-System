@@ -9,21 +9,28 @@
 import { AiCallInput, AiCallSuccess, AiProviderError } from '../types.ts';
 import { sanitizeProviderErrorBody } from './sanitize.ts';
 
-// Verify against Google's current free-tier model list before relying on this default — free-tier
-// model names and quotas already changed twice in 2026 (a 50-80% quota cut in Dec 2025, Pro models
-// dropped from the free tier entirely in April 2026). Override via GEMINI_MODEL without a redeploy
-// if this drifts.
-const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-2.5-flash';
+// No hardcoded default (unlike Phase 1's original gemini-2.5-flash): Google removed that model for
+// new users during Phase 2's build (a live 404 confirmed against the real deployed function, not
+// assumed), and free-tier model names/quotas have already changed multiple times in 2026 — GROQ_
+// MODEL/OPENROUTER_MODEL already fail closed the same way for the same reason. Set GEMINI_MODEL to
+// a current free-tier model id from Google's live docs before use.
+const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || '';
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 
 export async function callGemini(input: AiCallInput): Promise<AiCallSuccess> {
   if (!GEMINI_API_KEY) throw new AiProviderError('error', 'GEMINI_API_KEY is not configured.');
+  if (!GEMINI_MODEL) {
+    throw new AiProviderError('error', 'GEMINI_MODEL is not configured — set it to a current free-tier model id from Gemini\'s live docs before use.');
+  }
 
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts: [{ text: input.prompt }] }],
   };
   if (input.systemPrompt) {
     body.systemInstruction = { parts: [{ text: input.systemPrompt }] };
+  }
+  if (input.maxOutputTokens) {
+    body.generationConfig = { maxOutputTokens: input.maxOutputTokens };
   }
 
   let res: Response;

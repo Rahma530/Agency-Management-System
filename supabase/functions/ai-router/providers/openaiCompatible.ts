@@ -23,6 +23,16 @@ export interface OpenAiCompatibleConfig {
   modelEnvVar: string;
 }
 
+// Groq-only, optional. WebSearch (not a first-hand doc read — console.groq.com is blocked by this
+// sandbox's network egress proxy, confirmed again for Phase 2) surfaced consistent, multi-source
+// content describing a `reasoning_effort` parameter ('low' | 'medium' | 'high', default 'medium')
+// supported specifically by gpt-oss-20b/gpt-oss-120b, rejecting out-of-set values with a 400. That
+// is genuinely unverified against the primary source, per instruction: this is never sent unless
+// GROQ_REASONING_EFFORT is explicitly set, and its value is passed through as-is with no
+// client-side validation of the allowed set — if the real API disagrees with what research
+// suggested, it fails with a clear 400 from Groq itself rather than silently misbehaving here.
+const GROQ_REASONING_EFFORT = Deno.env.get('GROQ_REASONING_EFFORT') || '';
+
 // limit_source's existence and value were confirmed against a real captured OpenRouter 429 (per
 // the field names reported from live testing); its exact nesting under error.metadata is this
 // adapter's best-effort match to OpenRouter's typical error envelope shape, not itself verified
@@ -90,12 +100,26 @@ export async function callOpenAiCompatible(
   if (input.systemPrompt) messages.push({ role: 'system', content: input.systemPrompt });
   messages.push({ role: 'user', content: input.prompt });
 
+  const requestBody: Record<string, unknown> = { model, messages };
+  if (input.maxOutputTokens) {
+    // Sent under both names since this sandbox couldn't confirm from Groq's own docs which one its
+    // OpenAI-compatible endpoint actually reads — both are long-standing, extremely common field
+    // names across OpenAI-compatible APIs, so an endpoint that only honors one still gets a cap;
+    // an endpoint that recognizes neither would simply ignore both rather than error, same as any
+    // unrecognized field on a typical REST API.
+    requestBody.max_tokens = input.maxOutputTokens;
+    requestBody.max_completion_tokens = input.maxOutputTokens;
+  }
+  if (config.provider === 'groq' && GROQ_REASONING_EFFORT) {
+    requestBody.reasoning_effort = GROQ_REASONING_EFFORT;
+  }
+
   let res: Response;
   try {
     res = await fetch(config.baseUrl, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages }),
+      body: JSON.stringify(requestBody),
     });
   } catch (err) {
     throw new AiProviderError(

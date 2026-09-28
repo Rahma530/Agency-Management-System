@@ -1,29 +1,35 @@
-// AI Orchestrator — Phase 1 of 6 (see the design conversation for the full architecture: Task
+// AI Orchestrator — Phase 2 of 6 (see the design conversation for the full architecture: Task
 // Registry -> AI Router -> Provider Adapter -> Usage Tracking + Rate-Limit State -> result
-// validation). This is deliberately a thin skeleton: three providers (Gemini for extraction; Groq
-// for analysis, primary; OpenRouter free models for analysis, emergency-fallback only — its free
-// tier is roughly 50 requests/day unless the account has purchased credits) across two adapter
-// files (./providers/gemini.ts; ./providers/openaiCompatible.ts, shared by Groq/OpenRouter since
-// both are OpenAI-compatible REST), wired behind the same auth/CORS/enable-flag scaffold every
-// Edge Function in this repo already uses (employee-invitation, employee-impersonation), callable
-// with a fixed test prompt via curl.
+// validation). Three providers (Gemini for extraction; Groq for analysis, primary; OpenRouter free
+// models for analysis, emergency-fallback only — its free tier is roughly 50 requests/day unless
+// the account has purchased credits) across two adapter files (./providers/gemini.ts;
+// ./providers/openaiCompatible.ts, shared by Groq/OpenRouter since both are OpenAI-compatible
+// REST), dispatched through ./providers/dispatch.ts, wired behind the same auth/CORS/enable-flag
+// scaffold every Edge Function in this repo already uses (employee-invitation,
+// employee-impersonation).
 //
 // Grok/xAI was evaluated and deliberately dropped: it has no renewing free tier (a one-time $25
 // signup credit, then real paid charges), which doesn't fit this project's zero-AI-cost goal.
 //
-// NOT yet implemented (Phases 2-4, in order):
-//  - The real Task Registry (prompt templates, per-task provider assignment, fallback rules).
-//  - The AI Router's provider-rotation/cooldown logic against ai_provider_state.
+// Two request shapes are handled here, sharing the same auth/CORS/enable-flag gate above:
+//  - PHASE1_TASK_MAP: the original Phase 1 skeleton, `{task, prompt, systemPrompt?}` — a single
+//    raw call to one adapter, no registry, no fallback. Kept working unchanged for curl testing.
+//  - TASK_REGISTRY (taskRegistry.ts): real, data-driven multi-stage tasks, `{task, payload,
+//    language?}` — payload is validated against that task's own field allowlist (never free text),
+//    executed by taskRunner.ts's generic sequential-stages-with-fallback runner.
+//
+// NOT yet implemented (Phases 3-4, in order):
+//  - The AI Router's provider-rotation/cooldown MEMORY against ai_provider_state — a rate-limited
+//    provider is retried again on the very next call today, nothing remembers it was just
+//    exhausted. Fallback within a single request (per stage) already works (see taskRunner.ts).
 //  - ai_usage logging.
-// PHASE1_TASK_MAP below is a temporary stand-in for the registry — just enough to exercise each
-// adapter independently. It exists so the request contract (task + prompt in, never a raw provider
-// choice from the caller) doesn't change shape once the real registry replaces it in Phase 2.
 //
 // Deploy with JWT verification enabled. Provider API keys are used only here, never in React.
 import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
-import { callGemini } from './providers/gemini.ts';
-import { callOpenAiCompatible } from './providers/openaiCompatible.ts';
-import { AiCallSuccess, AiProvider, AiProviderError } from './types.ts';
+import { callProvider } from './providers/dispatch.ts';
+import { AiProvider, AiProviderError } from './types.ts';
+import { isSupportedLanguage, TASK_REGISTRY } from './taskRegistry.ts';
+import { runRegistryTask } from './taskRunner.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
@@ -42,32 +48,12 @@ const cors = {
   'Vary': 'Origin',
 };
 
-// Phase-1-only stand-in for the Task Registry — replaced wholesale in Phase 2, not extended here.
+// Phase-1-only test scaffold — untouched, still bypasses the Task Registry entirely.
 const PHASE1_TASK_MAP: Record<string, AiProvider> = {
   PHASE1_TEST_GEMINI: 'gemini',
   PHASE1_TEST_GROQ: 'groq',
   PHASE1_TEST_OPENROUTER: 'openrouter',
 };
-
-const GROQ_CONFIG = {
-  provider: 'groq' as const,
-  baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-  apiKeyEnvVar: 'GROQ_API_KEY',
-  modelEnvVar: 'GROQ_MODEL',
-};
-
-const OPENROUTER_CONFIG = {
-  provider: 'openrouter' as const,
-  baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
-  apiKeyEnvVar: 'OPENROUTER_API_KEY',
-  modelEnvVar: 'OPENROUTER_MODEL',
-};
-
-function callProvider(provider: AiProvider, input: { prompt: string; systemPrompt?: string }): Promise<AiCallSuccess> {
-  if (provider === 'gemini') return callGemini(input);
-  if (provider === 'groq') return callOpenAiCompatible(GROQ_CONFIG, input);
-  return callOpenAiCompatible(OPENROUTER_CONFIG, input);
-}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('Origin');
@@ -107,35 +93,59 @@ Deno.serve(async (req) => {
     return response({ error: 'Only active employees may use the AI router.' }, 403);
   }
 
-  let input: { task?: string; prompt?: string; systemPrompt?: string };
+  let input: { task?: string; prompt?: string; systemPrompt?: string; payload?: unknown; language?: string };
   try { input = await req.json(); } catch { return response({ error: 'Invalid request.' }, 400); }
-  if (!input || typeof input !== 'object' || typeof input.task !== 'string' || typeof input.prompt !== 'string'
-    || !input.prompt || input.prompt.length > 20000) {
+  if (!input || typeof input !== 'object' || typeof input.task !== 'string' || !input.task) {
     return response({ error: 'Invalid request.' }, 400);
   }
 
-  const provider = PHASE1_TASK_MAP[input.task];
-  if (!provider) return response({ error: `Unknown task "${input.task}".` }, 400);
-
-  try {
-    const result = await callProvider(provider, { prompt: input.prompt, systemPrompt: input.systemPrompt });
-    return response({ ok: true, ...result });
-  } catch (err) {
-    // A rate-limit or provider-side failure is an anticipated outcome this router is built to
-    // handle (Phase 3 onward), not a broken request — returned as 200 with ok:false so callers
-    // branch on the body, while genuine request/auth problems above still use real HTTP statuses.
-    if (err instanceof AiProviderError) {
-      console.error(`ai-router ${provider} error (${err.kind}):`, err.message);
-      return response({
-        ok: false,
-        kind: err.kind,
-        reason: err.reason,
-        message: err.message,
-        rateLimitHeaders: err.rateLimitHeaders,
-        limitSource: err.limitSource,
-      });
+  // Path 1: the original Phase 1 skeleton — a single raw call, no registry, no fallback.
+  const legacyProvider = PHASE1_TASK_MAP[input.task];
+  if (legacyProvider) {
+    if (typeof input.prompt !== 'string' || !input.prompt || input.prompt.length > 20000) {
+      return response({ error: 'Invalid request.' }, 400);
     }
-    console.error('ai-router unexpected error:', err);
-    return response({ ok: false, kind: 'error', message: 'Unexpected error.' });
+    try {
+      const result = await callProvider(legacyProvider, { prompt: input.prompt, systemPrompt: input.systemPrompt });
+      return response({ ok: true, ...result });
+    } catch (err) {
+      // A rate-limit or provider-side failure is an anticipated outcome this router is built to
+      // handle, not a broken request — returned as 200 with ok:false so callers branch on the
+      // body, while genuine request/auth problems above still use real HTTP statuses.
+      if (err instanceof AiProviderError) {
+        console.error(`ai-router ${legacyProvider} error (${err.kind}):`, err.message);
+        return response({
+          ok: false,
+          kind: err.kind,
+          reason: err.reason,
+          message: err.message,
+          rateLimitHeaders: err.rateLimitHeaders,
+          limitSource: err.limitSource,
+        });
+      }
+      console.error('ai-router unexpected error:', err);
+      return response({ ok: false, kind: 'error', message: 'Unexpected error.' });
+    }
   }
+
+  // Path 2: a real, data-driven Task Registry task — structured payload only, never free text.
+  const task = TASK_REGISTRY[input.task];
+  if (!task) return response({ error: `Unknown task "${input.task}".` }, 400);
+
+  const language = isSupportedLanguage(input.language) ? input.language : 'ar';
+  const result = await runRegistryTask(task, input.payload, language);
+  if (result.ok) {
+    return response({ ok: true, task: result.task, result: result.result, stages: result.stages });
+  }
+  console.error(`ai-router ${result.task}/${result.stage} error (${result.kind}):`, result.message);
+  return response({
+    ok: false,
+    task: result.task,
+    stage: result.stage,
+    kind: result.kind,
+    reason: result.reason,
+    message: result.message,
+    rateLimitHeaders: result.rateLimitHeaders,
+    limitSource: result.limitSource,
+  });
 });
