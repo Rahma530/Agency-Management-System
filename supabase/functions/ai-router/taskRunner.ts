@@ -1,9 +1,12 @@
 // Phase 2: the generic multi-stage task runner. Reads a TaskDefinition (taskRegistry.ts) and
 // executes its stages in order — this is the "dispatch code" that a new registry entry should
-// never need to change. Execution model, exactly as specified: sequential stages, each stage tries
-// its primary provider, then its declared fallback (if any) only on an ok:false from the primary —
-// no cooldown memory yet (Phase 3 owns that, against ai_provider_state), so a rate-limited provider
-// is retried again on the very next call regardless of how recently it failed.
+// never need to change. A task may define any number of stages (one, two, or more) with no
+// special-casing here — see taskRegistry.ts's header comment for when a task needs more than one.
+// Execution model, exactly as specified: within a stage, its provider order (TaskStageDefinition.
+// providers(), possibly more than one fallback) is tried in sequence, moving to the next only on an
+// ok:false from the current one — no cooldown memory yet (Phase 3 owns that, against
+// ai_provider_state), so a rate-limited provider is retried again on the very next call regardless
+// of how recently it failed.
 import { callProvider } from './providers/dispatch.ts';
 import { AiProviderError, AiProvider, RateLimitHeaders } from './types.ts';
 import { DetailLevel, SupportedLanguage, TaskDefinition, TaskStageDefinition } from './taskRegistry.ts';
@@ -56,25 +59,32 @@ async function runStage(
   language: SupportedLanguage,
   detail: DetailLevel
 ): Promise<StageAttemptResult> {
+  // stage.providers() can throw (e.g. CAMPAIGN_SUMMARY_ANALYZE_ORDER set to an invalid value) —
+  // caught the same way a provider call's own failure is, so a misconfigured order fails this one
+  // stage, not the whole request path.
+  let providerOrder: AiProvider[];
+  try {
+    providerOrder = stage.providers();
+  } catch (err) {
+    return toFailure(err);
+  }
+
   const systemPrompt = stage.systemPrompt(language, detail);
   const maxOutputTokens = stage.maxOutputTokens(detail);
-  const attempt = (provider: AiProvider) =>
-    callProvider(provider, { prompt: inputText, systemPrompt, maxOutputTokens });
 
-  try {
-    const result = await attempt(stage.provider);
-    return { ok: true, text: result.text, provider: result.provider, model: result.model, usedFallback: false };
-  } catch (primaryErr) {
-    if (!stage.fallbackProvider) return toFailure(primaryErr);
+  let lastFailure: Extract<StageAttemptResult, { ok: false }> | null = null;
+  for (let i = 0; i < providerOrder.length; i++) {
     try {
-      const result = await attempt(stage.fallbackProvider);
-      return { ok: true, text: result.text, provider: result.provider, model: result.model, usedFallback: true };
-    } catch (fallbackErr) {
-      // The fallback's own failure is the one reported — it's the more recent, more relevant
-      // signal for why this stage ultimately failed.
-      return toFailure(fallbackErr);
+      const result = await callProvider(providerOrder[i], { prompt: inputText, systemPrompt, maxOutputTokens });
+      return { ok: true, text: result.text, provider: result.provider, model: result.model, usedFallback: i > 0 };
+    } catch (err) {
+      // Move to the next provider in the order only after this one returns ok:false (throws) — the
+      // last one's failure is what gets reported if every provider in the order is exhausted, since
+      // it's the most recent, most relevant signal for why the stage ultimately failed.
+      lastFailure = toFailure(err);
     }
   }
+  return lastFailure ?? { ok: false, kind: 'error', message: `${stage.name} has no configured providers.` };
 }
 
 export async function runRegistryTask(

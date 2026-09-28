@@ -1,14 +1,27 @@
 // Phase 2: the Task Registry. Every task is a plain data entry (name, ordered stages, each with a
-// provider/fallback/system prompt/max output tokens/expected output format) — adding a 5th task
-// later means adding an entry here, never touching taskRunner.ts's execution logic or index.ts's
-// dispatch. PHASE1_TEST_* in index.ts is untouched and does not go through this registry at all.
+// provider order/system prompt/max output tokens/expected output format) — adding a 5th task later
+// means adding an entry here, never touching taskRunner.ts's execution logic or index.ts's dispatch.
+// PHASE1_TEST_* in index.ts is untouched and does not go through this registry at all.
+//
+// One stage vs. two: a task needs an EXTRACT stage only when its input genuinely requires a model to
+// parse or restructure it (free text, an inconsistent/undocumented shape, anything not already
+// guaranteed well-formed). CAMPAIGN_SUMMARY originally had one (Gemini primary, Groq fallback) that
+// only ever reformatted already-validated, already-computed JSON — pure copying, no real parsing
+// work. Live testing then hit Gemini returning 503 twice, which forced the EXTRACT fallback to Groq
+// both times and put two Groq requests inside the same rate-limit minute for what was really a
+// single logical request. Since EXTRACT was doing no real work for this task, it was removed
+// entirely and replaced by buildAnalyzeInput() below (plain code, no model call) — CAMPAIGN_SUMMARY
+// is now ANALYZE-only. The runner (taskRunner.ts) still executes however many stages a task defines
+// with no special-casing — nothing here hardcodes "two stages"; a future task whose input actually
+// needs model-assisted parsing defines its own two-stage TaskDefinition (its own EXTRACT prompt,
+// schema, and provider order) the exact same way CAMPAIGN_SUMMARY's ANALYZE stage is defined below.
 //
 // Generic EXTRACT_CLIENT_DATA/ANALYZE_CLIENT_DATA task names from the original design were folded
-// directly into CAMPAIGN_SUMMARY's own two stages instead of being kept as separate top-level
-// registry entries: the part that's actually reusable across future tasks is the two-stage
-// runner/fallback mechanism (already generic in taskRunner.ts), not the prompts or schemas
-// themselves — a future task's EXTRACT prompt will look nothing like this one's, so a shared
-// "EXTRACT_CLIENT_DATA" entry would just be dead weight, not a real building block.
+// directly into CAMPAIGN_SUMMARY's stage(s) instead of being kept as separate top-level registry
+// entries: the part that's actually reusable across future tasks is the runner/fallback mechanism
+// (already generic in taskRunner.ts), not the prompts or schemas themselves — a future task's
+// EXTRACT prompt will look nothing like one written for this task, so a shared "EXTRACT_CLIENT_DATA"
+// entry would just be dead weight, not a real building block.
 import { AiProvider } from './types.ts';
 
 export type SupportedLanguage = 'ar' | 'en';
@@ -37,13 +50,19 @@ export interface StageValidationResult {
 
 export interface TaskStageDefinition {
   name: string;
-  provider: AiProvider;
-  fallbackProvider?: AiProvider;
+  // Ordered: index 0 is tried first, then each next entry only after the previous one returns
+  // ok:false — not limited to a single fallback. A function (not a plain array) so a provider order
+  // that depends on an env var (see CAMPAIGN_SUMMARY_ANALYZE_ORDER below) can validate lazily, at
+  // request time, and fail just this stage with a clear message rather than crashing the whole
+  // Edge Function at cold start over one task's misconfigured override. A task with a fixed order
+  // simply returns a constant array, e.g. `() => ['gemini', 'groq']`.
+  providers: () => AiProvider[];
   systemPrompt: (language: SupportedLanguage, detail: DetailLevel) => string;
   maxOutputTokens: (detail: DetailLevel) => number;
   outputFormat: 'json' | 'text';
   // Only meaningful when outputFormat is 'json'; undefined means "valid JSON is enough, no shape
-  // check" (EXTRACT's current behavior, unchanged by this task).
+  // check". Applied uniformly to whichever provider in the order actually answered — see
+  // taskRunner.ts — so a wrongly-shaped result from ANY of them is caught the same way.
   validateOutput?: (parsed: unknown, detail: DetailLevel) => StageValidationResult;
 }
 
@@ -160,46 +179,80 @@ function validateCampaignSummaryPayload(rawPayload: unknown): CampaignSummaryPay
   };
 }
 
-// Percentage change is computed here, in code, never asked of a model: it's trivial arithmetic,
-// and trusting a small/fast free-tier model to get it right every time would be a needless,
-// avoidable source of hallucinated numbers in a system whose entire point is "every number must
-// come from the input." EXTRACT's job (see its system prompt below) is therefore reformatting and
-// filtering only, never arithmetic.
-function withDeltaPct(payload: CampaignSummaryPayload): unknown {
+// Replaces what the now-removed EXTRACT stage used to do (drop metrics with nothing to report,
+// compute each kept metric's percentage change) — entirely in code, never asked of a model. Two
+// separate reasons this is deterministic, not an LLM call: percentage change is trivial arithmetic
+// (trusting a small/fast free-tier model to get it right every time would be an avoidable source of
+// hallucinated numbers), and the filtering step is a single mechanical rule with no actual parsing
+// work behind it, which was exactly why the old EXTRACT stage added a real Gemini/Groq call for no
+// real benefit.
+function buildAnalyzeInput(payload: CampaignSummaryPayload): unknown {
   return {
     period_current: payload.period_current,
     period_previous: payload.period_previous,
-    metrics: payload.metrics.map((m) => ({
-      ...m,
-      delta_pct:
-        m.current_value !== null && m.previous_value !== null && m.previous_value !== 0
-          ? Math.round(((m.current_value - m.previous_value) / m.previous_value) * 1000) / 10
-          : null,
-    })),
+    metrics: payload.metrics
+      .filter((m) => m.current_value !== null || m.previous_value !== null)
+      .map((m) => ({
+        ...m,
+        delta_pct:
+          m.current_value !== null && m.previous_value !== null && m.previous_value !== 0
+            ? Math.round(((m.current_value - m.previous_value) / m.previous_value) * 1000) / 10
+            : null,
+      })),
   };
 }
 
 // ----------------------------------------------------------------------------
-// CAMPAIGN_SUMMARY prompts
+// CAMPAIGN_SUMMARY's ANALYZE provider order — configurable via CAMPAIGN_SUMMARY_ANALYZE_ORDER
+// (comma-separated, e.g. "gemini,groq,openrouter"). Parsed once at module load (same timing as
+// GEMINI_MODEL/GROQ_MODEL/etc. in the provider adapters), but a parse failure is stored rather than
+// thrown immediately: throwing here would crash the whole Edge Function — every task, including
+// PHASE1_TEST_* — over one env var typo. The stored error is instead re-thrown lazily, only when
+// this stage's providers() is actually called for a CAMPAIGN_SUMMARY request, which taskRunner.ts
+// already catches and turns into an ok:false for that stage alone (same pattern as
+// TaskDefinition.buildInitialInput's own throw-on-invalid-payload).
 // ----------------------------------------------------------------------------
+const KNOWN_PROVIDERS: readonly AiProvider[] = ['gemini', 'groq', 'openrouter'];
+const DEFAULT_ANALYZE_ORDER: AiProvider[] = ['groq', 'gemini', 'openrouter'];
 
-// Stage 1 (EXTRACT, Gemini primary / Groq fallback). Deliberately thin for this specific task:
-// because validateCampaignSummaryPayload() above already guarantees clean, well-typed input before
-// any model ever sees it, there is no messy data here for an LLM to genuinely parse — its real job
-// is a single mechanical filtering decision (drop metrics with nothing to report) plus faithful
-// passthrough. This is an honest, deliberately modest use of the stage for this task; it still
-// exercises the real two-stage/fallback pipeline end-to-end, and will carry more actual weight for
-// a future task whose input isn't pre-validated structured JSON (e.g. free-text notes).
-const EXTRACT_SYSTEM_PROMPT =
-  'You are a data-formatting step in an internal agency reporting pipeline. You will receive a JSON ' +
-  'object with period_current, period_previous, and a metrics array. Copy it into the exact same ' +
-  'JSON shape, with one rule: remove any metric object where both current_value and previous_value ' +
-  'are null (nothing to report). Do not change, round, add, or invent any value. Do not add or ' +
-  'remove any field on period_current, period_previous, or a kept metric. Do not add any metric ' +
-  'that is not already present. Respond with ONLY the JSON object — no markdown code fences, no ' +
-  'explanation, no extra text before or after it.';
+function parseAnalyzeProviderOrder(raw: string): AiProvider[] {
+  const seen = new Set<AiProvider>();
+  const order: AiProvider[] = [];
+  for (const name of raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)) {
+    if (!(KNOWN_PROVIDERS as readonly string[]).includes(name)) {
+      throw new Error(
+        `CAMPAIGN_SUMMARY_ANALYZE_ORDER contains an unknown provider "${name}" — must be a ` +
+          `comma-separated list using only: ${KNOWN_PROVIDERS.join(', ')}.`
+      );
+    }
+    const provider = name as AiProvider;
+    if (!seen.has(provider)) {
+      seen.add(provider);
+      order.push(provider); // duplicates ignored, not rejected
+    }
+  }
+  if (order.length === 0) {
+    throw new Error('CAMPAIGN_SUMMARY_ANALYZE_ORDER is set but empty after parsing — list at least one provider.');
+  }
+  return order;
+}
 
-// Stage 2 (ANALYZE, Groq primary / OpenRouter fallback). Arabic-specific wording rules
+let cachedAnalyzeOrder: AiProvider[] | null = null;
+let cachedAnalyzeOrderError: string | null = null;
+try {
+  const raw = Deno.env.get('CAMPAIGN_SUMMARY_ANALYZE_ORDER');
+  cachedAnalyzeOrder = raw ? parseAnalyzeProviderOrder(raw) : DEFAULT_ANALYZE_ORDER;
+} catch (err) {
+  cachedAnalyzeOrderError = err instanceof Error ? err.message : String(err);
+}
+
+function getAnalyzeProviderOrder(): AiProvider[] {
+  if (cachedAnalyzeOrderError) throw new Error(cachedAnalyzeOrderError);
+  return cachedAnalyzeOrder as AiProvider[];
+}
+
+// ----------------------------------------------------------------------------
+// CAMPAIGN_SUMMARY's ANALYZE prompt. Arabic-specific wording rules
 // (grammar/phrasing) are appended only when language === 'ar', so the English variant stays as
 // short as before — refined after live testing surfaced small but real Arabic-quality issues
 // (gender-agreement errors, a minus sign clashing with a word-stated direction, an awkward
@@ -341,30 +394,25 @@ function validateAnalyzeOutput(parsed: unknown, detail: DetailLevel): StageValid
 export const TASK_REGISTRY: Record<string, TaskDefinition> = {
   CAMPAIGN_SUMMARY: {
     name: 'CAMPAIGN_SUMMARY',
-    buildInitialInput: (rawPayload) => withDeltaPct(validateCampaignSummaryPayload(rawPayload)),
+    buildInitialInput: (rawPayload) => buildAnalyzeInput(validateCampaignSummaryPayload(rawPayload)),
+    // Single stage — see this file's header comment for why EXTRACT was removed for this task
+    // specifically (it did no real parsing work) rather than being a structural limit: a future
+    // task with genuinely messy input defines its own two-(or more-)stage TaskDefinition the same
+    // way this one is defined.
     stages: [
       {
-        name: 'EXTRACT',
-        provider: 'gemini',
-        fallbackProvider: 'groq',
-        systemPrompt: () => EXTRACT_SYSTEM_PROMPT,
-        // Groq's own free-tier reasoning overhead was observed at ~423 tokens for a trivial
-        // one-word reply (unconfirmed root cause: likely gpt-oss's internal reasoning pass before
-        // the visible answer) — sized to cover that overhead plus this stage's actual JSON output
-        // if EXTRACT falls back to Groq, comfortably under its 8,000 TPM cap for one call. Detail
-        // level doesn't affect EXTRACT at all, so this ignores it.
-        maxOutputTokens: () => 1200,
-        outputFormat: 'json',
-      },
-      {
         name: 'ANALYZE',
-        provider: 'groq',
-        fallbackProvider: 'openrouter',
+        // Default groq -> gemini -> openrouter; override with CAMPAIGN_SUMMARY_ANALYZE_ORDER (see
+        // that env var's parsing logic above this registry for validation/fail-closed behavior).
+        providers: getAnalyzeProviderOrder,
         systemPrompt: buildAnalyzeSystemPrompt,
         // 'detailed' needs real headroom (summary + up to 3 by_service paragraphs + up to 5
         // recommendations, plus Groq's own reasoning overhead) — see the commit/report for the
         // full token-budget arithmetic against Groq's 8,000 TPM free-tier cap. 'brief' is
-        // unchanged from before "detailed" existed.
+        // unchanged from before "detailed" existed. Applied uniformly to whichever provider in
+        // the order above actually serves the request, including Gemini — flagged in the commit
+        // report as an unverified risk specifically for Gemini (thinking-token behavior could not
+        // be confirmed against Google's official docs, blocked in this sandbox).
         maxOutputTokens: (detail) => (detail === 'detailed' ? 3000 : 1500),
         outputFormat: 'json',
         validateOutput: validateAnalyzeOutput,
