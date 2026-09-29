@@ -54,7 +54,7 @@ import {
   resolveClientsForSubject,
   serviceFilterForRole,
 } from './lib/reportingEngine';
-import { CampaignSummaryPayload, CampaignSummaryDetailedResult } from './components/reporting/ComparisonDisplay';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
 import { DashboardHub } from './components/DashboardHub';
@@ -951,6 +951,55 @@ export default function App() {
     } catch (err: any) {
       console.error('CAMPAIGN_SUMMARY request failed:', err);
       showNotification(err?.message || 'AI summary unavailable — try again later.', 'info');
+      return null;
+    }
+  };
+
+  // Combined-scope item D: the unified multi-service report, reachable only by a client's own
+  // assigned AM Agent (checked in ClientDashboard.tsx, not here — this handler trusts its caller
+  // the same way handleGenerateCampaignSummary does). Same error-shaping/never-throws convention as
+  // handleGenerateCampaignSummary above; the only difference is the task name and the response
+  // shape it validates ({narrative, recommendations} instead of CAMPAIGN_SUMMARY's detailed shape).
+  const handleGenerateUnifiedReport = async (
+    payload: CampaignSummaryPayload
+  ): Promise<UnifiedClientReportResult | null> => {
+    try {
+      const { data, error } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: { task: 'UNIFIED_CLIENT_REPORT', language: 'ar', payload },
+        }),
+        AI_SUMMARY_TIMEOUT_MS,
+        `Unified report timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+      );
+      if (error) {
+        const context = error.context;
+        const status = context instanceof Response ? context.status : undefined;
+        let detail: string | undefined;
+        if (context instanceof Response) {
+          try {
+            const body: unknown = await context.clone().json();
+            if (body && typeof body === 'object') {
+              const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+              if (typeof value === 'string') detail = value;
+            }
+          } catch { /* A gateway error may not have a JSON body. */ }
+        }
+        console.error('Unified report request failed:', { status, detail, errorName: error.name, errorMessage: error.message });
+        throw new Error(status
+          ? `Unified report request failed (HTTP ${status}): ${detail || error.message}`
+          : `Unified report request failed before an HTTP response: ${error.message}`);
+      }
+      if (!data?.ok) {
+        throw new Error(data?.message || 'Unified report is currently unavailable.');
+      }
+      const result = data.result;
+      if (!result || typeof result !== 'object' || typeof result.narrative !== 'string' || !Array.isArray(result.recommendations)) {
+        throw new Error('Unexpected unified report response.');
+      }
+      return result as UnifiedClientReportResult;
+    } catch (err: any) {
+      console.error('UNIFIED_CLIENT_REPORT request failed:', err);
+      showNotification(err?.message || 'Unified report unavailable — try again later.', 'info');
       return null;
     }
   };
@@ -4795,6 +4844,7 @@ export default function App() {
                     onGenerateComparison={handleGenerateComparison}
                     onGenerateReport={handleGenerateReport}
                     onGenerateAiSummary={handleGenerateCampaignSummary}
+                    onGenerateUnifiedReport={handleGenerateUnifiedReport}
                     onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                     onApproveReport={handleApproveReport}
                     onCreatePortalLogin={handleCreatePortalLogin}
@@ -4846,6 +4896,7 @@ export default function App() {
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onGenerateUnifiedReport={handleGenerateUnifiedReport}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -4940,6 +4991,7 @@ export default function App() {
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onGenerateUnifiedReport={handleGenerateUnifiedReport}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}

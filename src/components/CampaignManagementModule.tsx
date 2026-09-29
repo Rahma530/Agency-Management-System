@@ -56,7 +56,7 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { getRoleInfo } from '../data/roles';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
-import { CampaignSummaryPayload, CampaignSummaryDetailedResult } from './reporting/ComparisonDisplay';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
 
 interface CampaignManagementModuleProps {
   campaigns: CampaignRecord[];
@@ -83,6 +83,7 @@ interface CampaignManagementModuleProps {
   ) => Promise<void>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
@@ -260,6 +261,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
+  onGenerateUnifiedReport,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -1874,6 +1876,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
           onGenerateAiSummary={onGenerateAiSummary}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           onCreatePortalLogin={onCreatePortalLogin}

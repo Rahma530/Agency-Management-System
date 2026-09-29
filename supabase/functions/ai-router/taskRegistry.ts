@@ -412,6 +412,76 @@ function validateAnalyzeOutput(parsed: unknown, detail: DetailLevel): StageValid
 }
 
 // ----------------------------------------------------------------------------
+// UNIFIED_CLIENT_REPORT (combined-scope item D): a single, cohesively-written narrative
+// synthesizing ALL of a client's active services together — deliberately NOT per-service
+// paragraphs (that's exactly what CAMPAIGN_SUMMARY's 'detailed' by_service already does). Shares
+// CAMPAIGN_SUMMARY's input shape/allowlist/validation verbatim (validateCampaignSummaryPayload,
+// buildAnalyzeInput below in the registry entry) — the input here is the same already-verified,
+// already-computed numeric JSON, just potentially spanning more services in one payload; no
+// EXTRACT-equivalent stage is needed for the same reason CAMPAIGN_SUMMARY's own EXTRACT was
+// removed (no real parsing work for a model to do). Only reachable, client-side, by a client's own
+// assigned AM Agent (client.am_agent_id === currentUser.id) — see ClientDashboard.tsx.
+// ----------------------------------------------------------------------------
+export interface UnifiedClientReportOutput {
+  narrative: string;
+  recommendations: string[];
+}
+
+// No 'detail' concept for this task (single fixed output shape) — the function signature still
+// takes it since taskRunner.ts calls every registry task's stage functions uniformly regardless of
+// task; a request's detail (defaulted to 'brief' when unset, same as any other task) is simply
+// ignored here.
+function buildUnifiedReportSystemPrompt(language: SupportedLanguage): string {
+  const languageName = LANGUAGE_NAMES[language];
+  const arabicRules = buildArabicQualityRules(language);
+  return (
+    `You are the agency's own account lead writing a single, unified performance report directly ` +
+    `to this client, covering every service they subscribe to together as ONE coherent story — ` +
+    `never as separate, isolated sections per service. You will receive a JSON object of ` +
+    `already-verified metrics comparing two periods (service, metric, current_value, ` +
+    `previous_value, delta_pct, unit) across whichever services are present. Analyze ONLY this ` +
+    `data — never invent, estimate, or reference any number, client, platform, or fact that is not ` +
+    `present in it.\n\n` +
+    `Voice: professional and data-grounded, written as this agency's own account lead speaking ` +
+    `directly to the client. Confident but not exaggerated — no marketing fluff, no filler ` +
+    `adjectives. Concise sentences. Every claim must be traceable to a specific number in the ` +
+    `input.\n\n` +
+    `Write in ${languageName}, using simple, professional wording suitable for a client-facing ` +
+    `report. Metric names (e.g. ROAS, CPA) may stay in English even inside a ${languageName} ` +
+    `sentence.\n\n` +
+    `Respond with ONLY this JSON object — no markdown code fences, no explanation:\n` +
+    `{"narrative": string, "recommendations": string[]}\n\n` +
+    `Rules:\n` +
+    `- narrative: 3 to 6 sentences telling ONE coherent story across every service present — never ` +
+    `separate paragraphs per service. At least one sentence MUST explicitly connect a finding in ` +
+    `one service to a finding in a different service (e.g. spend vs. engagement, delivery pace vs. ` +
+    `performance) — a purely per-service enumeration, with no such connection, is not acceptable.\n` +
+    `- recommendations: at most 5 short, actionable sentences, ordered by priority (most important ` +
+    `first), grounded only in the input's numbers — never invent a fact or number not present in ` +
+    `it. Return an empty array if nothing in the data warrants a recommendation.\n` +
+    `- If a metric's current_value or previous_value is null, say so explicitly instead of ` +
+    `guessing a number.\n` +
+    arabicRules +
+    `- If metrics is empty, respond with {"narrative": "<one sentence in ${languageName} saying no ` +
+    `metrics were provided for this period>", "recommendations": []}.\n` +
+    `- Every number you write must exactly match a number present in the input JSON.`
+  );
+}
+
+function validateUnifiedReportOutput(parsed: unknown): StageValidationResult {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
+  const p = parsed as Record<string, unknown>;
+  if (!isNonEmptyString(p.narrative) || !isStringArray(p.recommendations)) return { ok: false };
+  return {
+    ok: true,
+    value: {
+      narrative: cleanText(p.narrative),
+      recommendations: p.recommendations.slice(0, 5).map(cleanText),
+    },
+  };
+}
+
+// ----------------------------------------------------------------------------
 // The registry itself
 // ----------------------------------------------------------------------------
 export const TASK_REGISTRY: Record<string, TaskDefinition> = {
@@ -439,6 +509,30 @@ export const TASK_REGISTRY: Record<string, TaskDefinition> = {
         maxOutputTokens: (detail) => (detail === 'detailed' ? 3000 : 1500),
         outputFormat: 'json',
         validateOutput: validateAnalyzeOutput,
+      },
+    ],
+  },
+  UNIFIED_CLIENT_REPORT: {
+    name: 'UNIFIED_CLIENT_REPORT',
+    // Identical input handling to CAMPAIGN_SUMMARY — same allowlist, same delta_pct computed in
+    // code, never asked of a model (see buildAnalyzeInput's own comment above).
+    buildInitialInput: (rawPayload) => buildAnalyzeInput(validateCampaignSummaryPayload(rawPayload)),
+    stages: [
+      {
+        name: 'ANALYZE',
+        // Fixed default order, not configurable via its own env var for this phase (no separate
+        // ask for that) — same providers/fallback order CAMPAIGN_SUMMARY defaults to.
+        providers: () => ['groq', 'gemini', 'openrouter'],
+        systemPrompt: (language) => buildUnifiedReportSystemPrompt(language),
+        // ~4000 tokens: a genuine cross-service narrative (3-6 sentences weaving multiple
+        // services together, per the system prompt) plus up to 5 recommendations needs more room
+        // than CAMPAIGN_SUMMARY's single-service 'detailed' cap (3000). Input size is unchanged
+        // from CAMPAIGN_SUMMARY's own (same metrics payload, same allowlist), so worst case is
+        // roughly 225 (system prompt) + 150 (input) + 4000 (output) ≈ 4400 tokens — still
+        // comfortably under Groq's 8,000 TPM free-tier limit.
+        maxOutputTokens: () => 4000,
+        outputFormat: 'json',
+        validateOutput: (parsed) => validateUnifiedReportOutput(parsed),
       },
     ],
   },

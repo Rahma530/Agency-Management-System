@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, Sparkles } from 'lucide-react';
 import { ClientComparisonRecord, ClientRecord, ReportRecord, ServiceType, UserRecord } from '../../types/database';
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
 
@@ -55,6 +55,13 @@ export interface CampaignSummaryPayload {
 export interface CampaignSummaryDetailedResult {
   summary: string;
   by_service: { service: string; text: string }[];
+  recommendations: string[];
+}
+
+// Combined-scope item D: matches ai-router's UNIFIED_CLIENT_REPORT task output shape
+// (taskRegistry.ts's UnifiedClientReportOutput) — a single narrative, not per-service paragraphs.
+export interface UnifiedClientReportResult {
+  narrative: string;
   recommendations: string[];
 }
 
@@ -399,6 +406,92 @@ export const ComparisonCard: React.FC<{
                 </ul>
               )}
             </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------------------
+// Combined-scope item D: the unified multi-service report — client-level (not tied to one
+// ComparisonCard row), so it lives as its own panel rather than another prop on ComparisonCard.
+// Reuses CAMPAIGN_SUMMARY's own buildCampaignSummaryPayload/canBuildCampaignSummaryPayload
+// unchanged (no serviceFilter — this is AM-only, and an AM always sees every service), since
+// UNIFIED_CLIENT_REPORT's input allowlist is identical to CAMPAIGN_SUMMARY's. No period picker for
+// this phase — always built from the client's own most recently generated 'comparison' row,
+// passed in by the caller (ClientDashboard.tsx).
+// ----------------------------------------------------------------------------
+export const UnifiedReportPanel: React.FC<{
+  latestComparison: ClientComparisonRecord | null;
+  onGenerateUnifiedReport: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+}> = ({ latestComparison, onGenerateUnifiedReport }) => {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [result, setResult] = useState<UnifiedClientReportResult | null>(null);
+
+  // Ephemeral, same as ComparisonCard's own AI summary — cleared if the underlying comparison
+  // this panel is built from changes (e.g. a fresh comparison was just generated).
+  useEffect(() => {
+    setResult(null);
+    setIsGenerating(false);
+  }, [latestComparison?.id]);
+
+  const canBuild = !!latestComparison && canBuildCampaignSummaryPayload(latestComparison);
+
+  const handleGenerate = async () => {
+    if (!latestComparison) return;
+    setIsGenerating(true);
+    const fresh = await onGenerateUnifiedReport(buildCampaignSummaryPayload(latestComparison));
+    setIsGenerating(false);
+    if (fresh) setResult(fresh);
+  };
+
+  return (
+    <div className="p-4 rounded-xl border border-amber-900/30 bg-amber-950/10 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+            <Sparkles className="w-4 h-4" />
+            <span>Unified Client Report</span>
+          </h3>
+          <p className="text-[11px] text-stone-400">
+            {latestComparison
+              ? `One combined narrative across every active service, for ${latestComparison.period_current}` +
+                (latestComparison.period_previous ? ` vs ${latestComparison.period_previous}` : '') + '.'
+              : 'Generate a comparison below first — the unified report is built from your most recent one.'}
+          </p>
+        </div>
+        {canBuild && (
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-amber-200 bg-amber-900/40 hover:bg-amber-800/60 hover:text-white border border-amber-700/40 transition-all disabled:opacity-50"
+          >
+            {isGenerating ? 'Generating...' : result ? 'Regenerate Unified Report' : 'Generate Unified Report'}
+          </button>
+        )}
+      </div>
+
+      {latestComparison && !canBuild && (
+        <p className="text-xs text-stone-500">
+          Your most recent comparison isn't eligible yet (no metrics, or a period label ai-router
+          doesn't accept) — generate a new comparison below first.
+        </p>
+      )}
+
+      {result && (
+        <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-900/30 space-y-1.5">
+          <p className="text-xs text-stone-200 leading-relaxed" dir="rtl">
+            {result.narrative}
+          </p>
+          {result.recommendations.length > 0 && (
+            <ul className="list-disc list-inside space-y-0.5" dir="rtl">
+              {result.recommendations.map((rec, i) => (
+                <li key={i} className="text-xs text-stone-200 leading-relaxed">
+                  {rec}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

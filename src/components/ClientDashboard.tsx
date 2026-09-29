@@ -66,7 +66,14 @@ import {
 } from './CampaignManagementModule';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope, detectClientAnomalies, clientHasService } from '../lib/reportingEngine';
 import { PeriodSelector } from './reporting/PeriodSelector';
-import { ComparisonCard, FiledReportsList, CampaignSummaryPayload, CampaignSummaryDetailedResult } from './reporting/ComparisonDisplay';
+import {
+  ComparisonCard,
+  FiledReportsList,
+  UnifiedReportPanel,
+  CampaignSummaryPayload,
+  CampaignSummaryDetailedResult,
+  UnifiedClientReportResult,
+} from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
@@ -132,6 +139,10 @@ interface ClientDashboardProps {
   // Phase 4 (AI Orchestrator): threaded straight to ComparisonCard, same optional-prop convention
   // as onGenerateReport above — omitted by every caller that shouldn't offer it (see App.tsx).
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  // Combined-scope item D: threaded to the new UnifiedReportPanel. Never gated by hasComparisonAccess
+  // — only ever shown when this client's own am_agent is viewing (checked locally below), so the
+  // prop's mere presence isn't what controls visibility the way onGenerateAiSummary's is.
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   clientPortalUser?: ClientPortalUserRecord | null;
@@ -210,6 +221,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
+  onGenerateUnifiedReport,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   clientPortalUser,
@@ -505,6 +517,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     : currentUser.role === 'social_media_team_lead' || currentUser.role === 'social_media_agent'
     ? ['social_media']
     : undefined;
+
+  // Combined-scope item D: the unified multi-service report is reachable ONLY by this exact
+  // client's own assigned AM Agent — not other AM Agents, not leadership, not department roles.
+  // The exact field/role pair the audit confirmed reusing (same one hasReportsAccess's own
+  // am_agent branch already checks above).
+  const isClientsOwnAmAgent = currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id;
 
   const clientComparisonsForClient = useMemo(
     () =>
@@ -2268,6 +2286,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               onGenerateReport={handleGenerateReport}
               onGenerateAiSummary={hasComparisonAccess ? onGenerateAiSummary : undefined}
               viewerServiceFilter={viewerServiceFilter}
+              canGenerateUnifiedReport={isClientsOwnAmAgent}
+              onGenerateUnifiedReport={onGenerateUnifiedReport}
               canGenerateMonthlyDraft={hasReportsAccess && !!onGenerateMonthlyReportDraft}
               isGeneratingDraft={isGeneratingDraft}
               onGenerateMonthlyDraft={handleGenerateMonthlyDraft}
@@ -2417,6 +2437,9 @@ interface ReportsAndComparisonsTabProps {
   // Combined-scope item C: undefined = viewer sees every service (AM/leadership); an array = a
   // department agent/team lead, narrowed to their own service(s) only.
   viewerServiceFilter?: ServiceType[];
+  // Combined-scope item D: true only when the viewer is this exact client's own assigned AM Agent.
+  canGenerateUnifiedReport: boolean;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
   canGenerateMonthlyDraft: boolean;
   isGeneratingDraft: boolean;
   onGenerateMonthlyDraft: () => void;
@@ -2448,6 +2471,8 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   onGenerateReport,
   onGenerateAiSummary,
   viewerServiceFilter,
+  canGenerateUnifiedReport,
+  onGenerateUnifiedReport,
   canGenerateMonthlyDraft,
   isGeneratingDraft,
   onGenerateMonthlyDraft,
@@ -2461,8 +2486,21 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   // ever one result to compute, applied only to that client's latest comparison row.
   const anomalyResult = useMemo(() => detectClientAnomalies(client.id, comparisons), [client.id, comparisons]);
 
+  // Combined-scope item D: the client's own most recently generated real comparison row (never a
+  // period_summary — no previous period to synthesize across) — the unified report always reuses
+  // this, with no separate period picker for this phase.
+  const latestFullComparison = useMemo(() => {
+    const comparisonRows = comparisons.filter((c) => c.row_kind === 'comparison');
+    if (comparisonRows.length === 0) return null;
+    return comparisonRows.slice().sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
+  }, [comparisons]);
+
   return (
     <div className="space-y-6">
+      {canGenerateUnifiedReport && onGenerateUnifiedReport && (
+        <UnifiedReportPanel latestComparison={latestFullComparison} onGenerateUnifiedReport={onGenerateUnifiedReport} />
+      )}
+
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-purple-400" />
