@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
-import { ClientComparisonRecord, ClientRecord, ReportRecord, UserRecord } from '../../types/database';
+import { ClientComparisonRecord, ClientRecord, ReportRecord, ServiceType, UserRecord } from '../../types/database';
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
 
 // ----------------------------------------------------------------------------
@@ -76,12 +76,29 @@ function toAllowlistUnit(displayUnit: string): string {
 // True only for a real 'comparison' row (never period_summary — there's no previous period to
 // diff against, and no rule-based narrative renders for one either) whose period_current matches
 // one of ai-router's four accepted label shapes, with at least one service's metrics present.
-export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecord): boolean {
+// serviceFilter (combined-scope item C): a department agent/team lead viewer only ever gets a
+// payload built from their own service(s) — undefined means "every service present," same as
+// before this was added.
+export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecord, serviceFilter?: ServiceType[]): boolean {
   if (comparison.row_kind === 'period_summary') return false;
   if (!CAMPAIGN_SUMMARY_PERIOD_LABEL_RE.test(comparison.period_current)) return false;
-  return (['media_buying', 'social_media', 'seo'] as const).some(
-    (service) => comparison.metrics_current[service] || comparison.metrics_previous[service]
-  );
+  return (['media_buying', 'social_media', 'seo'] as const)
+    .filter((service) => !serviceFilter || serviceFilter.includes(service))
+    .some((service) => comparison.metrics_current[service] || comparison.metrics_previous[service]);
+}
+
+// Narrows a metrics/delta object down to only the given services — used both for the AI-summary
+// payload and for the rule-based narrative box, so a department agent/team lead never sees (and
+// ai-router is never sent) another department's numbers, even when the underlying row itself
+// spans every service the client subscribes to. undefined filter returns the object unchanged.
+function filterMetricsByViewer<T extends object>(metrics: T, serviceFilter: ServiceType[] | undefined): T {
+  if (!serviceFilter) return metrics;
+  const result: any = {};
+  const metricsAny: any = metrics;
+  for (const service of serviceFilter) {
+    if (service in metricsAny) result[service] = metricsAny[service];
+  }
+  return result as T;
 }
 
 // Builds the CAMPAIGN_SUMMARY payload from a comparison's already-computed metrics_current/
@@ -92,27 +109,32 @@ export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecor
 // client-side. buildAnalyzeInput() now divides by Math.abs(previous_value), matching this app's
 // own reportingEngine.ts's pctDelta() exactly — previously it didn't, which could invert
 // follower_growth's sign vs. the DeltaBadge already on screen (fixed alongside this phase).
-export function buildCampaignSummaryPayload(comparison: ClientComparisonRecord): CampaignSummaryPayload {
+export function buildCampaignSummaryPayload(
+  comparison: ClientComparisonRecord,
+  serviceFilter?: ServiceType[]
+): CampaignSummaryPayload {
   const metrics: CampaignSummaryMetricPoint[] = [];
 
-  (['media_buying', 'social_media', 'seo'] as const).forEach((service) => {
-    const current = comparison.metrics_current[service];
-    const previous = comparison.metrics_previous[service];
-    if (!current && !previous) return;
-    const labels = SERVICE_METRIC_LABELS[service];
-    const units = SERVICE_METRIC_UNITS[service];
-    Object.keys(labels).forEach((metric) => {
-      const currentValue = (current as unknown as Record<string, unknown> | undefined)?.[metric];
-      const previousValue = (previous as unknown as Record<string, unknown> | undefined)?.[metric];
-      metrics.push({
-        service,
-        metric,
-        current_value: typeof currentValue === 'number' ? currentValue : null,
-        previous_value: typeof previousValue === 'number' ? previousValue : null,
-        unit: toAllowlistUnit(units[metric] ?? ''),
+  (['media_buying', 'social_media', 'seo'] as const)
+    .filter((service) => !serviceFilter || serviceFilter.includes(service))
+    .forEach((service) => {
+      const current = comparison.metrics_current[service];
+      const previous = comparison.metrics_previous[service];
+      if (!current && !previous) return;
+      const labels = SERVICE_METRIC_LABELS[service];
+      const units = SERVICE_METRIC_UNITS[service];
+      Object.keys(labels).forEach((metric) => {
+        const currentValue = (current as unknown as Record<string, unknown> | undefined)?.[metric];
+        const previousValue = (previous as unknown as Record<string, unknown> | undefined)?.[metric];
+        metrics.push({
+          service,
+          metric,
+          current_value: typeof currentValue === 'number' ? currentValue : null,
+          previous_value: typeof previousValue === 'number' ? previousValue : null,
+          unit: toAllowlistUnit(units[metric] ?? ''),
+        });
       });
     });
-  });
 
   return {
     period_current: comparison.period_current,
@@ -202,11 +224,21 @@ export const ComparisonCard: React.FC<{
   // throws — it resolves to null and shows its own toast internally on any failure (see
   // App.tsx's handleGenerateCampaignSummary) — so this component never needs its own error state.
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
-}> = ({ comparison, subtitle, canGenerateReport, isGeneratingReport, onGenerateReport, anomalyFlags, onGenerateAiSummary }) => {
+  // Combined-scope item C: undefined = viewer sees every service (AM/leadership, or no filter
+  // passed at all — e.g. ClientPortalView.tsx). An array = a department agent/team lead, narrowed
+  // to only their own service(s) — applies to the ServiceMetricsCard grid below, the rule-based
+  // narrative text, and the AI-summary payload alike, so no surface on this card can leak another
+  // department's numbers to a scoped viewer.
+  viewerServiceFilter?: ServiceType[];
+}> = ({ comparison, subtitle, canGenerateReport, isGeneratingReport, onGenerateReport, anomalyFlags, onGenerateAiSummary, viewerServiceFilter }) => {
   const isSummary = comparison.row_kind === 'period_summary';
-  const narrative = isSummary
-    ? null
-    : generateComparisonNarrative(comparison.metrics_current, comparison.metrics_previous, comparison.delta);
+  // Narrowed to the viewer's own service(s) before computing the narrative — otherwise a scoped
+  // viewer would still read rule-based findings about a department that isn't theirs, even though
+  // the ServiceMetricsCard grid below correctly hides that department's numbers.
+  const visibleMetricsCurrent = filterMetricsByViewer(comparison.metrics_current, viewerServiceFilter);
+  const visibleMetricsPrevious = filterMetricsByViewer(comparison.metrics_previous, viewerServiceFilter);
+  const visibleDelta = filterMetricsByViewer(comparison.delta, viewerServiceFilter);
+  const narrative = isSummary ? null : generateComparisonNarrative(visibleMetricsCurrent, visibleMetricsPrevious, visibleDelta);
 
   const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
   const [aiSummaryResult, setAiSummaryResult] = useState<CampaignSummaryDetailedResult | null>(null);
@@ -219,12 +251,12 @@ export const ComparisonCard: React.FC<{
     setIsGeneratingAiSummary(false);
   }, [comparison.id]);
 
-  const canShowAiButton = !!onGenerateAiSummary && canBuildCampaignSummaryPayload(comparison);
+  const canShowAiButton = !!onGenerateAiSummary && canBuildCampaignSummaryPayload(comparison, viewerServiceFilter);
 
   const handleGenerateAiSummary = async () => {
     if (!onGenerateAiSummary) return;
     setIsGeneratingAiSummary(true);
-    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison));
+    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter));
     setIsGeneratingAiSummary(false);
     if (result) setAiSummaryResult(result);
   };
@@ -255,30 +287,36 @@ export const ComparisonCard: React.FC<{
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <ServiceMetricsCard
-          serviceKey="media_buying"
-          title="Media Buying"
-          current={comparison.metrics_current.media_buying}
-          previous={comparison.metrics_previous.media_buying}
-          delta={comparison.delta.media_buying}
-          flat={isSummary}
-        />
-        <ServiceMetricsCard
-          serviceKey="social_media"
-          title="Social Media"
-          current={comparison.metrics_current.social_media}
-          previous={comparison.metrics_previous.social_media}
-          delta={comparison.delta.social_media}
-          flat={isSummary}
-        />
-        <ServiceMetricsCard
-          serviceKey="seo"
-          title="SEO (Delivery)"
-          current={comparison.metrics_current.seo}
-          previous={comparison.metrics_previous.seo}
-          delta={comparison.delta.seo}
-          flat={isSummary}
-        />
+        {(!viewerServiceFilter || viewerServiceFilter.includes('media_buying')) && (
+          <ServiceMetricsCard
+            serviceKey="media_buying"
+            title="Media Buying"
+            current={comparison.metrics_current.media_buying}
+            previous={comparison.metrics_previous.media_buying}
+            delta={comparison.delta.media_buying}
+            flat={isSummary}
+          />
+        )}
+        {(!viewerServiceFilter || viewerServiceFilter.includes('social_media')) && (
+          <ServiceMetricsCard
+            serviceKey="social_media"
+            title="Social Media"
+            current={comparison.metrics_current.social_media}
+            previous={comparison.metrics_previous.social_media}
+            delta={comparison.delta.social_media}
+            flat={isSummary}
+          />
+        )}
+        {(!viewerServiceFilter || viewerServiceFilter.includes('seo')) && (
+          <ServiceMetricsCard
+            serviceKey="seo"
+            title="SEO (Delivery)"
+            current={comparison.metrics_current.seo}
+            previous={comparison.metrics_previous.seo}
+            delta={comparison.delta.seo}
+            flat={isSummary}
+          />
+        )}
       </div>
 
       {anomalyFlags && anomalyFlags.length > 0 && (
@@ -308,7 +346,13 @@ export const ComparisonCard: React.FC<{
           </p>
           <p className="text-xs text-stone-200 leading-relaxed">
             <strong className="text-purple-300">Recommendation: </strong>
-            {comparison.ai_recommendations_text || narrative.recommendations}
+            {/* comparison.ai_recommendations_text is a persisted plain string that can have been
+                written from this row's FULL, unfiltered metrics (e.g. by the AM) — it can't be
+                narrowed after the fact the way a structured object can, so a scoped viewer always
+                gets the freshly-computed narrative.recommendations (derived from
+                visibleMetricsCurrent/Previous/Delta above) instead of that persisted text, never
+                the other way around. Unrestricted viewers keep today's exact behavior. */}
+            {viewerServiceFilter ? narrative.recommendations : comparison.ai_recommendations_text || narrative.recommendations}
           </p>
 
           {canShowAiButton && (

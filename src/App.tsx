@@ -50,6 +50,7 @@ import {
   customPeriod,
   generateClientComparison,
   generatePeriodSummary,
+  generateComparisonNarrative,
   resolveClientsForSubject,
   serviceFilterForRole,
 } from './lib/reportingEngine';
@@ -3362,6 +3363,13 @@ export default function App() {
       const client = clients.find((c) => c.id === scope.clientId);
       if (!client) return;
       scopedClients = [client];
+      // Combined-scope item C: a department agent/team lead generating for a single client must
+      // only ever compute their own department's services — AM/leadership roles (undefined here,
+      // per serviceFilterForRole) keep generating every subscribed service, exactly as before this
+      // change. Previously this branch never set a filter at all, so ANY caller (including a
+      // department role, once let into this UI) would compute and write every service's metrics —
+      // see the merge logic below for why that alone still wasn't enough to make this safe.
+      serviceFilter = serviceFilterForRole(currentUser.role);
       scopeLabel = client.name;
     } else {
       const subject = users.find((u) => u.id === scope.agentId);
@@ -3390,9 +3398,65 @@ export default function App() {
         c.period_previous === result.period_previous
     );
 
+    // Combined-scope item C: when serviceFilter is set (a department agent/team lead generating
+    // for a single client), this caller's fresh result only ever has ITS OWN service's key
+    // populated — merging it into whatever already exists preserves every other department's
+    // already-computed data instead of the blind overwrite this write path used before, which
+    // would otherwise let a SEO agent's generation silently erase an AM's already-computed
+    // media_buying/social_media blocks for the same client/period (same row, same unique key).
+    // AM/leadership callers never set serviceFilter (they always compute every subscribed service
+    // themselves), so `existing` is ignored and this is a no-op for them — identical behavior to
+    // before this change.
+    //
+    // Known limitation, not fixed here: `existing` comes from this client's own in-memory
+    // clientComparisons state, not a fresh server read at write time — two different roles writing
+    // to the very same client/period within moments of each other (before either's browser has
+    // re-fetched) could still race. Acceptable for how infrequently that specific collision would
+    // occur in practice; a airtight fix would need a server-side merge (an RPC/function doing the
+    // read-merge-write atomically) rather than this client-computed merge.
+    function mergeServiceScopedMetrics<T extends object>(
+      existing: T | undefined,
+      fresh: T,
+      filter: ServiceType[] | undefined
+    ): T {
+      if (!filter || !existing) return fresh;
+      const merged: any = { ...existing };
+      const freshAny: any = fresh;
+      for (const service of filter) {
+        if (service in freshAny) {
+          merged[service] = freshAny[service];
+        } else {
+          // This caller's own fresh computation has nothing for a service the filter says is
+          // theirs (e.g. the client no longer subscribes to it) — don't leave a stale block
+          // behind under a key the filter is supposed to own.
+          delete merged[service];
+        }
+      }
+      return merged as T;
+    }
+
+    const mergedMetricsCurrent = mergeServiceScopedMetrics(localExisting?.metrics_current, result.metrics_current, serviceFilter);
+    const mergedMetricsPrevious = mergeServiceScopedMetrics(localExisting?.metrics_previous, result.metrics_previous, serviceFilter);
+    const mergedDelta = mergeServiceScopedMetrics(localExisting?.delta, result.delta, serviceFilter);
+    // ai_recommendations_text (comparison mode only — always null for period_summary) is derived
+    // from generateComparisonNarrative() over metrics_current/previous/delta. result's own value
+    // was computed from this caller's FILTERED metrics alone, so once a merge actually combined
+    // data from more than one contributor, it's recomputed here from the MERGED metrics instead —
+    // otherwise a department agent's generation would overwrite the stored recommendation text
+    // with one that only ever reflects their own service, discarding what a fuller previous
+    // generation already said about other departments.
+    const mergedAiRecommendationsText =
+      mode === 'comparison' && serviceFilter && localExisting
+        ? generateComparisonNarrative(mergedMetricsCurrent, mergedMetricsPrevious, mergedDelta).recommendations
+        : result.ai_recommendations_text;
+
     const comparisonPayload: ClientComparisonRecord = {
       id: localExisting?.id || `cmp-${Date.now().toString().slice(-4)}`,
       ...result,
+      metrics_current: mergedMetricsCurrent,
+      metrics_previous: mergedMetricsPrevious,
+      delta: mergedDelta,
+      ai_recommendations_text: mergedAiRecommendationsText,
       client_id: scope.type === 'client' ? scope.clientId : null,
       agent_id: scope.type === 'agent' ? scope.agentId : null,
       covered_client_ids: scope.type === 'client' ? null : result.covered_client_ids,
