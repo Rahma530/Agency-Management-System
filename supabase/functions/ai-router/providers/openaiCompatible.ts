@@ -153,5 +153,15 @@ export async function callOpenAiCompatible(
   const text = data?.choices?.[0]?.message?.content || '';
   if (!text) throw new AiProviderError('error', `${config.provider} returned no usable text.`);
 
-  return { text, provider: config.provider, model, rateLimitHeaders };
+  // Standard OpenAI-compatible `usage` object — same field names for both Groq and OpenRouter.
+  const usage = data?.usage;
+  return {
+    text,
+    provider: config.provider,
+    model,
+    rateLimitHeaders,
+    inputTokens: typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : undefined,
+    outputTokens: typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : undefined,
+    totalTokens: typeof usage?.total_tokens === 'number' ? usage.total_tokens : undefined,
+  };
 }

@@ -1,4 +1,4 @@
-// AI Orchestrator — Phase 2 of 6 (see the design conversation for the full architecture: Task
+// AI Orchestrator — Phase 3 of 6 (see the design conversation for the full architecture: Task
 // Registry -> AI Router -> Provider Adapter -> Usage Tracking + Rate-Limit State -> result
 // validation). Three providers (Gemini for extraction; Groq for analysis, primary; OpenRouter free
 // models for analysis, emergency-fallback only — its free tier is roughly 50 requests/day unless
@@ -18,15 +18,24 @@
 //    language?}` — payload is validated against that task's own field allowlist (never free text),
 //    executed by taskRunner.ts's generic sequential-stages-with-fallback runner.
 //
-// NOT yet implemented (Phases 3-4, in order):
-//  - The AI Router's provider-rotation/cooldown MEMORY against ai_provider_state — a rate-limited
-//    provider is retried again on the very next call today, nothing remembers it was just
-//    exhausted. Fallback within a single request (per stage) already works (see taskRunner.ts).
-//  - ai_usage logging.
+// Phase 3 (this update) added provider-rotation/cooldown MEMORY against ai_provider_state (a
+// rate-limited provider:model is skipped, without a network call, until its recorded
+// cooldown_until passes — see providers/cooldown.ts and taskRunner.ts's runStage) and ai_usage
+// logging (one row per real provider attempt, success or failure — see providers/usageLog.ts).
+// Cooldown checking/skipping applies only to the Task Registry path below; PHASE1_TEST_* always
+// attempts the real provider call (it exists specifically for on-demand diagnosis of one provider)
+// but still logs every attempt to ai_usage, and still records ai_provider_state on a genuine 429 —
+// that's real provider state, useful to the Task Registry path's next cooldown check regardless of
+// which path observed it.
+//
+// NOT yet implemented (Phase 4+): UI wiring — each of the 4 features this will power is already
+// gated by its own existing permission check (see the design conversation).
 //
 // Deploy with JWT verification enabled. Provider API keys are used only here, never in React.
 import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
-import { callProvider } from './providers/dispatch.ts';
+import { callProvider, resolveProviderModel } from './providers/dispatch.ts';
+import { recordCooldown } from './providers/cooldown.ts';
+import { recordUsage } from './providers/usageLog.ts';
 import { AiProvider, AiProviderError } from './types.ts';
 import { isDetailLevel, isSupportedLanguage, TASK_REGISTRY } from './taskRegistry.ts';
 import { runRegistryTask } from './taskRunner.ts';
@@ -99,7 +108,15 @@ Deno.serve(async (req) => {
     return response({ error: 'Invalid request.' }, 400);
   }
 
-  // Path 1: the original Phase 1 skeleton — a single raw call, no registry, no fallback.
+  // One id per incoming HTTP request, stamped on every ai_usage row this request's fallback chain
+  // produces (legacy path: one row; registry path: one per stage attempt) — lets a later query
+  // group everything one request actually did.
+  const requestId = crypto.randomUUID();
+
+  // Path 1: the original Phase 1 skeleton — a single raw call, no registry, no fallback. Never
+  // checks or skips based on cooldown state (always attempts the real call, for direct diagnosis),
+  // but still logs to ai_usage, and still records a genuine 429 to ai_provider_state — see this
+  // file's header comment for why.
   const legacyProvider = PHASE1_TASK_MAP[input.task];
   if (legacyProvider) {
     if (typeof input.prompt !== 'string' || !input.prompt || input.prompt.length > 20000) {
@@ -107,13 +124,49 @@ Deno.serve(async (req) => {
     }
     try {
       const result = await callProvider(legacyProvider, { prompt: input.prompt, systemPrompt: input.systemPrompt });
-      return response({ ok: true, ...result });
+      await recordUsage(admin, {
+        provider: legacyProvider,
+        model: result.model,
+        task: input.task,
+        stage: null,
+        ok: true,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        totalTokens: result.totalTokens,
+        thoughtsTokens: result.thoughtsTokens,
+        requestId,
+      });
+      // Response shape unchanged from before Phase 3: only the fields this endpoint has always
+      // returned, not the new token counts recordUsage above already captured for ai_usage.
+      const { text, provider, model, rateLimitHeaders } = result;
+      return response({ ok: true, text, provider, model, rateLimitHeaders });
     } catch (err) {
       // A rate-limit or provider-side failure is an anticipated outcome this router is built to
       // handle, not a broken request — returned as 200 with ok:false so callers branch on the
       // body, while genuine request/auth problems above still use real HTTP statuses.
       if (err instanceof AiProviderError) {
         console.error(`ai-router ${legacyProvider} error (${err.kind}):`, err.message);
+        const model = resolveProviderModel(legacyProvider);
+        await recordUsage(admin, {
+          provider: legacyProvider,
+          model: model || null,
+          task: input.task,
+          stage: null,
+          ok: false,
+          kind: err.kind,
+          reason: err.reason,
+          limitSource: err.limitSource,
+          requestId,
+        });
+        if (err.kind === 'rate_limit' && model) {
+          await recordCooldown(admin, {
+            provider: legacyProvider,
+            model,
+            reason: err.reason,
+            limitSource: err.limitSource,
+            rateLimitHeaders: err.rateLimitHeaders,
+          });
+        }
         return response({
           ok: false,
           kind: err.kind,
@@ -124,6 +177,15 @@ Deno.serve(async (req) => {
         });
       }
       console.error('ai-router unexpected error:', err);
+      await recordUsage(admin, {
+        provider: legacyProvider,
+        model: resolveProviderModel(legacyProvider) || null,
+        task: input.task,
+        stage: null,
+        ok: false,
+        kind: 'error',
+        requestId,
+      });
       return response({ ok: false, kind: 'error', message: 'Unexpected error.' });
     }
   }
@@ -141,7 +203,7 @@ Deno.serve(async (req) => {
   const detail = isDetailLevel(input.detail) ? input.detail : 'brief';
 
   const language = isSupportedLanguage(input.language) ? input.language : 'ar';
-  const result = await runRegistryTask(task, input.payload, language, detail);
+  const result = await runRegistryTask(task, input.payload, language, detail, admin, requestId);
   if (result.ok) {
     return response({ ok: true, task: result.task, detail, result: result.result, stages: result.stages });
   }

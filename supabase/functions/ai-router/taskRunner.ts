@@ -1,15 +1,21 @@
-// Phase 2: the generic multi-stage task runner. Reads a TaskDefinition (taskRegistry.ts) and
+// Phase 2/3: the generic multi-stage task runner. Reads a TaskDefinition (taskRegistry.ts) and
 // executes its stages in order — this is the "dispatch code" that a new registry entry should
 // never need to change. A task may define any number of stages (one, two, or more) with no
 // special-casing here — see taskRegistry.ts's header comment for when a task needs more than one.
-// Execution model, exactly as specified: within a stage, its provider order (TaskStageDefinition.
-// providers(), possibly more than one fallback) is tried in sequence, moving to the next only on an
-// ok:false from the current one — no cooldown memory yet (Phase 3 owns that, against
-// ai_provider_state), so a rate-limited provider is retried again on the very next call regardless
-// of how recently it failed.
-import { callProvider } from './providers/dispatch.ts';
-import { AiProviderError, AiProvider, RateLimitHeaders } from './types.ts';
+// Execution model: within a stage, its provider order (TaskStageDefinition.providers(), possibly
+// more than one fallback) is tried in sequence, skipping any candidate currently in cooldown
+// (public.ai_provider_state, checked in one batched query per stage — see providers/cooldown.ts)
+// and moving to the next only after a real attempt returns ok:false. Every real attempt — success
+// or failure — is logged to public.ai_usage (providers/usageLog.ts); a skipped, in-cooldown
+// candidate gets no network call and no usage row.
+import { callProvider, resolveProviderModel } from './providers/dispatch.ts';
+import { checkCooldowns, cooldownId, recordCooldown } from './providers/cooldown.ts';
+import { recordUsage } from './providers/usageLog.ts';
+import { AiProviderError, AiProvider, AiRateLimitReason, RateLimitHeaders } from './types.ts';
 import { DetailLevel, SupportedLanguage, TaskDefinition, TaskStageDefinition } from './taskRegistry.ts';
+import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
+
+type AdminClient = ReturnType<typeof createClient>;
 
 export interface StageOutcome {
   stage: string;
@@ -57,11 +63,15 @@ async function runStage(
   stage: TaskStageDefinition,
   inputText: string,
   language: SupportedLanguage,
-  detail: DetailLevel
+  detail: DetailLevel,
+  admin: AdminClient,
+  taskName: string,
+  requestId: string
 ): Promise<StageAttemptResult> {
   // stage.providers() can throw (e.g. CAMPAIGN_SUMMARY_ANALYZE_ORDER set to an invalid value) —
   // caught the same way a provider call's own failure is, so a misconfigured order fails this one
-  // stage, not the whole request path.
+  // stage, not the whole request path. Nothing to log to ai_usage here: no candidate was even
+  // resolved yet.
   let providerOrder: AiProvider[];
   try {
     providerOrder = stage.providers();
@@ -69,20 +79,73 @@ async function runStage(
     return toFailure(err);
   }
 
+  // Resolve each candidate's configured model up front (needed for both the cooldown lookup key
+  // and, on failure, the usage log row) and batch-check cooldown state in one query rather than
+  // one per provider.
+  const candidates = providerOrder.map((provider) => ({ provider, model: resolveProviderModel(provider) }));
+  const ids = candidates.filter((c) => c.model).map((c) => cooldownId(c));
+  const inCooldown = await checkCooldowns(admin, ids);
+
   const systemPrompt = stage.systemPrompt(language, detail);
   const maxOutputTokens = stage.maxOutputTokens(detail);
 
   let lastFailure: Extract<StageAttemptResult, { ok: false }> | null = null;
-  for (let i = 0; i < providerOrder.length; i++) {
+  let attempted = false;
+  for (let i = 0; i < candidates.length; i++) {
+    const { provider, model } = candidates[i];
+    // An unconfigured provider (model === '') has no meaningful cooldown key — let callProvider
+    // raise its own clear "not configured" error below rather than silently treating a
+    // misconfiguration as if it were just rate-limited.
+    if (model && inCooldown.has(cooldownId({ provider, model }))) continue;
+
+    attempted = true;
     try {
-      const result = await callProvider(providerOrder[i], { prompt: inputText, systemPrompt, maxOutputTokens });
+      const result = await callProvider(provider, { prompt: inputText, systemPrompt, maxOutputTokens });
+      await recordUsage(admin, {
+        provider,
+        model: result.model,
+        task: taskName,
+        stage: stage.name,
+        ok: true,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        totalTokens: result.totalTokens,
+        thoughtsTokens: result.thoughtsTokens,
+        requestId,
+      });
       return { ok: true, text: result.text, provider: result.provider, model: result.model, usedFallback: i > 0 };
     } catch (err) {
       // Move to the next provider in the order only after this one returns ok:false (throws) — the
-      // last one's failure is what gets reported if every provider in the order is exhausted, since
-      // it's the most recent, most relevant signal for why the stage ultimately failed.
-      lastFailure = toFailure(err);
+      // last one's failure is what gets reported if every candidate is exhausted, since it's the
+      // most recent, most relevant signal for why the stage ultimately failed.
+      const failure = toFailure(err);
+      lastFailure = failure;
+      await recordUsage(admin, {
+        provider,
+        model: model || null,
+        task: taskName,
+        stage: stage.name,
+        ok: false,
+        kind: failure.kind,
+        reason: failure.reason,
+        limitSource: failure.limitSource,
+        requestId,
+      });
+      // Cooldown state is written only on a genuine 429 — never for a non-rate-limit error (a
+      // misconfigured key, a 503, a network failure) and never on success.
+      if (failure.kind === 'rate_limit' && model) {
+        await recordCooldown(admin, {
+          provider,
+          model,
+          reason: failure.reason as AiRateLimitReason | undefined,
+          limitSource: failure.limitSource,
+          rateLimitHeaders: failure.rateLimitHeaders,
+        });
+      }
     }
+  }
+  if (!attempted) {
+    return { ok: false, kind: 'error', message: `${stage.name}: every configured provider is currently in cooldown.` };
   }
   return lastFailure ?? { ok: false, kind: 'error', message: `${stage.name} has no configured providers.` };
 }
@@ -91,7 +154,9 @@ export async function runRegistryTask(
   task: TaskDefinition,
   rawPayload: unknown,
   language: SupportedLanguage,
-  detail: DetailLevel
+  detail: DetailLevel,
+  admin: AdminClient,
+  requestId: string
 ): Promise<RunTaskResult> {
   let currentInput: unknown;
   try {
@@ -110,7 +175,7 @@ export async function runRegistryTask(
 
   for (const stage of task.stages) {
     const inputText = JSON.stringify(currentInput);
-    const outcome = await runStage(stage, inputText, language, detail);
+    const outcome = await runStage(stage, inputText, language, detail, admin, task.name, requestId);
 
     if (!outcome.ok) {
       return { ok: false, task: task.name, stage: stage.name, ...outcome };

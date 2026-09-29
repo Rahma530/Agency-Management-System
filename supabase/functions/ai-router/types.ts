@@ -40,6 +40,16 @@ export interface AiCallSuccess {
   provider: AiProvider;
   model: string;
   rateLimitHeaders?: RateLimitHeaders;
+  // Phase 3: token counts, when the provider's response includes them, for ai_usage. Groq/
+  // OpenRouter read these from the OpenAI-compatible `usage` object; Gemini from its own
+  // `usageMetadata`. thoughtsTokens is Gemini-only (usageMetadata.thoughtsTokenCount) — captured as
+  // its own field specifically to observe whether Gemini's thinking tokens eat into
+  // maxOutputTokens, the unverified risk flagged at the end of Phase 2 (this sandbox's network
+  // egress proxy blocked a direct read of Google's docs on this).
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  thoughtsTokens?: number;
 }
 
 export type AiErrorKind = 'rate_limit' | 'error';

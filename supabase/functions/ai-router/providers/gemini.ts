@@ -71,5 +71,19 @@ export async function callGemini(input: AiCallInput): Promise<AiCallSuccess> {
     .join('');
   if (!text) throw new AiProviderError('error', 'Gemini returned no usable text.');
 
-  return { text, provider: 'gemini', model: GEMINI_MODEL, rateLimitHeaders };
+  // usageMetadata's field names are confirmed from real captured responses this session (Phase 1/2
+  // live testing), not a first-hand read of Google's docs (blocked by this sandbox's egress
+  // proxy) — thoughtsTokenCount is only present at all when the model actually used thinking
+  // tokens, so it's left undefined rather than 0 when absent.
+  const usage = data?.usageMetadata;
+  return {
+    text,
+    provider: 'gemini',
+    model: GEMINI_MODEL,
+    rateLimitHeaders,
+    inputTokens: typeof usage?.promptTokenCount === 'number' ? usage.promptTokenCount : undefined,
+    outputTokens: typeof usage?.candidatesTokenCount === 'number' ? usage.candidatesTokenCount : undefined,
+    totalTokens: typeof usage?.totalTokenCount === 'number' ? usage.totalTokenCount : undefined,
+    thoughtsTokens: typeof usage?.thoughtsTokenCount === 'number' ? usage.thoughtsTokenCount : undefined,
+  };
 }
