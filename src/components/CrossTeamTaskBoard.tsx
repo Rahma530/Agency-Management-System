@@ -631,7 +631,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
     // 'closed' is the one transition every other status change here is deliberately NOT gated
     // for: it requires the assignee's done_link to already be submitted and the mover to be the
-    // task's creator, its assignee, or head_of_technical (canCloseTask/canSubmitTaskForClosing in
+    // task's creator, its assignee, or technical leadership (canCloseTask/canSubmitTaskForClosing in
     // lib/taskLifecycle.ts) — matched server-side by tasks_update_rls. Every other target status
     // is unrestricted, same as before.
     if (targetStatus === 'closed') {
@@ -1548,7 +1548,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
 
               {/* Done Link — surfaced once the task reaches 'completed': the assignee's link to
-                  their finished work, for the creator/assignee/head_of_technical to review before
+                  their finished work, for the creator/assignee/technical leadership to review before
                   closing. Distinct from Drive Link above (always-visible general reference). */}
               {isTaskDone(selectedTaskDetails.status) && (
                 <div>

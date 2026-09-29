@@ -14,17 +14,21 @@ export const TASK_STATUS_ORDER: TaskStatus[] = ['todo', 'in_progress', 'in_revie
 export const isTaskDone = (status: TaskStatus): boolean => status === 'completed' || status === 'closed';
 
 // Who may transition a task INTO 'closed': its creator, its current assignee (the person who did
-// the work can also close it themselves), or head_of_technical (this session's standing "full
-// access" precedent). Deliberately narrower than every other status transition in this app, which
-// has no assignee/creator restriction at all — this is a new, additional gate specific to the
-// closing action, not a general task-edit permission.
+// the work can also close it themselves), or either organization-wide technical role. Deliberately
+// narrower than every other status transition in this app, which has no assignee/creator
+// restriction at all — this is a new, additional gate specific to the closing action, not a
+// general task-edit permission.
 export const canCloseTask = (
   task: Pick<TaskRecord, 'created_by' | 'assigned_to'>,
   user: Pick<UserRecord, 'id' | 'role'>
-): boolean => task.created_by === user.id || task.assigned_to === user.id || user.role === 'head_of_technical';
+): boolean =>
+  task.created_by === user.id ||
+  task.assigned_to === user.id ||
+  user.role === 'head_of_technical' ||
+  user.role === 'ai_engineer';
 
 // The Close Task control should only be usable once the task has actually reached 'completed' and
-// the assignee has submitted a done_link for the creator/assignee/head_of_technical to review —
+// the assignee has submitted a done_link for the creator/assignee/technical leadership to review —
 // reinforcing the "review before closing" intent even though done_link is optional at the DB
 // level. Combine with canCloseTask() for the full gate on rendering/enabling that control.
 export const canSubmitTaskForClosing = (task: Pick<TaskRecord, 'status' | 'done_link'>): boolean =>

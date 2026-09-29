@@ -1760,7 +1760,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               )}
 
               {/* Done Link — surfaced once the task reaches 'completed': the assignee's link to
-                  their finished work, for the creator/assignee/head_of_technical to review before
+                  their finished work, for the creator/assignee/technical leadership to review before
                   closing. Same pattern as CrossTeamTaskBoard.tsx's own Done Link field. */}
               {isTaskDone(selectedTaskDetails.status) && (
                 <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800">

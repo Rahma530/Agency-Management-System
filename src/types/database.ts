@@ -42,7 +42,7 @@ export type ClientSector = 'E-Commerce' | 'Service';
 export type ClientStatus = 'onboarding' | 'active' | 'paused' | 'renewal' | 'closed';
 
 // 'closed' is a manual confirmation step after 'completed' — the task's creator, its assignee, or
-// head_of_technical reviews the assignee's done_link and closes it out themselves (never
+// head_of_technical/ai_engineer reviews the assignee's done_link and closes it out themselves (never
 // automatic). Functionally identical to 'completed' for every downstream calculation (capacity,
 // overdue, completion metrics) — see isTaskDone() in lib/taskLifecycle.ts, the single source of
 // truth for that equivalence instead of checking either value inline.
@@ -313,7 +313,7 @@ export interface TaskRecord {
   // reference link, always visible/editable regardless of status — distinct from done_link below.
   drive_link?: string | null;
   // The assignee's link to their finished work (e.g. Google Drive/Figma), submitted once the task
-  // reaches 'completed' and reviewed by the creator/assignee/head_of_technical before manually
+  // reaches 'completed' and reviewed by the creator/assignee/technical leadership before manually
   // closing the task — see canCloseTask() in lib/taskLifecycle.ts.
   done_link?: string | null;
 }
