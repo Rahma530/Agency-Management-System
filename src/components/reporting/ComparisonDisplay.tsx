@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, AlertTriangle, Sparkles } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, Sparkles, Download } from 'lucide-react';
 import { ClientComparisonRecord, ClientRecord, ReportRecord, ServiceType, UserRecord } from '../../types/database';
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
+import { downloadReportPdf, buildUnifiedReportMetricsTable, PdfParagraph, PdfBulletList } from '../../lib/pdfExport';
 
 // ----------------------------------------------------------------------------
 // Shared presentation pieces for a generated ClientComparisonRecord and the ReportRecords filed
@@ -268,6 +269,53 @@ export const ComparisonCard: React.FC<{
     if (result) setAiSummaryResult(result);
   };
 
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  // Combined-scope item E: builds the PDF from the same already-filtered view-model this card
+  // already renders — narrative/visibleMetrics-derived text and aiSummaryResult (itself already
+  // generated from a viewerServiceFilter-scoped payload, see handleGenerateAiSummary above) —
+  // never from comparison's raw, unfiltered fields directly. This is deliberate: a PDF export is a
+  // new place the same cross-department leak Stage C closed could reappear if it read from
+  // unfiltered data instead of what's already on screen.
+  const handleDownloadPdf = async () => {
+    if (!narrative) return;
+    setIsDownloadingPdf(true);
+    setPdfError(null);
+    try {
+      const paragraphs: PdfParagraph[] = [
+        { heading: 'Summary', body: narrative.summary },
+        {
+          heading: 'Recommendation',
+          body: viewerServiceFilter ? narrative.recommendations : comparison.ai_recommendations_text || narrative.recommendations,
+        },
+      ];
+      const bulletLists: PdfBulletList[] = [];
+      if (aiSummaryResult) {
+        paragraphs.push({ heading: 'AI Summary', body: aiSummaryResult.summary });
+        aiSummaryResult.by_service.forEach((entry) => {
+          const title = SERVICE_TITLES[entry.service as keyof typeof SERVICE_TITLES] || entry.service;
+          paragraphs.push({ heading: `AI Summary — ${title}`, body: entry.text });
+        });
+        if (aiSummaryResult.recommendations.length > 0) {
+          bulletLists.push({ heading: 'AI Recommendations', items: aiSummaryResult.recommendations });
+        }
+      }
+      await downloadReportPdf({
+        filename: `campaign-summary-${comparison.period_current}.pdf`,
+        title: 'Campaign Summary Report',
+        subtitle: `${subtitle ? `${subtitle} — ` : ''}${comparison.period_current} vs ${comparison.period_previous}`,
+        paragraphs,
+        bulletLists,
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      setPdfError('Could not generate the PDF — try again.');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   return (
     <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -362,8 +410,8 @@ export const ComparisonCard: React.FC<{
             {viewerServiceFilter ? narrative.recommendations : comparison.ai_recommendations_text || narrative.recommendations}
           </p>
 
-          {canShowAiButton && (
-            <div className="pt-1.5 border-t border-purple-900/20">
+          <div className="pt-1.5 border-t border-purple-900/20 flex items-center gap-2 flex-wrap">
+            {canShowAiButton && (
               <button
                 onClick={handleGenerateAiSummary}
                 disabled={isGeneratingAiSummary}
@@ -375,8 +423,17 @@ export const ComparisonCard: React.FC<{
                   ? 'Regenerate AI Summary'
                   : 'Generate AI Summary'}
               </button>
-            </div>
-          )}
+            )}
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="pdf-download-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-stone-200 bg-stone-800/60 hover:bg-stone-700/60 hover:text-white border border-stone-600/40 transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              <Download className="w-3 h-3" />
+              {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
+            </button>
+            {pdfError && <span className="text-[11px] text-red-300">{pdfError}</span>}
+          </div>
 
           {/* AI-generated content — Arabic per the request's language:'ar' (matches this task's
               prompt design: metric names like ROAS/CPA stay in English inside Arabic sentences).
@@ -446,6 +503,36 @@ export const UnifiedReportPanel: React.FC<{
     if (fresh) setResult(fresh);
   };
 
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  // Combined-scope item E: the metrics table is built from latestComparison directly, unfiltered
+  // — correct here specifically because this panel is AM-only (isClientsOwnAmAgent in
+  // ClientDashboard.tsx), so there is no viewerServiceFilter concept to respect in the first
+  // place; buildUnifiedReportMetricsTable deliberately has no filter parameter, so it can't
+  // accidentally be reused from a scoped context without a compile error forcing a second look.
+  const handleDownloadPdf = async () => {
+    if (!latestComparison || !result) return;
+    setIsDownloadingPdf(true);
+    setPdfError(null);
+    try {
+      await downloadReportPdf({
+        filename: `unified-client-report-${latestComparison.period_current}.pdf`,
+        title: 'Unified Client Report',
+        subtitle:
+          latestComparison.period_current + (latestComparison.period_previous ? ` vs ${latestComparison.period_previous}` : ''),
+        paragraphs: [{ heading: 'Narrative', body: result.narrative }],
+        bulletLists: result.recommendations.length > 0 ? [{ heading: 'Recommendations', items: result.recommendations }] : [],
+        table: buildUnifiedReportMetricsTable(latestComparison),
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      setPdfError('Could not generate the PDF — try again.');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   return (
     <div className="p-4 rounded-xl border border-amber-900/30 bg-amber-950/10 space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -493,6 +580,17 @@ export const UnifiedReportPanel: React.FC<{
               ))}
             </ul>
           )}
+          <div className="pt-1.5 border-t border-amber-900/20 flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="pdf-download-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-stone-200 bg-stone-800/60 hover:bg-stone-700/60 hover:text-white border border-stone-600/40 transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              <Download className="w-3 h-3" />
+              {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
+            </button>
+            {pdfError && <span className="text-[11px] text-red-300">{pdfError}</span>}
+          </div>
         </div>
       )}
     </div>
