@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
 import { ClientComparisonRecord, ClientRecord, ReportRecord, UserRecord } from '../../types/database';
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
@@ -25,6 +25,113 @@ export const formatMetricValue = (value: number | null | undefined, unit: string
   if (value === null || value === undefined) return 'N/A';
   const rounded = Number.isInteger(value) ? value : Math.round(value * 100) / 100;
   return `${rounded.toLocaleString()}${unit}`;
+};
+
+// ----------------------------------------------------------------------------
+// Phase 4 (AI Orchestrator): CAMPAIGN_SUMMARY payload builder. Converts an already-computed
+// ClientComparisonRecord into the exact shape supabase/functions/ai-router/taskRegistry.ts's
+// CAMPAIGN_SUMMARY input allowlist expects. Kept here rather than in reportingEngine.ts since it
+// only runs when the optional "Generate AI Summary" button below is pressed — this intentionally
+// duplicates the allowlist's own service/metric vocabulary rather than importing it, since
+// taskRegistry.ts is Deno Edge Function code, not reachable from this Vite/browser bundle. This is
+// the same "duplicated on purpose, kept in sync by convention" relationship taskRegistry.ts's own
+// header comment already documents in the other direction (it mirrors SERVICE_METRIC_LABELS/UNITS
+// defined just above in this file).
+// ----------------------------------------------------------------------------
+export interface CampaignSummaryMetricPoint {
+  service: 'media_buying' | 'social_media' | 'seo';
+  metric: string;
+  current_value: number | null;
+  previous_value: number | null;
+  unit: string;
+}
+
+export interface CampaignSummaryPayload {
+  period_current: string;
+  period_previous: string | null;
+  metrics: CampaignSummaryMetricPoint[];
+}
+
+export interface CampaignSummaryDetailedResult {
+  summary: string;
+  by_service: { service: string; text: string }[];
+  recommendations: string[];
+}
+
+const CAMPAIGN_SUMMARY_MONTH_LABEL_RE = /^\d{4}-\d{2}$/;
+
+// SERVICE_METRIC_UNITS above carries a leading space for display concatenation (e.g. " SAR", so
+// formatMetricValue can produce "1,200 SAR") — ai-router's CAMPAIGN_SUMMARY_UNITS allowlist
+// requires the bare string ('', 'SAR', '%', 'x') with no leading space, so this trims rather than
+// reusing that table's values verbatim.
+function toAllowlistUnit(displayUnit: string): string {
+  return displayUnit.trim();
+}
+
+// True only for a real 'comparison' row (never period_summary — there's no previous period to
+// diff against, and no rule-based narrative renders for one either) whose period_current is a
+// plain "YYYY-MM" label with at least one service's metrics present. Quarterly ("2026-Q1"), yearly
+// ("2026"), and custom-range ("2026-01-01_2026-03-31") comparisons all fail ai-router's own
+// period_current validation (see taskRegistry.ts's PERIOD_LABEL_RE) — rather than let the AI
+// button fail every time for those, it's simply never offered for them.
+export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecord): boolean {
+  if (comparison.row_kind === 'period_summary') return false;
+  if (!CAMPAIGN_SUMMARY_MONTH_LABEL_RE.test(comparison.period_current)) return false;
+  return (['media_buying', 'social_media', 'seo'] as const).some(
+    (service) => comparison.metrics_current[service] || comparison.metrics_previous[service]
+  );
+}
+
+// Builds the CAMPAIGN_SUMMARY payload from a comparison's already-computed metrics_current/
+// metrics_previous — a pure, deterministic transform, no fetch. Sends only the raw current_value/
+// previous_value pair per metric; delta_pct is intentionally NOT computed here — ai-router's own
+// buildAnalyzeInput() (taskRegistry.ts) computes it server-side from these same two numbers, per
+// this project's standing rule that percentage math is never trusted to a model or duplicated
+// client-side.
+//
+// Known sign inconsistency, flagged but deliberately NOT fixed here (out of scope for this phase):
+// buildAnalyzeInput() computes delta_pct as (current - previous) / previous, with no Math.abs,
+// while this app's own reportingEngine.ts's pctDelta() divides by Math.abs(previous). The two
+// agree for every metric here except follower_growth — the only one of the nine that can
+// legitimately be negative in a previous period (a net follower loss). If a previous period's
+// follower_growth was negative, the AI text's delta_pct and the DeltaBadge already on screen for
+// that same metric can disagree in sign. Narrow (only reachable via follower_growth) and left
+// alone per this phase's scope — fixing it means touching either ai-router's or
+// reportingEngine.ts's shared calculation logic, a separate, narrow change if this inconsistency
+// ever proves worth resolving.
+export function buildCampaignSummaryPayload(comparison: ClientComparisonRecord): CampaignSummaryPayload {
+  const metrics: CampaignSummaryMetricPoint[] = [];
+
+  (['media_buying', 'social_media', 'seo'] as const).forEach((service) => {
+    const current = comparison.metrics_current[service];
+    const previous = comparison.metrics_previous[service];
+    if (!current && !previous) return;
+    const labels = SERVICE_METRIC_LABELS[service];
+    const units = SERVICE_METRIC_UNITS[service];
+    Object.keys(labels).forEach((metric) => {
+      const currentValue = (current as unknown as Record<string, unknown> | undefined)?.[metric];
+      const previousValue = (previous as unknown as Record<string, unknown> | undefined)?.[metric];
+      metrics.push({
+        service,
+        metric,
+        current_value: typeof currentValue === 'number' ? currentValue : null,
+        previous_value: typeof previousValue === 'number' ? previousValue : null,
+        unit: toAllowlistUnit(units[metric] ?? ''),
+      });
+    });
+  });
+
+  return {
+    period_current: comparison.period_current,
+    period_previous: comparison.period_previous ?? null,
+    metrics,
+  };
+}
+
+const SERVICE_TITLES: Record<'media_buying' | 'social_media' | 'seo', string> = {
+  media_buying: 'Media Buying',
+  social_media: 'Social Media',
+  seo: 'SEO (Delivery)',
 };
 
 export const DeltaBadge: React.FC<{ value: number | null | undefined }> = ({ value }) => {
@@ -95,11 +202,39 @@ export const ComparisonCard: React.FC<{
   isGeneratingReport?: boolean;
   onGenerateReport?: () => void;
   anomalyFlags?: AnomalyFlag[];
-}> = ({ comparison, subtitle, canGenerateReport, isGeneratingReport, onGenerateReport, anomalyFlags }) => {
+  // Phase 4 (AI Orchestrator): optional, additive-only enhancement to the rule-based narrative
+  // below — never replaces it, never shown on its own. Omitted (same convention as
+  // canGenerateReport/onGenerateReport above) wherever the AI button shouldn't appear at all;
+  // ClientPortalView.tsx never passes this, so clients never see it. The function itself never
+  // throws — it resolves to null and shows its own toast internally on any failure (see
+  // App.tsx's handleGenerateCampaignSummary) — so this component never needs its own error state.
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+}> = ({ comparison, subtitle, canGenerateReport, isGeneratingReport, onGenerateReport, anomalyFlags, onGenerateAiSummary }) => {
   const isSummary = comparison.row_kind === 'period_summary';
   const narrative = isSummary
     ? null
     : generateComparisonNarrative(comparison.metrics_current, comparison.metrics_previous, comparison.delta);
+
+  const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+  const [aiSummaryResult, setAiSummaryResult] = useState<CampaignSummaryDetailedResult | null>(null);
+
+  // Ephemeral by design (no persistence, no new column): reset whenever this card starts
+  // representing a different comparison row, so a stale result never carries over if the parent
+  // list re-renders with the same component instance pointed at a different row.
+  useEffect(() => {
+    setAiSummaryResult(null);
+    setIsGeneratingAiSummary(false);
+  }, [comparison.id]);
+
+  const canShowAiButton = !!onGenerateAiSummary && canBuildCampaignSummaryPayload(comparison);
+
+  const handleGenerateAiSummary = async () => {
+    if (!onGenerateAiSummary) return;
+    setIsGeneratingAiSummary(true);
+    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison));
+    setIsGeneratingAiSummary(false);
+    if (result) setAiSummaryResult(result);
+  };
 
   return (
     <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
@@ -182,6 +317,52 @@ export const ComparisonCard: React.FC<{
             <strong className="text-purple-300">Recommendation: </strong>
             {comparison.ai_recommendations_text || narrative.recommendations}
           </p>
+
+          {canShowAiButton && (
+            <div className="pt-1.5 border-t border-purple-900/20">
+              <button
+                onClick={handleGenerateAiSummary}
+                disabled={isGeneratingAiSummary}
+                className="ai-summary-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-indigo-200 bg-indigo-900/40 hover:bg-indigo-800/60 hover:text-white border border-indigo-700/40 transition-all disabled:opacity-50"
+              >
+                {isGeneratingAiSummary
+                  ? 'Generating AI Summary...'
+                  : aiSummaryResult
+                  ? 'Regenerate AI Summary'
+                  : 'Generate AI Summary'}
+              </button>
+            </div>
+          )}
+
+          {/* AI-generated content — Arabic per the request's language:'ar' (matches this task's
+              prompt design: metric names like ROAS/CPA stay in English inside Arabic sentences).
+              Visually distinct (indigo, not purple) from the deterministic narrative above it, so
+              it's never mistaken for the same rule-based text. */}
+          {aiSummaryResult && (
+            <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-900/30 space-y-1.5">
+              <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-wide">AI Summary</p>
+              <p className="text-xs text-stone-200 leading-relaxed" dir="rtl">
+                {aiSummaryResult.summary}
+              </p>
+              {aiSummaryResult.by_service.map((entry, i) => (
+                <p key={i} className="text-xs text-stone-200 leading-relaxed" dir="rtl">
+                  <strong className="text-indigo-300">
+                    {SERVICE_TITLES[entry.service as keyof typeof SERVICE_TITLES] || entry.service}:{' '}
+                  </strong>
+                  {entry.text}
+                </p>
+              ))}
+              {aiSummaryResult.recommendations.length > 0 && (
+                <ul className="list-disc list-inside space-y-0.5" dir="rtl">
+                  {aiSummaryResult.recommendations.map((rec, i) => (
+                    <li key={i} className="text-xs text-stone-200 leading-relaxed">
+                      {rec}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

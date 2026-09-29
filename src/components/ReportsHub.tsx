@@ -21,7 +21,13 @@ import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { PeriodSelector } from './reporting/PeriodSelector';
-import { ComparisonCard, FiledReportsList, describeComparisonScope } from './reporting/ComparisonDisplay';
+import {
+  ComparisonCard,
+  FiledReportsList,
+  describeComparisonScope,
+  CampaignSummaryPayload,
+  CampaignSummaryDetailedResult,
+} from './reporting/ComparisonDisplay';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
 
@@ -40,6 +46,11 @@ interface ReportsHubProps {
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<void>;
   onGenerateReport: (comparisonId: string, period: string) => Promise<void>;
+  // Phase 4 (AI Orchestrator): same optional-prop convention as ComparisonCard's own
+  // onGenerateAiSummary — reuses this hub's existing nav-level access gate exactly (whoever can
+  // reach ReportsHub at all already sees canGenerateReport below unconditionally, so the AI button
+  // gets no separate check either).
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
 }
 
 // Role-agnostic reporting entry point: unlike ClientDashboard's per-client "Reports &
@@ -59,6 +70,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   dailyLogs = [],
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
@@ -389,6 +401,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                 canGenerateReport
                 isGeneratingReport={generatingReportForComparisonId === cmp.id}
                 onGenerateReport={() => handleGenerateReport(cmp)}
+                onGenerateAiSummary={onGenerateAiSummary}
                 anomalyFlags={anomalyFlags}
               />
             );

@@ -66,7 +66,7 @@ import {
 } from './CampaignManagementModule';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope, detectClientAnomalies } from '../lib/reportingEngine';
 import { PeriodSelector } from './reporting/PeriodSelector';
-import { ComparisonCard, FiledReportsList } from './reporting/ComparisonDisplay';
+import { ComparisonCard, FiledReportsList, CampaignSummaryPayload, CampaignSummaryDetailedResult } from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
@@ -129,6 +129,9 @@ interface ClientDashboardProps {
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<void>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  // Phase 4 (AI Orchestrator): threaded straight to ComparisonCard, same optional-prop convention
+  // as onGenerateReport above — omitted by every caller that shouldn't offer it (see App.tsx).
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   clientPortalUser?: ClientPortalUserRecord | null;
@@ -206,6 +209,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onMarkAssignmentViewed,
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   clientPortalUser,
@@ -2222,6 +2226,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               canGenerateReport={!!onGenerateReport}
               generatingReportForComparisonId={generatingReportForComparisonId}
               onGenerateReport={handleGenerateReport}
+              onGenerateAiSummary={onGenerateAiSummary}
               canGenerateMonthlyDraft={hasReportsAccess && !!onGenerateMonthlyReportDraft}
               isGeneratingDraft={isGeneratingDraft}
               onGenerateMonthlyDraft={handleGenerateMonthlyDraft}
@@ -2367,6 +2372,7 @@ interface ReportsAndComparisonsTabProps {
   canGenerateReport: boolean;
   generatingReportForComparisonId: string | null;
   onGenerateReport: (comparison: ClientComparisonRecord) => void;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   canGenerateMonthlyDraft: boolean;
   isGeneratingDraft: boolean;
   onGenerateMonthlyDraft: () => void;
@@ -2396,6 +2402,7 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   canGenerateReport,
   generatingReportForComparisonId,
   onGenerateReport,
+  onGenerateAiSummary,
   canGenerateMonthlyDraft,
   isGeneratingDraft,
   onGenerateMonthlyDraft,
@@ -2471,6 +2478,7 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
               canGenerateReport={canGenerateReport}
               isGeneratingReport={generatingReportForComparisonId === cmp.id}
               onGenerateReport={() => onGenerateReport(cmp)}
+              onGenerateAiSummary={onGenerateAiSummary}
               anomalyFlags={anomalyResult?.latestComparisonId === cmp.id ? anomalyResult.flags : undefined}
             />
           ))

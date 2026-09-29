@@ -52,6 +52,7 @@ import { BriefRepositoryView } from './BriefRepositoryView';
 import { DynamicBriefForm } from './DynamicBriefForm';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult } from './reporting/ComparisonDisplay';
 import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
@@ -87,6 +88,7 @@ interface ServiceBriefsRoutingViewProps {
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<void>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
@@ -161,6 +163,7 @@ const AMServiceBriefsPanel: React.FC<{
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<void>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
@@ -223,6 +226,7 @@ const AMServiceBriefsPanel: React.FC<{
   clientPortalUsers,
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -362,6 +366,7 @@ const AMServiceBriefsPanel: React.FC<{
           onDeleteClient={onDeleteClient}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
+          onGenerateAiSummary={onGenerateAiSummary}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           onCreatePortalLogin={onCreatePortalLogin}
@@ -396,6 +401,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onNavigateToModule,
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -433,6 +439,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         clientPortalUsers={clientPortalUsers}
         onGenerateComparison={onGenerateComparison}
         onGenerateReport={onGenerateReport}
+        onGenerateAiSummary={onGenerateAiSummary}
         onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
         onApproveReport={onApproveReport}
         onCreatePortalLogin={onCreatePortalLogin}

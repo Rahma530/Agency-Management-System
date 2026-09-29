@@ -53,6 +53,7 @@ import {
   resolveClientsForSubject,
   serviceFilterForRole,
 } from './lib/reportingEngine';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
 import { DashboardHub } from './components/DashboardHub';
@@ -876,6 +877,81 @@ export default function App() {
       throw new Error('Unexpected invitation response.');
     }
     return data as SendInvitationResult;
+  };
+
+  // Phase 4 (AI Orchestrator): one row's AI call shouldn't be able to hang the button forever —
+  // races the real request against a timeout, same pattern as EmployeeAdminHub.tsx's own
+  // withTimeout/ROW_TIMEOUT_MS (used there for CSV-import row writes). Not imported from there
+  // since that helper isn't exported and this is a different component — a small local copy is
+  // simpler than exporting a component-internal utility. 25s (vs. that one's 15s) since
+  // CAMPAIGN_SUMMARY's ANALYZE stage can chain up to three provider attempts on fallback, each its
+  // own network round trip, before the Edge Function itself gives up.
+  const AI_SUMMARY_TIMEOUT_MS = 25000;
+  function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (err) => { clearTimeout(timer); reject(err); }
+      );
+    });
+  }
+
+  // Optional, additive-only AI enhancement (Phase 4) for ComparisonCard's rule-based narrative —
+  // never called unless the employee presses "Generate AI Summary". Unlike invokeImpersonation/
+  // handleSendInvitation above, this never throws to its caller: any failure (timeout, ai-router
+  // ok:false, a malformed response) is caught here, surfaced via the existing showNotification
+  // toast, and resolves to null — so ComparisonCard (reused by three different surfaces) never
+  // needs its own error-handling branch, only "did I get a result back or not."
+  const handleGenerateCampaignSummary = async (
+    payload: CampaignSummaryPayload
+  ): Promise<CampaignSummaryDetailedResult | null> => {
+    try {
+      const { data, error } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: { task: 'CAMPAIGN_SUMMARY', language: 'ar', detail: 'detailed', payload },
+        }),
+        AI_SUMMARY_TIMEOUT_MS,
+        `AI summary timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+      );
+      if (error) {
+        const context = error.context;
+        const status = context instanceof Response ? context.status : undefined;
+        let detail: string | undefined;
+        if (context instanceof Response) {
+          try {
+            const body: unknown = await context.clone().json();
+            if (body && typeof body === 'object') {
+              const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+              if (typeof value === 'string') detail = value;
+            }
+          } catch { /* A gateway error may not have a JSON body. */ }
+        }
+        console.error('AI summary request failed:', { status, detail, errorName: error.name, errorMessage: error.message });
+        throw new Error(status
+          ? `AI summary request failed (HTTP ${status}): ${detail || error.message}`
+          : `AI summary request failed before an HTTP response: ${error.message}`);
+      }
+      if (!data?.ok) {
+        // A rate-limit or provider failure is an anticipated ai-router outcome, not a broken
+        // request — ai-router's own message is already a plain, displayable string.
+        throw new Error(data?.message || 'AI summary is currently unavailable.');
+      }
+      const result = data.result;
+      if (
+        !result || typeof result !== 'object'
+        || typeof result.summary !== 'string'
+        || !Array.isArray(result.by_service)
+        || !Array.isArray(result.recommendations)
+      ) {
+        throw new Error('Unexpected AI summary response.');
+      }
+      return result as CampaignSummaryDetailedResult;
+    } catch (err: any) {
+      console.error('CAMPAIGN_SUMMARY request failed:', err);
+      showNotification(err?.message || 'AI summary unavailable — try again later.', 'info');
+      return null;
+    }
   };
 
   const handleStartEmployeeTest = async (employee: UserRecord, account: TestAccountStatus) => {
@@ -4653,6 +4729,7 @@ export default function App() {
                     onNavigateToModule={handleNavigateToModule}
                     onGenerateComparison={handleGenerateComparison}
                     onGenerateReport={handleGenerateReport}
+                    onGenerateAiSummary={handleGenerateCampaignSummary}
                     onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                     onApproveReport={handleApproveReport}
                     onCreatePortalLogin={handleCreatePortalLogin}
@@ -4703,6 +4780,7 @@ export default function App() {
                   onNavigateToModule={handleNavigateToModule}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
+                  onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -4796,6 +4874,7 @@ export default function App() {
                   onUpdateCampaign={handleUpdateCampaign}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
+                  onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -4824,6 +4903,7 @@ export default function App() {
                   dailyLogs={dailyLogs}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
+                  onGenerateAiSummary={handleGenerateCampaignSummary}
                 />
               </div>
             )}
