@@ -785,17 +785,19 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             <span>Service Briefs{hasBriefViewAccess && isAMAgentAssigned ? ` (${clientBriefs.length})` : ''}</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('campaigns')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
-              activeTab === 'campaigns'
-                ? 'bg-purple-600 text-white shadow'
-                : 'text-stone-400 hover:text-stone-200 hover:bg-purple-950/30'
-            }`}
-          >
-            <Target className="w-3.5 h-3.5" />
-            <span>Campaigns & Performance ({clientCampaigns.length})</span>
-          </button>
+          {hasCampaignViewAccess && (
+            <button
+              onClick={() => setActiveTab('campaigns')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'campaigns'
+                  ? 'bg-purple-600 text-white shadow'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-purple-950/30'
+              }`}
+            >
+              <Target className="w-3.5 h-3.5" />
+              <span>Campaigns & Performance ({clientCampaigns.length})</span>
+            </button>
+          )}
 
           <button
             onClick={() => setActiveTab('tasks')}
