@@ -24,3 +24,16 @@ export function callProvider(provider: AiProvider, input: AiCallInput): Promise<
   if (provider === 'groq') return callOpenAiCompatible(GROQ_CONFIG, input);
   return callOpenAiCompatible(OPENROUTER_CONFIG, input);
 }
+
+// Phase 3: the router needs to know which model a provider is actually configured to use BEFORE
+// calling it, to build the 'provider:model' key checked against ai_provider_state (see
+// ../providers/cooldown.ts) — something no adapter exposed on its own until now. This simply
+// re-reads the same env var each adapter already reads for itself (GEMINI_MODEL/GROQ_MODEL/
+// OPENROUTER_MODEL) — a small, acceptable duplication rather than restructuring every adapter to
+// also export its own model getter. Returns '' when the env var is unset, same as each adapter's
+// own read; callProvider still throws its own clear "not configured" error in that case.
+export function resolveProviderModel(provider: AiProvider): string {
+  if (provider === 'gemini') return Deno.env.get('GEMINI_MODEL') || '';
+  if (provider === 'groq') return Deno.env.get('GROQ_MODEL') || '';
+  return Deno.env.get('OPENROUTER_MODEL') || '';
+}
