@@ -3408,12 +3408,13 @@ export default function App() {
     // themselves), so `existing` is ignored and this is a no-op for them — identical behavior to
     // before this change.
     //
-    // Known limitation, not fixed here: `existing` comes from this client's own in-memory
-    // clientComparisons state, not a fresh server read at write time — two different roles writing
-    // to the very same client/period within moments of each other (before either's browser has
-    // re-fetched) could still race. Acceptable for how infrequently that specific collision would
-    // occur in practice; a airtight fix would need a server-side merge (an RPC/function doing the
-    // read-merge-write atomically) rather than this client-computed merge.
+    // KNOWN GAP, accepted for this phase, not fixed here: `existing` comes from this client's own
+    // in-memory clientComparisons state, not a fresh server read at write time — two different
+    // roles writing to the very same client/period within moments of each other (before either
+    // browser has re-fetched) could still race, and one write could lose the other's just-written
+    // service block. Deliberately not building a server-side atomic merge (an RPC doing the
+    // read-merge-write in one transaction) for this phase — revisit only if this is ever actually
+    // observed causing real data loss in practice.
     function mergeServiceScopedMetrics<T extends object>(
       existing: T | undefined,
       fresh: T,

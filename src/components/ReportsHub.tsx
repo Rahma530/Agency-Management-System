@@ -7,6 +7,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   DailyLogRecord,
+  ServiceType,
 } from '../types/database';
 import {
   ComparisonGranularity,
@@ -74,6 +75,34 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
+
+  // Combined-scope item C (extended here to close the same gap ClientDashboard.tsx just closed):
+  // which service(s) this viewer may see on a comparison row's ComparisonCard. Unlike
+  // ClientDashboard.tsx's version, this needs no per-client check — visibleComparisons below
+  // already restricts which ROWS this viewer sees at all (via resolveClientsForSubject/myClientIds,
+  // the same client-scoping mechanism), so every row that gets this far is already one this viewer
+  // is allowed to know exists; this only narrows which SERVICE(S) within that row they see, exactly
+  // the same DISPLAY-level narrowing ClientDashboard.tsx's viewerServiceFilter does, since RLS/the
+  // client-scoping above operates per-row, never per-key inside metrics_current's JSON blob. An
+  // am_agent here is unconditionally "sees everything" (not scoped to one specific client's
+  // am_agent_id the way ClientDashboard.tsx's hasReportsAccess is) because myClientIds already only
+  // ever contains clients THIS am_agent owns (resolveClientsForSubject's am_agent branch) — any row
+  // visible here is already their own client's row.
+  const seesAllServices =
+    currentUser.role === 'executive' ||
+    currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'am_team_lead' ||
+    currentUser.role === 'ai_engineer' ||
+    currentUser.role === 'am_agent';
+  const viewerServiceFilter: ServiceType[] | undefined = seesAllServices
+    ? undefined
+    : currentUser.role === 'media_buying_team_lead' || currentUser.role === 'media_buying_agent'
+    ? ['media_buying']
+    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent'
+    ? ['seo']
+    : currentUser.role === 'social_media_team_lead' || currentUser.role === 'social_media_agent'
+    ? ['social_media']
+    : undefined;
 
   // Point 9's aggregate daily-activity report — manager/leadership audience only. Note this
   // never widens visibility: dailyLogs here is whatever direct_report_visible() already let
@@ -402,6 +431,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                 isGeneratingReport={generatingReportForComparisonId === cmp.id}
                 onGenerateReport={() => handleGenerateReport(cmp)}
                 onGenerateAiSummary={onGenerateAiSummary}
+                viewerServiceFilter={viewerServiceFilter}
                 anomalyFlags={anomalyFlags}
               />
             );
