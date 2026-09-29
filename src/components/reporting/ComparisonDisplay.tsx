@@ -58,7 +58,12 @@ export interface CampaignSummaryDetailedResult {
   recommendations: string[];
 }
 
-const CAMPAIGN_SUMMARY_MONTH_LABEL_RE = /^\d{4}-\d{2}$/;
+// Matches ai-router's own widened PERIOD_LABEL_RE (taskRegistry.ts) — monthly ("2026-03"),
+// quarterly ("2026-Q1"), yearly ("2026"), and custom range ("2026-01-01_2026-03-31"). Kept as its
+// own client-side copy (not imported — taskRegistry.ts is Deno Edge Function code) so the button
+// can be pre-emptively hidden for a label ai-router would reject, same duplication relationship as
+// the rest of this payload builder.
+const CAMPAIGN_SUMMARY_PERIOD_LABEL_RE = /^(?:\d{4}-\d{2}|\d{4}-Q[1-4]|\d{4}|\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2})$/;
 
 // SERVICE_METRIC_UNITS above carries a leading space for display concatenation (e.g. " SAR", so
 // formatMetricValue can produce "1,200 SAR") — ai-router's CAMPAIGN_SUMMARY_UNITS allowlist
@@ -69,14 +74,11 @@ function toAllowlistUnit(displayUnit: string): string {
 }
 
 // True only for a real 'comparison' row (never period_summary — there's no previous period to
-// diff against, and no rule-based narrative renders for one either) whose period_current is a
-// plain "YYYY-MM" label with at least one service's metrics present. Quarterly ("2026-Q1"), yearly
-// ("2026"), and custom-range ("2026-01-01_2026-03-31") comparisons all fail ai-router's own
-// period_current validation (see taskRegistry.ts's PERIOD_LABEL_RE) — rather than let the AI
-// button fail every time for those, it's simply never offered for them.
+// diff against, and no rule-based narrative renders for one either) whose period_current matches
+// one of ai-router's four accepted label shapes, with at least one service's metrics present.
 export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecord): boolean {
   if (comparison.row_kind === 'period_summary') return false;
-  if (!CAMPAIGN_SUMMARY_MONTH_LABEL_RE.test(comparison.period_current)) return false;
+  if (!CAMPAIGN_SUMMARY_PERIOD_LABEL_RE.test(comparison.period_current)) return false;
   return (['media_buying', 'social_media', 'seo'] as const).some(
     (service) => comparison.metrics_current[service] || comparison.metrics_previous[service]
   );
@@ -87,18 +89,9 @@ export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecor
 // previous_value pair per metric; delta_pct is intentionally NOT computed here — ai-router's own
 // buildAnalyzeInput() (taskRegistry.ts) computes it server-side from these same two numbers, per
 // this project's standing rule that percentage math is never trusted to a model or duplicated
-// client-side.
-//
-// Known sign inconsistency, flagged but deliberately NOT fixed here (out of scope for this phase):
-// buildAnalyzeInput() computes delta_pct as (current - previous) / previous, with no Math.abs,
-// while this app's own reportingEngine.ts's pctDelta() divides by Math.abs(previous). The two
-// agree for every metric here except follower_growth — the only one of the nine that can
-// legitimately be negative in a previous period (a net follower loss). If a previous period's
-// follower_growth was negative, the AI text's delta_pct and the DeltaBadge already on screen for
-// that same metric can disagree in sign. Narrow (only reachable via follower_growth) and left
-// alone per this phase's scope — fixing it means touching either ai-router's or
-// reportingEngine.ts's shared calculation logic, a separate, narrow change if this inconsistency
-// ever proves worth resolving.
+// client-side. buildAnalyzeInput() now divides by Math.abs(previous_value), matching this app's
+// own reportingEngine.ts's pctDelta() exactly — previously it didn't, which could invert
+// follower_growth's sign vs. the DeltaBadge already on screen (fixed alongside this phase).
 export function buildCampaignSummaryPayload(comparison: ClientComparisonRecord): CampaignSummaryPayload {
   const metrics: CampaignSummaryMetricPoint[] = [];
 

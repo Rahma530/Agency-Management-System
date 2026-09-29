@@ -94,7 +94,13 @@ export const CAMPAIGN_SUMMARY_METRICS_BY_SERVICE: Record<CampaignSummaryService,
 
 export const CAMPAIGN_SUMMARY_UNITS = ['', 'SAR', '%', 'x'] as const;
 
-const PERIOD_LABEL_RE = /^\d{4}-\d{2}$/; // matches reportingEngine.ts's "YYYY-MM" period label format
+// Matches reportingEngine.ts's four period-label shapes: monthly ("2026-03"), quarterly
+// ("2026-Q1"), yearly ("2026"), and custom range ("2026-01-01_2026-03-31") — see
+// resolveComparisonPeriods()/customPeriod() there for the generators these mirror. Widened from
+// monthly-only after confirming (live) that nothing else in this file or in buildAnalyzeSystemPrompt
+// assumed a monthly period except the Arabic "في الشهر السابق" phrase fixed just below.
+const PERIOD_LABEL_RE = /^(?:\d{4}-\d{2}|\d{4}-Q[1-4]|\d{4}|\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2})$/;
+const PERIOD_LABEL_ERROR = 'must be a valid period label ("YYYY-MM", "YYYY-Qn", "YYYY", or "YYYY-MM-DD_YYYY-MM-DD")';
 const MAX_PAYLOAD_BYTES = 8 * 1024; // aggregated metrics only — 8 KB is already generous
 const MAX_METRICS = 20;
 
@@ -127,11 +133,11 @@ function validateCampaignSummaryPayload(rawPayload: unknown): CampaignSummaryPay
   }
 
   if (typeof p.period_current !== 'string' || !PERIOD_LABEL_RE.test(p.period_current)) {
-    throw new Error('period_current must be a "YYYY-MM" string.');
+    throw new Error(`period_current ${PERIOD_LABEL_ERROR}.`);
   }
   if (p.period_previous !== null && p.period_previous !== undefined
     && (typeof p.period_previous !== 'string' || !PERIOD_LABEL_RE.test(p.period_previous))) {
-    throw new Error('period_previous must be a "YYYY-MM" string or null.');
+    throw new Error(`period_previous ${PERIOD_LABEL_ERROR}, or null.`);
   }
   if (!Array.isArray(p.metrics) || p.metrics.length === 0 || p.metrics.length > MAX_METRICS) {
     throw new Error(`metrics must be a non-empty array of at most ${MAX_METRICS} entries.`);
@@ -194,9 +200,14 @@ function buildAnalyzeInput(payload: CampaignSummaryPayload): unknown {
       .filter((m) => m.current_value !== null || m.previous_value !== null)
       .map((m) => ({
         ...m,
+        // Math.abs(previous_value) matches reportingEngine.ts's own pctDelta() exactly — without
+        // it, a metric whose previous_value is legitimately negative (only follower_growth today,
+        // a net follower loss) could get an inverted sign here vs. the DeltaBadge already on
+        // screen for that same metric, since this app's own UI computes delta with Math.abs and
+        // this line previously didn't.
         delta_pct:
           m.current_value !== null && m.previous_value !== null && m.previous_value !== 0
-            ? Math.round(((m.current_value - m.previous_value) / m.previous_value) * 1000) / 10
+            ? Math.round(((m.current_value - m.previous_value) / Math.abs(m.previous_value)) * 1000) / 10
             : null,
       })),
   };
@@ -252,6 +263,25 @@ function getAnalyzeProviderOrder(): AiProvider[] {
 }
 
 // ----------------------------------------------------------------------------
+// Shared Arabic-quality rules — used by CAMPAIGN_SUMMARY's ANALYZE prompt below AND
+// UNIFIED_CLIENT_REPORT's prompt, so a future wording refinement (two have already happened, from
+// live testing) only needs to change one place instead of two prompts drifting apart. Returns ''
+// for English, so callers can always append this unconditionally.
+// ----------------------------------------------------------------------------
+export function buildArabicQualityRules(language: SupportedLanguage): string {
+  if (language !== 'ar') return '';
+  return (
+    `- Arabic grammar: match the verb/adjective's gender to the noun it describes (e.g. ` +
+    `"ارتفعت تكلفة الاكتساب", not "ارتفع تكلفة الاكتساب").\n` +
+    `- When the direction is already stated in words (ارتفع/انخفض/تراجع/تحسّن), write the ` +
+    `percentage as a plain positive number (e.g. 26.2%) — never with a minus sign.\n` +
+    `- Avoid "مسبقاً". When referring to the previous period, name it using its actual label from ` +
+    `the input's period_previous field (e.g. "في الفترة 2026-02" or "في الفترة 2026-Q1"), never a ` +
+    `fixed word like "الشهر الماضي" — the previous period is not always a month.\n`
+  );
+}
+
+// ----------------------------------------------------------------------------
 // CAMPAIGN_SUMMARY's ANALYZE prompt. Arabic-specific wording rules
 // (grammar/phrasing) are appended only when language === 'ar', so the English variant stays as
 // short as before — refined after live testing surfaced small but real Arabic-quality issues
@@ -261,14 +291,7 @@ function getAnalyzeProviderOrder(): AiProvider[] {
 // was before "detailed" existed.
 function buildAnalyzeSystemPrompt(language: SupportedLanguage, detail: DetailLevel): string {
   const languageName = LANGUAGE_NAMES[language];
-  const arabicRules =
-    language === 'ar'
-      ? `- Arabic grammar: match the verb/adjective's gender to the noun it describes (e.g. ` +
-        `"ارتفعت تكلفة الاكتساب", not "ارتفع تكلفة الاكتساب").\n` +
-        `- When the direction is already stated in words (ارتفع/انخفض/تراجع/تحسّن), write the ` +
-        `percentage as a plain positive number (e.g. 26.2%) — never with a minus sign.\n` +
-        `- Avoid "مسبقاً"; refer to the previous period as "في الشهر السابق".\n`
-      : '';
+  const arabicRules = buildArabicQualityRules(language);
   const intro =
     `You are a marketing performance analyst writing for an internal agency dashboard. You will ` +
     `receive a JSON object of already-verified metrics comparing two periods (service, metric, ` +
