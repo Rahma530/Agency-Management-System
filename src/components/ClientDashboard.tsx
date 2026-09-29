@@ -28,6 +28,7 @@ import {
   ClipboardCheck,
   Trash2,
   StickyNote,
+  Share2,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -75,6 +76,7 @@ import {
   UnifiedClientReportResult,
 } from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
+import { LogSocialMetricsModal } from './LogSocialMetricsModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
@@ -183,6 +185,15 @@ interface ClientDashboardProps {
       payment_card_details?: string | null;
     }
   ) => Promise<void>;
+  // Weekly manual-entry write path for social_insights (see
+  // 20261025000000_social_insights_weekly_manual_entry.sql) — omitted entirely means "this viewer
+  // can't log social metrics for this client", same optional-prop convention as onGenerateAiSummary.
+  onLogSocialMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
 }
 
 type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
@@ -236,6 +247,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onDeleteClientContract,
   onUpdatePaymentTracking,
   onUpdateClientAccess,
+  onLogSocialMetrics,
 }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab || 'overview');
   const [isDeletingClient, setIsDeletingClient] = useState(false);
@@ -500,6 +512,20 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     (currentUser.role === 'seo_agent' && isAssignedToService('seo')) ||
     (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
     (currentUser.role === 'social_media_agent' && isAssignedToService('social_media'));
+
+  // Weekly manual-entry write gate for social_insights — mirrors social_insights_write_rls /
+  // social_insights_update_rls in 20261025000000_social_insights_weekly_manual_entry.sql exactly
+  // (same roles, same client_has_service/agent_assigned checks), so the UI never offers an action
+  // the database would reject. The head_of_technical/ai_engineer branch is a TEMPORARY TRANSITION
+  // FEATURE — see that migration and src/App.tsx's Employee Impersonation comments for the
+  // convention — intended for removal once real social_media_agent/social_media_team_lead users are
+  // entering their own weekly numbers.
+  const canLogSocialMetrics =
+    clientHasService(client, 'social_media') &&
+    ((currentUser.role === 'social_media_agent' && isAssignedToService('social_media')) ||
+      (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
+      currentUser.role === 'head_of_technical' ||
+      currentUser.role === 'ai_engineer');
 
   // Which service(s) this viewer may see on this client's comparison rows. undefined means "show
   // everything" (every hasReportsAccess role) — a department agent/team lead only ever sees their
@@ -2293,6 +2319,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               onGenerateMonthlyDraft={handleGenerateMonthlyDraft}
               canApproveReport={hasReportsAccess && !!onApproveReport}
               onApproveReport={onApproveReport || (async () => {})}
+              canLogSocialMetrics={canLogSocialMetrics && !!onLogSocialMetrics}
+              onLogSocialMetrics={
+                onLogSocialMetrics
+                  ? (platform, weekStartDate, metrics) => onLogSocialMetrics(client.id, platform, weekStartDate, metrics)
+                  : undefined
+              }
             />
           )}
 
@@ -2446,6 +2478,12 @@ interface ReportsAndComparisonsTabProps {
   canApproveReport: boolean;
   onApproveReport: (reportId: string) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  canLogSocialMetrics: boolean;
+  onLogSocialMetrics?: (
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
 }
 
 const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
@@ -2479,8 +2517,11 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   canApproveReport,
   onApproveReport,
   briefFieldSchemas,
+  canLogSocialMetrics,
+  onLogSocialMetrics,
 }) => {
   const [selectedDraftReport, setSelectedDraftReport] = useState<ReportRecord | null>(null);
+  const [isLogSocialMetricsOpen, setIsLogSocialMetricsOpen] = useState(false);
 
   // Same rolling-baseline check ReportsHub.tsx runs — this tab is single-client, so there's only
   // ever one result to compute, applied only to that client's latest comparison row.
@@ -2499,6 +2540,29 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
     <div className="space-y-6">
       {canGenerateUnifiedReport && onGenerateUnifiedReport && (
         <UnifiedReportPanel latestComparison={latestFullComparison} onGenerateUnifiedReport={onGenerateUnifiedReport} />
+      )}
+
+      {canLogSocialMetrics && onLogSocialMetrics && (
+        <div className="p-4 rounded-xl border border-pink-900/30 bg-[#161224]/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Share2 className="w-4 h-4 text-pink-400" />
+            <span className="text-sm font-bold text-white">Weekly Social Metrics</span>
+          </div>
+          <button
+            onClick={() => setIsLogSocialMetricsOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-pink-600 hover:bg-pink-500 text-white transition-all"
+          >
+            Log This Week's Social Metrics
+          </button>
+        </div>
+      )}
+
+      {isLogSocialMetricsOpen && onLogSocialMetrics && (
+        <LogSocialMetricsModal
+          clientName={client.name}
+          onClose={() => setIsLogSocialMetricsOpen(false)}
+          onSubmit={onLogSocialMetrics}
+        />
       )}
 
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">

@@ -2963,6 +2963,52 @@ export default function App() {
     showNotification('Capacity reading logged successfully.');
   };
 
+  // Weekly manual-entry write path for social_insights (see
+  // 20261025000000_social_insights_weekly_manual_entry.sql). Unlike handleLogCapacity above, this
+  // is a genuine upsert keyed on (client_id, platform, week_start_date) — re-submitting the same
+  // client/platform/week overwrites that week's numbers rather than creating a duplicate row. `id`
+  // is deterministic from that same key so upserting the same week twice always targets the exact
+  // same row, with no risk of colliding with another row's randomly-generated id. `date` is kept
+  // equal to `week_start_date` so aggregateSocialMetrics() in reportingEngine.ts (untouched by this
+  // feature) keeps matching these rows via its existing inRange(date, range) check.
+  const handleLogSocialMetrics = async (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => {
+    const row: SocialInsightRecord = {
+      id: `si-${clientId}-${platform}-${weekStartDate}`,
+      client_id: clientId,
+      platform,
+      date: weekStartDate,
+      week_start_date: weekStartDate,
+      metrics: {
+        reach: metrics.reach,
+        engagement_rate: metrics.engagement_rate,
+        follower_growth: metrics.follower_growth,
+      },
+    };
+
+    if (supabaseActive) {
+      const { error } = await supabase
+        .from('social_insights')
+        .upsert([row], { onConflict: 'client_id,platform,week_start_date' });
+      if (error) throw error;
+    }
+
+    setSocialInsights((prev) => {
+      const idx = prev.findIndex(
+        (i) => i.client_id === clientId && i.platform === platform && i.week_start_date === weekStartDate
+      );
+      if (idx === -1) return [row, ...prev];
+      const next = prev.slice();
+      next[idx] = row;
+      return next;
+    });
+    showNotification("This week's social metrics were saved successfully.");
+  };
+
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
     const existingTask = tasks.find((t) => t.id === taskId);
@@ -4897,6 +4943,7 @@ export default function App() {
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGenerateUnifiedReport={handleGenerateUnifiedReport}
+                  onLogSocialMetrics={handleLogSocialMetrics}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -4992,6 +5039,7 @@ export default function App() {
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGenerateUnifiedReport={handleGenerateUnifiedReport}
+                  onLogSocialMetrics={handleLogSocialMetrics}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}

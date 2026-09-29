@@ -281,6 +281,14 @@ function sumMetric(rows: SocialInsightRecord[], key: string): number | null {
   return values.length ? values.reduce((a, b) => a + b, 0) : null;
 }
 
+// Weekly manual-entry rows (see LogSocialMetricsModal.tsx) are matched by this same inRange(date,
+// range) check, since `date` is always kept equal to `week_start_date` on write — this function was
+// deliberately left unmodified when that feature shipped. That means a week whose week_start_date
+// falls near a period boundary has its ENTIRE numbers counted in whichever single period contains
+// that start date, with no proportional split (e.g. a week starting 2026-02-26 and running into
+// March counts 100% toward February, 0% toward March). Accepted as a known limitation of feeding
+// weekly rows into logic written for daily ones — not fixed here, since proportional date-splitting
+// is materially more work than the weekly form's three fields warrant.
 export function aggregateSocialMetrics(
   insights: SocialInsightRecord[],
   clientIds: string[],

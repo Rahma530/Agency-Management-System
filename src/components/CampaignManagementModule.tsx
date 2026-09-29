@@ -84,6 +84,12 @@ interface CampaignManagementModuleProps {
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onLogSocialMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
@@ -262,6 +268,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onGenerateReport,
   onGenerateAiSummary,
   onGenerateUnifiedReport,
+  onLogSocialMetrics,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -1877,6 +1884,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onGenerateReport={onGenerateReport}
           onGenerateAiSummary={onGenerateAiSummary}
           onGenerateUnifiedReport={onGenerateUnifiedReport}
+          onLogSocialMetrics={onLogSocialMetrics}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           onCreatePortalLogin={onCreatePortalLogin}
