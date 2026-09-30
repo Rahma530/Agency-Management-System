@@ -1238,7 +1238,7 @@ export default function App() {
 
         // Fetch briefs
         const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
-        if (!briefErr && briefData && briefData.length > 0) {
+        if (!briefErr && briefData) {
           setBriefs(briefData as BriefRecord[]);
         }
 
@@ -1246,7 +1246,7 @@ export default function App() {
         const { data: briefRevisionData, error: briefRevisionErr } = await supabase
           .from('brief_revisions')
           .select('*');
-        if (!briefRevisionErr && briefRevisionData && briefRevisionData.length > 0) {
+        if (!briefRevisionErr && briefRevisionData) {
           setBriefRevisions(briefRevisionData as BriefRevisionRecord[]);
         }
 
@@ -1271,7 +1271,7 @@ export default function App() {
         const { data: taskCommentData, error: taskCommentErr } = await supabase
           .from('task_comments')
           .select('*');
-        if (!taskCommentErr && taskCommentData && taskCommentData.length > 0) {
+        if (!taskCommentErr && taskCommentData) {
           setTaskComments(taskCommentData as TaskCommentRecord[]);
         }
 
@@ -1279,37 +1279,37 @@ export default function App() {
         const { data: taskAttachmentData, error: taskAttachmentErr } = await supabase
           .from('task_attachments')
           .select('*');
-        if (!taskAttachmentErr && taskAttachmentData && taskAttachmentData.length > 0) {
+        if (!taskAttachmentErr && taskAttachmentData) {
           setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
         }
 
         // Fetch capacity_logs
         const { data: capData, error: capErr } = await supabase.from('capacity_logs').select('*');
-        if (!capErr && capData && capData.length > 0) {
+        if (!capErr && capData) {
           setCapacityLogs(capData as CapacityLogRecord[]);
         }
 
         // Fetch daily_logs
         const { data: logData, error: logErr } = await supabase.from('daily_logs').select('*');
-        if (!logErr && logData && logData.length > 0) {
+        if (!logErr && logData) {
           setDailyLogs(logData as DailyLogRecord[]);
         }
 
         // Fetch extra_notes
         const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
-        if (!noteErr && noteData && noteData.length > 0) {
+        if (!noteErr && noteData) {
           setExtraNotes(noteData as ExtraNoteRecord[]);
         }
 
         // Fetch campaigns
         const { data: campaignData, error: campaignErr } = await supabase.from('campaigns').select('*');
-        if (!campaignErr && campaignData && campaignData.length > 0) {
+        if (!campaignErr && campaignData) {
           setCampaigns(campaignData as CampaignRecord[]);
         }
 
         // Fetch assignments (service specialist delegation records)
         const { data: assignmentData, error: assignmentErr } = await supabase.from('assignments').select('*');
-        if (!assignmentErr && assignmentData && assignmentData.length > 0) {
+        if (!assignmentErr && assignmentData) {
           setAssignments(assignmentData as AssignmentRecord[]);
         }
 
@@ -1317,13 +1317,13 @@ export default function App() {
         const { data: socialInsightData, error: socialInsightErr } = await supabase
           .from('social_insights')
           .select('*');
-        if (!socialInsightErr && socialInsightData && socialInsightData.length > 0) {
+        if (!socialInsightErr && socialInsightData) {
           setSocialInsights(socialInsightData as SocialInsightRecord[]);
         }
 
         // Fetch reports (Reporting Engine)
         const { data: reportData, error: reportErr } = await supabase.from('reports').select('*');
-        if (!reportErr && reportData && reportData.length > 0) {
+        if (!reportErr && reportData) {
           setReports(reportData as ReportRecord[]);
         }
 
@@ -1331,7 +1331,7 @@ export default function App() {
         const { data: comparisonData, error: comparisonErr } = await supabase
           .from('client_comparisons')
           .select('*');
-        if (!comparisonErr && comparisonData && comparisonData.length > 0) {
+        if (!comparisonErr && comparisonData) {
           setClientComparisons(comparisonData as ClientComparisonRecord[]);
         }
 
@@ -1339,19 +1339,19 @@ export default function App() {
         const { data: portalUserData, error: portalUserErr } = await supabase
           .from('client_portal_users')
           .select('*');
-        if (!portalUserErr && portalUserData && portalUserData.length > 0) {
+        if (!portalUserErr && portalUserData) {
           setClientPortalUsers(portalUserData as ClientPortalUserRecord[]);
         }
 
         // Fetch meetings (Module 9 scaffolding: AM meeting recordings/manual transcript notes)
         const { data: meetingData, error: meetingErr } = await supabase.from('meetings').select('*');
-        if (!meetingErr && meetingData && meetingData.length > 0) {
+        if (!meetingErr && meetingData) {
           setMeetings(meetingData as MeetingRecord[]);
         }
 
         // Fetch client_contracts (Module 12 Phase 6: Sales's signed-contract upload)
         const { data: contractData, error: contractErr } = await supabase.from('client_contracts').select('*');
-        if (!contractErr && contractData && contractData.length > 0) {
+        if (!contractErr && contractData) {
           setClientContracts(contractData as ClientContractRecord[]);
         }
 
@@ -1359,7 +1359,7 @@ export default function App() {
         const { data: platformConnectionData, error: platformConnectionErr } = await supabase
           .from('platform_connections')
           .select('*');
-        if (!platformConnectionErr && platformConnectionData && platformConnectionData.length > 0) {
+        if (!platformConnectionErr && platformConnectionData) {
           setPlatformConnections(platformConnectionData as PlatformConnectionRecord[]);
         }
 
