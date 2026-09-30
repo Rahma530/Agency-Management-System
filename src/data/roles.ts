@@ -1,6 +1,6 @@
 import { UserRole } from '../types/database';
 
-export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees';
+export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates';
 
 export interface RoleMetadata {
   role: UserRole;
@@ -31,7 +31,7 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     badgeBg: 'var(--role-executive-tint)',
     badgeText: 'var(--role-executive-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'campaigns', 'reports', 'employees'],
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'campaigns', 'reports', 'employees', 'brief_templates'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -47,7 +47,7 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     badgeBg: 'var(--role-head-of-technical-tint)',
     badgeText: 'var(--role-head-of-technical-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees'],
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -102,7 +102,7 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     badgeBg: 'var(--role-am-agent-tint)',
     badgeText: 'var(--role-am-agent-ink)',
     defaultModule: 'my_work',
-    allowedModules: ['my_work', 'onboarding', 'service_briefs', 'tasks', 'campaigns', 'reports'],
+    allowedModules: ['my_work', 'onboarding', 'service_briefs', 'tasks', 'campaigns', 'reports', 'brief_templates'],
     canCreateCampaign: false,
     canManageCapacity: false,
     canAssignAM: false,
@@ -305,7 +305,7 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     // Application authorization intentionally mirrors head_of_technical. Role identity and
     // presentation remain distinct, but this role must not receive modules HoT cannot access.
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees'],
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,

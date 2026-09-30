@@ -19,7 +19,7 @@ const FIELD_TYPES: { value: BriefFieldType; label: string }[] = [
   { value: 'tag-list', label: 'Tag List (comma-separated)' },
 ];
 
-const SERVICE_LABELS: Record<ServiceType, string> = {
+export const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',
   media_buying: 'Media Buying',
@@ -127,9 +127,11 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-white">Manage Brief Questions — {SERVICE_LABELS[serviceType]}</h3>
-            <p className="text-[11px] text-stone-400 mt-0.5">
-              Changes here apply to every NEW brief for this service going forward. Existing submitted briefs are
-              unaffected.
+            {/* Brief forms always render from the live schema (no per-brief snapshot), so this is
+                a real, immediate effect, not future-only — corrected from an earlier version of
+                this note that claimed the opposite. */}
+            <p className="text-[11px] text-amber-300 mt-0.5">
+              Changes here affect already-submitted briefs for this service immediately, not just future ones.
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-white/5">

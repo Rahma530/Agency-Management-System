@@ -21,6 +21,7 @@ import {
   BarChart3,
   Briefcase,
   UserPlus,
+  ClipboardList,
   Menu,
   X,
   Sun,
@@ -57,6 +58,7 @@ import {
 import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
+import { BriefTemplatesModule } from './components/BriefTemplatesModule';
 import { DashboardHub } from './components/DashboardHub';
 import {
   ClientRecord,
@@ -4759,6 +4761,20 @@ export default function App() {
               </button>
             )}
 
+            {userRoleInfo.allowedModules.includes('brief_templates') && (
+              <button
+                onClick={() => handleTabChange('brief_templates')}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
+                  activeTab === 'brief_templates'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
+                }`}
+              >
+                <ClipboardList className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">Brief Templates</span>
+              </button>
+            )}
+
             {/* Live Activity Feed — mobile only; desktop keeps its own header button
                 (hidden md:flex above) instead of duplicating it here. */}
             {['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role) && (
@@ -5108,6 +5124,20 @@ export default function App() {
                   onUpdateEmployee={handleUpdateEmployee}
                   onDeactivateEmployee={handleDeactivateEmployee}
                   onSendInvitation={handleSendInvitation}
+                />
+              </div>
+            )}
+
+            {/* Tab 8: Brief Templates — standalone, client-independent entry point for
+                brief_field_schemas, see BriefTemplatesModule.tsx's own header comment. */}
+            {activeTab === 'brief_templates' && (
+              <div className="space-y-6">
+                <BriefTemplatesModule
+                  currentUser={currentUser}
+                  briefFieldSchemaRows={briefFieldSchemaRows}
+                  onCreateBriefFieldSchema={handleCreateBriefFieldSchema}
+                  onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
+                  onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                 />
               </div>
             )}
