@@ -28,6 +28,7 @@ import {
   ClipboardCheck,
   Trash2,
   StickyNote,
+  Share2,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -64,10 +65,27 @@ import {
   getCampaignEndDate,
   getCampaignOwnerId,
 } from './CampaignManagementModule';
-import { ComparisonGranularity, DateRange, ReportMode, ReportScope, detectClientAnomalies } from '../lib/reportingEngine';
+import {
+  ComparisonGranularity,
+  DateRange,
+  ReportMode,
+  ReportScope,
+  detectClientAnomalies,
+  clientHasService,
+  ensureComparisonForSummary as resolveOrGenerateComparison,
+} from '../lib/reportingEngine';
 import { PeriodSelector } from './reporting/PeriodSelector';
-import { ComparisonCard, FiledReportsList } from './reporting/ComparisonDisplay';
+import {
+  ComparisonCard,
+  FiledReportsList,
+  UnifiedReportPanel,
+  DirectAiSummaryPanel,
+  CampaignSummaryPayload,
+  CampaignSummaryDetailedResult,
+  UnifiedClientReportResult,
+} from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
+import { LogSocialMetricsModal } from './LogSocialMetricsModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
@@ -122,13 +140,24 @@ interface ClientDashboardProps {
   ) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
+  // Returns the saved row (or null) so the "Generate AI Summary" entry points below can
+  // compute-and-write on demand when no row exists yet, then use the fresh result immediately —
+  // see ReportsAndComparisonsTab's onEnsureComparisonForSummary. Existing callers that just await
+  // and ignore the result are unaffected by this widening from Promise<void>.
   onGenerateComparison?: (
     scope: ReportScope,
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  // Phase 4 (AI Orchestrator): threaded straight to ComparisonCard, same optional-prop convention
+  // as onGenerateReport above — omitted by every caller that shouldn't offer it (see App.tsx).
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  // Combined-scope item D: threaded to the new UnifiedReportPanel. Never gated by hasComparisonAccess
+  // — only ever shown when this client's own am_agent is viewing (checked locally below), so the
+  // prop's mere presence isn't what controls visibility the way onGenerateAiSummary's is.
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   clientPortalUser?: ClientPortalUserRecord | null;
@@ -169,6 +198,15 @@ interface ClientDashboardProps {
       payment_card_details?: string | null;
     }
   ) => Promise<void>;
+  // Weekly manual-entry write path for social_insights (see
+  // 20261025000000_social_insights_weekly_manual_entry.sql) — omitted entirely means "this viewer
+  // can't log social metrics for this client", same optional-prop convention as onGenerateAiSummary.
+  onLogSocialMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
 }
 
 type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
@@ -206,6 +244,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onMarkAssignmentViewed,
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
+  onGenerateUnifiedReport,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   clientPortalUser,
@@ -220,6 +260,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onDeleteClientContract,
   onUpdatePaymentTracking,
   onUpdateClientAccess,
+  onLogSocialMetrics,
 }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab || 'overview');
   const [isDeletingClient, setIsDeletingClient] = useState(false);
@@ -454,13 +495,73 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const isAMAgentAssigned = !!client.am_agent_id;
 
   // Mirrors reports_select_rls / client_comparisons_select_rls in the migrations: Executive,
-  // Head of Technical, AM Team Lead, or the client's own assigned AM Agent.
+  // Head of Technical, AM Team Lead, or the client's own assigned AM Agent. Deliberately UNCHANGED
+  // by the combined-scope widening below — this still gates Team Activity, Meetings, Integrations,
+  // Monthly Draft generation, and Report approval, none of which were asked to widen.
   const hasReportsAccess =
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
+
+  // Combined-scope item C: widens ONLY the Reports & Comparisons tab (viewing/generating a
+  // comparison, filing a report, the AI summary button) to a department agent/team lead who is
+  // actually working this client — reusing the exact same assignments-table + client.services
+  // mechanism report_scope_accessible() already encodes at the RLS layer (public.agent_assigned /
+  // public.client_has_service, latest definition in
+  // 20261019000000_ai_engineer_full_application_authorization.sql), so this can never grant more
+  // than what a real SELECT against client_comparisons/reports would already allow. A team lead
+  // sees every client their department serves (clientHasService); an individual agent only sees a
+  // client they hold a real assignments-table row for (mirrors reportingEngine.ts's own
+  // resolveClientsForSubject/isAssigned logic) — never the whole department's client list.
+  const isAssignedToService = (service: ServiceType) =>
+    clientAssignments.some((a) => a.service_type === service && a.agent_id === currentUser.id);
+  const hasComparisonAccess =
+    hasReportsAccess ||
+    (currentUser.role === 'media_buying_team_lead' && clientHasService(client, 'media_buying')) ||
+    (currentUser.role === 'media_buying_agent' && isAssignedToService('media_buying')) ||
+    (currentUser.role === 'seo_team_lead' && clientHasService(client, 'seo')) ||
+    (currentUser.role === 'seo_agent' && isAssignedToService('seo')) ||
+    (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
+    (currentUser.role === 'social_media_agent' && isAssignedToService('social_media'));
+
+  // Weekly manual-entry write gate for social_insights — mirrors social_insights_write_rls /
+  // social_insights_update_rls in 20261025000000_social_insights_weekly_manual_entry.sql exactly
+  // (same roles, same client_has_service/agent_assigned checks), so the UI never offers an action
+  // the database would reject. The head_of_technical/ai_engineer branch is a TEMPORARY TRANSITION
+  // FEATURE — see that migration and src/App.tsx's Employee Impersonation comments for the
+  // convention — intended for removal once real social_media_agent/social_media_team_lead users are
+  // entering their own weekly numbers.
+  const canLogSocialMetrics =
+    clientHasService(client, 'social_media') &&
+    ((currentUser.role === 'social_media_agent' && isAssignedToService('social_media')) ||
+      (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
+      currentUser.role === 'head_of_technical' ||
+      currentUser.role === 'ai_engineer');
+
+  // Which service(s) this viewer may see on this client's comparison rows. undefined means "show
+  // everything" (every hasReportsAccess role) — a department agent/team lead only ever sees their
+  // own department's service, even though the underlying row (now potentially merged from more
+  // than one contributor — see App.tsx's handleGenerateComparison) can contain every subscribed
+  // service together. This is a DISPLAY-level narrowing that RLS structurally cannot do itself,
+  // since one row's metrics_current is a single JSON object spanning every service — RLS grants or
+  // denies the whole row, never a key within it.
+  const viewerServiceFilter: ServiceType[] | undefined = hasReportsAccess
+    ? undefined
+    : currentUser.role === 'media_buying_team_lead' || currentUser.role === 'media_buying_agent'
+    ? ['media_buying']
+    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent'
+    ? ['seo']
+    : currentUser.role === 'social_media_team_lead' || currentUser.role === 'social_media_agent'
+    ? ['social_media']
+    : undefined;
+
+  // Combined-scope item D: the unified multi-service report is reachable ONLY by this exact
+  // client's own assigned AM Agent — not other AM Agents, not leadership, not department roles.
+  // The exact field/role pair the audit confirmed reusing (same one hasReportsAccess's own
+  // am_agent branch already checks above).
+  const isClientsOwnAmAgent = currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id;
 
   const clientComparisonsForClient = useMemo(
     () =>
@@ -601,6 +702,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       setIsGeneratingComparison(false);
     }
   };
+
+  // UX-flow change: lets "Generate AI Summary" work before any client_comparisons row exists yet,
+  // for both modes. Binds reportingEngine.ts's shared ensureComparisonForSummary (also used by
+  // ReportsHub.tsx, whose scope can be client- or agent-based) to this dashboard's always-fixed
+  // client scope. `mode` is a parameter rather than always reading reportMode state because the
+  // Unified Report button always wants a 'comparison' row regardless of which toggle is currently
+  // selected above.
+  const ensureComparisonForSummary = (mode: ReportMode): Promise<ClientComparisonRecord | null> =>
+    resolveOrGenerateComparison({
+      scope: { type: 'client', clientId: client.id },
+      mode,
+      granularity: reportGranularity,
+      customCurrentRange,
+      customPreviousRange,
+      comparisons: clientComparisonsForClient,
+      onGenerateComparison,
+    });
 
   const handleGenerateReport = async (comparison: ClientComparisonRecord) => {
     if (!onGenerateReport) return;
@@ -837,7 +955,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             </button>
           )}
 
-          {hasReportsAccess && (
+          {hasComparisonAccess && (
             <button
               onClick={() => setActiveTab('reports')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
@@ -2218,17 +2336,28 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               onCustomCurrentRangeChange={setCustomCurrentRange}
               customPreviousRange={customPreviousRange}
               onCustomPreviousRangeChange={setCustomPreviousRange}
-              canGenerate={!!onGenerateComparison}
+              canGenerate={hasComparisonAccess && !!onGenerateComparison}
               isGeneratingComparison={isGeneratingComparison}
               onGenerateComparison={handleGenerateComparison}
-              canGenerateReport={!!onGenerateReport}
+              canGenerateReport={hasComparisonAccess && !!onGenerateReport}
               generatingReportForComparisonId={generatingReportForComparisonId}
               onGenerateReport={handleGenerateReport}
+              onGenerateAiSummary={hasComparisonAccess ? onGenerateAiSummary : undefined}
+              viewerServiceFilter={viewerServiceFilter}
+              canGenerateUnifiedReport={isClientsOwnAmAgent}
+              onGenerateUnifiedReport={onGenerateUnifiedReport}
               canGenerateMonthlyDraft={hasReportsAccess && !!onGenerateMonthlyReportDraft}
               isGeneratingDraft={isGeneratingDraft}
               onGenerateMonthlyDraft={handleGenerateMonthlyDraft}
               canApproveReport={hasReportsAccess && !!onApproveReport}
               onApproveReport={onApproveReport || (async () => {})}
+              canLogSocialMetrics={canLogSocialMetrics && !!onLogSocialMetrics}
+              onLogSocialMetrics={
+                onLogSocialMetrics
+                  ? (platform, weekStartDate, metrics) => onLogSocialMetrics(client.id, platform, weekStartDate, metrics)
+                  : undefined
+              }
+              onEnsureComparisonForSummary={ensureComparisonForSummary}
             />
           )}
 
@@ -2369,12 +2498,30 @@ interface ReportsAndComparisonsTabProps {
   canGenerateReport: boolean;
   generatingReportForComparisonId: string | null;
   onGenerateReport: (comparison: ClientComparisonRecord) => void;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  // Combined-scope item C: undefined = viewer sees every service (AM/leadership); an array = a
+  // department agent/team lead, narrowed to their own service(s) only.
+  viewerServiceFilter?: ServiceType[];
+  // Combined-scope item D: true only when the viewer is this exact client's own assigned AM Agent.
+  canGenerateUnifiedReport: boolean;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
   canGenerateMonthlyDraft: boolean;
   isGeneratingDraft: boolean;
   onGenerateMonthlyDraft: () => void;
   canApproveReport: boolean;
   onApproveReport: (reportId: string) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  canLogSocialMetrics: boolean;
+  onLogSocialMetrics?: (
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
+  // UX-flow change: backs both the per-service DirectAiSummaryPanel below and UnifiedReportPanel's
+  // own on-demand generation — looks up an existing row for the current period/mode first, computes
+  // and saves one via the same onGenerateComparison path otherwise. See ClientDashboard's own
+  // ensureComparisonForSummary for the implementation this is bound to.
+  onEnsureComparisonForSummary: (mode: ReportMode) => Promise<ClientComparisonRecord | null>;
 }
 
 const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
@@ -2398,21 +2545,69 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   canGenerateReport,
   generatingReportForComparisonId,
   onGenerateReport,
+  onGenerateAiSummary,
+  viewerServiceFilter,
+  canGenerateUnifiedReport,
+  onGenerateUnifiedReport,
   canGenerateMonthlyDraft,
   isGeneratingDraft,
   onGenerateMonthlyDraft,
   canApproveReport,
   onApproveReport,
   briefFieldSchemas,
+  canLogSocialMetrics,
+  onLogSocialMetrics,
+  onEnsureComparisonForSummary,
 }) => {
   const [selectedDraftReport, setSelectedDraftReport] = useState<ReportRecord | null>(null);
+  const [isLogSocialMetricsOpen, setIsLogSocialMetricsOpen] = useState(false);
 
   // Same rolling-baseline check ReportsHub.tsx runs — this tab is single-client, so there's only
   // ever one result to compute, applied only to that client's latest comparison row.
   const anomalyResult = useMemo(() => detectClientAnomalies(client.id, comparisons), [client.id, comparisons]);
 
+  // Combined-scope item D: the client's own most recently generated real comparison row (never a
+  // period_summary — no previous period to synthesize across) — the unified report always reuses
+  // this, with no separate period picker for this phase.
+  const latestFullComparison = useMemo(() => {
+    const comparisonRows = comparisons.filter((c) => c.row_kind === 'comparison');
+    if (comparisonRows.length === 0) return null;
+    return comparisonRows.slice().sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
+  }, [comparisons]);
+
   return (
     <div className="space-y-6">
+      {canGenerateUnifiedReport && onGenerateUnifiedReport && (
+        <UnifiedReportPanel
+          latestComparison={latestFullComparison}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
+          onEnsureComparison={() => onEnsureComparisonForSummary('comparison')}
+        />
+      )}
+
+      {canLogSocialMetrics && onLogSocialMetrics && (
+        <div className="p-4 rounded-xl border border-pink-900/30 bg-[#161224]/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Share2 className="w-4 h-4 text-pink-400" />
+            <span className="text-sm font-bold text-white">Weekly Social Metrics</span>
+          </div>
+          <button
+            onClick={() => setIsLogSocialMetricsOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-pink-600 hover:bg-pink-500 text-white transition-all"
+          >
+            Log This Week's Social Metrics
+          </button>
+        </div>
+      )}
+
+      {isLogSocialMetricsOpen && onLogSocialMetrics && (
+        <LogSocialMetricsModal
+          clientName={client.name}
+          onClose={() => setIsLogSocialMetricsOpen(false)}
+          onSubmit={onLogSocialMetrics}
+        />
+      )}
+
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-purple-400" />
@@ -2456,6 +2651,15 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
         singlePeriod={reportMode === 'period_summary'}
       />
 
+      {canGenerate && onGenerateAiSummary && (
+        <DirectAiSummaryPanel
+          mode={reportMode}
+          onEnsureComparison={() => onEnsureComparisonForSummary(reportMode)}
+          onGenerateAiSummary={onGenerateAiSummary}
+          viewerServiceFilter={viewerServiceFilter}
+        />
+      )}
+
       {/* Past comparisons */}
       <div className="space-y-3">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -2473,6 +2677,8 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
               canGenerateReport={canGenerateReport}
               isGeneratingReport={generatingReportForComparisonId === cmp.id}
               onGenerateReport={() => onGenerateReport(cmp)}
+              onGenerateAiSummary={onGenerateAiSummary}
+              viewerServiceFilter={viewerServiceFilter}
               anomalyFlags={anomalyResult?.latestComparisonId === cmp.id ? anomalyResult.flags : undefined}
             />
           ))
@@ -2535,6 +2741,7 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
             setSelectedDraftReport(null);
           }}
           onClose={() => setSelectedDraftReport(null)}
+          viewerServiceFilter={viewerServiceFilter}
         />
       )}
     </div>

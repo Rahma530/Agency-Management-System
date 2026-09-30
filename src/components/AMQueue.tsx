@@ -56,6 +56,7 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
 
 interface AMQueueProps {
   clients: ClientRecord[];
@@ -105,8 +106,10 @@ interface AMQueueProps {
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
@@ -182,6 +185,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onNavigateToModule,
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
+  onGenerateUnifiedReport,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -733,6 +738,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onMarkClientViewed={onMarkClientViewed}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
+          onGenerateAiSummary={onGenerateAiSummary}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           meetings={meetings}

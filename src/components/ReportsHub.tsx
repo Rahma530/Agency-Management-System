@@ -7,6 +7,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   DailyLogRecord,
+  ServiceType,
 } from '../types/database';
 import {
   ComparisonGranularity,
@@ -16,12 +17,20 @@ import {
   resolveClientsForSubject,
   detectClientAnomalies,
   ClientAnomalyResult,
+  ensureComparisonForSummary as resolveOrGenerateComparison,
 } from '../lib/reportingEngine';
 import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { PeriodSelector } from './reporting/PeriodSelector';
-import { ComparisonCard, FiledReportsList, describeComparisonScope } from './reporting/ComparisonDisplay';
+import {
+  ComparisonCard,
+  FiledReportsList,
+  DirectAiSummaryPanel,
+  describeComparisonScope,
+  CampaignSummaryPayload,
+  CampaignSummaryDetailedResult,
+} from './reporting/ComparisonDisplay';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
 
@@ -38,8 +47,13 @@ interface ReportsHubProps {
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport: (comparisonId: string, period: string) => Promise<void>;
+  // Phase 4 (AI Orchestrator): same optional-prop convention as ComparisonCard's own
+  // onGenerateAiSummary — reuses this hub's existing nav-level access gate exactly (whoever can
+  // reach ReportsHub at all already sees canGenerateReport below unconditionally, so the AI button
+  // gets no separate check either).
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
 }
 
 // Role-agnostic reporting entry point: unlike ClientDashboard's per-client "Reports &
@@ -59,9 +73,38 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   dailyLogs = [],
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
+
+  // Combined-scope item C (extended here to close the same gap ClientDashboard.tsx just closed):
+  // which service(s) this viewer may see on a comparison row's ComparisonCard. Unlike
+  // ClientDashboard.tsx's version, this needs no per-client check — visibleComparisons below
+  // already restricts which ROWS this viewer sees at all (via resolveClientsForSubject/myClientIds,
+  // the same client-scoping mechanism), so every row that gets this far is already one this viewer
+  // is allowed to know exists; this only narrows which SERVICE(S) within that row they see, exactly
+  // the same DISPLAY-level narrowing ClientDashboard.tsx's viewerServiceFilter does, since RLS/the
+  // client-scoping above operates per-row, never per-key inside metrics_current's JSON blob. An
+  // am_agent here is unconditionally "sees everything" (not scoped to one specific client's
+  // am_agent_id the way ClientDashboard.tsx's hasReportsAccess is) because myClientIds already only
+  // ever contains clients THIS am_agent owns (resolveClientsForSubject's am_agent branch) — any row
+  // visible here is already their own client's row.
+  const seesAllServices =
+    currentUser.role === 'executive' ||
+    currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'am_team_lead' ||
+    currentUser.role === 'ai_engineer' ||
+    currentUser.role === 'am_agent';
+  const viewerServiceFilter: ServiceType[] | undefined = seesAllServices
+    ? undefined
+    : currentUser.role === 'media_buying_team_lead' || currentUser.role === 'media_buying_agent'
+    ? ['media_buying']
+    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent'
+    ? ['seo']
+    : currentUser.role === 'social_media_team_lead' || currentUser.role === 'social_media_agent'
+    ? ['social_media']
+    : undefined;
 
   // Point 9's aggregate daily-activity report — manager/leadership audience only. Note this
   // never widens visibility: dailyLogs here is whatever direct_report_visible() already let
@@ -173,6 +216,26 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')),
     [clientComparisons, myClientIds, directReportIds, currentUser.id]
   );
+
+  // UX-flow change: lets "Generate AI Summary" work before any comparison row exists yet, same as
+  // ClientDashboard.tsx's own DirectAiSummaryPanel — binds reportingEngine.ts's shared
+  // ensureComparisonForSummary to whichever scope is currently selected (client or agent), looking
+  // it up in visibleComparisons first (already scoped to what this viewer is allowed to see) before
+  // falling through to onGenerateComparison. Returns null with no side effect when no scope is
+  // selected yet, same as PeriodSelector's own canGenerate={!!resolvedScope} silently disabling the
+  // plain generate button in that case.
+  const ensureComparisonForSummary = (mode: ReportMode): Promise<ClientComparisonRecord | null> =>
+    resolvedScope
+      ? resolveOrGenerateComparison({
+          scope: resolvedScope,
+          mode,
+          granularity,
+          customCurrentRange,
+          customPreviousRange,
+          comparisons: visibleComparisons,
+          onGenerateComparison,
+        })
+      : Promise.resolve(null);
 
   const visibleReports = useMemo(
     () =>
@@ -369,6 +432,15 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         singlePeriod={isSinglePeriod}
       />
 
+      {!!resolvedScope && onGenerateAiSummary && (
+        <DirectAiSummaryPanel
+          mode={reportMode}
+          onEnsureComparison={() => ensureComparisonForSummary(reportMode)}
+          onGenerateAiSummary={onGenerateAiSummary}
+          viewerServiceFilter={viewerServiceFilter}
+        />
+      )}
+
       <div className="space-y-3">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-emerald-400" />
@@ -389,6 +461,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                 canGenerateReport
                 isGeneratingReport={generatingReportForComparisonId === cmp.id}
                 onGenerateReport={() => handleGenerateReport(cmp)}
+                onGenerateAiSummary={onGenerateAiSummary}
+                viewerServiceFilter={viewerServiceFilter}
                 anomalyFlags={anomalyFlags}
               />
             );

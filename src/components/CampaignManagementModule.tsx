@@ -56,6 +56,7 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { getRoleInfo } from '../data/roles';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
 
 interface CampaignManagementModuleProps {
   campaigns: CampaignRecord[];
@@ -79,8 +80,16 @@ interface CampaignManagementModuleProps {
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onLogSocialMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;
@@ -257,6 +266,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onUpdateCampaign,
   onGenerateComparison,
   onGenerateReport,
+  onGenerateAiSummary,
+  onGenerateUnifiedReport,
+  onLogSocialMetrics,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -1870,6 +1882,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onDeleteClient={onDeleteClient}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
+          onGenerateAiSummary={onGenerateAiSummary}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
+          onLogSocialMetrics={onLogSocialMetrics}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           onCreatePortalLogin={onCreatePortalLogin}

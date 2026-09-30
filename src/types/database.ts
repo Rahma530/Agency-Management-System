@@ -390,6 +390,11 @@ export interface SocialInsightRecord {
   platform: 'facebook' | 'instagram' | 'tiktok' | 'x' | 'linkedin' | string;
   metrics: Record<string, any>;
   date: string;
+  // Set only on rows created by the weekly manual-entry form (see LogSocialMetricsModal.tsx /
+  // App.tsx's handleLogSocialMetrics) — kept equal to `date` on every such write so
+  // aggregateSocialMetrics() in reportingEngine.ts needs no changes to read these rows. Null on any
+  // pre-existing/legacy daily row that predates this column.
+  week_start_date?: string | null;
 }
 
 // Module 6 (External Integrations Hub) scaffolding — see

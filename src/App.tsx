@@ -50,9 +50,11 @@ import {
   customPeriod,
   generateClientComparison,
   generatePeriodSummary,
+  generateComparisonNarrative,
   resolveClientsForSubject,
   serviceFilterForRole,
 } from './lib/reportingEngine';
+import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
 import { DashboardHub } from './components/DashboardHub';
@@ -876,6 +878,130 @@ export default function App() {
       throw new Error('Unexpected invitation response.');
     }
     return data as SendInvitationResult;
+  };
+
+  // Phase 4 (AI Orchestrator): one row's AI call shouldn't be able to hang the button forever —
+  // races the real request against a timeout, same pattern as EmployeeAdminHub.tsx's own
+  // withTimeout/ROW_TIMEOUT_MS (used there for CSV-import row writes). Not imported from there
+  // since that helper isn't exported and this is a different component — a small local copy is
+  // simpler than exporting a component-internal utility. 25s (vs. that one's 15s) since
+  // CAMPAIGN_SUMMARY's ANALYZE stage can chain up to three provider attempts on fallback, each its
+  // own network round trip, before the Edge Function itself gives up.
+  const AI_SUMMARY_TIMEOUT_MS = 25000;
+  function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (err) => { clearTimeout(timer); reject(err); }
+      );
+    });
+  }
+
+  // Optional, additive-only AI enhancement (Phase 4) for ComparisonCard's rule-based narrative —
+  // never called unless the employee presses "Generate AI Summary". Unlike invokeImpersonation/
+  // handleSendInvitation above, this never throws to its caller: any failure (timeout, ai-router
+  // ok:false, a malformed response) is caught here, surfaced via the existing showNotification
+  // toast, and resolves to null — so ComparisonCard (reused by three different surfaces) never
+  // needs its own error-handling branch, only "did I get a result back or not."
+  const handleGenerateCampaignSummary = async (
+    payload: CampaignSummaryPayload
+  ): Promise<CampaignSummaryDetailedResult | null> => {
+    try {
+      const { data, error } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: { task: 'CAMPAIGN_SUMMARY', language: 'ar', detail: 'detailed', payload },
+        }),
+        AI_SUMMARY_TIMEOUT_MS,
+        `AI summary timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+      );
+      if (error) {
+        const context = error.context;
+        const status = context instanceof Response ? context.status : undefined;
+        let detail: string | undefined;
+        if (context instanceof Response) {
+          try {
+            const body: unknown = await context.clone().json();
+            if (body && typeof body === 'object') {
+              const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+              if (typeof value === 'string') detail = value;
+            }
+          } catch { /* A gateway error may not have a JSON body. */ }
+        }
+        console.error('AI summary request failed:', { status, detail, errorName: error.name, errorMessage: error.message });
+        throw new Error(status
+          ? `AI summary request failed (HTTP ${status}): ${detail || error.message}`
+          : `AI summary request failed before an HTTP response: ${error.message}`);
+      }
+      if (!data?.ok) {
+        // A rate-limit or provider failure is an anticipated ai-router outcome, not a broken
+        // request — ai-router's own message is already a plain, displayable string.
+        throw new Error(data?.message || 'AI summary is currently unavailable.');
+      }
+      const result = data.result;
+      if (
+        !result || typeof result !== 'object'
+        || typeof result.summary !== 'string'
+        || !Array.isArray(result.by_service)
+        || !Array.isArray(result.recommendations)
+      ) {
+        throw new Error('Unexpected AI summary response.');
+      }
+      return result as CampaignSummaryDetailedResult;
+    } catch (err: any) {
+      console.error('CAMPAIGN_SUMMARY request failed:', err);
+      showNotification(err?.message || 'AI summary unavailable — try again later.', 'info');
+      return null;
+    }
+  };
+
+  // Combined-scope item D: the unified multi-service report, reachable only by a client's own
+  // assigned AM Agent (checked in ClientDashboard.tsx, not here — this handler trusts its caller
+  // the same way handleGenerateCampaignSummary does). Same error-shaping/never-throws convention as
+  // handleGenerateCampaignSummary above; the only difference is the task name and the response
+  // shape it validates ({narrative, recommendations} instead of CAMPAIGN_SUMMARY's detailed shape).
+  const handleGenerateUnifiedReport = async (
+    payload: CampaignSummaryPayload
+  ): Promise<UnifiedClientReportResult | null> => {
+    try {
+      const { data, error } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: { task: 'UNIFIED_CLIENT_REPORT', language: 'ar', payload },
+        }),
+        AI_SUMMARY_TIMEOUT_MS,
+        `Unified report timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+      );
+      if (error) {
+        const context = error.context;
+        const status = context instanceof Response ? context.status : undefined;
+        let detail: string | undefined;
+        if (context instanceof Response) {
+          try {
+            const body: unknown = await context.clone().json();
+            if (body && typeof body === 'object') {
+              const value = (body as Record<string, unknown>).error ?? (body as Record<string, unknown>).message;
+              if (typeof value === 'string') detail = value;
+            }
+          } catch { /* A gateway error may not have a JSON body. */ }
+        }
+        console.error('Unified report request failed:', { status, detail, errorName: error.name, errorMessage: error.message });
+        throw new Error(status
+          ? `Unified report request failed (HTTP ${status}): ${detail || error.message}`
+          : `Unified report request failed before an HTTP response: ${error.message}`);
+      }
+      if (!data?.ok) {
+        throw new Error(data?.message || 'Unified report is currently unavailable.');
+      }
+      const result = data.result;
+      if (!result || typeof result !== 'object' || typeof result.narrative !== 'string' || !Array.isArray(result.recommendations)) {
+        throw new Error('Unexpected unified report response.');
+      }
+      return result as UnifiedClientReportResult;
+    } catch (err: any) {
+      console.error('UNIFIED_CLIENT_REPORT request failed:', err);
+      showNotification(err?.message || 'Unified report unavailable — try again later.', 'info');
+      return null;
+    }
   };
 
   const handleStartEmployeeTest = async (employee: UserRecord, account: TestAccountStatus) => {
@@ -2837,6 +2963,52 @@ export default function App() {
     showNotification('Capacity reading logged successfully.');
   };
 
+  // Weekly manual-entry write path for social_insights (see
+  // 20261025000000_social_insights_weekly_manual_entry.sql). Unlike handleLogCapacity above, this
+  // is a genuine upsert keyed on (client_id, platform, week_start_date) — re-submitting the same
+  // client/platform/week overwrites that week's numbers rather than creating a duplicate row. `id`
+  // is deterministic from that same key so upserting the same week twice always targets the exact
+  // same row, with no risk of colliding with another row's randomly-generated id. `date` is kept
+  // equal to `week_start_date` so aggregateSocialMetrics() in reportingEngine.ts (untouched by this
+  // feature) keeps matching these rows via its existing inRange(date, range) check.
+  const handleLogSocialMetrics = async (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => {
+    const row: SocialInsightRecord = {
+      id: `si-${clientId}-${platform}-${weekStartDate}`,
+      client_id: clientId,
+      platform,
+      date: weekStartDate,
+      week_start_date: weekStartDate,
+      metrics: {
+        reach: metrics.reach,
+        engagement_rate: metrics.engagement_rate,
+        follower_growth: metrics.follower_growth,
+      },
+    };
+
+    if (supabaseActive) {
+      const { error } = await supabase
+        .from('social_insights')
+        .upsert([row], { onConflict: 'client_id,platform,week_start_date' });
+      if (error) throw error;
+    }
+
+    setSocialInsights((prev) => {
+      const idx = prev.findIndex(
+        (i) => i.client_id === clientId && i.platform === platform && i.week_start_date === weekStartDate
+      );
+      if (idx === -1) return [row, ...prev];
+      const next = prev.slice();
+      next[idx] = row;
+      return next;
+    });
+    showNotification("This week's social metrics were saved successfully.");
+  };
+
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
     const existingTask = tasks.find((t) => t.id === taskId);
@@ -3258,12 +3430,18 @@ export default function App() {
   // 8b. Generate a period-over-period comparison (Reporting Engine) — either a single client, or
   // an agent's pooled client set (that agent's own "all my clients" report, or a team lead
   // generating one for a specific direct report).
+  // Returns the saved row (or null if nothing was generated/saved) so callers beyond the plain
+  // "Generate Comparison"/"Generate Period Report" button — the new pre-row "Generate AI Summary"
+  // entry points in ReportsAndComparisonsTab/UnifiedReportPanel — can compute-and-write on demand
+  // and immediately use the fresh result for an ai-router payload, all as one click, without a
+  // second copy of this metrics-computation/write logic anywhere. Every existing caller already
+  // just awaits this and ignores the resolved value, so widening it from Promise<void> is additive.
   const handleGenerateComparison = async (
     scope: ReportScope,
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => {
+  ): Promise<ClientComparisonRecord | null> => {
     let current: ComparisonPeriod;
     let previous: ComparisonPeriod | undefined;
 
@@ -3276,7 +3454,7 @@ export default function App() {
       previous = resolved.previous;
     }
 
-    if (mode === 'comparison' && !previous) return;
+    if (mode === 'comparison' && !previous) return null;
 
     let scopedClients: ClientRecord[];
     let serviceFilter: ServiceType[] | undefined;
@@ -3284,12 +3462,19 @@ export default function App() {
 
     if (scope.type === 'client') {
       const client = clients.find((c) => c.id === scope.clientId);
-      if (!client) return;
+      if (!client) return null;
       scopedClients = [client];
+      // Combined-scope item C: a department agent/team lead generating for a single client must
+      // only ever compute their own department's services — AM/leadership roles (undefined here,
+      // per serviceFilterForRole) keep generating every subscribed service, exactly as before this
+      // change. Previously this branch never set a filter at all, so ANY caller (including a
+      // department role, once let into this UI) would compute and write every service's metrics —
+      // see the merge logic below for why that alone still wasn't enough to make this safe.
+      serviceFilter = serviceFilterForRole(currentUser.role);
       scopeLabel = client.name;
     } else {
       const subject = users.find((u) => u.id === scope.agentId);
-      if (!subject) return;
+      if (!subject) return null;
       scopedClients = resolveClientsForSubject(subject, clients, assignments);
       serviceFilter = serviceFilterForRole(subject.role);
       scopeLabel = subject.name;
@@ -3297,7 +3482,7 @@ export default function App() {
 
     if (scopedClients.length === 0) {
       showNotification('No clients found for this scope — nothing to report on.', 'info');
-      return;
+      return null;
     }
 
     const result =
@@ -3314,9 +3499,66 @@ export default function App() {
         c.period_previous === result.period_previous
     );
 
+    // Combined-scope item C: when serviceFilter is set (a department agent/team lead generating
+    // for a single client), this caller's fresh result only ever has ITS OWN service's key
+    // populated — merging it into whatever already exists preserves every other department's
+    // already-computed data instead of the blind overwrite this write path used before, which
+    // would otherwise let a SEO agent's generation silently erase an AM's already-computed
+    // media_buying/social_media blocks for the same client/period (same row, same unique key).
+    // AM/leadership callers never set serviceFilter (they always compute every subscribed service
+    // themselves), so `existing` is ignored and this is a no-op for them — identical behavior to
+    // before this change.
+    //
+    // KNOWN GAP, accepted for this phase, not fixed here: `existing` comes from this client's own
+    // in-memory clientComparisons state, not a fresh server read at write time — two different
+    // roles writing to the very same client/period within moments of each other (before either
+    // browser has re-fetched) could still race, and one write could lose the other's just-written
+    // service block. Deliberately not building a server-side atomic merge (an RPC doing the
+    // read-merge-write in one transaction) for this phase — revisit only if this is ever actually
+    // observed causing real data loss in practice.
+    function mergeServiceScopedMetrics<T extends object>(
+      existing: T | undefined,
+      fresh: T,
+      filter: ServiceType[] | undefined
+    ): T {
+      if (!filter || !existing) return fresh;
+      const merged: any = { ...existing };
+      const freshAny: any = fresh;
+      for (const service of filter) {
+        if (service in freshAny) {
+          merged[service] = freshAny[service];
+        } else {
+          // This caller's own fresh computation has nothing for a service the filter says is
+          // theirs (e.g. the client no longer subscribes to it) — don't leave a stale block
+          // behind under a key the filter is supposed to own.
+          delete merged[service];
+        }
+      }
+      return merged as T;
+    }
+
+    const mergedMetricsCurrent = mergeServiceScopedMetrics(localExisting?.metrics_current, result.metrics_current, serviceFilter);
+    const mergedMetricsPrevious = mergeServiceScopedMetrics(localExisting?.metrics_previous, result.metrics_previous, serviceFilter);
+    const mergedDelta = mergeServiceScopedMetrics(localExisting?.delta, result.delta, serviceFilter);
+    // ai_recommendations_text (comparison mode only — always null for period_summary) is derived
+    // from generateComparisonNarrative() over metrics_current/previous/delta. result's own value
+    // was computed from this caller's FILTERED metrics alone, so once a merge actually combined
+    // data from more than one contributor, it's recomputed here from the MERGED metrics instead —
+    // otherwise a department agent's generation would overwrite the stored recommendation text
+    // with one that only ever reflects their own service, discarding what a fuller previous
+    // generation already said about other departments.
+    const mergedAiRecommendationsText =
+      mode === 'comparison' && serviceFilter && localExisting
+        ? generateComparisonNarrative(mergedMetricsCurrent, mergedMetricsPrevious, mergedDelta).recommendations
+        : result.ai_recommendations_text;
+
     const comparisonPayload: ClientComparisonRecord = {
       id: localExisting?.id || `cmp-${Date.now().toString().slice(-4)}`,
       ...result,
+      metrics_current: mergedMetricsCurrent,
+      metrics_previous: mergedMetricsPrevious,
+      delta: mergedDelta,
+      ai_recommendations_text: mergedAiRecommendationsText,
       client_id: scope.type === 'client' ? scope.clientId : null,
       agent_id: scope.type === 'agent' ? scope.agentId : null,
       covered_client_ids: scope.type === 'client' ? null : result.covered_client_ids,
@@ -3330,6 +3572,8 @@ export default function App() {
     // migrations), which Postgres's ON CONFLICT arbiter inference generally won't match via a
     // bare column list — those look up any existing row explicitly first, then update or insert.
     const canOneShotUpsert = scope.type === 'client' && mode === 'comparison';
+
+    let saved: ClientComparisonRecord = comparisonPayload;
 
     if (supabaseActive) {
       try {
@@ -3354,12 +3598,12 @@ export default function App() {
         }
 
         if (error) throw error;
-        const saved = data?.[0] || comparisonPayload;
+        saved = data?.[0] || comparisonPayload;
         setClientComparisons((prev) => [...prev.filter((c) => c.id !== saved.id), saved]);
       } catch (err) {
         console.error('Supabase client_comparisons write error:', err);
         showNotification('Unable to save the report.', 'info');
-        return;
+        return null;
       }
     } else {
       setClientComparisons((prev) => [...prev.filter((c) => c.id !== comparisonPayload.id), comparisonPayload]);
@@ -3368,6 +3612,7 @@ export default function App() {
     const periodLabel = mode === 'comparison' ? `${result.period_current} vs ${result.period_previous}` : result.period_current;
     const kindLabel = mode === 'comparison' ? 'Comparison' : 'Period report';
     showNotification(`${kindLabel} generated for ${scopeLabel} (${periodLabel}).`);
+    return saved;
   };
 
   // 8c. File a monthly/period report against an existing comparison (Reporting Engine). The
@@ -4653,6 +4898,8 @@ export default function App() {
                     onNavigateToModule={handleNavigateToModule}
                     onGenerateComparison={handleGenerateComparison}
                     onGenerateReport={handleGenerateReport}
+                    onGenerateAiSummary={handleGenerateCampaignSummary}
+                    onGenerateUnifiedReport={handleGenerateUnifiedReport}
                     onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                     onApproveReport={handleApproveReport}
                     onCreatePortalLogin={handleCreatePortalLogin}
@@ -4703,6 +4950,9 @@ export default function App() {
                   onNavigateToModule={handleNavigateToModule}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
+                  onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onGenerateUnifiedReport={handleGenerateUnifiedReport}
+                  onLogSocialMetrics={handleLogSocialMetrics}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -4796,6 +5046,9 @@ export default function App() {
                   onUpdateCampaign={handleUpdateCampaign}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
+                  onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onGenerateUnifiedReport={handleGenerateUnifiedReport}
+                  onLogSocialMetrics={handleLogSocialMetrics}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -4824,6 +5077,7 @@ export default function App() {
                   dailyLogs={dailyLogs}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
+                  onGenerateAiSummary={handleGenerateCampaignSummary}
                 />
               </div>
             )}

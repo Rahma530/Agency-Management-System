@@ -119,6 +119,66 @@ export type ReportScope = { type: 'client'; clientId: string } | { type: 'agent'
 // parameter, and the persisted row all agree with no translation step between them.
 export type ReportMode = 'comparison' | 'period_summary';
 
+// UX-flow change: shared by ClientDashboard.tsx's ReportsAndComparisonsTab and ReportsHub.tsx so
+// "Generate AI Summary" can work before any client_comparisons row exists yet in either surface,
+// without duplicating this lookup-or-generate logic once per caller. Looks up an already-computed
+// row for the given scope/mode/period first (so an existing row's data is reused unchanged, never
+// silently recomputed — matching whatever "Generate Comparison"/"Generate Period Report" already
+// produced), and only calls onGenerateComparison (App.tsx's handleGenerateComparison — the same
+// compute+write path, including its service-filtered merge write for department agents/team leads)
+// when nothing matches yet. Generic over ReportScope (client- or agent-scoped) so both callers'
+// different scope models — ClientDashboard's fixed single client vs. ReportsHub's
+// own-clients/specific-client/specific-agent picker — share one implementation rather than each
+// re-deriving the "does a matching row already exist" predicate.
+export async function ensureComparisonForSummary(params: {
+  scope: ReportScope;
+  mode: ReportMode;
+  granularity: ComparisonGranularity | 'custom';
+  customCurrentRange: DateRange;
+  customPreviousRange: DateRange;
+  comparisons: ClientComparisonRecord[];
+  onGenerateComparison?: (
+    scope: ReportScope,
+    mode: ReportMode,
+    granularity: ComparisonGranularity | 'custom',
+    custom?: { currentRange: DateRange; previousRange?: DateRange }
+  ) => Promise<ClientComparisonRecord | null>;
+}): Promise<ClientComparisonRecord | null> {
+  const { scope, mode, granularity, customCurrentRange, customPreviousRange, comparisons, onGenerateComparison } = params;
+  if (!onGenerateComparison) return null;
+  if (granularity === 'custom') {
+    const missingCurrent = !customCurrentRange.start || !customCurrentRange.end;
+    const missingPrevious = mode === 'comparison' && (!customPreviousRange.start || !customPreviousRange.end);
+    if (missingCurrent || missingPrevious) return null;
+  }
+
+  const currentPeriod = granularity === 'custom' ? customPeriod(customCurrentRange) : resolveComparisonPeriods(granularity).current;
+  const previousPeriod =
+    mode === 'comparison'
+      ? granularity === 'custom'
+        ? customPeriod(customPreviousRange)
+        : resolveComparisonPeriods(granularity).previous
+      : null;
+
+  const existing = comparisons.find(
+    (c) =>
+      (scope.type === 'client' ? c.client_id === scope.clientId : c.agent_id === scope.agentId) &&
+      c.row_kind === mode &&
+      c.period_current === currentPeriod.label &&
+      c.period_previous === (previousPeriod?.label ?? null)
+  );
+  if (existing) return existing;
+
+  return onGenerateComparison(
+    scope,
+    mode,
+    granularity,
+    granularity === 'custom'
+      ? { currentRange: customCurrentRange, previousRange: mode === 'comparison' ? customPreviousRange : undefined }
+      : undefined
+  );
+}
+
 // True if the client subscribes to the given service. Standalone (not nested in
 // resolveClientsForSubject below) so dashboards can ask "which clients belong to department X"
 // directly, without needing a fake team-lead subject to route through the resolver.
@@ -281,6 +341,14 @@ function sumMetric(rows: SocialInsightRecord[], key: string): number | null {
   return values.length ? values.reduce((a, b) => a + b, 0) : null;
 }
 
+// Weekly manual-entry rows (see LogSocialMetricsModal.tsx) are matched by this same inRange(date,
+// range) check, since `date` is always kept equal to `week_start_date` on write — this function was
+// deliberately left unmodified when that feature shipped. That means a week whose week_start_date
+// falls near a period boundary has its ENTIRE numbers counted in whichever single period contains
+// that start date, with no proportional split (e.g. a week starting 2026-02-26 and running into
+// March counts 100% toward February, 0% toward March). Accepted as a known limitation of feeding
+// weekly rows into logic written for daily ones — not fixed here, since proportional date-splitting
+// is materially more work than the weekly form's three fields warrant.
 export function aggregateSocialMetrics(
   insights: SocialInsightRecord[],
   clientIds: string[],
