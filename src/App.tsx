@@ -1238,7 +1238,7 @@ export default function App() {
 
         // Fetch briefs
         const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
-        if (!briefErr && briefData && briefData.length > 0) {
+        if (!briefErr && briefData) {
           setBriefs(briefData as BriefRecord[]);
         }
 
@@ -1246,7 +1246,7 @@ export default function App() {
         const { data: briefRevisionData, error: briefRevisionErr } = await supabase
           .from('brief_revisions')
           .select('*');
-        if (!briefRevisionErr && briefRevisionData && briefRevisionData.length > 0) {
+        if (!briefRevisionErr && briefRevisionData) {
           setBriefRevisions(briefRevisionData as BriefRevisionRecord[]);
         }
 
@@ -1271,7 +1271,7 @@ export default function App() {
         const { data: taskCommentData, error: taskCommentErr } = await supabase
           .from('task_comments')
           .select('*');
-        if (!taskCommentErr && taskCommentData && taskCommentData.length > 0) {
+        if (!taskCommentErr && taskCommentData) {
           setTaskComments(taskCommentData as TaskCommentRecord[]);
         }
 
@@ -1279,37 +1279,40 @@ export default function App() {
         const { data: taskAttachmentData, error: taskAttachmentErr } = await supabase
           .from('task_attachments')
           .select('*');
-        if (!taskAttachmentErr && taskAttachmentData && taskAttachmentData.length > 0) {
+        if (!taskAttachmentErr && taskAttachmentData) {
           setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
         }
 
         // Fetch capacity_logs
         const { data: capData, error: capErr } = await supabase.from('capacity_logs').select('*');
-        if (!capErr && capData && capData.length > 0) {
+        if (!capErr && capData) {
           setCapacityLogs(capData as CapacityLogRecord[]);
         }
 
         // Fetch daily_logs
         const { data: logData, error: logErr } = await supabase.from('daily_logs').select('*');
-        if (!logErr && logData && logData.length > 0) {
+        if (!logErr && logData) {
           setDailyLogs(logData as DailyLogRecord[]);
         }
 
         // Fetch extra_notes
         const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
-        if (!noteErr && noteData && noteData.length > 0) {
+        if (!noteErr && noteData) {
           setExtraNotes(noteData as ExtraNoteRecord[]);
         }
 
-        // Fetch campaigns
-        const { data: campaignData, error: campaignErr } = await supabase.from('campaigns').select('*');
-        if (!campaignErr && campaignData && campaignData.length > 0) {
+        // Fetch campaigns directly from Postgres (bypassing the legacy client-side campaigns
+        // proxy in lib/supabase.ts, same reasoning as the users fetch above — that proxy's
+        // select path reads from an in-memory array seeded once from INITIAL_CAMPAIGNS and never
+        // synced with the real table, so it could never reflect a real, empty campaigns table).
+        const { data: campaignData, error: campaignErr } = await supabaseRaw.from('campaigns').select('*');
+        if (!campaignErr && campaignData) {
           setCampaigns(campaignData as CampaignRecord[]);
         }
 
         // Fetch assignments (service specialist delegation records)
         const { data: assignmentData, error: assignmentErr } = await supabase.from('assignments').select('*');
-        if (!assignmentErr && assignmentData && assignmentData.length > 0) {
+        if (!assignmentErr && assignmentData) {
           setAssignments(assignmentData as AssignmentRecord[]);
         }
 
@@ -1317,13 +1320,13 @@ export default function App() {
         const { data: socialInsightData, error: socialInsightErr } = await supabase
           .from('social_insights')
           .select('*');
-        if (!socialInsightErr && socialInsightData && socialInsightData.length > 0) {
+        if (!socialInsightErr && socialInsightData) {
           setSocialInsights(socialInsightData as SocialInsightRecord[]);
         }
 
         // Fetch reports (Reporting Engine)
         const { data: reportData, error: reportErr } = await supabase.from('reports').select('*');
-        if (!reportErr && reportData && reportData.length > 0) {
+        if (!reportErr && reportData) {
           setReports(reportData as ReportRecord[]);
         }
 
@@ -1331,7 +1334,7 @@ export default function App() {
         const { data: comparisonData, error: comparisonErr } = await supabase
           .from('client_comparisons')
           .select('*');
-        if (!comparisonErr && comparisonData && comparisonData.length > 0) {
+        if (!comparisonErr && comparisonData) {
           setClientComparisons(comparisonData as ClientComparisonRecord[]);
         }
 
@@ -1339,19 +1342,19 @@ export default function App() {
         const { data: portalUserData, error: portalUserErr } = await supabase
           .from('client_portal_users')
           .select('*');
-        if (!portalUserErr && portalUserData && portalUserData.length > 0) {
+        if (!portalUserErr && portalUserData) {
           setClientPortalUsers(portalUserData as ClientPortalUserRecord[]);
         }
 
         // Fetch meetings (Module 9 scaffolding: AM meeting recordings/manual transcript notes)
         const { data: meetingData, error: meetingErr } = await supabase.from('meetings').select('*');
-        if (!meetingErr && meetingData && meetingData.length > 0) {
+        if (!meetingErr && meetingData) {
           setMeetings(meetingData as MeetingRecord[]);
         }
 
         // Fetch client_contracts (Module 12 Phase 6: Sales's signed-contract upload)
         const { data: contractData, error: contractErr } = await supabase.from('client_contracts').select('*');
-        if (!contractErr && contractData && contractData.length > 0) {
+        if (!contractErr && contractData) {
           setClientContracts(contractData as ClientContractRecord[]);
         }
 
@@ -1359,7 +1362,7 @@ export default function App() {
         const { data: platformConnectionData, error: platformConnectionErr } = await supabase
           .from('platform_connections')
           .select('*');
-        if (!platformConnectionErr && platformConnectionData && platformConnectionData.length > 0) {
+        if (!platformConnectionErr && platformConnectionData) {
           setPlatformConnections(platformConnectionData as PlatformConnectionRecord[]);
         }
 
@@ -3951,7 +3954,13 @@ export default function App() {
 
     if (supabaseActive) {
       try {
-        const { data, error } = await supabase.from('campaigns').insert([newRecord]).select();
+        // supabaseRaw, not the legacy `supabase` proxy — that proxy's insert handler only
+        // mutates its own in-memory array and never reaches Postgres at all. Real RLS
+        // (campaigns_insert_rls) enforces the exact same media_buying_team_lead/
+        // media_buying_agent-only rule CampaignManagementModule.tsx's own canCreateCampaign
+        // check already gates the "create campaign" UI with, so this never rejects a write
+        // the UI let someone attempt in the first place.
+        const { data, error } = await supabaseRaw.from('campaigns').insert([newRecord]).select();
         if (error) throw error;
         if (data && data[0]) {
           setCampaigns((prev) => [data[0] as CampaignRecord, ...prev]);
@@ -3972,7 +3981,12 @@ export default function App() {
   const handleUpdateCampaign = async (id: string, updates: Partial<CampaignRecord>) => {
     if (supabaseActive) {
       try {
-        const { error } = await supabase.from('campaigns').update(updates).eq('id', id);
+        // supabaseRaw, not the legacy `supabase` proxy — same reasoning as handleCreateCampaign
+        // above. Real RLS (campaigns_update_rls) is a verified exact match of the proxy's own
+        // canEdit check it's replacing (team_lead any row, agent scoped to their assignment, own
+        // am_agent scoped to their client) — the migration's own comment on that policy confirms
+        // it was written to mirror this handler in the first place.
+        const { error } = await supabaseRaw.from('campaigns').update(updates).eq('id', id);
         if (error) throw error;
       } catch (err: any) {
         console.warn('Supabase campaign update fallback to state:', err);
