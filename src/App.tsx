@@ -3430,12 +3430,18 @@ export default function App() {
   // 8b. Generate a period-over-period comparison (Reporting Engine) — either a single client, or
   // an agent's pooled client set (that agent's own "all my clients" report, or a team lead
   // generating one for a specific direct report).
+  // Returns the saved row (or null if nothing was generated/saved) so callers beyond the plain
+  // "Generate Comparison"/"Generate Period Report" button — the new pre-row "Generate AI Summary"
+  // entry points in ReportsAndComparisonsTab/UnifiedReportPanel — can compute-and-write on demand
+  // and immediately use the fresh result for an ai-router payload, all as one click, without a
+  // second copy of this metrics-computation/write logic anywhere. Every existing caller already
+  // just awaits this and ignores the resolved value, so widening it from Promise<void> is additive.
   const handleGenerateComparison = async (
     scope: ReportScope,
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => {
+  ): Promise<ClientComparisonRecord | null> => {
     let current: ComparisonPeriod;
     let previous: ComparisonPeriod | undefined;
 
@@ -3448,7 +3454,7 @@ export default function App() {
       previous = resolved.previous;
     }
 
-    if (mode === 'comparison' && !previous) return;
+    if (mode === 'comparison' && !previous) return null;
 
     let scopedClients: ClientRecord[];
     let serviceFilter: ServiceType[] | undefined;
@@ -3456,7 +3462,7 @@ export default function App() {
 
     if (scope.type === 'client') {
       const client = clients.find((c) => c.id === scope.clientId);
-      if (!client) return;
+      if (!client) return null;
       scopedClients = [client];
       // Combined-scope item C: a department agent/team lead generating for a single client must
       // only ever compute their own department's services — AM/leadership roles (undefined here,
@@ -3468,7 +3474,7 @@ export default function App() {
       scopeLabel = client.name;
     } else {
       const subject = users.find((u) => u.id === scope.agentId);
-      if (!subject) return;
+      if (!subject) return null;
       scopedClients = resolveClientsForSubject(subject, clients, assignments);
       serviceFilter = serviceFilterForRole(subject.role);
       scopeLabel = subject.name;
@@ -3476,7 +3482,7 @@ export default function App() {
 
     if (scopedClients.length === 0) {
       showNotification('No clients found for this scope — nothing to report on.', 'info');
-      return;
+      return null;
     }
 
     const result =
@@ -3567,6 +3573,8 @@ export default function App() {
     // bare column list — those look up any existing row explicitly first, then update or insert.
     const canOneShotUpsert = scope.type === 'client' && mode === 'comparison';
 
+    let saved: ClientComparisonRecord = comparisonPayload;
+
     if (supabaseActive) {
       try {
         let data: ClientComparisonRecord[] | null;
@@ -3590,12 +3598,12 @@ export default function App() {
         }
 
         if (error) throw error;
-        const saved = data?.[0] || comparisonPayload;
+        saved = data?.[0] || comparisonPayload;
         setClientComparisons((prev) => [...prev.filter((c) => c.id !== saved.id), saved]);
       } catch (err) {
         console.error('Supabase client_comparisons write error:', err);
         showNotification('Unable to save the report.', 'info');
-        return;
+        return null;
       }
     } else {
       setClientComparisons((prev) => [...prev.filter((c) => c.id !== comparisonPayload.id), comparisonPayload]);
@@ -3604,6 +3612,7 @@ export default function App() {
     const periodLabel = mode === 'comparison' ? `${result.period_current} vs ${result.period_previous}` : result.period_current;
     const kindLabel = mode === 'comparison' ? 'Comparison' : 'Period report';
     showNotification(`${kindLabel} generated for ${scopeLabel} (${periodLabel}).`);
+    return saved;
   };
 
   // 8c. File a monthly/period report against an existing comparison (Reporting Engine). The

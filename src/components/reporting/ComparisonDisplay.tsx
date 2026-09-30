@@ -81,14 +81,19 @@ function toAllowlistUnit(displayUnit: string): string {
   return displayUnit.trim();
 }
 
-// True only for a real 'comparison' row (never period_summary — there's no previous period to
-// diff against, and no rule-based narrative renders for one either) whose period_current matches
-// one of ai-router's four accepted label shapes, with at least one service's metrics present.
-// serviceFilter (combined-scope item C): a department agent/team lead viewer only ever gets a
-// payload built from their own service(s) — undefined means "every service present," same as
-// before this was added.
+// Whose period_current matches one of ai-router's four accepted label shapes, with at least one
+// service's metrics present. serviceFilter (combined-scope item C): a department agent/team lead
+// viewer only ever gets a payload built from their own service(s) — undefined means "every service
+// present," same as before this was added.
+//
+// Deliberately allows a 'period_summary' row too (previously excluded here, not by ai-router
+// itself): metrics_previous is always empty for one, so buildCampaignSummaryPayload below sends
+// previous_value: null for every metric — a shape ai-router's own buildAnalyzeInput() already
+// tolerates gracefully (confirmed by audit), so no taskRegistry.ts change was needed to allow this.
+// The AI summary's prose is still comparison-flavored (CAMPAIGN_SUMMARY's prompt wasn't rewritten
+// for a no-previous-period tone as part of this change), so expect it to read a little oddly around
+// "no change" deltas on a period_summary row until/unless that prompt is revisited separately.
 export function canBuildCampaignSummaryPayload(comparison: ClientComparisonRecord, serviceFilter?: ServiceType[]): boolean {
-  if (comparison.row_kind === 'period_summary') return false;
   if (!CAMPAIGN_SUMMARY_PERIOD_LABEL_RE.test(comparison.period_current)) return false;
   return (['media_buying', 'social_media', 'seo'] as const)
     .filter((service) => !serviceFilter || serviceFilter.includes(service))
@@ -411,6 +416,27 @@ export const ComparisonCard: React.FC<{
           </p>
 
           <div className="pt-1.5 border-t border-purple-900/20 flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="pdf-download-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-stone-200 bg-stone-800/60 hover:bg-stone-700/60 hover:text-white border border-stone-600/40 transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              <Download className="w-3 h-3" />
+              {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
+            </button>
+            {pdfError && <span className="text-[11px] text-red-300">{pdfError}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* AI summary section — deliberately its own block, independent of the rule-based narrative
+          box above (which never renders for a period_summary row): "Generate AI Summary" must be
+          offered for period_summary rows too, even though they have no narrative to sit inside. PDF
+          export stays narrative-only (unchanged) — this request only asked to fix AI-summary
+          gating, not PDF export's. */}
+      {(canShowAiButton || aiSummaryResult) && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
             {canShowAiButton && (
               <button
                 onClick={handleGenerateAiSummary}
@@ -424,15 +450,6 @@ export const ComparisonCard: React.FC<{
                   : 'Generate AI Summary'}
               </button>
             )}
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isDownloadingPdf}
-              className="pdf-download-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-stone-200 bg-stone-800/60 hover:bg-stone-700/60 hover:text-white border border-stone-600/40 transition-all disabled:opacity-50 flex items-center gap-1"
-            >
-              <Download className="w-3 h-3" />
-              {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
-            </button>
-            {pdfError && <span className="text-[11px] text-red-300">{pdfError}</span>}
           </div>
 
           {/* AI-generated content — Arabic per the request's language:'ar' (matches this task's
@@ -482,48 +499,68 @@ export const ComparisonCard: React.FC<{
 export const UnifiedReportPanel: React.FC<{
   latestComparison: ClientComparisonRecord | null;
   onGenerateUnifiedReport: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
-}> = ({ latestComparison, onGenerateUnifiedReport }) => {
-  const [isGenerating, setIsGenerating] = useState(false);
+  // When there's no comparison yet at all, generating still works in one click: this computes and
+  // saves one for the CURRENTLY selected period first (reusing handleGenerateComparison's own
+  // logic/write path in App.tsx, always in 'comparison' mode — the unified report has never had a
+  // period_summary variant and this doesn't add one), then the result feeds straight into
+  // onGenerateUnifiedReport below. Omitted entirely means "this viewer can't generate at all,"
+  // same convention as every other optional handler prop in this file.
+  onEnsureComparison?: () => Promise<ClientComparisonRecord | null>;
+}> = ({ latestComparison, onGenerateUnifiedReport, onEnsureComparison }) => {
+  const [stage, setStage] = useState<'idle' | 'computing' | 'generating'>('idle');
   const [result, setResult] = useState<UnifiedClientReportResult | null>(null);
+  // Holds whichever comparison the last successful generation actually used — latestComparison
+  // itself may still be null (or a stale, older row) for a render or two after an on-demand
+  // ensure-then-generate click, since it only updates once the parent's client_comparisons state
+  // round-trips back down as a prop. PDF export reads this instead of latestComparison directly.
+  const [resolvedComparison, setResolvedComparison] = useState<ClientComparisonRecord | null>(null);
 
   // Ephemeral, same as ComparisonCard's own AI summary — cleared if the underlying comparison
   // this panel is built from changes (e.g. a fresh comparison was just generated).
   useEffect(() => {
     setResult(null);
-    setIsGenerating(false);
+    setStage('idle');
+    setResolvedComparison(null);
   }, [latestComparison?.id]);
 
-  const canBuild = !!latestComparison && canBuildCampaignSummaryPayload(latestComparison);
+  const canBuild = latestComparison ? canBuildCampaignSummaryPayload(latestComparison) : !!onEnsureComparison;
 
   const handleGenerate = async () => {
-    if (!latestComparison) return;
-    setIsGenerating(true);
-    const fresh = await onGenerateUnifiedReport(buildCampaignSummaryPayload(latestComparison));
-    setIsGenerating(false);
-    if (fresh) setResult(fresh);
+    setStage('computing');
+    try {
+      const comparison = latestComparison || (onEnsureComparison ? await onEnsureComparison() : null);
+      if (!comparison || !canBuildCampaignSummaryPayload(comparison)) return;
+      setResolvedComparison(comparison);
+      setStage('generating');
+      const fresh = await onGenerateUnifiedReport(buildCampaignSummaryPayload(comparison));
+      if (fresh) setResult(fresh);
+    } finally {
+      setStage('idle');
+    }
   };
 
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const pdfSourceComparison = resolvedComparison || latestComparison;
 
-  // Combined-scope item E: the metrics table is built from latestComparison directly, unfiltered
+  // Combined-scope item E: the metrics table is built from pdfSourceComparison directly, unfiltered
   // — correct here specifically because this panel is AM-only (isClientsOwnAmAgent in
   // ClientDashboard.tsx), so there is no viewerServiceFilter concept to respect in the first
   // place; buildUnifiedReportMetricsTable deliberately has no filter parameter, so it can't
   // accidentally be reused from a scoped context without a compile error forcing a second look.
   const handleDownloadPdf = async () => {
-    if (!latestComparison || !result) return;
+    if (!pdfSourceComparison || !result) return;
     setIsDownloadingPdf(true);
     setPdfError(null);
     try {
       await downloadReportPdf({
-        filename: `unified-client-report-${latestComparison.period_current}.pdf`,
+        filename: `unified-client-report-${pdfSourceComparison.period_current}.pdf`,
         title: 'Unified Client Report',
         subtitle:
-          latestComparison.period_current + (latestComparison.period_previous ? ` vs ${latestComparison.period_previous}` : ''),
+          pdfSourceComparison.period_current + (pdfSourceComparison.period_previous ? ` vs ${pdfSourceComparison.period_previous}` : ''),
         paragraphs: [{ heading: 'Narrative', body: result.narrative }],
         bulletLists: result.recommendations.length > 0 ? [{ heading: 'Recommendations', items: result.recommendations }] : [],
-        table: buildUnifiedReportMetricsTable(latestComparison),
+        table: buildUnifiedReportMetricsTable(pdfSourceComparison),
       });
     } catch (err) {
       console.error('PDF export failed:', err);
@@ -545,16 +582,24 @@ export const UnifiedReportPanel: React.FC<{
             {latestComparison
               ? `One combined narrative across every active service, for ${latestComparison.period_current}` +
                 (latestComparison.period_previous ? ` vs ${latestComparison.period_previous}` : '') + '.'
+              : onEnsureComparison
+              ? 'Generates a comparison for the period selected below if none exists yet, then the unified narrative — one click.'
               : 'Generate a comparison below first — the unified report is built from your most recent one.'}
           </p>
         </div>
         {canBuild && (
           <button
             onClick={handleGenerate}
-            disabled={isGenerating}
+            disabled={stage !== 'idle'}
             className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-amber-200 bg-amber-900/40 hover:bg-amber-800/60 hover:text-white border border-amber-700/40 transition-all disabled:opacity-50"
           >
-            {isGenerating ? 'Generating...' : result ? 'Regenerate Unified Report' : 'Generate Unified Report'}
+            {stage === 'computing'
+              ? 'Computing metrics...'
+              : stage === 'generating'
+              ? 'Generating...'
+              : result
+              ? 'Regenerate Unified Report'
+              : 'Generate Unified Report'}
           </button>
         )}
       </div>
@@ -591,6 +636,119 @@ export const UnifiedReportPanel: React.FC<{
             </button>
             {pdfError && <span className="text-[11px] text-red-300">{pdfError}</span>}
           </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------------------
+// UX-flow change: "Generate AI Summary" used to be reachable only from an already-rendered
+// ComparisonCard, which meant it was invisible until a client_comparisons row already existed for
+// the current period (i.e. until "Generate Comparison"/"Generate Period Report" below had already
+// been clicked at least once). This panel offers the same action up front, alongside that button,
+// for both comparison and period_summary modes. A single click either reuses an already-computed
+// row for the currently selected period (exactly today's ComparisonCard behavior, no recompute) or
+// — when none exists yet — computes and saves one first via onEnsureComparison (which reuses
+// handleGenerateComparison's own logic/write path in App.tsx unchanged, including its
+// service-filtered merge write for department agents), then immediately builds the payload and
+// calls ai-router, all as one user-facing action. The result renders inline here rather than inside
+// whichever ComparisonCard the newly-created row ends up as (that card's own AI section still works
+// independently afterward, e.g. to regenerate).
+// ----------------------------------------------------------------------------
+export const DirectAiSummaryPanel: React.FC<{
+  mode: 'comparison' | 'period_summary';
+  onEnsureComparison: () => Promise<ClientComparisonRecord | null>;
+  onGenerateAiSummary: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  viewerServiceFilter?: ServiceType[];
+}> = ({ mode, onEnsureComparison, onGenerateAiSummary, viewerServiceFilter }) => {
+  const [stage, setStage] = useState<'idle' | 'computing' | 'generating'>('idle');
+  const [result, setResult] = useState<CampaignSummaryDetailedResult | null>(null);
+  const [ineligible, setIneligible] = useState(false);
+
+  // Cleared on a mode switch (Comparison Report <-> Period Report) — a result generated under one
+  // mode has no bearing on the other.
+  useEffect(() => {
+    setResult(null);
+    setIneligible(false);
+    setStage('idle');
+  }, [mode]);
+
+  const handleClick = async () => {
+    setIneligible(false);
+    setStage('computing');
+    try {
+      const row = await onEnsureComparison();
+      if (!row) return; // onEnsureComparison's own failure path already surfaced a notification
+      if (!canBuildCampaignSummaryPayload(row, viewerServiceFilter)) {
+        setIneligible(true);
+        return;
+      }
+      setStage('generating');
+      const fresh = await onGenerateAiSummary(buildCampaignSummaryPayload(row, viewerServiceFilter));
+      if (fresh) setResult(fresh);
+    } finally {
+      setStage('idle');
+    }
+  };
+
+  return (
+    <div className="p-4 rounded-xl border border-indigo-900/30 bg-indigo-950/10 space-y-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+            <Sparkles className="w-4 h-4" />
+            <span>AI Summary</span>
+          </h3>
+          <p className="text-[11px] text-stone-400">
+            Uses the period selected below — computes it first if it hasn't been generated yet.
+          </p>
+        </div>
+        <button
+          onClick={handleClick}
+          disabled={stage !== 'idle'}
+          className="ai-summary-action px-2.5 py-1 rounded-lg text-[11px] font-bold text-indigo-200 bg-indigo-900/40 hover:bg-indigo-800/60 hover:text-white border border-indigo-700/40 transition-all disabled:opacity-50"
+        >
+          {stage === 'computing'
+            ? 'Computing metrics...'
+            : stage === 'generating'
+            ? 'Generating AI Summary...'
+            : result
+            ? 'Regenerate AI Summary'
+            : 'Generate AI Summary'}
+        </button>
+      </div>
+
+      {ineligible && (
+        <p className="text-xs text-stone-500">
+          That period isn't eligible for an AI summary yet (no metrics, or a period label ai-router
+          doesn't accept).
+        </p>
+      )}
+
+      {result && (
+        <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-900/30 space-y-1.5">
+          <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-wide">AI Summary</p>
+          <p className="text-xs text-stone-200 leading-relaxed" dir="rtl">
+            {result.summary}
+          </p>
+          {result.by_service.map((entry, i) => (
+            <p key={i} className="text-xs text-stone-200 leading-relaxed" dir="rtl">
+              <strong className="text-indigo-300">
+                {SERVICE_TITLES[entry.service as keyof typeof SERVICE_TITLES] || entry.service}:{' '}
+              </strong>
+              {entry.text}
+            </p>
+          ))}
+          {result.recommendations.length > 0 && (
+            <ul className="list-disc list-inside space-y-0.5" dir="rtl">
+              {result.recommendations.map((rec, i) => (
+                <li key={i} className="text-xs text-stone-200 leading-relaxed">
+                  {rec}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

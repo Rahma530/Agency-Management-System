@@ -65,12 +65,22 @@ import {
   getCampaignEndDate,
   getCampaignOwnerId,
 } from './CampaignManagementModule';
-import { ComparisonGranularity, DateRange, ReportMode, ReportScope, detectClientAnomalies, clientHasService } from '../lib/reportingEngine';
+import {
+  ComparisonGranularity,
+  DateRange,
+  ReportMode,
+  ReportScope,
+  detectClientAnomalies,
+  clientHasService,
+  resolveComparisonPeriods,
+  customPeriod,
+} from '../lib/reportingEngine';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
   ComparisonCard,
   FiledReportsList,
   UnifiedReportPanel,
+  DirectAiSummaryPanel,
   CampaignSummaryPayload,
   CampaignSummaryDetailedResult,
   UnifiedClientReportResult,
@@ -131,12 +141,16 @@ interface ClientDashboardProps {
   ) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
+  // Returns the saved row (or null) so the "Generate AI Summary" entry points below can
+  // compute-and-write on demand when no row exists yet, then use the fresh result immediately —
+  // see ReportsAndComparisonsTab's onEnsureComparisonForSummary. Existing callers that just await
+  // and ignore the result are unaffected by this widening from Promise<void>.
   onGenerateComparison?: (
     scope: ReportScope,
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
   // Phase 4 (AI Orchestrator): threaded straight to ComparisonCard, same optional-prop convention
   // as onGenerateReport above — omitted by every caller that shouldn't offer it (see App.tsx).
@@ -688,6 +702,49 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     } finally {
       setIsGeneratingComparison(false);
     }
+  };
+
+  // UX-flow change: lets "Generate AI Summary" work before any client_comparisons row exists yet,
+  // for both modes — looks up an already-computed row for the currently selected granularity/
+  // period first (mirroring handleGenerateComparison's own upsert-or-update lookup so the two never
+  // disagree about what "the current period" means), and only calls onGenerateComparison (the same
+  // compute+write path "Generate Comparison"/"Generate Period Report" already uses, unchanged) when
+  // nothing matches yet. `mode` is a parameter rather than always reading reportMode state because
+  // the Unified Report button always wants a 'comparison' row regardless of which toggle is
+  // currently selected above.
+  const ensureComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
+    if (!onGenerateComparison) return null;
+    if (reportGranularity === 'custom') {
+      const missingCurrent = !customCurrentRange.start || !customCurrentRange.end;
+      const missingPrevious = mode === 'comparison' && (!customPreviousRange.start || !customPreviousRange.end);
+      if (missingCurrent || missingPrevious) return null;
+    }
+
+    const currentPeriod =
+      reportGranularity === 'custom' ? customPeriod(customCurrentRange) : resolveComparisonPeriods(reportGranularity).current;
+    const previousPeriod =
+      mode === 'comparison'
+        ? reportGranularity === 'custom'
+          ? customPeriod(customPreviousRange)
+          : resolveComparisonPeriods(reportGranularity).previous
+        : null;
+
+    const existing = clientComparisonsForClient.find(
+      (c) =>
+        c.row_kind === mode &&
+        c.period_current === currentPeriod.label &&
+        c.period_previous === (previousPeriod?.label ?? null)
+    );
+    if (existing) return existing;
+
+    return onGenerateComparison(
+      { type: 'client', clientId: client.id },
+      mode,
+      reportGranularity,
+      reportGranularity === 'custom'
+        ? { currentRange: customCurrentRange, previousRange: mode === 'comparison' ? customPreviousRange : undefined }
+        : undefined
+    );
   };
 
   const handleGenerateReport = async (comparison: ClientComparisonRecord) => {
@@ -2325,6 +2382,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   ? (platform, weekStartDate, metrics) => onLogSocialMetrics(client.id, platform, weekStartDate, metrics)
                   : undefined
               }
+              onEnsureComparisonForSummary={ensureComparisonForSummary}
             />
           )}
 
@@ -2484,6 +2542,11 @@ interface ReportsAndComparisonsTabProps {
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
   ) => Promise<void>;
+  // UX-flow change: backs both the per-service DirectAiSummaryPanel below and UnifiedReportPanel's
+  // own on-demand generation — looks up an existing row for the current period/mode first, computes
+  // and saves one via the same onGenerateComparison path otherwise. See ClientDashboard's own
+  // ensureComparisonForSummary for the implementation this is bound to.
+  onEnsureComparisonForSummary: (mode: ReportMode) => Promise<ClientComparisonRecord | null>;
 }
 
 const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
@@ -2519,6 +2582,7 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   briefFieldSchemas,
   canLogSocialMetrics,
   onLogSocialMetrics,
+  onEnsureComparisonForSummary,
 }) => {
   const [selectedDraftReport, setSelectedDraftReport] = useState<ReportRecord | null>(null);
   const [isLogSocialMetricsOpen, setIsLogSocialMetricsOpen] = useState(false);
@@ -2539,7 +2603,11 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   return (
     <div className="space-y-6">
       {canGenerateUnifiedReport && onGenerateUnifiedReport && (
-        <UnifiedReportPanel latestComparison={latestFullComparison} onGenerateUnifiedReport={onGenerateUnifiedReport} />
+        <UnifiedReportPanel
+          latestComparison={latestFullComparison}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
+          onEnsureComparison={() => onEnsureComparisonForSummary('comparison')}
+        />
       )}
 
       {canLogSocialMetrics && onLogSocialMetrics && (
@@ -2607,6 +2675,15 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
         onGenerate={onGenerateComparison}
         singlePeriod={reportMode === 'period_summary'}
       />
+
+      {canGenerate && onGenerateAiSummary && (
+        <DirectAiSummaryPanel
+          mode={reportMode}
+          onEnsureComparison={() => onEnsureComparisonForSummary(reportMode)}
+          onGenerateAiSummary={onGenerateAiSummary}
+          viewerServiceFilter={viewerServiceFilter}
+        />
+      )}
 
       {/* Past comparisons */}
       <div className="space-y-3">
