@@ -105,6 +105,68 @@
   --indigo-tint: rgba(99, 102, 241, 0.15);
   --indigo-ink: #a5b4fc;
   --border-indigo: rgba(99, 102, 241, 0.2);
+  --border-rose: rgba(245, 163, 163, 0.3);
+  --border-success: rgba(169, 245, 193, 0.3);
+  --border-warning: rgba(245, 226, 154, 0.3);
+  --border-info: rgba(56, 189, 248, 0.3);
+
+  /* ---- Role badge colors (data/roles.ts) ----
+     One dedicated tint/ink pair per role, dark values equal to that role's previous hardcoded
+     badgeBg/badgeText literal exactly — this introduces no dark-mode visual change, only makes
+     the same colors themeable. Light values are added below. Kept independent of the semantic
+     tokens above (--accent-tint, --rose, etc.) even where a role's hue overlaps one, since a
+     role's badge and an unrelated feature's color could otherwise drift apart unexpectedly if
+     they shared a token. */
+  --role-executive-tint: rgba(216, 180, 254, 0.2);
+  --role-executive-ink: #e9d5ff;
+  --role-head-of-technical-tint: rgba(123, 47, 247, 0.25);
+  --role-head-of-technical-ink: #c084fc;
+  --role-sales-tint: rgba(245, 226, 154, 0.2);
+  --role-sales-ink: var(--roas-mid);
+  --role-am-team-lead-tint: rgba(123, 47, 247, 0.2);
+  --role-am-team-lead-ink: var(--purple-light);
+  --role-am-agent-tint: rgba(168, 155, 184, 0.15);
+  --role-am-agent-ink: var(--lilac);
+  --role-media-buying-lead-tint: rgba(14, 165, 233, 0.2);
+  --role-media-buying-lead-ink: #38bdf8;
+  --role-media-buying-agent-tint: rgba(14, 165, 233, 0.15);
+  --role-media-buying-agent-ink: #7dd3fc;
+  --role-seo-lead-tint: rgba(16, 185, 129, 0.2);
+  --role-seo-lead-ink: #34d399;
+  --role-seo-agent-tint: rgba(168, 185, 129, 0.15);
+  --role-seo-agent-ink: #6ee7b7;
+  --role-programming-tint: rgba(99, 102, 241, 0.2);
+  --role-programming-ink: #818cf8;
+  --role-social-lead-tint: rgba(236, 72, 153, 0.2);
+  --role-social-lead-ink: #f472b6;
+  --role-social-agent-tint: rgba(236, 72, 153, 0.15);
+  --role-social-agent-ink: #fbcfe8;
+  --role-graphic-designer-tint: rgba(249, 115, 22, 0.2);
+  --role-graphic-designer-ink: #fb923c;
+  --role-video-editor-tint: rgba(239, 68, 68, 0.2);
+  --role-video-editor-ink: #f87171;
+  --role-ai-engineer-tint: rgba(45, 212, 191, 0.2);
+  --role-ai-engineer-ink: #2dd4bf;
+  --role-marketing-manager-tint: rgba(217, 70, 239, 0.2);
+  --role-marketing-manager-ink: #e879f9;
+
+  /* ---- Task-status badge colors (CrossTeamTaskBoard.tsx's columns array) ----
+     Same reasoning as the role tokens above: dark values equal today's literals exactly, one
+     dedicated pair per status even where two statuses already share a value today. */
+  --status-todo-tint: rgba(168, 155, 184, 0.2);
+  --status-progress-tint: rgba(123, 47, 247, 0.25);
+  --status-review-tint: rgba(245, 226, 154, 0.2);
+  --status-completed-tint: rgba(169, 245, 193, 0.2);
+  --status-closed-tint: rgba(168, 155, 184, 0.2);
+  --status-blocked-tint: rgba(245, 163, 163, 0.2);
+
+  /* ---- Department badge colors (ServiceBriefsRoutingView.tsx's getServiceContext) ---- */
+  --dept-seo-tint: rgba(16, 185, 129, 0.15);
+  --dept-seo-ink: #34d399;
+  --dept-media-buying-tint: rgba(14, 165, 233, 0.15);
+  --dept-media-buying-ink: #38bdf8;
+  --dept-social-tint: rgba(236, 72, 153, 0.15);
+  --dept-social-ink: #f472b6;
 
   /* ---- Stat-number colors ----
      Dedicated from the primary --accent/--success/--warning/--info/--rose tokens (which serve
@@ -174,11 +236,71 @@
   --warning-tint: #f8ecd8;
   --info: #2f6fae;
   --info-tint: #e2eefa;
-  --rose: #a24d78;
+  /* Darkened from the initial #a24d78 — that value cleared WCAG AA (4.5:1) against --rose-tint
+     by only 4.53:1, an uncomfortably thin margin for body text. This clears ~6.1:1. */
+  --rose: #8a3a63;
   --rose-tint: #f7e6ef;
   --indigo-tint: #e6e8fc;
   --indigo-ink: #4338ca;
   --border-indigo: rgba(67, 56, 202, 0.25);
+  --border-rose: rgba(138, 58, 99, 0.3);
+  --border-success: rgba(47, 143, 99, 0.3);
+  --border-warning: rgba(184, 121, 31, 0.3);
+  --border-info: rgba(47, 111, 174, 0.3);
+
+  /* ---- Role badge colors — light values ----
+     Tailwind's own 100-tint/700-ink (or 50-tint/800-ink for a role whose dark badge was already
+     paler) pairing, per hue family: this is the same shade relationship Tailwind's default
+     palette is designed around for AA-safe text-on-tint, verified directly for a sky and a pink
+     pair (5.17:1 and 7.22:1) rather than assumed for all sixteen. */
+  --role-executive-tint: #f5f3ff;
+  --role-executive-ink: #5b21b6;
+  --role-head-of-technical-tint: #f3e8ff;
+  --role-head-of-technical-ink: #7e22ce;
+  --role-sales-tint: #fef3c7;
+  --role-sales-ink: var(--roas-mid);
+  --role-am-team-lead-tint: #ede9fe;
+  --role-am-team-lead-ink: var(--purple-light);
+  --role-am-agent-tint: #f5f5f4;
+  --role-am-agent-ink: var(--lilac);
+  --role-media-buying-lead-tint: #e0f2fe;
+  --role-media-buying-lead-ink: #0369a1;
+  --role-media-buying-agent-tint: #f0f9ff;
+  --role-media-buying-agent-ink: #075985;
+  --role-seo-lead-tint: #d1fae5;
+  --role-seo-lead-ink: #047857;
+  --role-seo-agent-tint: #ecfdf5;
+  --role-seo-agent-ink: #065f46;
+  --role-programming-tint: #e0e7ff;
+  --role-programming-ink: #4338ca;
+  --role-social-lead-tint: #fce7f3;
+  --role-social-lead-ink: #be185d;
+  --role-social-agent-tint: #fdf2f8;
+  --role-social-agent-ink: #9d174d;
+  --role-graphic-designer-tint: #ffedd5;
+  --role-graphic-designer-ink: #c2410c;
+  --role-video-editor-tint: #fee2e2;
+  --role-video-editor-ink: #b91c1c;
+  --role-ai-engineer-tint: #ccfbf1;
+  --role-ai-engineer-ink: #0f766e;
+  --role-marketing-manager-tint: #fae8ff;
+  --role-marketing-manager-ink: #a21caf;
+
+  /* ---- Task-status badge colors — light values ---- */
+  --status-todo-tint: #eeecf5;
+  --status-progress-tint: #ece9fb;
+  --status-review-tint: #f8ecd8;
+  --status-completed-tint: #e3f2e9;
+  --status-closed-tint: #eeecf5;
+  --status-blocked-tint: #f7e6ef;
+
+  /* ---- Department badge colors — light values ---- */
+  --dept-seo-tint: #d1fae5;
+  --dept-seo-ink: #047857;
+  --dept-media-buying-tint: #e0f2fe;
+  --dept-media-buying-ink: #0369a1;
+  --dept-social-tint: #fce7f3;
+  --dept-social-ink: #be185d;
 
   /* ---- Legacy brand/semantic token names, rebuilt as aliases onto the primitives above ----
      Every pre-existing component in the app (badges, gradients, chart colors, and every
@@ -351,58 +473,150 @@
   color: var(--on-accent) !important;
 }
 
-/* Formerly dark status blocks become softly tinted light surfaces instead of leaking a dark
-   panel into Light Mode. */
-[data-theme='light'] :is(.bg-purple-950, .bg-purple-950\/10, .bg-purple-950\/20, .bg-purple-950\/30, .bg-purple-950\/40, .bg-purple-950\/50, .bg-purple-950\/60) {
-  background-color: var(--accent-tint) !important;
-}
-
-[data-theme='light'] :is(.bg-red-950, .bg-red-950\/20, .bg-red-950\/30, .bg-red-950\/40, .bg-red-950\/50, .bg-red-950\/60, .bg-red-950\/80) {
+/* Formerly dark status blocks/badges become softly tinted light surfaces instead of leaking a
+   dark panel into Light Mode, and their light-pastel text/border companions (both meant to sit
+   on a dark backdrop) get a readable dark "ink" at the same time — background and text ship
+   together per hue family below, so this pass never trades an invisible-light-text-on-dark-card
+   bug for the reverse (invisible-dark-text-on-still-dark-card, wherever a family's background
+   isn't covered yet) or vice versa.
+   Generic substring attribute selectors (matching any element, any opacity suffix, any other
+   classes on the same element) replace the old one-exact-class-per-opacity approach, so a future
+   component reusing one of these colors doesn't quietly fall outside coverage the way today's
+   indigo AI-summary panel and several role/status badges elsewhere did.
+   The text rules for purple/indigo/red/amber/emerald are guarded with :not() against the small,
+   fixed set of elements that force their own on-accent white text below (.bg-purple-600 and
+   siblings, a few lines up, plus .client-initial-avatar and .chat-avatar's own dedicated rules,
+   further down — checked directly: both are small circular initials/icon badges that stay a
+   vivid accent-gradient in both themes by design, not a leftover dark surface) — those are
+   deliberately vivid/dark in both themes, and without the guard this block's text rule would win
+   the cascade tie against them by sitting later in the file, undoing an intentional choice rather
+   than fixing an oversight. No such rule exists for the remaining families (pink/rose/violet/
+   fuchsia/green/teal/lime/yellow/orange/sky/blue/cyan) today, so they need no guard. */
+[data-theme='light'] :is(
+  [class*='bg-red-900'], [class*='bg-red-950'],
+  [class*='bg-rose-900'], [class*='bg-rose-950'],
+  [class*='bg-pink-900'], [class*='bg-pink-950']
+) {
   background-color: var(--rose-tint) !important;
 }
-
-[data-theme='light'] :is(.bg-amber-950, .bg-amber-950\/20, .bg-amber-950\/30, .bg-amber-950\/40, .bg-amber-950\/50, .bg-amber-950\/60, .bg-amber-950\/80) {
-  background-color: var(--warning-tint) !important;
+[data-theme='light'] :is(
+  [class*='text-red-100'], [class*='text-red-200'], [class*='text-red-300'], [class*='text-red-400'],
+  [class*='text-rose-100'], [class*='text-rose-200'], [class*='text-rose-300'], [class*='text-rose-400'],
+  [class*='text-pink-100'], [class*='text-pink-200'], [class*='text-pink-300'], [class*='text-pink-400']
+):not(:is(.bg-red-600, .bg-red-700)) {
+  color: var(--rose) !important;
+}
+[data-theme='light'] :is(
+  [class*='border-red-700'], [class*='border-red-800'], [class*='border-red-900'],
+  [class*='border-rose-700'], [class*='border-rose-800'], [class*='border-rose-900'],
+  [class*='border-pink-700'], [class*='border-pink-800'], [class*='border-pink-900']
+) {
+  border-color: var(--border-rose);
 }
 
-[data-theme='light'] :is(.bg-emerald-950, .bg-emerald-950\/30, .bg-emerald-950\/60, .bg-emerald-950\/80) {
-  background-color: var(--success-tint) !important;
+[data-theme='light'] :is(
+  [class*='bg-purple-900'], [class*='bg-purple-950'],
+  [class*='bg-violet-900'], [class*='bg-violet-950'],
+  [class*='bg-fuchsia-900'], [class*='bg-fuchsia-950']
+) {
+  background-color: var(--accent-tint) !important;
 }
-
-/* AI-generated summary panels (DirectAiSummaryPanel, ComparisonCard's AI section) use indigo
-   specifically so they're never mistaken for the rule-based purple narrative next to them —
-   this gives indigo the same softly-tinted-surface treatment every other status color above
-   already has, instead of leaking an unstyled dark panel into Light Mode. */
-[data-theme='light'] :is(.bg-indigo-950, .bg-indigo-950\/10, .bg-indigo-950\/20, .bg-indigo-950\/30, .bg-indigo-950\/40, .bg-indigo-950\/50, .bg-indigo-950\/60) {
-  background-color: var(--indigo-tint) !important;
+[data-theme='light'] :is(
+  [class*='text-purple-100'], [class*='text-purple-200'], [class*='text-purple-300'], [class*='text-purple-400'],
+  [class*='text-violet-100'], [class*='text-violet-200'], [class*='text-violet-300'], [class*='text-violet-400'],
+  [class*='text-fuchsia-100'], [class*='text-fuchsia-200'], [class*='text-fuchsia-300'], [class*='text-fuchsia-400']
+):not(:is(.bg-purple-600, .bg-purple-700, .client-initial-avatar, .chat-avatar)) {
+  color: var(--accent-ink) !important;
 }
-
-[data-theme='light'] :is(.bg-purple-950\/40, .bg-purple-950\/60) {
-  background-color: var(--accent-tint);
-}
-
-[data-theme='light'] :is(.border-purple-800\/40, .border-purple-800\/60) {
+[data-theme='light'] :is(
+  [class*='border-purple-700'], [class*='border-purple-800'], [class*='border-purple-900'],
+  [class*='border-violet-700'], [class*='border-violet-800'], [class*='border-violet-900'],
+  [class*='border-fuchsia-700'], [class*='border-fuchsia-800'], [class*='border-fuchsia-900']
+) {
   border-color: var(--border-lilac);
 }
 
-[data-theme='light'] :is(.border-indigo-900\/30, .border-indigo-900\/40, .border-indigo-700\/40) {
+/* AI-generated summary panels (DirectAiSummaryPanel, ComparisonCard's AI section) use indigo
+   specifically so they're never mistaken for the rule-based purple narrative next to them. */
+[data-theme='light'] :is([class*='bg-indigo-900'], [class*='bg-indigo-950']) {
+  background-color: var(--indigo-tint) !important;
+}
+[data-theme='light'] :is(
+  [class*='text-indigo-100'], [class*='text-indigo-200'], [class*='text-indigo-300'], [class*='text-indigo-400']
+):not(.bg-indigo-600) {
+  color: var(--indigo-ink) !important;
+}
+[data-theme='light'] :is([class*='border-indigo-700'], [class*='border-indigo-800'], [class*='border-indigo-900']) {
   border-color: var(--border-indigo);
 }
 
-/* Light-pastel text tints (meant to sit on a dark backdrop) have no readable counterpart once
-   their parent surface goes light above — without this, "Summary:"/"Recommendation:" labels,
-   the anomaly heading, the Impersonation banner text, and the AI-summary labels all go
-   near-invisible (light text on a now-light tint) the moment their background gets corrected. */
-[data-theme='light'] :is(.text-red-100, .text-red-300) {
-  color: var(--rose) !important;
+[data-theme='light'] :is(
+  [class*='bg-emerald-900'], [class*='bg-emerald-950'],
+  [class*='bg-green-900'], [class*='bg-green-950'],
+  [class*='bg-teal-900'], [class*='bg-teal-950'],
+  [class*='bg-lime-900'], [class*='bg-lime-950']
+) {
+  background-color: var(--success-tint) !important;
+}
+[data-theme='light'] :is(
+  [class*='text-emerald-100'], [class*='text-emerald-200'], [class*='text-emerald-300'], [class*='text-emerald-400'],
+  [class*='text-green-100'], [class*='text-green-200'], [class*='text-green-300'], [class*='text-green-400'],
+  [class*='text-teal-100'], [class*='text-teal-200'], [class*='text-teal-300'], [class*='text-teal-400'],
+  [class*='text-lime-100'], [class*='text-lime-200'], [class*='text-lime-300'], [class*='text-lime-400']
+):not(.bg-emerald-600) {
+  color: var(--success) !important;
+}
+[data-theme='light'] :is(
+  [class*='border-emerald-700'], [class*='border-emerald-800'], [class*='border-emerald-900'],
+  [class*='border-green-700'], [class*='border-green-800'], [class*='border-green-900'],
+  [class*='border-teal-700'], [class*='border-teal-800'], [class*='border-teal-900'],
+  [class*='border-lime-700'], [class*='border-lime-800'], [class*='border-lime-900']
+) {
+  border-color: var(--border-success);
 }
 
-[data-theme='light'] .text-purple-300 {
-  color: var(--accent-ink) !important;
+[data-theme='light'] :is(
+  [class*='bg-amber-900'], [class*='bg-amber-950'],
+  [class*='bg-yellow-900'], [class*='bg-yellow-950'],
+  [class*='bg-orange-900'], [class*='bg-orange-950']
+) {
+  background-color: var(--warning-tint) !important;
+}
+[data-theme='light'] :is(
+  [class*='text-amber-100'], [class*='text-amber-200'], [class*='text-amber-300'], [class*='text-amber-400'],
+  [class*='text-yellow-100'], [class*='text-yellow-200'], [class*='text-yellow-300'], [class*='text-yellow-400'],
+  [class*='text-orange-100'], [class*='text-orange-200'], [class*='text-orange-300'], [class*='text-orange-400']
+):not(:is(.bg-amber-600, .bg-amber-700, .employee-testing-action, .brand-gold-action)) {
+  color: var(--warning) !important;
+}
+[data-theme='light'] :is(
+  [class*='border-amber-700'], [class*='border-amber-800'], [class*='border-amber-900'],
+  [class*='border-yellow-700'], [class*='border-yellow-800'], [class*='border-yellow-900'],
+  [class*='border-orange-700'], [class*='border-orange-800'], [class*='border-orange-900']
+) {
+  border-color: var(--border-warning);
 }
 
-[data-theme='light'] :is(.text-indigo-200, .text-indigo-300) {
-  color: var(--indigo-ink) !important;
+[data-theme='light'] :is(
+  [class*='bg-sky-900'], [class*='bg-sky-950'],
+  [class*='bg-blue-900'], [class*='bg-blue-950'],
+  [class*='bg-cyan-900'], [class*='bg-cyan-950']
+) {
+  background-color: var(--info-tint) !important;
+}
+[data-theme='light'] :is(
+  [class*='text-sky-100'], [class*='text-sky-200'], [class*='text-sky-300'], [class*='text-sky-400'],
+  [class*='text-blue-100'], [class*='text-blue-200'], [class*='text-blue-300'], [class*='text-blue-400'],
+  [class*='text-cyan-100'], [class*='text-cyan-200'], [class*='text-cyan-300'], [class*='text-cyan-400']
+) {
+  color: var(--info) !important;
+}
+[data-theme='light'] :is(
+  [class*='border-sky-700'], [class*='border-sky-800'], [class*='border-sky-900'],
+  [class*='border-blue-700'], [class*='border-blue-800'], [class*='border-blue-900'],
+  [class*='border-cyan-700'], [class*='border-cyan-800'], [class*='border-cyan-900']
+) {
+  border-color: var(--border-info);
 }
 
 [data-theme='light'] aside :is(.text-stone-400, .hover\:text-white:hover) {
@@ -518,6 +732,23 @@
   background-color: #d9dbf5 !important;
   color: var(--indigo-ink) !important;
   border-color: #6366f1 !important;
+}
+
+/* Hover-feedback restoration for the same outline-button shape, extended to the two other
+   families actually used on a <button> element this way (amber, emerald — no red/sky/blue
+   button currently uses it). Resting-state background/color already come from the generic
+   per-family rule above; only :hover needs an override here, or that rule's own !important
+   would otherwise freeze the hover state with no visible feedback. */
+[data-theme='light'] button[class*='bg-amber-800/']:hover {
+  background-color: #f0dcb8 !important;
+  color: var(--warning) !important;
+  border-color: var(--warning) !important;
+}
+
+[data-theme='light'] button[class*='bg-emerald-800/']:hover {
+  background-color: #c9e8d4 !important;
+  color: var(--success) !important;
+  border-color: var(--success) !important;
 }
 
 [data-theme='light'] .client-initial-avatar {

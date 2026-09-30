@@ -358,14 +358,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     }
   }, [employeeFilterDisabled, employeeFilterOptions]);
 
-  // Kanban Columns configuration
+  // Kanban Columns configuration. color already referenced a theme-aware token per status
+  // (--grey/--purple-light/--roas-mid/--roas-good/--lilac/--roas-bad all have light-mode
+  // overrides) — only badgeBg was a raw dark-mode-only rgba with no light counterpart.
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
-    { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'rgba(168, 155, 184, 0.2)' },
-    { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'rgba(123, 47, 247, 0.25)' },
-    { id: 'in_review', label: 'In Review', color: 'var(--roas-mid)', badgeBg: 'rgba(245, 226, 154, 0.2)' },
-    { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'rgba(169, 245, 193, 0.2)' },
-    { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'rgba(168, 155, 184, 0.2)' },
-    { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'rgba(245, 163, 163, 0.2)' },
+    { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'var(--status-todo-tint)' },
+    { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'var(--status-progress-tint)' },
+    { id: 'in_review', label: 'In Review', color: 'var(--roas-mid)', badgeBg: 'var(--status-review-tint)' },
+    { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'var(--status-completed-tint)' },
+    { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'var(--status-closed-tint)' },
+    { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'var(--status-blocked-tint)' },
   ];
 
   // Helper date functions
