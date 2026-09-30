@@ -28,6 +28,14 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
   branding: 'Branding',
 };
 
+// A label with zero [a-z0-9] characters after lowercasing (an Arabic-only question, another
+// non-Latin script, or a pure emoji/symbol label) collapses to the SAME empty string here no
+// matter its actual content — every character in it falls outside [a-z0-9], so the whole label is
+// one contiguous run the regex replaces with a single '_', which the trim then strips to "".
+// handleCreate below must never use this empty result directly as a key: a fixed, content-blind
+// value would let the first such question claim it and make every later one collide forever.
+const slugify = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
 const emptyDraft = (serviceType: ServiceType, sortOrder: number): Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'> => ({
   service_type: serviceType,
   key: '',
@@ -99,7 +107,11 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
 
   const handleCreate = async () => {
     if (!onCreate) return;
-    const key = newDraft.key.trim() || newDraft.label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const slug = slugify(newDraft.label);
+    // slug is only "" when the label had no [a-z0-9] to work with (see slugify's comment) — a
+    // fresh random suffix per call guarantees a distinct key here regardless of how many such
+    // questions already exist, instead of every one of them colliding on the same empty key.
+    const key = newDraft.key.trim() || slug || `field_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const label = newDraft.label.trim();
     if (!label) {
       setErrorMsg('Please enter a question label.');
