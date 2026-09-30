@@ -1186,11 +1186,6 @@ export const supabaseRaw: SupabaseClient = getRawSupabase();
 // Dev-only: expose supabase globally for browser verification and direct security testing
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   (window as any).supabase = supabase;
-  // TEMPORARY DIAGNOSTIC — remove after use. Lets the browser console compare the proxied
-  // client's result for a table against what the real database actually has, e.g.:
-  //   await window.supabase.from('campaigns').select('*')     // proxy: in-memory, may be stale
-  //   await window.supabaseRaw.from('campaigns').select('*')  // real Postgres query
-  (window as any).supabaseRaw = supabaseRaw;
 }
 
 
