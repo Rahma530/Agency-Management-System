@@ -86,7 +86,7 @@ interface ServiceBriefsRoutingViewProps {
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
@@ -168,7 +168,7 @@ const AMServiceBriefsPanel: React.FC<{
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
   onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
@@ -1135,6 +1135,10 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          reports={reports}
+          clientComparisons={clientComparisons}
+          socialInsights={socialInsights}
+          clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           onMarkAssignmentViewed={onMarkAssignmentViewed}
           onClose={() => setDashboardClientId(null)}
           onSaveBrief={onSaveBrief}
@@ -1145,6 +1149,17 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
           onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
           onDeleteClient={onDeleteClient}
+          onGenerateComparison={onGenerateComparison}
+          onGenerateReport={onGenerateReport}
+          onGenerateAiSummary={onGenerateAiSummary}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
+          onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
+          onApproveReport={onApproveReport}
+          onCreatePortalLogin={onCreatePortalLogin}
+          platformConnections={platformConnections}
+          onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+          onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientAccess={onUpdateClientAccess}
           onLogSocialMetrics={onLogSocialMetrics}
         />
       )}

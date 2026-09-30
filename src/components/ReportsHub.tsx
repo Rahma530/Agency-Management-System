@@ -45,7 +45,7 @@ interface ReportsHubProps {
     mode: ReportMode,
     granularity: ComparisonGranularity | 'custom',
     custom?: { currentRange: DateRange; previousRange?: DateRange }
-  ) => Promise<void>;
+  ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport: (comparisonId: string, period: string) => Promise<void>;
   // Phase 4 (AI Orchestrator): same optional-prop convention as ComparisonCard's own
   // onGenerateAiSummary — reuses this hub's existing nav-level access gate exactly (whoever can

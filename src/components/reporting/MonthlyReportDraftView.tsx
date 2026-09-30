@@ -20,6 +20,13 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
 // none of which is stored as rendered text — consistent with how this app already treats
 // comparison narratives as re-derived-at-render-time, not persisted content. Requires an explicit
 // Approve action (report.status: 'draft' -> 'final') before it's treated as final.
+//
+// viewerServiceFilter: this view is reachable from "Filed Reports" by any hasComparisonAccess
+// viewer, including a department agent/team lead scoped to one service (Stage C) — previously this
+// component ignored that scoping entirely and always rendered every service's metrics AND every
+// service's brief snapshot, unlike ComparisonCard/ServiceMetricsCard elsewhere, which Stage C
+// already narrows. Same convention as ComparisonCard: undefined = viewer sees every service
+// (AM/leadership); an array narrows both the metrics cards and which briefs are shown.
 export const MonthlyReportDraftView: React.FC<{
   client: ClientRecord;
   report: ReportRecord;
@@ -30,14 +37,17 @@ export const MonthlyReportDraftView: React.FC<{
   canApprove: boolean;
   onApprove: () => Promise<void>;
   onClose: () => void;
-}> = ({ client, report, comparison, briefs, tasks, briefFieldSchemas, canApprove, onApprove, onClose }) => {
+  viewerServiceFilter?: ServiceType[];
+}> = ({ client, report, comparison, briefs, tasks, briefFieldSchemas, canApprove, onApprove, onClose, viewerServiceFilter }) => {
   const [isApproving, setIsApproving] = useState(false);
   const isDraft = report.status === 'draft';
 
   const range = monthLabelToRange(report.period);
   const taskStats = range ? computeClientTaskCompletionStats(tasks, client.id, range) : null;
 
-  const clientBriefs = briefs.filter((b) => b.client_id === client.id);
+  const clientBriefs = briefs
+    .filter((b) => b.client_id === client.id)
+    .filter((b) => !viewerServiceFilter || viewerServiceFilter.includes(b.service_type as ServiceType));
 
   const handleApprove = async () => {
     setIsApproving(true);
@@ -91,19 +101,25 @@ export const MonthlyReportDraftView: React.FC<{
               <span>Performance This Period</span>
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <ServiceMetricsCard
-                serviceKey="media_buying"
-                title="Media Buying"
-                current={comparison.metrics_current.media_buying}
-                flat
-              />
-              <ServiceMetricsCard
-                serviceKey="social_media"
-                title="Social Media"
-                current={comparison.metrics_current.social_media}
-                flat
-              />
-              <ServiceMetricsCard serviceKey="seo" title="SEO (Delivery)" current={comparison.metrics_current.seo} flat />
+              {(!viewerServiceFilter || viewerServiceFilter.includes('media_buying')) && (
+                <ServiceMetricsCard
+                  serviceKey="media_buying"
+                  title="Media Buying"
+                  current={comparison.metrics_current.media_buying}
+                  flat
+                />
+              )}
+              {(!viewerServiceFilter || viewerServiceFilter.includes('social_media')) && (
+                <ServiceMetricsCard
+                  serviceKey="social_media"
+                  title="Social Media"
+                  current={comparison.metrics_current.social_media}
+                  flat
+                />
+              )}
+              {(!viewerServiceFilter || viewerServiceFilter.includes('seo')) && (
+                <ServiceMetricsCard serviceKey="seo" title="SEO (Delivery)" current={comparison.metrics_current.seo} flat />
+              )}
             </div>
           </div>
         )}
