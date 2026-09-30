@@ -3954,7 +3954,13 @@ export default function App() {
 
     if (supabaseActive) {
       try {
-        const { data, error } = await supabase.from('campaigns').insert([newRecord]).select();
+        // supabaseRaw, not the legacy `supabase` proxy — that proxy's insert handler only
+        // mutates its own in-memory array and never reaches Postgres at all. Real RLS
+        // (campaigns_insert_rls) enforces the exact same media_buying_team_lead/
+        // media_buying_agent-only rule CampaignManagementModule.tsx's own canCreateCampaign
+        // check already gates the "create campaign" UI with, so this never rejects a write
+        // the UI let someone attempt in the first place.
+        const { data, error } = await supabaseRaw.from('campaigns').insert([newRecord]).select();
         if (error) throw error;
         if (data && data[0]) {
           setCampaigns((prev) => [data[0] as CampaignRecord, ...prev]);
@@ -3975,7 +3981,12 @@ export default function App() {
   const handleUpdateCampaign = async (id: string, updates: Partial<CampaignRecord>) => {
     if (supabaseActive) {
       try {
-        const { error } = await supabase.from('campaigns').update(updates).eq('id', id);
+        // supabaseRaw, not the legacy `supabase` proxy — same reasoning as handleCreateCampaign
+        // above. Real RLS (campaigns_update_rls) is a verified exact match of the proxy's own
+        // canEdit check it's replacing (team_lead any row, agent scoped to their assignment, own
+        // am_agent scoped to their client) — the migration's own comment on that policy confirms
+        // it was written to mirror this handler in the first place.
+        const { error } = await supabaseRaw.from('campaigns').update(updates).eq('id', id);
         if (error) throw error;
       } catch (err: any) {
         console.warn('Supabase campaign update fallback to state:', err);
