@@ -9,33 +9,33 @@ export const CLIENT_STATUS_META: Record<
 > = {
   onboarding: {
     label: 'Onboarding',
-    bg: 'rgba(123, 47, 247, 0.2)',
+    bg: 'var(--client-status-onboarding-tint)',
     color: 'var(--purple-light)',
-    border: 'rgba(123, 47, 247, 0.35)',
+    border: 'var(--lifecycle-onboarding-border)',
   },
   active: {
     label: 'Active',
-    bg: 'rgba(169, 245, 193, 0.2)',
+    bg: 'var(--client-status-active-tint)',
     color: 'var(--roas-good)',
-    border: 'rgba(169, 245, 193, 0.3)',
+    border: 'var(--border-success)',
   },
   paused: {
     label: 'Paused',
-    bg: 'rgba(168, 155, 184, 0.15)',
+    bg: 'var(--client-status-paused-tint)',
     color: 'var(--lilac)',
-    border: 'rgba(168, 155, 184, 0.3)',
+    border: 'var(--priority-low-border)',
   },
   renewal: {
     label: 'Renewal',
-    bg: 'rgba(245, 226, 154, 0.2)',
+    bg: 'var(--client-status-renewal-tint)',
     color: 'var(--roas-mid)',
-    border: 'rgba(245, 226, 154, 0.3)',
+    border: 'var(--priority-medium-border)',
   },
   closed: {
     label: 'Closed',
-    bg: 'rgba(245, 163, 163, 0.2)',
+    bg: 'var(--client-status-closed-tint)',
     color: 'var(--roas-bad)',
-    border: 'rgba(245, 163, 163, 0.3)',
+    border: 'var(--border-rose)',
   },
 };
 

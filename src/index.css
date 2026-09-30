@@ -194,6 +194,100 @@
   --team-am-tint: rgba(167, 139, 250, 0.15);
   --team-am-ink: #a78bfa;
   --team-default-tint: rgba(255, 255, 255, 0.05);
+  /* CrossTeamTaskBoard.tsx's own copy of getTeamColor adds a 'Programming' case the other
+     copies (KanbanTaskCard, DailyOperationsModule, TaskCalendarView) don't have. */
+  --team-programming-tint: rgba(99, 102, 241, 0.15);
+  --team-programming-ink: #818cf8;
+
+  /* ---- DailyOperationsModule.tsx's own copy of getPriorityBadge ----
+     Its 'high' case and every text/border value match KanbanTaskCard's --priority-* tokens
+     exactly (reused directly below) — only these three tints and one border, all slightly
+     lower-alpha than the shared set, differ and need their own dedicated pair. */
+  --ops-priority-urgent-tint: rgba(245, 163, 163, 0.2);
+  --ops-priority-medium-tint: rgba(245, 226, 154, 0.15);
+  --ops-priority-low-tint: rgba(168, 155, 184, 0.15);
+  --ops-priority-low-border: rgba(168, 155, 184, 0.25);
+
+  /* ---- Connection-status badge colors (ClientIntegrationsPanel.tsx's STATUS_STYLES) ---- */
+  --conn-status-not-connected-tint: rgba(120, 113, 108, 0.15);
+  --conn-status-not-connected-ink: #a8a29e;
+  --conn-status-pending-tint: rgba(245, 226, 154, 0.15);
+  --conn-status-connected-tint: rgba(16, 185, 129, 0.15);
+  --conn-status-connected-ink: #34d399;
+
+  /* ---- Client-lifecycle badge colors (ServiceBriefsRoutingView.tsx's getLifecycleStatus and
+     AMQueue.tsx's getClientLifecycleStatus) ----
+     The amber "pending" and green "ready" states are byte-identical between both functions and
+     share one pair each; the blue "review" state only exists in ServiceBriefsRoutingView and the
+     purple "onboarding" state only exists in AMQueue, so those two get their own dedicated pair. */
+  --lifecycle-pending-tint: rgba(245, 226, 154, 0.15);
+  --lifecycle-pending-border: rgba(245, 226, 154, 0.3);
+  --lifecycle-ready-tint: rgba(169, 245, 193, 0.15);
+  --lifecycle-ready-border: rgba(169, 245, 193, 0.3);
+  --lifecycle-review-tint: rgba(14, 165, 233, 0.15);
+  --lifecycle-review-ink: #38bdf8;
+  --lifecycle-review-border: rgba(14, 165, 233, 0.3);
+  --lifecycle-onboarding-tint: rgba(123, 47, 247, 0.2);
+  --lifecycle-onboarding-border: rgba(123, 47, 247, 0.35);
+
+  /* ---- Ad-platform badge colors (CampaignManagementModule.tsx's PLATFORM_CONFIG) ---- */
+  --platform-meta-tint: rgba(24, 119, 242, 0.15);
+  --platform-meta-ink: #60a5fa;
+  --platform-meta-border: rgba(24, 119, 242, 0.3);
+  --platform-google-tint: rgba(234, 67, 53, 0.15);
+  --platform-google-ink: #f87171;
+  --platform-google-border: rgba(234, 67, 53, 0.3);
+  --platform-tiktok-tint: rgba(0, 242, 234, 0.15);
+  --platform-tiktok-ink: #22d3ee;
+  --platform-tiktok-border: rgba(0, 242, 234, 0.3);
+  --platform-linkedin-tint: rgba(10, 102, 194, 0.15);
+  --platform-linkedin-ink: #38bdf8;
+  --platform-linkedin-border: rgba(10, 102, 194, 0.3);
+  --platform-snapchat-tint: rgba(255, 252, 0, 0.15);
+  --platform-snapchat-ink: #fde047;
+  --platform-snapchat-border: rgba(255, 252, 0, 0.3);
+  --platform-x-tint: rgba(255, 255, 255, 0.1);
+  --platform-x-ink: #e2e8f0;
+  --platform-x-border: rgba(255, 255, 255, 0.2);
+
+  /* ---- Campaign-status badge colors (CampaignManagementModule.tsx's STATUS_CONFIG) ---- */
+  --campaign-status-active-tint: rgba(169, 245, 193, 0.15);
+  --campaign-status-paused-tint: rgba(245, 226, 154, 0.15);
+  --campaign-status-completed-tint: rgba(168, 155, 184, 0.15);
+  --campaign-status-completed-border: rgba(168, 155, 184, 0.3);
+  --campaign-status-draft-tint: rgba(120, 113, 108, 0.15);
+  --campaign-status-draft-ink: #d6d3d1;
+  --campaign-status-draft-border: rgba(120, 113, 108, 0.3);
+  --campaign-status-archived-tint: rgba(100, 116, 139, 0.15);
+  --campaign-status-archived-ink: #94a3b8;
+  --campaign-status-archived-border: rgba(100, 116, 139, 0.3);
+
+  /* ---- Client-status badge colors (lib/clientStatus.ts's CLIENT_STATUS_META) ----
+     `color` already references theme-aware tokens for every status; only `bg` was raw. */
+  --client-status-onboarding-tint: rgba(123, 47, 247, 0.2);
+  --client-status-active-tint: rgba(169, 245, 193, 0.2);
+  --client-status-paused-tint: rgba(168, 155, 184, 0.15);
+  --client-status-renewal-tint: rgba(245, 226, 154, 0.2);
+  --client-status-closed-tint: rgba(245, 163, 163, 0.2);
+
+  /* ---- Payment-status badge colors (ClientDashboard.tsx's Fully Paid/Pending Payment pill) ---- */
+  --payment-paid-tint: rgba(16, 185, 129, 0.15);
+  --payment-paid-ink: #34d399;
+  --payment-pending-tint: rgba(245, 158, 11, 0.15);
+  --payment-pending-ink: #fbbf24;
+
+  /* ---- Sidebar nav-count badge colors (App.tsx's six .nav-badge spans) ----
+     The active-tab case is already handled by .sidebar-nav-item--active .nav-badge further
+     down, which deliberately repaints every active badge the same accent color regardless of
+     its own semantic color — these are for the (far more common) non-active-tab case, which
+     needs to keep each badge's own distinct color instead. Two pairs of badges already share an
+     identical value today (Client Onboarding/Service Briefs, and Capacity's "Live"/Task Board's
+     "Active"), so they share one token pair each rather than getting four. */
+  --nav-badge-purple-tint: rgba(123, 47, 247, 0.25);
+  --nav-badge-green-tint: rgba(169, 245, 193, 0.2);
+  --nav-badge-amber-tint: rgba(245, 226, 154, 0.2);
+  --nav-badge-blue-tint: rgba(14, 165, 233, 0.2);
+  --nav-badge-blue-ink: #38bdf8;
 
   /* ---- Stat-number colors ----
      Dedicated from the primary --accent/--success/--warning/--info/--rose tokens (which serve
@@ -355,6 +449,76 @@
   --team-am-tint: #ede9fe;
   --team-am-ink: #6d28d9;
   --team-default-tint: rgba(0, 0, 0, 0.05);
+  --team-programming-tint: #e6e8fc;
+  --team-programming-ink: #4338ca;
+
+  --ops-priority-urgent-tint: #f7e6ef;
+  --ops-priority-medium-tint: #f8ecd8;
+  --ops-priority-low-tint: #eeecf5;
+  --ops-priority-low-border: rgba(85, 80, 106, 0.3);
+
+  --conn-status-not-connected-tint: #f5f5f4;
+  --conn-status-not-connected-ink: #57534e;
+  --conn-status-pending-tint: #f8ecd8;
+  --conn-status-connected-tint: #d1fae5;
+  --conn-status-connected-ink: #047857;
+
+  --lifecycle-pending-tint: #f8ecd8;
+  --lifecycle-pending-border: rgba(184, 121, 31, 0.3);
+  --lifecycle-ready-tint: #e3f2e9;
+  --lifecycle-ready-border: rgba(47, 143, 99, 0.3);
+  --lifecycle-review-tint: #e0f2fe;
+  --lifecycle-review-ink: #0369a1;
+  --lifecycle-review-border: rgba(3, 105, 161, 0.3);
+  --lifecycle-onboarding-tint: #ece9fb;
+  --lifecycle-onboarding-border: rgba(90, 79, 214, 0.3);
+
+  --platform-meta-tint: #dbeafe;
+  --platform-meta-ink: #1d4ed8;
+  --platform-meta-border: rgba(29, 78, 216, 0.3);
+  --platform-google-tint: #fee2e2;
+  --platform-google-ink: #b91c1c;
+  --platform-google-border: rgba(185, 28, 28, 0.3);
+  --platform-tiktok-tint: #cffafe;
+  --platform-tiktok-ink: #0e7490;
+  --platform-tiktok-border: rgba(14, 116, 144, 0.3);
+  --platform-linkedin-tint: #e0f2fe;
+  --platform-linkedin-ink: #0369a1;
+  --platform-linkedin-border: rgba(3, 105, 161, 0.3);
+  --platform-snapchat-tint: #fef9c3;
+  --platform-snapchat-ink: #854d0e;
+  --platform-snapchat-border: rgba(133, 77, 14, 0.3);
+  --platform-x-tint: #f1f5f9;
+  --platform-x-ink: #334155;
+  --platform-x-border: rgba(51, 65, 85, 0.3);
+
+  --campaign-status-active-tint: #e3f2e9;
+  --campaign-status-paused-tint: #f8ecd8;
+  --campaign-status-completed-tint: #eeecf5;
+  --campaign-status-completed-border: rgba(85, 80, 106, 0.3);
+  --campaign-status-draft-tint: #f5f5f4;
+  --campaign-status-draft-ink: #57534e;
+  --campaign-status-draft-border: rgba(87, 83, 78, 0.3);
+  --campaign-status-archived-tint: #f1f5f9;
+  --campaign-status-archived-ink: #475569;
+  --campaign-status-archived-border: rgba(71, 85, 105, 0.3);
+
+  --client-status-onboarding-tint: #ece9fb;
+  --client-status-active-tint: #e3f2e9;
+  --client-status-paused-tint: #eeecf5;
+  --client-status-renewal-tint: #f8ecd8;
+  --client-status-closed-tint: #f7e6ef;
+
+  --payment-paid-tint: #d1fae5;
+  --payment-paid-ink: #047857;
+  --payment-pending-tint: #fef3c7;
+  --payment-pending-ink: #b45309;
+
+  --nav-badge-purple-tint: #ece9fb;
+  --nav-badge-green-tint: #e3f2e9;
+  --nav-badge-amber-tint: #f8ecd8;
+  --nav-badge-blue-tint: #e0f2fe;
+  --nav-badge-blue-ink: #0369a1;
 
   /* ---- Legacy brand/semantic token names, rebuilt as aliases onto the primitives above ----
      Every pre-existing component in the app (badges, gradients, chart colors, and every

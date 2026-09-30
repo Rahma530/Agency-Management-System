@@ -4595,7 +4595,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(123, 47, 247, 0.25)',
+                  background: 'var(--nav-badge-purple-tint)',
                   color: 'var(--white)',
                   }}
                 >
@@ -4619,7 +4619,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(123, 47, 247, 0.25)',
+                  background: 'var(--nav-badge-purple-tint)',
                   color: 'var(--white)',
                   }}
                 >
@@ -4643,7 +4643,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(169, 245, 193, 0.2)',
+                  background: 'var(--nav-badge-green-tint)',
                   color: 'var(--roas-good)',
                   }}
                 >
@@ -4667,7 +4667,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(245, 226, 154, 0.2)',
+                  background: 'var(--nav-badge-amber-tint)',
                   color: 'var(--roas-mid)',
                   }}
                 >
@@ -4696,7 +4696,7 @@ export default function App() {
                   <span
                     className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                     style={{
-                    background: 'rgba(169, 245, 193, 0.2)',
+                    background: 'var(--nav-badge-green-tint)',
                     color: 'var(--roas-good)',
                     }}
                   >
@@ -4721,8 +4721,8 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: 'rgba(14, 165, 233, 0.2)',
-                    color: '#38bdf8',
+                    background: 'var(--nav-badge-blue-tint)',
+                    color: 'var(--nav-badge-blue-ink)',
                   }}
                 >
                   {campaigns.filter((c) => (c.status || c.results?.status) === 'active').length} active

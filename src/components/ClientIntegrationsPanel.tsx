@@ -4,9 +4,9 @@ import { ClientRecord, PlatformConnectionRecord, PlatformConnectionStatus, Platf
 import { INTEGRATION_PLATFORMS, INTEGRATION_CATEGORY_LABELS } from '../data/integrationPlatforms';
 
 const STATUS_STYLES: Record<PlatformConnectionStatus, { bg: string; text: string; label: string }> = {
-  not_connected: { bg: 'rgba(120, 113, 108, 0.15)', text: '#a8a29e', label: 'Not Connected' },
-  pending: { bg: 'rgba(245, 226, 154, 0.15)', text: 'var(--roas-mid)', label: 'Pending' },
-  connected: { bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399', label: 'Connected' },
+  not_connected: { bg: 'var(--conn-status-not-connected-tint)', text: 'var(--conn-status-not-connected-ink)', label: 'Not Connected' },
+  pending: { bg: 'var(--conn-status-pending-tint)', text: 'var(--roas-mid)', label: 'Pending' },
+  connected: { bg: 'var(--conn-status-connected-tint)', text: 'var(--conn-status-connected-ink)', label: 'Connected' },
 };
 
 const STATUS_OPTIONS: PlatformConnectionStatus[] = ['not_connected', 'pending', 'connected'];

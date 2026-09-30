@@ -575,32 +575,32 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const getPriorityBadge = (priority: TaskPriority) => {
     switch (priority) {
       case 'urgent':
-        return { label: 'Urgent', bg: 'rgba(245, 163, 163, 0.2)', text: 'var(--roas-bad)', border: 'rgba(245, 163, 163, 0.4)' };
+        return { label: 'Urgent', bg: 'var(--ops-priority-urgent-tint)', text: 'var(--roas-bad)', border: 'var(--priority-urgent-border)' };
       case 'high':
-        return { label: 'High', bg: 'rgba(235, 94, 40, 0.2)', text: '#fb923c', border: 'rgba(235, 94, 40, 0.3)' };
+        return { label: 'High', bg: 'var(--priority-high-tint)', text: 'var(--priority-high-ink)', border: 'var(--priority-high-border)' };
       case 'medium':
-        return { label: 'Medium', bg: 'rgba(245, 226, 154, 0.15)', text: 'var(--roas-mid)', border: 'rgba(245, 226, 154, 0.3)' };
+        return { label: 'Medium', bg: 'var(--ops-priority-medium-tint)', text: 'var(--roas-mid)', border: 'var(--priority-medium-border)' };
       case 'low':
-        return { label: 'Low', bg: 'rgba(168, 155, 184, 0.15)', text: 'var(--grey)', border: 'rgba(168, 155, 184, 0.25)' };
+        return { label: 'Low', bg: 'var(--ops-priority-low-tint)', text: 'var(--grey)', border: 'var(--ops-priority-low-border)' };
     }
   };
 
   const getTeamColor = (teamName?: string | null) => {
     switch (teamName) {
       case 'SEO':
-        return { text: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' };
+        return { text: 'var(--team-seo-ink)', bg: 'var(--team-seo-tint)' };
       case 'Social Media':
-        return { text: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' };
+        return { text: 'var(--team-social-media-ink)', bg: 'var(--team-social-media-tint)' };
       case 'Media Buying':
-        return { text: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' };
+        return { text: 'var(--team-media-buying-ink)', bg: 'var(--team-media-buying-tint)' };
       case 'Creative & Design':
-        return { text: '#f472b6', bg: 'rgba(244, 114, 182, 0.15)' };
+        return { text: 'var(--team-creative-ink)', bg: 'var(--team-creative-tint)' };
       case 'Video Production':
-        return { text: '#f87171', bg: 'rgba(248, 113, 113, 0.15)' };
+        return { text: 'var(--team-video-ink)', bg: 'var(--team-video-tint)' };
       case 'Account Management':
-        return { text: '#a78bfa', bg: 'rgba(167, 139, 250, 0.15)' };
+        return { text: 'var(--team-am-ink)', bg: 'var(--team-am-tint)' };
       default:
-        return { text: 'var(--grey)', bg: 'rgba(255, 255, 255, 0.05)' };
+        return { text: 'var(--grey)', bg: 'var(--team-default-tint)' };
     }
   };
 

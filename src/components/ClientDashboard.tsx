@@ -1182,8 +1182,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
                           style={
                             !client.remaining_value
-                              ? { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }
-                              : { background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }
+                              ? { background: 'var(--payment-paid-tint)', color: 'var(--payment-paid-ink)' }
+                              : { background: 'var(--payment-pending-tint)', color: 'var(--payment-pending-ink)' }
                           }
                         >
                           {!client.remaining_value ? 'Fully Paid' : 'Pending Payment'}
