@@ -1035,9 +1035,9 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
               onClick={handleResetFilters}
               className="px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
               style={{
-                background: 'rgba(239, 68, 68, 0.15)',
-                color: '#f87171',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
+                background: 'var(--filter-reset-tint)',
+                color: 'var(--filter-reset-ink)',
+                border: '1px solid var(--filter-reset-border)',
               }}
             >
               <RefreshCw className="w-3.5 h-3.5" />

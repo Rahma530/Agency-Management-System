@@ -289,6 +289,32 @@
   --nav-badge-blue-tint: rgba(14, 165, 233, 0.2);
   --nav-badge-blue-ink: #38bdf8;
 
+  /* ---- CapacityManagement.tsx's five stat-icon container chips ----
+     `color` (and, for two of them, `border`) already reference theme-aware tokens; only `bg`
+     needed a pair. Two use --border-soft already (kept as-is); the other three's raw rgba border
+     values already match --border-success/--border-warning/--border-rose exactly, reused
+     directly rather than minted again. */
+  --capacity-total-tint: rgba(123, 47, 247, 0.2);
+  --capacity-available-tint: rgba(169, 245, 193, 0.15);
+  --capacity-near-tint: rgba(245, 226, 154, 0.15);
+  --capacity-over-tint: rgba(245, 163, 163, 0.15);
+  --capacity-buffer-tint: rgba(123, 47, 247, 0.15);
+
+  /* ---- DynamicBriefForm.tsx's version/submitted tags — bg only, borders already themed ---- */
+  --brief-version-tint: rgba(185, 140, 240, 0.15);
+  --brief-submitted-tint: rgba(169, 245, 193, 0.15);
+
+  /* ---- EmployeeLogin.tsx's forgot-password success/error alert boxes ----
+     A lower alpha (0.12) than the identically-hued tokens elsewhere in this file, so kept
+     dedicated rather than reused. color/borderColor already reference theme-aware tokens. */
+  --alert-success-tint: rgba(169, 245, 193, 0.12);
+  --alert-error-tint: rgba(245, 163, 163, 0.12);
+
+  /* ---- CampaignManagementModule.tsx's "Reset Filters" button — full pair, both raw ---- */
+  --filter-reset-tint: rgba(239, 68, 68, 0.15);
+  --filter-reset-ink: #f87171;
+  --filter-reset-border: rgba(239, 68, 68, 0.3);
+
   /* ---- Stat-number colors ----
      Dedicated from the primary --accent/--success/--warning/--info/--rose tokens (which serve
      buttons, badges, and borders elsewhere) so that fixing stat-number legibility here can't
@@ -519,6 +545,22 @@
   --nav-badge-amber-tint: #f8ecd8;
   --nav-badge-blue-tint: #e0f2fe;
   --nav-badge-blue-ink: #0369a1;
+
+  --capacity-total-tint: #ece9fb;
+  --capacity-available-tint: #e3f2e9;
+  --capacity-near-tint: #f8ecd8;
+  --capacity-over-tint: #f7e6ef;
+  --capacity-buffer-tint: #ece9fb;
+
+  --brief-version-tint: #ece9fb;
+  --brief-submitted-tint: #e3f2e9;
+
+  --alert-success-tint: #e3f2e9;
+  --alert-error-tint: #f7e6ef;
+
+  --filter-reset-tint: #fee2e2;
+  --filter-reset-ink: #b91c1c;
+  --filter-reset-border: rgba(185, 28, 28, 0.3);
 
   /* ---- Legacy brand/semantic token names, rebuilt as aliases onto the primitives above ----
      Every pre-existing component in the app (badges, gradients, chart colors, and every

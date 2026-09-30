@@ -281,7 +281,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
               <span
                 className="text-[11px] px-2.5 py-0.5 rounded-full font-medium"
                 style={{
-                  background: 'rgba(185, 140, 240, 0.15)',
+                  background: 'var(--brief-version-tint)',
                   color: 'var(--purple-light)',
                   border: '1px solid var(--border-lilac)',
                 }}
@@ -292,7 +292,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                 <span
                   className="text-[11px] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1"
                   style={{
-                    background: 'rgba(169, 245, 193, 0.15)',
+                    background: 'var(--brief-submitted-tint)',
                     color: 'var(--roas-good)',
                     border: '1px solid var(--roas-good)',
                   }}

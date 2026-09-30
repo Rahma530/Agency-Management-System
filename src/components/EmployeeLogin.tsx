@@ -260,7 +260,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
                 <div
                   className="mb-5 p-3.5 rounded-xl text-xs flex items-start gap-2.5 border animate-fadeIn"
                   style={{
-                    background: 'rgba(169, 245, 193, 0.12)',
+                    background: 'var(--alert-success-tint)',
                     borderColor: 'var(--roas-good)',
                     color: 'var(--roas-good)',
                   }}
@@ -339,7 +339,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({
             <div
               className="mb-5 p-3.5 rounded-xl text-xs flex items-start gap-2.5 border animate-fadeIn"
               style={{
-                background: 'rgba(245, 163, 163, 0.12)',
+                background: 'var(--alert-error-tint)',
                 borderColor: 'var(--roas-bad)',
                 color: 'var(--roas-bad)',
               }}

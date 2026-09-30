@@ -4344,7 +4344,7 @@ export default function App() {
                 <span
                   className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
                   style={{
-                    background: 'rgba(123, 47, 247, 0.25)',
+                    background: 'var(--nav-badge-purple-tint)',
                     color: 'var(--purple-light)',
                     border: '1px solid var(--border-soft)',
                   }}

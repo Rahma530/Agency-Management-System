@@ -336,7 +336,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-lg"
             style={{
-              background: 'rgba(123, 47, 247, 0.25)',
+              background: 'var(--nav-badge-purple-tint)',
               border: '1px solid var(--border-soft)',
               color: 'var(--purple-light)',
             }}
