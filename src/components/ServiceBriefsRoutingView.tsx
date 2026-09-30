@@ -1135,6 +1135,10 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          reports={reports}
+          clientComparisons={clientComparisons}
+          socialInsights={socialInsights}
+          clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           onMarkAssignmentViewed={onMarkAssignmentViewed}
           onClose={() => setDashboardClientId(null)}
           onSaveBrief={onSaveBrief}
@@ -1145,6 +1149,17 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
           onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
           onDeleteClient={onDeleteClient}
+          onGenerateComparison={onGenerateComparison}
+          onGenerateReport={onGenerateReport}
+          onGenerateAiSummary={onGenerateAiSummary}
+          onGenerateUnifiedReport={onGenerateUnifiedReport}
+          onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
+          onApproveReport={onApproveReport}
+          onCreatePortalLogin={onCreatePortalLogin}
+          platformConnections={platformConnections}
+          onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
+          onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientAccess={onUpdateClientAccess}
           onLogSocialMetrics={onLogSocialMetrics}
         />
       )}

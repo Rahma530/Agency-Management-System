@@ -2766,6 +2766,7 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
             setSelectedDraftReport(null);
           }}
           onClose={() => setSelectedDraftReport(null)}
+          viewerServiceFilter={viewerServiceFilter}
         />
       )}
     </div>
