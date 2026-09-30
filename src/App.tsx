@@ -1200,6 +1200,7 @@ export default function App() {
     setUsersLoadedFromSupabase(false);
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
+    console.log('[DIAG] isSupabaseConfigured():', configured); // TEMPORARY DIAGNOSTIC — remove after use
 
     // 1. Fetch employees directly from Postgres (bypassing the legacy client-side
     // users proxy in lib/supabase.ts — real RLS on public.users is the actual
@@ -1303,6 +1304,12 @@ export default function App() {
 
         // Fetch campaigns
         const { data: campaignData, error: campaignErr } = await supabase.from('campaigns').select('*');
+        // TEMPORARY DIAGNOSTIC — remove after use
+        console.log('[DIAG] campaigns fetch (via proxied `supabase` client):', {
+          campaignErr,
+          count: campaignData?.length,
+          sampleNames: (campaignData as CampaignRecord[] | null)?.slice(0, 3).map((c) => c.name),
+        });
         if (!campaignErr && campaignData) {
           setCampaigns(campaignData as CampaignRecord[]);
         }
