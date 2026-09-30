@@ -72,8 +72,7 @@ import {
   ReportScope,
   detectClientAnomalies,
   clientHasService,
-  resolveComparisonPeriods,
-  customPeriod,
+  ensureComparisonForSummary as resolveOrGenerateComparison,
 } from '../lib/reportingEngine';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
@@ -705,47 +704,21 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   };
 
   // UX-flow change: lets "Generate AI Summary" work before any client_comparisons row exists yet,
-  // for both modes — looks up an already-computed row for the currently selected granularity/
-  // period first (mirroring handleGenerateComparison's own upsert-or-update lookup so the two never
-  // disagree about what "the current period" means), and only calls onGenerateComparison (the same
-  // compute+write path "Generate Comparison"/"Generate Period Report" already uses, unchanged) when
-  // nothing matches yet. `mode` is a parameter rather than always reading reportMode state because
-  // the Unified Report button always wants a 'comparison' row regardless of which toggle is
-  // currently selected above.
-  const ensureComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
-    if (!onGenerateComparison) return null;
-    if (reportGranularity === 'custom') {
-      const missingCurrent = !customCurrentRange.start || !customCurrentRange.end;
-      const missingPrevious = mode === 'comparison' && (!customPreviousRange.start || !customPreviousRange.end);
-      if (missingCurrent || missingPrevious) return null;
-    }
-
-    const currentPeriod =
-      reportGranularity === 'custom' ? customPeriod(customCurrentRange) : resolveComparisonPeriods(reportGranularity).current;
-    const previousPeriod =
-      mode === 'comparison'
-        ? reportGranularity === 'custom'
-          ? customPeriod(customPreviousRange)
-          : resolveComparisonPeriods(reportGranularity).previous
-        : null;
-
-    const existing = clientComparisonsForClient.find(
-      (c) =>
-        c.row_kind === mode &&
-        c.period_current === currentPeriod.label &&
-        c.period_previous === (previousPeriod?.label ?? null)
-    );
-    if (existing) return existing;
-
-    return onGenerateComparison(
-      { type: 'client', clientId: client.id },
+  // for both modes. Binds reportingEngine.ts's shared ensureComparisonForSummary (also used by
+  // ReportsHub.tsx, whose scope can be client- or agent-based) to this dashboard's always-fixed
+  // client scope. `mode` is a parameter rather than always reading reportMode state because the
+  // Unified Report button always wants a 'comparison' row regardless of which toggle is currently
+  // selected above.
+  const ensureComparisonForSummary = (mode: ReportMode): Promise<ClientComparisonRecord | null> =>
+    resolveOrGenerateComparison({
+      scope: { type: 'client', clientId: client.id },
       mode,
-      reportGranularity,
-      reportGranularity === 'custom'
-        ? { currentRange: customCurrentRange, previousRange: mode === 'comparison' ? customPreviousRange : undefined }
-        : undefined
-    );
-  };
+      granularity: reportGranularity,
+      customCurrentRange,
+      customPreviousRange,
+      comparisons: clientComparisonsForClient,
+      onGenerateComparison,
+    });
 
   const handleGenerateReport = async (comparison: ClientComparisonRecord) => {
     if (!onGenerateReport) return;

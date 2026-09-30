@@ -17,6 +17,7 @@ import {
   resolveClientsForSubject,
   detectClientAnomalies,
   ClientAnomalyResult,
+  ensureComparisonForSummary as resolveOrGenerateComparison,
 } from '../lib/reportingEngine';
 import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
@@ -25,6 +26,7 @@ import { PeriodSelector } from './reporting/PeriodSelector';
 import {
   ComparisonCard,
   FiledReportsList,
+  DirectAiSummaryPanel,
   describeComparisonScope,
   CampaignSummaryPayload,
   CampaignSummaryDetailedResult,
@@ -214,6 +216,26 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')),
     [clientComparisons, myClientIds, directReportIds, currentUser.id]
   );
+
+  // UX-flow change: lets "Generate AI Summary" work before any comparison row exists yet, same as
+  // ClientDashboard.tsx's own DirectAiSummaryPanel — binds reportingEngine.ts's shared
+  // ensureComparisonForSummary to whichever scope is currently selected (client or agent), looking
+  // it up in visibleComparisons first (already scoped to what this viewer is allowed to see) before
+  // falling through to onGenerateComparison. Returns null with no side effect when no scope is
+  // selected yet, same as PeriodSelector's own canGenerate={!!resolvedScope} silently disabling the
+  // plain generate button in that case.
+  const ensureComparisonForSummary = (mode: ReportMode): Promise<ClientComparisonRecord | null> =>
+    resolvedScope
+      ? resolveOrGenerateComparison({
+          scope: resolvedScope,
+          mode,
+          granularity,
+          customCurrentRange,
+          customPreviousRange,
+          comparisons: visibleComparisons,
+          onGenerateComparison,
+        })
+      : Promise.resolve(null);
 
   const visibleReports = useMemo(
     () =>
@@ -409,6 +431,15 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         disabledReason="Select a scope first."
         singlePeriod={isSinglePeriod}
       />
+
+      {!!resolvedScope && onGenerateAiSummary && (
+        <DirectAiSummaryPanel
+          mode={reportMode}
+          onEnsureComparison={() => ensureComparisonForSummary(reportMode)}
+          onGenerateAiSummary={onGenerateAiSummary}
+          viewerServiceFilter={viewerServiceFilter}
+        />
+      )}
 
       <div className="space-y-3">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
