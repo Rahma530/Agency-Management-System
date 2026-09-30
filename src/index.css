@@ -102,6 +102,9 @@
   --info-tint: var(--info-bg);
   --rose: var(--pink);
   --rose-tint: var(--pink-bg);
+  --indigo-tint: rgba(99, 102, 241, 0.15);
+  --indigo-ink: #a5b4fc;
+  --border-indigo: rgba(99, 102, 241, 0.2);
 
   /* ---- Stat-number colors ----
      Dedicated from the primary --accent/--success/--warning/--info/--rose tokens (which serve
@@ -173,6 +176,9 @@
   --info-tint: #e2eefa;
   --rose: #a24d78;
   --rose-tint: #f7e6ef;
+  --indigo-tint: #e6e8fc;
+  --indigo-ink: #4338ca;
+  --border-indigo: rgba(67, 56, 202, 0.25);
 
   /* ---- Legacy brand/semantic token names, rebuilt as aliases onto the primitives above ----
      Every pre-existing component in the app (badges, gradients, chart colors, and every
@@ -363,12 +369,40 @@
   background-color: var(--success-tint) !important;
 }
 
+/* AI-generated summary panels (DirectAiSummaryPanel, ComparisonCard's AI section) use indigo
+   specifically so they're never mistaken for the rule-based purple narrative next to them —
+   this gives indigo the same softly-tinted-surface treatment every other status color above
+   already has, instead of leaking an unstyled dark panel into Light Mode. */
+[data-theme='light'] :is(.bg-indigo-950, .bg-indigo-950\/10, .bg-indigo-950\/20, .bg-indigo-950\/30, .bg-indigo-950\/40, .bg-indigo-950\/50, .bg-indigo-950\/60) {
+  background-color: var(--indigo-tint) !important;
+}
+
 [data-theme='light'] :is(.bg-purple-950\/40, .bg-purple-950\/60) {
   background-color: var(--accent-tint);
 }
 
 [data-theme='light'] :is(.border-purple-800\/40, .border-purple-800\/60) {
   border-color: var(--border-lilac);
+}
+
+[data-theme='light'] :is(.border-indigo-900\/30, .border-indigo-900\/40, .border-indigo-700\/40) {
+  border-color: var(--border-indigo);
+}
+
+/* Light-pastel text tints (meant to sit on a dark backdrop) have no readable counterpart once
+   their parent surface goes light above — without this, "Summary:"/"Recommendation:" labels,
+   the anomaly heading, the Impersonation banner text, and the AI-summary labels all go
+   near-invisible (light text on a now-light tint) the moment their background gets corrected. */
+[data-theme='light'] :is(.text-red-100, .text-red-300) {
+  color: var(--rose) !important;
+}
+
+[data-theme='light'] .text-purple-300 {
+  color: var(--accent-ink) !important;
+}
+
+[data-theme='light'] :is(.text-indigo-200, .text-indigo-300) {
+  color: var(--indigo-ink) !important;
 }
 
 [data-theme='light'] aside :is(.text-stone-400, .hover\:text-white:hover) {
@@ -379,21 +413,36 @@
   color: var(--on-accent) !important;
 }
 
-/* Reports and employee administration still use a small set of legacy arbitrary dark
-   backgrounds for their cards, table rows, and list rows. Keep the adjustment scoped to
-   those two work surfaces: the warm workspace stays distinct from elevated white cards,
-   while status colours retain their own meaning. */
-[data-theme='light'] :is(.reports-hub, .employee-admin-hub) :is(
-  [class*='bg-[#161224]/80'], [class*='bg-[#1a1428]'], [class~='bg-black/20']
-) {
+/* This dark card shell (#161224/80, #1a1428) is this app's general-purpose card background —
+   reused as-is by dozens of components (ClientDashboard's Reports & Comparisons and Campaigns
+   tabs, SalesPortalView, ClientMeetingsPanel, ServiceBriefsRoutingView, ClientPortalView, and
+   more, not just Reports/Employee Administration). Previously scoped to only .reports-hub/
+   .employee-admin-hub, which left every other consumer rendering it as an unstyled dark card in
+   Light Mode — applied globally now so the next component that reuses this same shell doesn't
+   hit the same gap. */
+[data-theme='light'] :is([class*='bg-[#161224]/80'], [class*='bg-[#1a1428]']) {
   background-color: var(--surface) !important;
   border-color: var(--border-soft) !important;
   box-shadow: 0 2px 6px rgba(51, 32, 111, 0.05), 0 12px 28px rgba(81, 56, 150, 0.1);
 }
 
-[data-theme='light'] :is(.reports-hub, .employee-admin-hub) :is(
-  [class*='bg-[#161224]/80'], [class*='bg-[#1a1428]'], [class~='bg-black/20']
-) .text-white:not(button, button *) {
+[data-theme='light'] :is([class*='bg-[#161224]/80'], [class*='bg-[#1a1428]']) .text-white:not(button, button *) {
+  color: var(--text-hi) !important;
+}
+
+/* bg-black/20 is a different, much more widely-reused utility — a generic translucent tint for
+   sub-panels nested inside an already-dark parent (chat bubbles, header strips, table rows), not
+   this app's card shell, and used by many components (MiniChat, NotificationBell, GlobalSearch,
+   ImportDataModal, and others) this pass hasn't reviewed. Left scoped to Employee
+   Administration's own list rows, the one place it was already relied on here, rather than
+   repainting every dark/20 tint app-wide without checking each consumer. */
+[data-theme='light'] .employee-admin-hub [class~='bg-black/20'] {
+  background-color: var(--surface) !important;
+  border-color: var(--border-soft) !important;
+  box-shadow: 0 2px 6px rgba(51, 32, 111, 0.05), 0 12px 28px rgba(81, 56, 150, 0.1);
+}
+
+[data-theme='light'] .employee-admin-hub [class~='bg-black/20'] .text-white:not(button, button *) {
   color: var(--text-hi) !important;
 }
 
@@ -453,6 +502,22 @@
   background-color: #ded9f7 !important;
   color: var(--accent-ink) !important;
   border-color: var(--accent) !important;
+}
+
+/* Same outline-button shape as the purple rule above (bg-*-900/40, hover:bg-*-800/60,
+   border-*-700/40), used by the ai-summary-action button — mirrored here so it doesn't fall
+   back to its unstyled dark-mode indigo in Light Mode. */
+[data-theme='light'] :is(button[class*='bg-indigo-900/'], button[class*='bg-indigo-800/']) {
+  background-color: var(--indigo-tint) !important;
+  border-color: #a5abf0 !important;
+  color: var(--indigo-ink) !important;
+  box-shadow: 0 3px 9px rgba(67, 56, 202, 0.12);
+}
+
+[data-theme='light'] :is(button[class*='bg-indigo-900/'], button[class*='bg-indigo-800/']):hover {
+  background-color: #d9dbf5 !important;
+  color: var(--indigo-ink) !important;
+  border-color: #6366f1 !important;
 }
 
 [data-theme='light'] .client-initial-avatar {
