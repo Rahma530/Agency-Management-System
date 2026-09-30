@@ -168,6 +168,33 @@
   --dept-social-tint: rgba(236, 72, 153, 0.15);
   --dept-social-ink: #f472b6;
 
+  /* ---- Task priority badge colors (KanbanTaskCard.tsx's getPriorityBadge) ---- */
+  --priority-urgent-tint: rgba(245, 163, 163, 0.25);
+  --priority-urgent-border: rgba(245, 163, 163, 0.4);
+  --priority-high-tint: rgba(235, 94, 40, 0.2);
+  --priority-high-ink: #fb923c;
+  --priority-high-border: rgba(235, 94, 40, 0.3);
+  --priority-medium-tint: rgba(245, 226, 154, 0.2);
+  --priority-medium-border: rgba(245, 226, 154, 0.3);
+  --priority-low-tint: rgba(168, 155, 184, 0.2);
+  --priority-low-border: rgba(168, 155, 184, 0.3);
+  --priority-default-tint: rgba(255, 255, 255, 0.1);
+
+  /* ---- Task-card team badge colors (KanbanTaskCard.tsx's getTeamColor) ---- */
+  --team-seo-tint: rgba(56, 189, 248, 0.15);
+  --team-seo-ink: #38bdf8;
+  --team-social-media-tint: rgba(192, 132, 252, 0.15);
+  --team-social-media-ink: #c084fc;
+  --team-media-buying-tint: rgba(251, 191, 36, 0.15);
+  --team-media-buying-ink: #fbbf24;
+  --team-creative-tint: rgba(244, 114, 182, 0.15);
+  --team-creative-ink: #f472b6;
+  --team-video-tint: rgba(248, 113, 113, 0.15);
+  --team-video-ink: #f87171;
+  --team-am-tint: rgba(167, 139, 250, 0.15);
+  --team-am-ink: #a78bfa;
+  --team-default-tint: rgba(255, 255, 255, 0.05);
+
   /* ---- Stat-number colors ----
      Dedicated from the primary --accent/--success/--warning/--info/--rose tokens (which serve
      buttons, badges, and borders elsewhere) so that fixing stat-number legibility here can't
@@ -301,6 +328,33 @@
   --dept-media-buying-ink: #0369a1;
   --dept-social-tint: #fce7f3;
   --dept-social-ink: #be185d;
+
+  /* ---- Task priority badge colors — light values ---- */
+  --priority-urgent-tint: #f7e6ef;
+  --priority-urgent-border: rgba(138, 58, 99, 0.35);
+  --priority-high-tint: #ffedd5;
+  --priority-high-ink: #c2410c;
+  --priority-high-border: rgba(194, 65, 12, 0.3);
+  --priority-medium-tint: #f8ecd8;
+  --priority-medium-border: rgba(184, 121, 31, 0.3);
+  --priority-low-tint: #eeecf5;
+  --priority-low-border: rgba(85, 80, 106, 0.3);
+  --priority-default-tint: rgba(0, 0, 0, 0.05);
+
+  /* ---- Task-card team badge colors — light values ---- */
+  --team-seo-tint: #e0f2fe;
+  --team-seo-ink: #0369a1;
+  --team-social-media-tint: #f3e8ff;
+  --team-social-media-ink: #7e22ce;
+  --team-media-buying-tint: #fef3c7;
+  --team-media-buying-ink: #b45309;
+  --team-creative-tint: #fce7f3;
+  --team-creative-ink: #be185d;
+  --team-video-tint: #fee2e2;
+  --team-video-ink: #b91c1c;
+  --team-am-tint: #ede9fe;
+  --team-am-ink: #6d28d9;
+  --team-default-tint: rgba(0, 0, 0, 0.05);
 
   /* ---- Legacy brand/semantic token names, rebuilt as aliases onto the primitives above ----
      Every pre-existing component in the app (badges, gradients, chart colors, and every
