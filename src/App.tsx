@@ -2544,14 +2544,17 @@ export default function App() {
       // notification badge so it re-flags as unseen (Module 12 Phase 5).
       const viewedAt = existing.agent_id !== agentId ? null : existing.viewed_at;
       if (supabaseActive) {
-        try {
-          const { error } = await supabase
-            .from('assignments')
-            .update({ agent_id: agentId, reason_notes: reasonNotes || existing.reason_notes, viewed_at: viewedAt })
-            .eq('id', existing.id);
-          if (error) throw error;
-        } catch (err: any) {
-          console.error('Supabase assignment update error:', err);
+        // ServiceBriefsRoutingView's handleAssignAgent only console.errors a caught rejection —
+        // it never surfaces one to the user — so a real failure is handled here directly with
+        // its own notification, rather than thrown to a caller that wouldn't display it.
+        const { error } = await supabase
+          .from('assignments')
+          .update({ agent_id: agentId, reason_notes: reasonNotes || existing.reason_notes, viewed_at: viewedAt })
+          .eq('id', existing.id);
+        if (error) {
+          console.error('Supabase assignment update error:', error);
+          showNotification('Unable to assign this specialist.', 'info');
+          return;
         }
       }
       setAssignments((prev) =>
@@ -2573,18 +2576,13 @@ export default function App() {
       };
 
       if (supabaseActive) {
-        try {
-          const { data, error } = await supabase.from('assignments').insert([newAssignment]).select();
-          if (error) throw error;
-          if (data && data[0]) {
-            setAssignments((prev) => [data[0] as AssignmentRecord, ...prev]);
-          } else {
-            setAssignments((prev) => [newAssignment, ...prev]);
-          }
-        } catch (err: any) {
-          console.error('Supabase assignment insert error:', err);
-          setAssignments((prev) => [newAssignment, ...prev]);
+        const { data, error } = await supabase.from('assignments').insert([newAssignment]).select();
+        if (error) {
+          console.error('Supabase assignment insert error:', error);
+          showNotification('Unable to assign this specialist.', 'info');
+          return;
         }
+        setAssignments((prev) => [(data?.[0] as AssignmentRecord) || newAssignment, ...prev]);
       } else {
         setAssignments((prev) => [newAssignment, ...prev]);
       }
@@ -2656,20 +2654,20 @@ export default function App() {
       };
 
       if (supabaseActive) {
-        try {
-          await supabase
-            .from('briefs')
-            .update({
-              fields: updated.fields,
-              version: updated.version,
-              submitted_by: updated.submitted_by,
-              custom_field_defs: updated.custom_field_defs,
-              team_lead_viewed_at: updated.team_lead_viewed_at,
-              updated_at: updated.updated_at,
-            })
-            .eq('id', existing.id);
-        } catch (err) {
-          console.error('Supabase brief update error:', err);
+        const { error } = await supabase
+          .from('briefs')
+          .update({
+            fields: updated.fields,
+            version: updated.version,
+            submitted_by: updated.submitted_by,
+            custom_field_defs: updated.custom_field_defs,
+            team_lead_viewed_at: updated.team_lead_viewed_at,
+            updated_at: updated.updated_at,
+          })
+          .eq('id', existing.id);
+        if (error) {
+          console.error('Supabase brief update error:', error);
+          throw error;
         }
       }
 
@@ -2691,13 +2689,13 @@ export default function App() {
       };
 
       if (supabaseActive) {
-        try {
-          const { data } = await supabase.from('briefs').insert([newBrief]).select();
-          if (data && data[0]) {
-            newBrief.id = data[0].id;
-          }
-        } catch (err) {
-          console.error('Supabase brief insert error:', err);
+        const { data, error } = await supabase.from('briefs').insert([newBrief]).select();
+        if (error) {
+          console.error('Supabase brief insert error:', error);
+          throw error;
+        }
+        if (data && data[0]) {
+          newBrief.id = data[0].id;
         }
       }
 
@@ -2720,13 +2718,13 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      try {
-        const { data } = await supabase.from('brief_revisions').insert([revision]).select();
-        if (data && data[0]) {
-          revision.id = data[0].id;
-        }
-      } catch (err) {
-        console.error('Supabase brief revision insert error:', err);
+      const { data, error } = await supabase.from('brief_revisions').insert([revision]).select();
+      if (error) {
+        console.error('Supabase brief revision insert error:', error);
+        throw error;
+      }
+      if (data && data[0]) {
+        revision.id = data[0].id;
       }
     }
 
@@ -2958,10 +2956,10 @@ export default function App() {
   // Log a new capacity reading
   const handleLogCapacity = async (newLog: CapacityLogRecord) => {
     if (supabaseActive) {
-      try {
-        await supabase.from('capacity_logs').insert([newLog]);
-      } catch (err) {
-        console.error('Supabase capacity_logs insert error:', err);
+      const { error } = await supabase.from('capacity_logs').insert([newLog]);
+      if (error) {
+        console.error('Supabase capacity_logs insert error:', error);
+        throw error;
       }
     }
     setCapacityLogs((prev) => [newLog, ...prev]);
@@ -3258,14 +3256,20 @@ export default function App() {
   };
 
   // 6c. Edit your own comment's body (sets edited_at)
+  // Neither TaskCommentThread caller awaits or catches these (both are fire-and-forget onClick
+  // handlers) — a thrown error here would surface only as an unhandled promise rejection, never
+  // to the user. Failures are therefore handled here directly: a real error shows its own
+  // notification and returns before touching local state, rather than throwing to a caller that
+  // can't display it.
   const handleEditTaskComment = async (commentId: string, body: string) => {
     const updates: Partial<TaskCommentRecord> = { body, edited_at: new Date().toISOString() };
 
     if (supabaseActive) {
-      try {
-        await supabase.from('task_comments').update(updates).eq('id', commentId);
-      } catch (err) {
-        console.error('Supabase task comment update error:', err);
+      const { error } = await supabase.from('task_comments').update(updates).eq('id', commentId);
+      if (error) {
+        console.error('Supabase task comment update error:', error);
+        showNotification('Unable to save the edited comment.', 'info');
+        return;
       }
     }
 
@@ -3280,10 +3284,11 @@ export default function App() {
     const updates: Partial<TaskCommentRecord> = { deleted_at: new Date().toISOString() };
 
     if (supabaseActive) {
-      try {
-        await supabase.from('task_comments').update(updates).eq('id', commentId);
-      } catch (err) {
-        console.error('Supabase task comment delete error:', err);
+      const { error } = await supabase.from('task_comments').update(updates).eq('id', commentId);
+      if (error) {
+        console.error('Supabase task comment delete error:', error);
+        showNotification('Unable to delete the comment.', 'info');
+        return;
       }
     }
 
@@ -3344,16 +3349,25 @@ export default function App() {
   // its metadata row (a real delete, not soft: nothing references an
   // attachment as a parent, so there's no orphaning concern like comments
   // have).
+  // TaskAttachmentList's onDelete is a fire-and-forget onClick, never awaited or caught by its
+  // caller — a thrown error here would only ever surface as an unhandled promise rejection, so a
+  // real failure is handled here directly instead, before any local state changes.
   const handleDeleteTaskAttachment = async (attachmentId: string) => {
     const attachment = taskAttachments.find((a) => a.id === attachmentId);
     if (!attachment) return;
 
     if (supabaseActive) {
-      try {
-        await supabase.storage.from('task-attachments').remove([attachment.storage_path]);
-        await supabase.from('task_attachments').delete().eq('id', attachmentId);
-      } catch (err) {
-        console.error('Supabase attachment delete error:', err);
+      const { error: storageError } = await supabase.storage.from('task-attachments').remove([attachment.storage_path]);
+      if (storageError) {
+        console.error('Supabase attachment storage delete error:', storageError);
+        showNotification('Unable to delete this attachment.', 'info');
+        return;
+      }
+      const { error } = await supabase.from('task_attachments').delete().eq('id', attachmentId);
+      if (error) {
+        console.error('Supabase attachment delete error:', error);
+        showNotification('Unable to delete this attachment.', 'info');
+        return;
       }
     }
 
@@ -3379,18 +3393,12 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      try {
-        const { data, error } = await supabase.from('daily_logs').insert([newLogPayload]).select();
-        if (error) throw error;
-        if (data && data[0]) {
-          setDailyLogs((prev) => [data[0] as DailyLogRecord, ...prev]);
-        } else {
-          setDailyLogs((prev) => [newLogPayload, ...prev]);
-        }
-      } catch (err) {
-        console.error('Supabase daily_logs insert error:', err);
-        setDailyLogs((prev) => [newLogPayload, ...prev]);
+      const { data, error } = await supabase.from('daily_logs').insert([newLogPayload]).select();
+      if (error) {
+        console.error('Supabase daily_logs insert error:', error);
+        throw error;
       }
+      setDailyLogs((prev) => [(data?.[0] as DailyLogRecord) || newLogPayload, ...prev]);
     } else {
       setDailyLogs((prev) => [newLogPayload, ...prev]);
     }
@@ -3415,18 +3423,12 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      try {
-        const { data, error } = await supabase.from('extra_notes').insert([newNotePayload]).select();
-        if (error) throw error;
-        if (data && data[0]) {
-          setExtraNotes((prev) => [data[0] as ExtraNoteRecord, ...prev]);
-        } else {
-          setExtraNotes((prev) => [newNotePayload, ...prev]);
-        }
-      } catch (err) {
-        console.error('Supabase extra_notes insert error:', err);
-        setExtraNotes((prev) => [newNotePayload, ...prev]);
+      const { data, error } = await supabase.from('extra_notes').insert([newNotePayload]).select();
+      if (error) {
+        console.error('Supabase extra_notes insert error:', error);
+        throw error;
       }
+      setExtraNotes((prev) => [(data?.[0] as ExtraNoteRecord) || newNotePayload, ...prev]);
     } else {
       setExtraNotes((prev) => [newNotePayload, ...prev]);
     }
@@ -3874,16 +3876,25 @@ export default function App() {
   };
 
   // Delete your own contract upload — removes both the Storage object and its metadata row.
+  // ClientContractsPanel's onDelete is a fire-and-forget onClick, never awaited or caught — a
+  // thrown error here would only surface as an unhandled promise rejection, so a real failure is
+  // handled here directly, before any local state changes.
   const handleDeleteClientContract = async (contractId: string) => {
     const contract = clientContracts.find((c) => c.id === contractId);
     if (!contract) return;
 
     if (supabaseActive) {
-      try {
-        await supabase.storage.from('client-contracts').remove([contract.storage_path]);
-        await supabase.from('client_contracts').delete().eq('id', contractId);
-      } catch (err) {
-        console.error('Supabase contract delete error:', err);
+      const { error: storageError } = await supabase.storage.from('client-contracts').remove([contract.storage_path]);
+      if (storageError) {
+        console.error('Supabase contract storage delete error:', storageError);
+        showNotification('Unable to remove this contract document.', 'info');
+        return;
+      }
+      const { error } = await supabase.from('client_contracts').delete().eq('id', contractId);
+      if (error) {
+        console.error('Supabase contract delete error:', error);
+        showNotification('Unable to remove this contract document.', 'info');
+        return;
       }
     }
 
@@ -3955,24 +3966,18 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      try {
-        // supabaseRaw, not the legacy `supabase` proxy — that proxy's insert handler only
-        // mutates its own in-memory array and never reaches Postgres at all. Real RLS
-        // (campaigns_insert_rls) enforces the exact same media_buying_team_lead/
-        // media_buying_agent-only rule CampaignManagementModule.tsx's own canCreateCampaign
-        // check already gates the "create campaign" UI with, so this never rejects a write
-        // the UI let someone attempt in the first place.
-        const { data, error } = await supabaseRaw.from('campaigns').insert([newRecord]).select();
-        if (error) throw error;
-        if (data && data[0]) {
-          setCampaigns((prev) => [data[0] as CampaignRecord, ...prev]);
-        } else {
-          setCampaigns((prev) => [newRecord, ...prev]);
-        }
-      } catch (err: any) {
-        console.warn('Supabase campaign insert fallback to state:', err);
-        setCampaigns((prev) => [newRecord, ...prev]);
+      // supabaseRaw, not the legacy `supabase` proxy — that proxy's insert handler only
+      // mutates its own in-memory array and never reaches Postgres at all. Real RLS
+      // (campaigns_insert_rls) enforces the exact same media_buying_team_lead/
+      // media_buying_agent-only rule CampaignManagementModule.tsx's own canCreateCampaign
+      // check already gates the "create campaign" UI with, so this never rejects a write
+      // the UI let someone attempt in the first place.
+      const { data, error } = await supabaseRaw.from('campaigns').insert([newRecord]).select();
+      if (error) {
+        console.error('Supabase campaign insert error:', error);
+        throw error;
       }
+      setCampaigns((prev) => [(data?.[0] as CampaignRecord) || newRecord, ...prev]);
     } else {
       setCampaigns((prev) => [newRecord, ...prev]);
     }
@@ -3982,16 +3987,15 @@ export default function App() {
 
   const handleUpdateCampaign = async (id: string, updates: Partial<CampaignRecord>) => {
     if (supabaseActive) {
-      try {
-        // supabaseRaw, not the legacy `supabase` proxy — same reasoning as handleCreateCampaign
-        // above. Real RLS (campaigns_update_rls) is a verified exact match of the proxy's own
-        // canEdit check it's replacing (team_lead any row, agent scoped to their assignment, own
-        // am_agent scoped to their client) — the migration's own comment on that policy confirms
-        // it was written to mirror this handler in the first place.
-        const { error } = await supabaseRaw.from('campaigns').update(updates).eq('id', id);
-        if (error) throw error;
-      } catch (err: any) {
-        console.warn('Supabase campaign update fallback to state:', err);
+      // supabaseRaw, not the legacy `supabase` proxy — same reasoning as handleCreateCampaign
+      // above. Real RLS (campaigns_update_rls) is a verified exact match of the proxy's own
+      // canEdit check it's replacing (team_lead any row, agent scoped to their assignment, own
+      // am_agent scoped to their client) — the migration's own comment on that policy confirms
+      // it was written to mirror this handler in the first place.
+      const { error } = await supabaseRaw.from('campaigns').update(updates).eq('id', id);
+      if (error) {
+        console.error('Supabase campaign update error:', error);
+        throw error;
       }
     }
 
