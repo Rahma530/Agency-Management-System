@@ -169,6 +169,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         type="text"
+                        dir="auto"
                         value={editDraft.label || ''}
                         onChange={(e) => setEditDraft((d) => ({ ...d, label: e.target.value }))}
                         placeholder="Question label"
@@ -258,7 +259,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
                     <div className="flex items-center gap-2 min-w-0">
                       <GripVertical className="w-3.5 h-3.5 text-stone-600 shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-white truncate">
+                        <p className="text-xs font-semibold text-white truncate" dir="auto">
                           {row.label}
                           {row.required && <span className="ml-1.5 text-[10px] text-red-400">*</span>}
                         </p>
@@ -291,6 +292,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="text"
+                dir="auto"
                 autoFocus
                 value={newDraft.label}
                 onChange={(e) => setNewDraft((d) => ({ ...d, label: e.target.value }))}

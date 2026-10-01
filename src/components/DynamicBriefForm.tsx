@@ -432,7 +432,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
               return (
               <div key={field.key} className={field.span === 'full' ? 'md:col-span-2' : ''}>
                 <label className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-semibold" style={{ color: 'var(--lilac)' }}>
+                  <span className="text-xs font-semibold" dir="auto" style={{ color: 'var(--lilac)' }}>
                     {field.label}
                     {field.required && <span className="ml-1.5 text-[10px] text-red-400">*</span>}
                     {isCustom && (
@@ -458,6 +458,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                 {field.type === 'textarea' ? (
                   <textarea
                     rows={field.rows || 2}
+                    dir="auto"
                     placeholder={field.placeholder}
                     value={formData[field.key] || ''}
                     onChange={(e) => handleFieldChange(field.key, e.target.value)}
@@ -471,6 +472,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                 ) : field.type === 'tag-list' ? (
                   <input
                     type="text"
+                    dir="auto"
                     placeholder={field.placeholder}
                     value={
                       Array.isArray(formData[field.key])
@@ -487,9 +489,30 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                       color: 'var(--white)',
                     }}
                   />
+                ) : field.type === 'url' ? (
+                  // type="url" is purely a native-keyboard/hint nicety (e.g. mobile keyboards
+                  // offering "/" and ".com") — it does NOT block form submission on an invalid
+                  // shape the way a required/pattern attribute would, since browsers only enforce
+                  // input validity on a <form>'s own submit, and this input was never inside a
+                  // <form> element (handleSave is a plain button onClick). Whatever the employee
+                  // types is saved as-is, matching every other field type's no-validation behavior.
+                  <input
+                    type="url"
+                    dir="auto"
+                    placeholder={field.placeholder}
+                    value={formData[field.key] || ''}
+                    onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"
+                    style={{
+                      background: 'rgba(10, 10, 13, 0.85)',
+                      border: '1px solid var(--border-soft)',
+                      color: 'var(--white)',
+                    }}
+                  />
                 ) : (
                   <input
                     type="text"
+                    dir="auto"
                     placeholder={field.placeholder}
                     value={formData[field.key] || ''}
                     onChange={(e) => handleFieldChange(field.key, e.target.value)}
@@ -583,10 +606,10 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
               ) : (
                 Object.entries(formData).map(([key, value]) => (
                   <tr key={key} className="hover:bg-purple-950/20 transition-colors">
-                    <td className="p-3 font-medium font-mono text-[11px]" style={{ color: 'var(--lilac)' }}>
+                    <td className="p-3 font-medium font-mono text-[11px]" dir="auto" style={{ color: 'var(--lilac)' }}>
                       {key}
                     </td>
-                    <td className="p-3" style={{ color: 'var(--white)' }}>
+                    <td className="p-3" dir="auto" style={{ color: 'var(--white)' }}>
                       {Array.isArray(value) ? (
                         <div className="flex flex-wrap gap-1">
                           {value.map((item, idx) => (
