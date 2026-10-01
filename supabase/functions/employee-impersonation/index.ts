@@ -18,6 +18,7 @@ const enabled = Deno.env.get('EMPLOYEE_IMPERSONATION_ENABLED') === 'true';
 const supportedOrigins = new Set([
   'http://localhost:3000',
   'https://agency-management-system-alpha.vercel.app',
+  'https://kms.kesraa.com',
 ]);
 const allowedOrigins = new Set((Deno.env.get('EMPLOYEE_IMPERSONATION_ALLOWED_ORIGIN') || 'http://localhost:3000')
   .split(',').map((origin) => origin.trim()).filter((origin) => supportedOrigins.has(origin)));
