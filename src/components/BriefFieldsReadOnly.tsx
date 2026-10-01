@@ -2,6 +2,20 @@ import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { BriefFieldDef } from '../types/database';
 
+// Fixes a url-typed field's raw saved value into a working href. Nothing stops an employee from
+// typing a bare domain ("google.com") or non-URL text into a url-typed question — saving is never
+// blocked regardless of answer type (see DynamicBriefForm.tsx) — so this is the one place that
+// decides what actually happens when someone clicks it. A value that already carries a scheme is
+// used as-is; a bare domain-shaped value (no whitespace) gets https:// prepended so it resolves as
+// a real external link instead of a broken relative path within this app; a value with no usable
+// host at all (empty after trimming, or containing whitespace — no real URL does) isn't linkified.
+// The displayed text is always exactly what was typed — only the underlying href is adjusted.
+const toUrlHref = (rawValue: string): string | null => {
+  const trimmed = rawValue.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+};
+
 interface BriefFieldsReadOnlyProps {
   fields: Record<string, any>;
   // The global per-service question list, resolved by the caller from the now-dynamic
@@ -27,6 +41,7 @@ export const BriefFieldsReadOnly: React.FC<BriefFieldsReadOnlyProps> = ({ fields
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       {allFieldDefs.map((field) => {
         const value = fields[field.key];
+        const urlHref = field.type === 'url' && typeof value === 'string' ? toUrlHref(value) : null;
         return (
           <div
             key={field.key}
@@ -51,9 +66,9 @@ export const BriefFieldsReadOnly: React.FC<BriefFieldsReadOnlyProps> = ({ fields
                 )}
               </div>
             ) : field.type === 'url' ? (
-              value ? (
+              urlHref ? (
                 <a
-                  href={value}
+                  href={urlHref}
                   target="_blank"
                   rel="noreferrer"
                   className={`hover:underline flex items-center gap-1 break-all ${field.valueClassName || 'text-xs font-bold text-purple-300'}`}
@@ -61,6 +76,8 @@ export const BriefFieldsReadOnly: React.FC<BriefFieldsReadOnlyProps> = ({ fields
                   <span>{value}</span>
                   <ExternalLink className="w-3 h-3 shrink-0" />
                 </a>
+              ) : typeof value === 'string' && value.trim() ? (
+                <p className={`leading-relaxed break-all ${field.valueClassName || 'text-xs text-stone-200'}`}>{value}</p>
               ) : (
                 <p className="text-xs text-stone-400">{field.fallback || 'Not specified'}</p>
               )

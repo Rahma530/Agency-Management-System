@@ -255,6 +255,12 @@ export const ComparisonCard: React.FC<{
 
   const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
   const [aiSummaryResult, setAiSummaryResult] = useState<CampaignSummaryDetailedResult | null>(null);
+  // Distinct from a null result: onGenerateAiSummary (App.tsx's handleGenerateCampaignSummary)
+  // never throws — it resolves to null and only surfaces a transient toast on failure (see that
+  // prop's own doc comment below) — so without this, a real ai-router failure looked identical
+  // to the button simply never having been pressed, with no persistent in-component signal a
+  // user could still see after the toast disappeared.
+  const [aiSummaryFailed, setAiSummaryFailed] = useState(false);
 
   // Ephemeral by design (no persistence, no new column): reset whenever this card starts
   // representing a different comparison row, so a stale result never carries over if the parent
@@ -262,6 +268,7 @@ export const ComparisonCard: React.FC<{
   useEffect(() => {
     setAiSummaryResult(null);
     setIsGeneratingAiSummary(false);
+    setAiSummaryFailed(false);
   }, [comparison.id]);
 
   const canShowAiButton = !!onGenerateAiSummary && canBuildCampaignSummaryPayload(comparison, viewerServiceFilter);
@@ -269,9 +276,14 @@ export const ComparisonCard: React.FC<{
   const handleGenerateAiSummary = async () => {
     if (!onGenerateAiSummary) return;
     setIsGeneratingAiSummary(true);
+    setAiSummaryFailed(false);
     const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter));
     setIsGeneratingAiSummary(false);
-    if (result) setAiSummaryResult(result);
+    if (result) {
+      setAiSummaryResult(result);
+    } else {
+      setAiSummaryFailed(true);
+    }
   };
 
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
@@ -434,7 +446,7 @@ export const ComparisonCard: React.FC<{
           offered for period_summary rows too, even though they have no narrative to sit inside. PDF
           export stays narrative-only (unchanged) — this request only asked to fix AI-summary
           gating, not PDF export's. */}
-      {(canShowAiButton || aiSummaryResult) && (
+      {(canShowAiButton || aiSummaryResult || aiSummaryFailed) && (
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
             {canShowAiButton && (
@@ -451,6 +463,10 @@ export const ComparisonCard: React.FC<{
               </button>
             )}
           </div>
+
+          {aiSummaryFailed && (
+            <p className="text-xs text-red-300">Something went wrong generating the AI summary — try again.</p>
+          )}
 
           {/* AI-generated content — Arabic per the request's language:'ar' (matches this task's
               prompt design: metric names like ROAS/CPA stay in English inside Arabic sentences).
@@ -665,17 +681,24 @@ export const DirectAiSummaryPanel: React.FC<{
   const [stage, setStage] = useState<'idle' | 'computing' | 'generating'>('idle');
   const [result, setResult] = useState<CampaignSummaryDetailedResult | null>(null);
   const [ineligible, setIneligible] = useState(false);
+  // Distinct from ineligible: onGenerateAiSummary never throws — it resolves to null and only
+  // surfaces a transient toast on a real ai-router failure (see ComparisonCard's own
+  // aiSummaryFailed for the identical reasoning) — without this, that failure looked identical
+  // to the button simply never having been pressed once the toast was gone.
+  const [failed, setFailed] = useState(false);
 
   // Cleared on a mode switch (Comparison Report <-> Period Report) — a result generated under one
   // mode has no bearing on the other.
   useEffect(() => {
     setResult(null);
     setIneligible(false);
+    setFailed(false);
     setStage('idle');
   }, [mode]);
 
   const handleClick = async () => {
     setIneligible(false);
+    setFailed(false);
     setStage('computing');
     try {
       const row = await onEnsureComparison();
@@ -686,7 +709,11 @@ export const DirectAiSummaryPanel: React.FC<{
       }
       setStage('generating');
       const fresh = await onGenerateAiSummary(buildCampaignSummaryPayload(row, viewerServiceFilter));
-      if (fresh) setResult(fresh);
+      if (fresh) {
+        setResult(fresh);
+      } else {
+        setFailed(true);
+      }
     } finally {
       setStage('idle');
     }
@@ -725,6 +752,8 @@ export const DirectAiSummaryPanel: React.FC<{
           doesn't accept).
         </p>
       )}
+
+      {failed && <p className="text-xs text-red-300">Something went wrong generating the AI summary — try again.</p>}
 
       {result && (
         <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-900/30 space-y-1.5">

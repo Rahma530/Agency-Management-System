@@ -21,6 +21,7 @@ import {
   BarChart3,
   Briefcase,
   UserPlus,
+  ClipboardList,
   Menu,
   X,
   Sun,
@@ -57,6 +58,7 @@ import {
 import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
+import { BriefTemplatesModule } from './components/BriefTemplatesModule';
 import { DashboardHub } from './components/DashboardHub';
 import {
   ClientRecord,
@@ -4344,7 +4346,7 @@ export default function App() {
                 <span
                   className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
                   style={{
-                    background: 'rgba(123, 47, 247, 0.25)',
+                    background: 'var(--nav-badge-purple-tint)',
                     color: 'var(--purple-light)',
                     border: '1px solid var(--border-soft)',
                   }}
@@ -4595,7 +4597,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(123, 47, 247, 0.25)',
+                  background: 'var(--nav-badge-purple-tint)',
                   color: 'var(--white)',
                   }}
                 >
@@ -4619,7 +4621,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(123, 47, 247, 0.25)',
+                  background: 'var(--nav-badge-purple-tint)',
                   color: 'var(--white)',
                   }}
                 >
@@ -4643,7 +4645,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(169, 245, 193, 0.2)',
+                  background: 'var(--nav-badge-green-tint)',
                   color: 'var(--roas-good)',
                   }}
                 >
@@ -4667,7 +4669,7 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                  background: 'rgba(245, 226, 154, 0.2)',
+                  background: 'var(--nav-badge-amber-tint)',
                   color: 'var(--roas-mid)',
                   }}
                 >
@@ -4696,7 +4698,7 @@ export default function App() {
                   <span
                     className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                     style={{
-                    background: 'rgba(169, 245, 193, 0.2)',
+                    background: 'var(--nav-badge-green-tint)',
                     color: 'var(--roas-good)',
                     }}
                   >
@@ -4721,8 +4723,8 @@ export default function App() {
                 <span
                   className="px-1.5 py-0.2 rounded-full text-[10px] shrink-0 nav-badge"
                   style={{
-                    background: 'rgba(14, 165, 233, 0.2)',
-                    color: '#38bdf8',
+                    background: 'var(--nav-badge-blue-tint)',
+                    color: 'var(--nav-badge-blue-ink)',
                   }}
                 >
                   {campaigns.filter((c) => (c.status || c.results?.status) === 'active').length} active
@@ -4756,6 +4758,20 @@ export default function App() {
               >
                 <UserPlus className="w-4 h-4 shrink-0" />
                 <span className="flex-1 text-left">Employees</span>
+              </button>
+            )}
+
+            {userRoleInfo.allowedModules.includes('brief_templates') && (
+              <button
+                onClick={() => handleTabChange('brief_templates')}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
+                  activeTab === 'brief_templates'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
+                }`}
+              >
+                <ClipboardList className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">Brief Templates</span>
               </button>
             )}
 
@@ -5108,6 +5124,20 @@ export default function App() {
                   onUpdateEmployee={handleUpdateEmployee}
                   onDeactivateEmployee={handleDeactivateEmployee}
                   onSendInvitation={handleSendInvitation}
+                />
+              </div>
+            )}
+
+            {/* Tab 8: Brief Templates — standalone, client-independent entry point for
+                brief_field_schemas, see BriefTemplatesModule.tsx's own header comment. */}
+            {activeTab === 'brief_templates' && (
+              <div className="space-y-6">
+                <BriefTemplatesModule
+                  currentUser={currentUser}
+                  briefFieldSchemaRows={briefFieldSchemaRows}
+                  onCreateBriefFieldSchema={handleCreateBriefFieldSchema}
+                  onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
+                  onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                 />
               </div>
             )}

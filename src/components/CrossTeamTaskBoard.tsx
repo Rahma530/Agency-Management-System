@@ -358,14 +358,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     }
   }, [employeeFilterDisabled, employeeFilterOptions]);
 
-  // Kanban Columns configuration
+  // Kanban Columns configuration. color already referenced a theme-aware token per status
+  // (--grey/--purple-light/--roas-mid/--roas-good/--lilac/--roas-bad all have light-mode
+  // overrides) — only badgeBg was a raw dark-mode-only rgba with no light counterpart.
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
-    { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'rgba(168, 155, 184, 0.2)' },
-    { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'rgba(123, 47, 247, 0.25)' },
-    { id: 'in_review', label: 'In Review', color: 'var(--roas-mid)', badgeBg: 'rgba(245, 226, 154, 0.2)' },
-    { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'rgba(169, 245, 193, 0.2)' },
-    { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'rgba(168, 155, 184, 0.2)' },
-    { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'rgba(245, 163, 163, 0.2)' },
+    { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'var(--status-todo-tint)' },
+    { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'var(--status-progress-tint)' },
+    { id: 'in_review', label: 'In Review', color: 'var(--roas-mid)', badgeBg: 'var(--status-review-tint)' },
+    { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'var(--status-completed-tint)' },
+    { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'var(--status-closed-tint)' },
+    { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'var(--status-blocked-tint)' },
   ];
 
   // Helper date functions
@@ -713,15 +715,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const getPriorityBadge = (priority: TaskPriority) => {
     switch (priority) {
       case 'urgent':
-        return { label: 'Urgent', bg: 'rgba(245, 163, 163, 0.25)', text: 'var(--roas-bad)', border: 'rgba(245, 163, 163, 0.4)' };
+        return { label: 'Urgent', bg: 'var(--priority-urgent-tint)', text: 'var(--roas-bad)', border: 'var(--priority-urgent-border)' };
       case 'high':
-        return { label: 'High', bg: 'rgba(235, 94, 40, 0.2)', text: '#fb923c', border: 'rgba(235, 94, 40, 0.3)' };
+        return { label: 'High', bg: 'var(--priority-high-tint)', text: 'var(--priority-high-ink)', border: 'var(--priority-high-border)' };
       case 'medium':
-        return { label: 'Medium', bg: 'rgba(245, 226, 154, 0.2)', text: 'var(--roas-mid)', border: 'rgba(245, 226, 154, 0.3)' };
+        return { label: 'Medium', bg: 'var(--priority-medium-tint)', text: 'var(--roas-mid)', border: 'var(--priority-medium-border)' };
       case 'low':
-        return { label: 'Low', bg: 'rgba(168, 155, 184, 0.2)', text: 'var(--grey)', border: 'rgba(168, 155, 184, 0.3)' };
+        return { label: 'Low', bg: 'var(--priority-low-tint)', text: 'var(--grey)', border: 'var(--priority-low-border)' };
       default:
-        return { label: priority, bg: 'rgba(255, 255, 255, 0.1)', text: 'var(--white)', border: 'transparent' };
+        return { label: priority, bg: 'var(--priority-default-tint)', text: 'var(--white)', border: 'transparent' };
     }
   };
 
@@ -729,21 +731,21 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const getTeamColor = (teamName?: string | null) => {
     switch (teamName) {
       case 'SEO':
-        return { text: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' };
+        return { text: 'var(--team-seo-ink)', bg: 'var(--team-seo-tint)' };
       case 'Social Media':
-        return { text: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' };
+        return { text: 'var(--team-social-media-ink)', bg: 'var(--team-social-media-tint)' };
       case 'Media Buying':
-        return { text: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' };
+        return { text: 'var(--team-media-buying-ink)', bg: 'var(--team-media-buying-tint)' };
       case 'Creative & Design':
-        return { text: '#f472b6', bg: 'rgba(244, 114, 182, 0.15)' };
+        return { text: 'var(--team-creative-ink)', bg: 'var(--team-creative-tint)' };
       case 'Video Production':
-        return { text: '#f87171', bg: 'rgba(248, 113, 113, 0.15)' };
+        return { text: 'var(--team-video-ink)', bg: 'var(--team-video-tint)' };
       case 'Programming':
-        return { text: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)' };
+        return { text: 'var(--team-programming-ink)', bg: 'var(--team-programming-tint)' };
       case 'Account Management':
-        return { text: '#a78bfa', bg: 'rgba(167, 139, 250, 0.15)' };
+        return { text: 'var(--team-am-ink)', bg: 'var(--team-am-tint)' };
       default:
-        return { text: 'var(--grey)', bg: 'rgba(255, 255, 255, 0.05)' };
+        return { text: 'var(--grey)', bg: 'var(--team-default-tint)' };
     }
   };
 

@@ -485,8 +485,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         leadRoleTitle: 'SEO Team Leader',
         agentRoleTitle: 'SEO Specialist',
         accentColor: '#10b981',
-        badgeBg: 'rgba(16, 185, 129, 0.15)',
-        badgeText: '#34d399',
+        badgeBg: 'var(--dept-seo-tint)',
+        badgeText: 'var(--dept-seo-ink)',
         icon: <Globe className="w-5 h-5 text-emerald-400" />,
       };
     }
@@ -501,8 +501,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         leadRoleTitle: 'Media Buying Team Leader',
         agentRoleTitle: 'Media Buying Specialist',
         accentColor: '#0ea5e9',
-        badgeBg: 'rgba(14, 165, 233, 0.15)',
-        badgeText: '#38bdf8',
+        badgeBg: 'var(--dept-media-buying-tint)',
+        badgeText: 'var(--dept-media-buying-ink)',
         icon: <Target className="w-5 h-5 text-sky-400" />,
       };
     }
@@ -517,8 +517,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         leadRoleTitle: 'Social Media Team Leader',
         agentRoleTitle: 'Social Media Specialist',
         accentColor: '#ec4899',
-        badgeBg: 'rgba(236, 72, 153, 0.15)',
-        badgeText: '#f472b6',
+        badgeBg: 'var(--dept-social-tint)',
+        badgeText: 'var(--dept-social-ink)',
         icon: <Share2 className="w-5 h-5 text-pink-400" />,
       };
     }
@@ -625,25 +625,25 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         key: 'brief_in_progress',
         label: 'Brief in Progress',
         color: 'var(--roas-mid)',
-        bg: 'rgba(245, 226, 154, 0.15)',
-        border: 'rgba(245, 226, 154, 0.3)',
+        bg: 'var(--lifecycle-pending-tint)',
+        border: 'var(--lifecycle-pending-border)',
       };
     }
     if (!asg || !asg.agent_id) {
       return {
         key: 'awaiting_service_team_review',
         label: 'Awaiting Specialist Assignment',
-        color: '#38bdf8',
-        bg: 'rgba(14, 165, 233, 0.15)',
-        border: 'rgba(14, 165, 233, 0.3)',
+        color: 'var(--lifecycle-review-ink)',
+        bg: 'var(--lifecycle-review-tint)',
+        border: 'var(--lifecycle-review-border)',
       };
     }
     return {
       key: 'ready_for_execution',
       label: `Assigned: ${users.find((u) => u.id === asg.agent_id)?.name || 'Specialist'}`,
       color: 'var(--roas-good)',
-      bg: 'rgba(169, 245, 193, 0.15)',
-      border: 'rgba(169, 245, 193, 0.3)',
+      bg: 'var(--lifecycle-ready-tint)',
+      border: 'var(--lifecycle-ready-border)',
     };
   };
 

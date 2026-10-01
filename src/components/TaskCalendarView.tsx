@@ -13,13 +13,13 @@ interface TaskCalendarViewProps {
 const priorityStyle = (priority: TaskPriority) => {
   switch (priority) {
     case 'urgent':
-      return { bg: 'rgba(245, 163, 163, 0.25)', text: 'var(--roas-bad)', border: 'rgba(245, 163, 163, 0.4)' };
+      return { bg: 'var(--priority-urgent-tint)', text: 'var(--roas-bad)', border: 'var(--priority-urgent-border)' };
     case 'high':
-      return { bg: 'rgba(235, 94, 40, 0.2)', text: '#fb923c', border: 'rgba(235, 94, 40, 0.3)' };
+      return { bg: 'var(--priority-high-tint)', text: 'var(--priority-high-ink)', border: 'var(--priority-high-border)' };
     case 'low':
-      return { bg: 'rgba(168, 155, 184, 0.2)', text: 'var(--grey)', border: 'rgba(168, 155, 184, 0.3)' };
+      return { bg: 'var(--priority-low-tint)', text: 'var(--grey)', border: 'var(--priority-low-border)' };
     default:
-      return { bg: 'rgba(245, 226, 154, 0.2)', text: 'var(--roas-mid)', border: 'rgba(245, 226, 154, 0.3)' };
+      return { bg: 'var(--priority-medium-tint)', text: 'var(--roas-mid)', border: 'var(--priority-medium-border)' };
   }
 };
 

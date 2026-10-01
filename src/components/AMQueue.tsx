@@ -292,8 +292,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         key: 'awaiting_am_assignment',
         label: 'Awaiting AM',
         color: 'var(--roas-mid)',
-        bg: 'rgba(245, 226, 154, 0.15)',
-        border: 'rgba(245, 226, 154, 0.3)',
+        bg: 'var(--lifecycle-pending-tint)',
+        border: 'var(--lifecycle-pending-border)',
       };
     }
 
@@ -308,8 +308,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         key: 'brief_submitted',
         label: 'Briefs Completed',
         color: 'var(--roas-good)',
-        bg: 'rgba(169, 245, 193, 0.15)',
-        border: 'rgba(169, 245, 193, 0.3)',
+        bg: 'var(--lifecycle-ready-tint)',
+        border: 'var(--lifecycle-ready-border)',
       };
     }
 
@@ -317,8 +317,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       key: 'brief_in_progress',
       label: 'Onboarding in Progress',
       color: 'var(--purple-light)',
-      bg: 'rgba(123, 47, 247, 0.2)',
-      border: 'rgba(123, 47, 247, 0.35)',
+      bg: 'var(--lifecycle-onboarding-tint)',
+      border: 'var(--lifecycle-onboarding-border)',
     };
   };
 
@@ -336,7 +336,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-lg"
             style={{
-              background: 'rgba(123, 47, 247, 0.25)',
+              background: 'var(--nav-badge-purple-tint)',
               border: '1px solid var(--border-soft)',
               color: 'var(--purple-light)',
             }}

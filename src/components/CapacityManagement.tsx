@@ -470,7 +470,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: 'rgba(123, 47, 247, 0.2)',
+              background: 'var(--capacity-total-tint)',
               color: 'var(--purple-light)',
               border: '1px solid var(--border-soft)',
             }}
@@ -498,9 +498,9 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: 'rgba(169, 245, 193, 0.15)',
+              background: 'var(--capacity-available-tint)',
               color: 'var(--roas-good)',
-              border: '1px solid rgba(169, 245, 193, 0.3)',
+              border: '1px solid var(--border-success)',
             }}
           >
             <UserCheck className="w-5 h-5" />
@@ -526,9 +526,9 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: 'rgba(245, 226, 154, 0.15)',
+              background: 'var(--capacity-near-tint)',
               color: 'var(--roas-mid)',
-              border: '1px solid rgba(245, 226, 154, 0.3)',
+              border: '1px solid var(--border-warning)',
             }}
           >
             <Clock className="w-5 h-5" />
@@ -557,9 +557,9 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: 'rgba(245, 163, 163, 0.15)',
+              background: 'var(--capacity-over-tint)',
               color: 'var(--roas-bad)',
-              border: '1px solid rgba(245, 163, 163, 0.3)',
+              border: '1px solid var(--border-rose)',
             }}
           >
             <AlertTriangle className="w-5 h-5" />
@@ -585,7 +585,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: 'rgba(123, 47, 247, 0.15)',
+              background: 'var(--capacity-buffer-tint)',
               color: 'var(--purple-light)',
               border: '1px solid var(--border-soft)',
             }}

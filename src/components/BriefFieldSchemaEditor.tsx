@@ -19,7 +19,7 @@ const FIELD_TYPES: { value: BriefFieldType; label: string }[] = [
   { value: 'tag-list', label: 'Tag List (comma-separated)' },
 ];
 
-const SERVICE_LABELS: Record<ServiceType, string> = {
+export const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',
   media_buying: 'Media Buying',
@@ -27,6 +27,14 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   creation: 'Creation',
   branding: 'Branding',
 };
+
+// A label with zero [a-z0-9] characters after lowercasing (an Arabic-only question, another
+// non-Latin script, or a pure emoji/symbol label) collapses to the SAME empty string here no
+// matter its actual content — every character in it falls outside [a-z0-9], so the whole label is
+// one contiguous run the regex replaces with a single '_', which the trim then strips to "".
+// handleCreate below must never use this empty result directly as a key: a fixed, content-blind
+// value would let the first such question claim it and make every later one collide forever.
+const slugify = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
 const emptyDraft = (serviceType: ServiceType, sortOrder: number): Omit<BriefFieldSchemaRow, 'id' | 'created_at' | 'updated_at'> => ({
   service_type: serviceType,
@@ -99,7 +107,11 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
 
   const handleCreate = async () => {
     if (!onCreate) return;
-    const key = newDraft.key.trim() || newDraft.label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const slug = slugify(newDraft.label);
+    // slug is only "" when the label had no [a-z0-9] to work with (see slugify's comment) — a
+    // fresh random suffix per call guarantees a distinct key here regardless of how many such
+    // questions already exist, instead of every one of them colliding on the same empty key.
+    const key = newDraft.key.trim() || slug || `field_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const label = newDraft.label.trim();
     if (!label) {
       setErrorMsg('Please enter a question label.');
@@ -127,9 +139,11 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-white">Manage Brief Questions — {SERVICE_LABELS[serviceType]}</h3>
-            <p className="text-[11px] text-stone-400 mt-0.5">
-              Changes here apply to every NEW brief for this service going forward. Existing submitted briefs are
-              unaffected.
+            {/* Brief forms always render from the live schema (no per-brief snapshot), so this is
+                a real, immediate effect, not future-only — corrected from an earlier version of
+                this note that claimed the opposite. */}
+            <p className="text-[11px] text-amber-300 mt-0.5">
+              Changes here affect already-submitted briefs for this service immediately, not just future ones.
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-white/5">
@@ -155,6 +169,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         type="text"
+                        dir="auto"
                         value={editDraft.label || ''}
                         onChange={(e) => setEditDraft((d) => ({ ...d, label: e.target.value }))}
                         placeholder="Question label"
@@ -244,7 +259,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
                     <div className="flex items-center gap-2 min-w-0">
                       <GripVertical className="w-3.5 h-3.5 text-stone-600 shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-white truncate">
+                        <p className="text-xs font-semibold text-white truncate" dir="auto">
                           {row.label}
                           {row.required && <span className="ml-1.5 text-[10px] text-red-400">*</span>}
                         </p>
@@ -277,6 +292,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="text"
+                dir="auto"
                 autoFocus
                 value={newDraft.label}
                 onChange={(e) => setNewDraft((d) => ({ ...d, label: e.target.value }))}
