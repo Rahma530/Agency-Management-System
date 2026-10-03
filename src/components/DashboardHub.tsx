@@ -5,6 +5,7 @@ import {
   CampaignRecord,
   TaskRecord,
   SocialInsightRecord,
+  SeoInsightRecord,
   AssignmentRecord,
   BriefRecord,
 } from '../types/database';
@@ -26,6 +27,7 @@ interface DashboardHubProps {
   campaigns: CampaignRecord[];
   tasks: TaskRecord[];
   socialInsights: SocialInsightRecord[];
+  seoInsights: SeoInsightRecord[];
   assignments: AssignmentRecord[];
   briefs: BriefRecord[];
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
@@ -38,6 +40,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
   campaigns,
   tasks,
   socialInsights,
+  seoInsights,
   assignments,
   briefs,
   onNavigateToModule,
@@ -49,6 +52,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         campaigns={campaigns}
         tasks={tasks}
         socialInsights={socialInsights}
+        seoInsights={seoInsights}
         users={users}
       />
     );
@@ -61,6 +65,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         campaigns={campaigns}
         tasks={tasks}
         socialInsights={socialInsights}
+        seoInsights={seoInsights}
         users={users}
       />
     );

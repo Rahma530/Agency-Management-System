@@ -8,6 +8,7 @@ import {
   ComparisonMediaBuyingMetrics,
   ComparisonSeoMetrics,
   ComparisonSocialMetrics,
+  SeoInsightRecord,
   ServiceType,
   SocialInsightRecord,
   TaskRecord,
@@ -304,11 +305,34 @@ export function aggregateMediaBuyingMetrics(
 }
 
 // ----------------------------------------------------------------------------
-// SEO: no analytics table exists in this schema — this is an operational delivery proxy
-// (completed tasks + on-time rate for the SEO-team tasks of the pooled clients), not a true
-// performance metric. Flagged in the reporting plan as a real data gap.
+// SEO: completed_tasks/on_time_rate remain an operational delivery proxy (completed tasks +
+// on-time rate for the SEO-team tasks of the pooled clients) — they answer "did we deliver the
+// work on time," not "did it produce results." organic_traffic/keywords_top10_count/
+// backlinks_acquired, pooled from seo_insights' weekly manual entries (see
+// 20261028000000_seo_insights.sql), are a real performance signal this schema never had before.
+// The two sets are deliberately ADDITIVE, not a prefer-one-or-the-other choice the way
+// aggregateMediaBuyingMetrics prefers periodic rows over the campaigns-cumulative fallback — they
+// answer different questions, so both populate this same object side by side whenever data exists
+// for each. organic_traffic/keywords_top10_count are averaged across the period's pooled weeks
+// (snapshot-like readings, same treatment as social's reach/engagement_rate); backlinks_acquired
+// is summed (an incremental "gained this week" figure, same treatment as social's follower_growth).
 // ----------------------------------------------------------------------------
-export function aggregateSeoMetrics(tasks: TaskRecord[], clientIds: string[], range: DateRange): ComparisonSeoMetrics {
+function avgSeoField(rows: SeoInsightRecord[], key: 'organic_traffic' | 'keywords_top10_count'): number | null {
+  const values = rows.map((r) => r[key]).filter((v): v is number => typeof v === 'number');
+  return values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null;
+}
+
+function sumSeoField(rows: SeoInsightRecord[], key: 'backlinks_acquired'): number | null {
+  const values = rows.map((r) => r[key]).filter((v): v is number => typeof v === 'number');
+  return values.length ? values.reduce((a, b) => a + b, 0) : null;
+}
+
+export function aggregateSeoMetrics(
+  tasks: TaskRecord[],
+  seoInsights: SeoInsightRecord[],
+  clientIds: string[],
+  range: DateRange
+): ComparisonSeoMetrics {
   const completed = tasks.filter(
     (t) =>
       clientIds.includes(t.client_id) &&
@@ -318,12 +342,21 @@ export function aggregateSeoMetrics(tasks: TaskRecord[], clientIds: string[], ra
       inRange(t.completed_at.split('T')[0], range)
   );
   const completed_tasks = completed.length;
-  if (completed_tasks === 0) return { completed_tasks, on_time_rate: null };
 
   // Ratio recomputed from the pooled completed-task set, not averaged per client — same
   // weighting principle as CPA above.
   const onTime = completed.filter((t) => t.completed_at!.split('T')[0] <= t.due_date).length;
-  return { completed_tasks, on_time_rate: Math.round((onTime / completed_tasks) * 100) };
+  const on_time_rate = completed_tasks > 0 ? Math.round((onTime / completed_tasks) * 100) : null;
+
+  const periodicRows = seoInsights.filter((i) => clientIds.includes(i.client_id) && inRange(i.week_start_date, range));
+
+  return {
+    completed_tasks,
+    on_time_rate,
+    organic_traffic: avgSeoField(periodicRows, 'organic_traffic'),
+    keywords_top10_count: avgSeoField(periodicRows, 'keywords_top10_count'),
+    backlinks_acquired: sumSeoField(periodicRows, 'backlinks_acquired'),
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -375,6 +408,7 @@ export function generateClientComparisonMetrics(
   campaigns: CampaignRecord[],
   tasks: TaskRecord[],
   socialInsights: SocialInsightRecord[],
+  seoInsights: SeoInsightRecord[],
   serviceFilter?: ServiceType[]
 ): ClientComparisonMetrics {
   const wantsService = (service: ServiceType) => !serviceFilter || serviceFilter.includes(service);
@@ -388,7 +422,7 @@ export function generateClientComparisonMetrics(
   }
   if (wantsService('seo')) {
     const ids = clientIdsWith('seo');
-    if (ids.length) metrics.seo = aggregateSeoMetrics(tasks, ids, range);
+    if (ids.length) metrics.seo = aggregateSeoMetrics(tasks, seoInsights, ids, range);
   }
   if (wantsService('social_media')) {
     const ids = clientIdsWith('social_media');
@@ -431,6 +465,9 @@ export function computeComparisonDelta(
     delta.seo = {
       completed_tasks: pctDelta(c?.completed_tasks, p?.completed_tasks),
       on_time_rate: pctDelta(c?.on_time_rate, p?.on_time_rate),
+      organic_traffic: pctDelta(c?.organic_traffic, p?.organic_traffic),
+      keywords_top10_count: pctDelta(c?.keywords_top10_count, p?.keywords_top10_count),
+      backlinks_acquired: pctDelta(c?.backlinks_acquired, p?.backlinks_acquired),
     };
   }
 
@@ -546,6 +583,7 @@ export function generateClientComparison(
   campaigns: CampaignRecord[],
   tasks: TaskRecord[],
   socialInsights: SocialInsightRecord[],
+  seoInsights: SeoInsightRecord[],
   serviceFilter?: ServiceType[]
 ): {
   row_kind: 'comparison';
@@ -563,6 +601,7 @@ export function generateClientComparison(
     campaigns,
     tasks,
     socialInsights,
+    seoInsights,
     serviceFilter
   );
   const metrics_previous = generateClientComparisonMetrics(
@@ -571,6 +610,7 @@ export function generateClientComparison(
     campaigns,
     tasks,
     socialInsights,
+    seoInsights,
     serviceFilter
   );
   const delta = computeComparisonDelta(metrics_current, metrics_previous);
@@ -600,6 +640,7 @@ export function generatePeriodSummary(
   campaigns: CampaignRecord[],
   tasks: TaskRecord[],
   socialInsights: SocialInsightRecord[],
+  seoInsights: SeoInsightRecord[],
   serviceFilter?: ServiceType[]
 ): {
   row_kind: 'period_summary';
@@ -617,6 +658,7 @@ export function generatePeriodSummary(
     campaigns,
     tasks,
     socialInsights,
+    seoInsights,
     serviceFilter
   );
 

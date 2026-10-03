@@ -86,6 +86,7 @@ import {
   ChatDirectoryEntry,
   BriefFieldSchemaRow,
   SocialInsightRecord,
+  SeoInsightRecord,
   ReportRecord,
   ClientComparisonRecord,
   ClientPortalUserRecord,
@@ -232,6 +233,7 @@ export default function App() {
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>(INITIAL_CAMPAIGNS);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>(INITIAL_ASSIGNMENTS);
   const [socialInsights, setSocialInsights] = useState<SocialInsightRecord[]>([]);
+  const [seoInsights, setSeoInsights] = useState<SeoInsightRecord[]>([]);
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [clientComparisons, setClientComparisons] = useState<ClientComparisonRecord[]>([]);
   const [clientPortalUsers, setClientPortalUsers] = useState<ClientPortalUserRecord[]>([]);
@@ -1324,6 +1326,14 @@ export default function App() {
           .select('*');
         if (!socialInsightErr && socialInsightData) {
           setSocialInsights(socialInsightData as SocialInsightRecord[]);
+        }
+
+        // Fetch seo_insights (Reporting Engine: weekly SEO comparison indicators)
+        const { data: seoInsightData, error: seoInsightErr } = await supabase
+          .from('seo_insights')
+          .select('*');
+        if (!seoInsightErr && seoInsightData) {
+          setSeoInsights(seoInsightData as SeoInsightRecord[]);
         }
 
         // Fetch reports (Reporting Engine)
@@ -3014,6 +3024,43 @@ export default function App() {
     showNotification("This week's social metrics were saved successfully.");
   };
 
+  // Weekly manual-entry write path for seo_insights (see 20261028000000_seo_insights.sql) — same
+  // upsert shape as handleLogSocialMetrics/handleLogMediaBuyingMetrics above, keyed on (client_id,
+  // week_start_date) only: SEO has no platform dimension. `id` is deterministic from that same key
+  // so upserting the same week twice always targets the exact same row.
+  const handleLogSeoMetrics = async (
+    clientId: string,
+    weekStartDate: string,
+    metrics: { organic_traffic: number | null; keywords_top10_count: number | null; backlinks_acquired: number | null }
+  ) => {
+    const row: SeoInsightRecord = {
+      id: `sei-${clientId}-${weekStartDate}`,
+      client_id: clientId,
+      week_start_date: weekStartDate,
+      organic_traffic: metrics.organic_traffic,
+      keywords_top10_count: metrics.keywords_top10_count,
+      backlinks_acquired: metrics.backlinks_acquired,
+      source: 'manual',
+      created_by: currentUser.id,
+    };
+
+    if (supabaseActive) {
+      const { error } = await supabase
+        .from('seo_insights')
+        .upsert([row], { onConflict: 'client_id,week_start_date' });
+      if (error) throw error;
+    }
+
+    setSeoInsights((prev) => {
+      const idx = prev.findIndex((i) => i.client_id === clientId && i.week_start_date === weekStartDate);
+      if (idx === -1) return [row, ...prev];
+      const next = prev.slice();
+      next[idx] = row;
+      return next;
+    });
+    showNotification("This week's SEO metrics were saved successfully.");
+  };
+
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
     const existingTask = tasks.find((t) => t.id === taskId);
@@ -3496,8 +3543,8 @@ export default function App() {
 
     const result =
       mode === 'comparison'
-        ? generateClientComparison(scopedClients, current, previous!, campaigns, tasks, socialInsights, serviceFilter)
-        : generatePeriodSummary(scopedClients, current, campaigns, tasks, socialInsights, serviceFilter);
+        ? generateClientComparison(scopedClients, current, previous!, campaigns, tasks, socialInsights, seoInsights, serviceFilter)
+        : generatePeriodSummary(scopedClients, current, campaigns, tasks, socialInsights, seoInsights, serviceFilter);
 
     // created_at is preserved from whatever's already in local state (cheap, synchronous) for
     // both write paths below; the network round trip only decides insert-vs-update targeting.
@@ -3671,7 +3718,7 @@ export default function App() {
     if (!client) return;
 
     const period = resolveComparisonPeriods('monthly').current;
-    const result = generatePeriodSummary([client], period, campaigns, tasks, socialInsights);
+    const result = generatePeriodSummary([client], period, campaigns, tasks, socialInsights, seoInsights);
 
     const localExistingComparison = clientComparisons.find(
       (c) => c.client_id === clientId && c.row_kind === 'period_summary' && c.period_current === result.period_current
@@ -4859,6 +4906,7 @@ export default function App() {
                   campaigns={campaigns}
                   tasks={tasks}
                   socialInsights={socialInsights}
+                  seoInsights={seoInsights}
                   assignments={assignments}
                   briefs={briefs}
                   onNavigateToModule={handleNavigateToModule}
@@ -4914,6 +4962,7 @@ export default function App() {
                     reports={reports}
                     clientComparisons={clientComparisons}
                     socialInsights={socialInsights}
+                    seoInsights={seoInsights}
                     clientPortalUsers={clientPortalUsers}
                     currentUser={currentUser}
                     currentUserId={currentUser.id}
@@ -4971,6 +5020,7 @@ export default function App() {
                   reports={reports}
                   clientComparisons={clientComparisons}
                   socialInsights={socialInsights}
+                  seoInsights={seoInsights}
                   clientPortalUsers={clientPortalUsers}
                   onAssignServiceAgent={handleAssignServiceAgent}
                   onSaveBrief={handleSaveBrief}
@@ -4989,6 +5039,7 @@ export default function App() {
                   onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGenerateUnifiedReport={handleGenerateUnifiedReport}
                   onLogSocialMetrics={handleLogSocialMetrics}
+                  onLogSeoMetrics={handleLogSeoMetrics}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}
@@ -5077,6 +5128,7 @@ export default function App() {
                   reports={reports}
                   clientComparisons={clientComparisons}
                   socialInsights={socialInsights}
+                  seoInsights={seoInsights}
                   clientPortalUsers={clientPortalUsers}
                   onCreateCampaign={handleCreateCampaign}
                   onUpdateCampaign={handleUpdateCampaign}
@@ -5085,6 +5137,7 @@ export default function App() {
                   onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGenerateUnifiedReport={handleGenerateUnifiedReport}
                   onLogSocialMetrics={handleLogSocialMetrics}
+                  onLogSeoMetrics={handleLogSeoMetrics}
                   onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
                   onApproveReport={handleApproveReport}
                   onCreatePortalLogin={handleCreatePortalLogin}

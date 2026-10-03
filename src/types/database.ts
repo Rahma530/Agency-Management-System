@@ -397,6 +397,26 @@ export interface SocialInsightRecord {
   week_start_date?: string | null;
 }
 
+// 8a. seo_insights — weekly manual-entry periodic metrics for SEO, additive alongside the
+// existing task-derived proxy (aggregateSeoMetrics' completed_tasks/on_time_rate): that answers
+// "did we deliver the work on time," this answers "did it produce results" — a real performance
+// signal this schema has never had. See supabase/migrations/20261028000000_seo_insights.sql.
+export interface SeoInsightRecord {
+  id: string;
+  client_id: string;
+  week_start_date: string;
+  organic_traffic?: number | null;
+  keywords_top10_count?: number | null;
+  backlinks_acquired?: number | null;
+  // 'manual' for every row entered through LogSeoMetricsModal.tsx today; 'platform_api' is
+  // reserved for a real SEO analytics/rank-tracking integration landing later — a synced row joins
+  // this same table additively, distinguished only by this column, with no schema change.
+  source?: 'manual' | 'platform_api';
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 // Module 6 (External Integrations Hub) scaffolding — see
 // supabase/migrations/20260915100000_platform_connections.sql. No
 // credential/token field exists here on purpose; see that migration's
@@ -630,11 +650,18 @@ export interface ComparisonMediaBuyingMetrics {
   cpa: number | null; // null when conversions is 0 (undefined cost per acquisition)
 }
 
-// SEO has no analytics table in this schema (no keyword rankings, no organic traffic) — this is
-// an operational delivery proxy from `tasks` where team === 'SEO', not a true performance metric.
+// completed_tasks/on_time_rate are an operational delivery proxy from `tasks` where
+// team === 'SEO' — not a true performance metric (no analytics/keyword-ranking table existed when
+// this was written). organic_traffic/keywords_top10_count/backlinks_acquired are additive, from
+// seo_insights' weekly manual entry (see 20261028000000_seo_insights.sql) — a real performance
+// signal alongside the delivery one, not a replacement for it: one answers "did we do the work on
+// time," the other "did it produce results."
 export interface ComparisonSeoMetrics {
   completed_tasks: number;
   on_time_rate: number | null; // null when completed_tasks is 0
+  organic_traffic?: number | null;
+  keywords_top10_count?: number | null;
+  backlinks_acquired?: number | null;
 }
 
 // social_insights.metrics is an untyped JSON blob per platform row with no guaranteed keys —
@@ -706,6 +733,7 @@ export interface Database {
       task_attachments: { Row: TaskAttachmentRecord; Insert: Partial<TaskAttachmentRecord>; Update: Partial<TaskAttachmentRecord>; Relationships: any[] };
       campaigns: { Row: CampaignRecord; Insert: Partial<CampaignRecord>; Update: Partial<CampaignRecord>; Relationships: any[] };
       social_insights: { Row: SocialInsightRecord; Insert: Partial<SocialInsightRecord>; Update: Partial<SocialInsightRecord>; Relationships: any[] };
+      seo_insights: { Row: SeoInsightRecord; Insert: Partial<SeoInsightRecord>; Update: Partial<SeoInsightRecord>; Relationships: any[] };
       reports: { Row: ReportRecord; Insert: Partial<ReportRecord>; Update: Partial<ReportRecord>; Relationships: any[] };
       capacity_logs: { Row: CapacityLogRecord; Insert: Partial<CapacityLogRecord>; Update: Partial<CapacityLogRecord>; Relationships: any[] };
       daily_logs: { Row: DailyLogRecord; Insert: Partial<DailyLogRecord>; Update: Partial<DailyLogRecord>; Relationships: any[] };

@@ -40,6 +40,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   SocialInsightRecord,
+  SeoInsightRecord,
   ClientPortalUserRecord,
   MeetingRecord,
   PlatformConnectionRecord,
@@ -71,6 +72,7 @@ interface AMQueueProps {
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
+  seoInsights?: SeoInsightRecord[];
   clientPortalUsers?: ClientPortalUserRecord[];
   currentUser?: UserRecord;
   currentUserId?: string;
@@ -164,6 +166,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   reports = [],
   clientComparisons = [],
   socialInsights = [],
+  seoInsights = [],
   clientPortalUsers = [],
   currentUser,
   currentUserId,
@@ -721,6 +724,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}
+          seoInsights={seoInsights}
           clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           onClose={() => setDashboardClientId(null)}
           onSaveBrief={onSaveBrief}

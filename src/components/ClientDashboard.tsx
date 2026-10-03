@@ -29,6 +29,7 @@ import {
   Trash2,
   StickyNote,
   Share2,
+  Search,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -46,6 +47,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   SocialInsightRecord,
+  SeoInsightRecord,
   ClientPortalUserRecord,
   MeetingRecord,
   PlatformConnectionRecord,
@@ -86,6 +88,7 @@ import {
 } from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
 import { LogSocialMetricsModal } from './LogSocialMetricsModal';
+import { LogSeoMetricsModal } from './LogSeoMetricsModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
@@ -112,6 +115,7 @@ interface ClientDashboardProps {
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
+  seoInsights?: SeoInsightRecord[];
   initialTab?: DashboardTab;
   onClose: () => void;
   onSaveBrief?: (briefData: {
@@ -207,6 +211,14 @@ interface ClientDashboardProps {
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
   ) => Promise<void>;
+  // Weekly manual-entry write path for seo_insights (see 20261028000000_seo_insights.sql) — same
+  // optional-prop convention as onLogSocialMetrics above: omitted entirely means "this viewer can't
+  // log SEO metrics for this client".
+  onLogSeoMetrics?: (
+    clientId: string,
+    weekStartDate: string,
+    metrics: { organic_traffic: number | null; keywords_top10_count: number | null; backlinks_acquired: number | null }
+  ) => Promise<void>;
 }
 
 type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
@@ -225,6 +237,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   reports = [],
   clientComparisons = [],
   socialInsights = [],
+  seoInsights = [],
   initialTab,
   onClose,
   onSaveBrief,
@@ -261,6 +274,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUpdatePaymentTracking,
   onUpdateClientAccess,
   onLogSocialMetrics,
+  onLogSeoMetrics,
 }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab || 'overview');
   const [isDeletingClient, setIsDeletingClient] = useState(false);
@@ -370,15 +384,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     [campaigns, client.id]
   );
 
-  // Client Logs & Notes
+  // Client Logs & Notes — filtered directly by daily_logs.client_id (see
+  // 20261028100000_daily_logs_report_scope_visibility.sql's RLS widening, which makes this tab's
+  // underlying data visible in the first place). Previously a fragile heuristic
+  // (summary_text.includes(client.name), with a linked-task-id fallback) that both missed logs
+  // whose text didn't happen to mention the client by name and could false-positive on a log for a
+  // differently-named client whose summary happened to contain this one's name as a substring.
   const clientLogs = useMemo(() => {
-    const taskIds = new Set(clientTasks.map((t) => t.id));
-    return dailyLogs.filter(
-      (log) =>
-        (log.summary_text && log.summary_text.includes(client.name)) ||
-        (log.linked_task_ids && log.linked_task_ids.some((id) => taskIds.has(id)))
-    );
-  }, [dailyLogs, clientTasks, client.name]);
+    return dailyLogs.filter((log) => log.client_id === client.id);
+  }, [dailyLogs, client.id]);
 
   // Assigned Specialists
   const assignedAM = users.find((u) => u.id === client.am_agent_id);
@@ -539,6 +553,19 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
       currentUser.role === 'head_of_technical' ||
       currentUser.role === 'ai_engineer');
+
+  // Weekly manual-entry write gate for seo_insights — mirrors seo_insights_write_rls/
+  // seo_insights_update_rls in 20261028000000_seo_insights.sql exactly (same roles, same
+  // client_has_service/agent_assigned/client_am_agent_is_caller checks), so the UI never offers an
+  // action the database would reject. No head_of_technical/ai_engineer bridge here, unlike
+  // canLogSocialMetrics: seo_team_lead/seo_agent are already real, actively-used roles, so there's
+  // no "role doesn't exist yet" gap to bridge. am_agent is included (own client only), same
+  // capability tier as canLogMediaBuyingMetrics.
+  const canLogSeoMetrics =
+    clientHasService(client, 'seo') &&
+    ((currentUser.role === 'seo_agent' && isAssignedToService('seo')) ||
+      (currentUser.role === 'seo_team_lead' && clientHasService(client, 'seo')) ||
+      (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id));
 
   // Which service(s) this viewer may see on this client's comparison rows. undefined means "show
   // everything" (every hasReportsAccess role) — a department agent/team lead only ever sees their
@@ -2357,6 +2384,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   ? (platform, weekStartDate, metrics) => onLogSocialMetrics(client.id, platform, weekStartDate, metrics)
                   : undefined
               }
+              canLogSeoMetrics={canLogSeoMetrics && !!onLogSeoMetrics}
+              onLogSeoMetrics={
+                onLogSeoMetrics
+                  ? (weekStartDate, metrics) => onLogSeoMetrics(client.id, weekStartDate, metrics)
+                  : undefined
+              }
               onEnsureComparisonForSummary={ensureComparisonForSummary}
             />
           )}
@@ -2517,6 +2550,11 @@ interface ReportsAndComparisonsTabProps {
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
   ) => Promise<void>;
+  canLogSeoMetrics: boolean;
+  onLogSeoMetrics?: (
+    weekStartDate: string,
+    metrics: { organic_traffic: number | null; keywords_top10_count: number | null; backlinks_acquired: number | null }
+  ) => Promise<void>;
   // UX-flow change: backs both the per-service DirectAiSummaryPanel below and UnifiedReportPanel's
   // own on-demand generation — looks up an existing row for the current period/mode first, computes
   // and saves one via the same onGenerateComparison path otherwise. See ClientDashboard's own
@@ -2557,10 +2595,13 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   briefFieldSchemas,
   canLogSocialMetrics,
   onLogSocialMetrics,
+  canLogSeoMetrics,
+  onLogSeoMetrics,
   onEnsureComparisonForSummary,
 }) => {
   const [selectedDraftReport, setSelectedDraftReport] = useState<ReportRecord | null>(null);
   const [isLogSocialMetricsOpen, setIsLogSocialMetricsOpen] = useState(false);
+  const [isLogSeoMetricsOpen, setIsLogSeoMetricsOpen] = useState(false);
 
   // Same rolling-baseline check ReportsHub.tsx runs — this tab is single-client, so there's only
   // ever one result to compute, applied only to that client's latest comparison row.
@@ -2605,6 +2646,29 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
           clientName={client.name}
           onClose={() => setIsLogSocialMetricsOpen(false)}
           onSubmit={onLogSocialMetrics}
+        />
+      )}
+
+      {canLogSeoMetrics && onLogSeoMetrics && (
+        <div className="p-4 rounded-xl border border-emerald-900/30 bg-[#161224]/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Search className="w-4 h-4 text-emerald-400" />
+            <span className="text-sm font-bold text-white">Weekly SEO Metrics</span>
+          </div>
+          <button
+            onClick={() => setIsLogSeoMetricsOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all"
+          >
+            Log This Week's SEO Metrics
+          </button>
+        </div>
+      )}
+
+      {isLogSeoMetricsOpen && onLogSeoMetrics && (
+        <LogSeoMetricsModal
+          clientName={client.name}
+          onClose={() => setIsLogSeoMetricsOpen(false)}
+          onSubmit={onLogSeoMetrics}
         />
       )}
 
