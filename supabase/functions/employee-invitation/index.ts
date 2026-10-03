@@ -22,6 +22,21 @@ const supportedOrigins = new Set([
   'https://agency-management-system-alpha.vercel.app',
   'https://kms.kesraa.com',
 ]);
+const getInvitationRedirectUrl = (): string => {
+  const value = (Deno.env.get('EMPLOYEE_INVITATION_REDIRECT_URL') || '').trim();
+  try {
+    const url = new URL(value);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:')
+      || url.username || url.password || url.pathname !== '/' || url.search || url.hash
+      || !supportedOrigins.has(url.origin)) {
+      return '';
+    }
+    return url.origin;
+  } catch {
+    return '';
+  }
+};
+const invitationRedirectUrl = getInvitationRedirectUrl();
 const allowedOrigins = new Set((Deno.env.get('EMPLOYEE_INVITATION_ALLOWED_ORIGIN') || 'http://localhost:3000')
   .split(',').map((origin) => origin.trim()).filter((origin) => supportedOrigins.has(origin)));
 
@@ -62,6 +77,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return response({ ok: true });
   if (req.method !== 'POST') return response({ error: 'Method not allowed.' }, 405);
   if (!enabled || !supabaseUrl || !anonKey || !serviceKey) return response({ error: 'Employee invitation is disabled.' }, 503);
+  if (!invitationRedirectUrl) {
+    return response({ error: 'EMPLOYEE_INVITATION_REDIRECT_URL is missing or invalid.' }, 503);
+  }
 
   const bearer = req.headers.get('Authorization') || '';
   if (!bearer.startsWith('Bearer ')) return response({ error: 'Authentication required.' }, 401);
@@ -130,6 +148,7 @@ Deno.serve(async (req) => {
     const { data: link, error: linkError } = await admin.auth.admin.generateLink({
       type: 'recovery',
       email: authUser.email || employee.email,
+      options: { redirectTo: invitationRedirectUrl },
     });
     // generateLink({type: 'recovery'}) only ever issues a one-time password-setup token; it never
     // sets or exposes a real password.
