@@ -2150,6 +2150,7 @@ export default function App() {
     renewal_date: string;
     am_team_lead_id?: string;
     am_agent_id?: string;
+    notes?: string;
   }) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmUpload = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
@@ -2180,6 +2181,7 @@ export default function App() {
       remaining_value: clientData.remaining_value ?? null,
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
+      notes: clientData.notes || null,
       created_at: new Date().toISOString(),
     };
 

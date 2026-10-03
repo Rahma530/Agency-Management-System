@@ -20,6 +20,7 @@ interface BulkClientUploadModalProps {
     services: ServiceType[];
     phone_number?: string;
     website_or_social_link?: string;
+    notes?: string;
     contract_value: number;
     due_value?: number;
     remaining_value?: number;
@@ -64,6 +65,7 @@ const CSV_TEMPLATE_HEADERS = [
   'renewal_date',
   'phone_number',
   'website_or_social_link',
+  'notes',
   'am_team_lead_name',
 ];
 const MANAGEMENT_TEMPLATE_HEADERS = [...CSV_TEMPLATE_HEADERS, 'am_agent_name'];
@@ -80,6 +82,7 @@ const CSV_TEMPLATE_EXAMPLE = [
   '',
   '+966 50 123 4567',
   'https://apexglobal.example.com',
+  'Referred by an existing client; interested in a long-term contract.',
   'مها الشامي',
 ];
 
@@ -135,7 +138,8 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   const [results, setResults] = useState<RowResult[] | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 
-  // Sales and AM Agent retain a required AM lead; management may leave both AM assignments empty.
+  // am_team_lead_name is optional for every role now (see the auto-assign-or-reject logic below);
+  // am_agent_name stays management-only — Sales/AM Agent uploads never pick an Account Manager.
   const isSalesUpload = currentUser.role === 'sales';
   const isLeadershipUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const isManagementUpload = isLeadershipUpload || currentUser.role === 'am_team_lead';
@@ -211,6 +215,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const rowRenewalDate = (raw.renewal_date || '').trim();
         const rowPhone = (raw.phone_number || '').trim();
         const rowWebsiteOrSocial = (raw.website_or_social_link || '').trim();
+        const rowNotes = (raw.notes || '').trim();
         const rowAmLeadName = (raw.am_team_lead_name || '').trim();
         const rowAmAgentName = (raw.am_agent_name || '').trim();
 
@@ -278,21 +283,38 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         }
         const renewalDate = rowRenewalDate || addOneYear(startDate);
 
-        if (!rowAmLeadName && !isManagementUpload) {
-          rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'Missing am_team_lead_name' });
-          continue;
-        }
-        // First case-insensitive name match wins; two active AM Team Leads sharing a name would
-        // silently resolve to whichever comes first in `users`. Not handled specially since role
-        // names are set by leadership at hire time and collisions are expected to be rare/caught
-        // elsewhere, same trust level manager_id gets in the employee bulk uploader.
-        const matchedLead = rowAmLeadName ? amTeamLeads.find((u) => u.name.trim().toLowerCase() === rowAmLeadName.toLowerCase()) : null;
-        if (rowAmLeadName && !matchedLead) {
+        // am_team_lead_name is optional for every uploader role (not just management): a blank
+        // value auto-assigns the sole active AM Team Lead if exactly one exists, and rejects the
+        // row otherwise — deliberately louder than ClientRegistrationModal's single-client
+        // soleActiveAmTeamLeadId, which silently leaves the client unassigned in that same
+        // ambiguous case. A bad CSV row is easy to fix before commit; a silently-unassigned client
+        // discovered later is not — the two entry points are intentionally inconsistent here.
+        let matchedLead: UserRecord | undefined;
+        if (rowAmLeadName) {
+          // First case-insensitive name match wins; two active AM Team Leads sharing a name would
+          // silently resolve to whichever comes first in `users`. Not handled specially since role
+          // names are set by leadership at hire time and collisions are expected to be rare/caught
+          // elsewhere, same trust level manager_id gets in the employee bulk uploader.
+          matchedLead = amTeamLeads.find((u) => u.name.trim().toLowerCase() === rowAmLeadName.toLowerCase());
+          if (!matchedLead) {
+            rowResults.push({
+              row: rowNum,
+              name: rowName,
+              status: 'skipped',
+              reason: `No active AM Team Lead named "${rowAmLeadName}"`,
+            });
+            continue;
+          }
+        } else if (amTeamLeads.length === 1) {
+          matchedLead = amTeamLeads[0];
+        } else {
           rowResults.push({
             row: rowNum,
             name: rowName,
             status: 'skipped',
-            reason: `No active AM Team Lead named "${rowAmLeadName}"`,
+            reason: amTeamLeads.length === 0
+              ? 'am_team_lead_name is required: no active AM Team Lead exists'
+              : 'am_team_lead_name is required: multiple active AM Team Leads exist, specify one',
           });
           continue;
         }
@@ -319,6 +341,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             services,
             phone_number: rowPhone || undefined,
             website_or_social_link: rowWebsiteOrSocial || undefined,
+            notes: rowNotes || undefined,
             contract_value: contractValue,
             due_value: dueValue,
             remaining_value: remainingValue,
@@ -382,7 +405,9 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             <p className="text-xs text-stone-400">
               Columns: <code className="font-mono">{(isManagementUpload ? MANAGEMENT_TEMPLATE_HEADERS : CSV_TEMPLATE_HEADERS).join(', ')}</code>
               <br />
-              Required: name, services{isManagementUpload ? '.' : ', am_team_lead_name.'} Everything else is optional.
+              Required: name, services. Everything else is optional.
+              <br />
+              Leave am_team_lead_name blank to auto-assign the sole active AM Team Lead — the row is rejected if none or more than one exist.
             </p>
             <button
               onClick={downloadTemplate}
