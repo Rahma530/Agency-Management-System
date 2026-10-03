@@ -12,9 +12,23 @@ import { ArrowRight, ShieldAlert, ShieldCheck } from 'lucide-react';
 //
 // This page is what gets shared instead — it renders nothing but a static "Continue" button with
 // no redirect or fetch on page load, so a crawler scraping it for a preview card never reaches the
-// real verify URL. The real action_link is embedded in this page's own URL fragment (#/invite?
-// verify=...), which is never sent to any server — including a crawler's, since URL fragments are
-// a browser-only concept — so only an actual click ever reaches Supabase's verify endpoint.
+// real verify URL. The real action_link is embedded in this page's own URL QUERY STRING
+// (?verify=...), deliberately NOT a hash fragment (an earlier version of this fix used
+// #/invite?verify=... and broke in live testing): a fragment is never sent in any HTTP request,
+// including a crawler's — which sounds safer, but backfires once the crawler's resulting preview
+// CARD gets tapped. index.html declares no <meta property="og:url">, so per the Open Graph default
+// ("if og:url isn't specified, the URL of the page is assumed to be the canonical URL"), the
+// crawler infers the tap target as literally the URL it fetched — and since the fragment was never
+// part of that fetch, it silently vanishes, landing the real recipient on the bare app root with no
+// signal this was ever an invite link at all (confirmed: Telegram's crawler is a plain, JS-free
+// meta-tag scraper — "no browser, no JavaScript execution" — so it never even reaches this
+// component to begin with; the failure was purely the fragment never surviving the round trip). A
+// query string IS part of the actual HTTP request the crawler makes, so it survives being echoed
+// back as the inferred canonical/tap-target URL — while remaining just as inert to the crawl itself,
+// since this is static hosting with zero server-side logic: the crawler's GET returns the exact same
+// index.html every time regardless of query string, and the real verify URL is never serialized into
+// any `<a href>`/static markup a non-JS-executing scraper could read — it only ever exists in React
+// state, reached solely via this button's onClick.
 //
 // This page does NOT handle what happens after that click: generateLink()'s redirectTo (see
 // employee-invitation/index.ts's validated invitationRedirectUrl) still points at the plain app
@@ -24,16 +38,13 @@ import { ArrowRight, ShieldAlert, ShieldCheck } from 'lucide-react';
 // also lands at the app root, where App.tsx now surfaces Supabase's error/error_description params
 // directly instead of silently falling through to the Sign In screen.
 function getVerifyUrl(): string | null {
-  const hash = window.location.hash; // "#/invite?verify=<encoded action_link>"
-  const queryIndex = hash.indexOf('?');
-  if (queryIndex === -1) return null;
-  const params = new URLSearchParams(hash.slice(queryIndex + 1));
+  const params = new URLSearchParams(window.location.search); // "?verify=<encoded action_link>"
   const value = params.get('verify');
   if (!value) return null;
   // Validated before ever being handed to window.location.href below — this value only ever comes
   // from this app's own trusted employee-invitation Edge Function in practice, but the "Continue"
-  // click is a genuine navigation, so a maliciously crafted #/invite?verify=javascript:... link
-  // must not be able to use it as an XSS vector against whoever clicks the button.
+  // click is a genuine navigation, so a maliciously crafted ?verify=javascript:... link must not
+  // be able to use it as an XSS vector against whoever clicks the button.
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;

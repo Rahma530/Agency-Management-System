@@ -165,10 +165,22 @@ Deno.serve(async (req) => {
     // unchanged — it's still where Supabase itself redirects after a real verify attempt, success
     // or failure. This wrapped link is the one actually handed to the admin to share: it points at
     // this app's own /invite route (src/components/InvitePage.tsx), which renders nothing but a
-    // static "Continue" button with no redirect/fetch on load. The real action_link is embedded in
-    // the hash fragment, which a server-side crawler never receives (fragments are never sent over
-    // HTTP) — only a genuine click ever reaches /auth/v1/verify.
-    const shareableLink = `${invitationRedirectUrl}/#/invite?verify=${encodeURIComponent(link.properties.action_link)}`;
+    // static "Continue" button with no redirect/fetch on load.
+    //
+    // The real action_link is embedded as a QUERY STRING param (?verify=...), NOT a hash fragment
+    // (an earlier version used a #/invite?verify=... fragment and broke in live testing): a crawler
+    // confirmed to be a plain, JS-free meta-tag scraper (Telegram's) still fetches this URL to build
+    // its preview card, and when that preview CARD is later tapped, the chat app sends the recipient
+    // to whatever it inferred as this page's canonical URL — which, since index.html declares no
+    // og:url, defaults to the exact URL it fetched. A fragment is never part of that fetch (fragments
+    // are a browser-only concept, never sent over HTTP), so it silently vanished on tap, landing the
+    // recipient on the bare app root with no signal this was ever an invite link. A query string IS
+    // part of the actual request the crawler makes, so it survives being echoed back — while
+    // remaining just as inert to the crawl itself: this is static hosting with zero server-side
+    // logic, so the crawler's GET returns the exact same index.html regardless of query string, and
+    // the real action_link is never serialized into any crawl-visible markup — only a genuine click
+    // on InvitePage.tsx's button ever reaches /auth/v1/verify.
+    const shareableLink = `${invitationRedirectUrl}/?verify=${encodeURIComponent(link.properties.action_link)}`;
 
     return response({
       actionLink: shareableLink,
