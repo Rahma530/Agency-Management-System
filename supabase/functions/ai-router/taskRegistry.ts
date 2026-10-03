@@ -89,7 +89,10 @@ export type CampaignSummaryService = (typeof CAMPAIGN_SUMMARY_SERVICES)[number];
 export const CAMPAIGN_SUMMARY_METRICS_BY_SERVICE: Record<CampaignSummaryService, readonly string[]> = {
   media_buying: ['spend', 'roas', 'conversions', 'cpa'],
   social_media: ['reach', 'engagement_rate', 'follower_growth'],
-  seo: ['completed_tasks', 'on_time_rate'],
+  // organic_traffic/keywords_top10_count/backlinks_acquired are additive, from seo_insights'
+  // weekly manual entry (see 20261028000000_seo_insights.sql and reportingEngine.ts's
+  // aggregateSeoMetrics) — alongside completed_tasks/on_time_rate, not a replacement for them.
+  seo: ['completed_tasks', 'on_time_rate', 'organic_traffic', 'keywords_top10_count', 'backlinks_acquired'],
 };
 
 export const CAMPAIGN_SUMMARY_UNITS = ['', 'SAR', '%', 'x'] as const;

@@ -13,13 +13,29 @@ import { downloadReportPdf, buildUnifiedReportMetricsTable, PdfParagraph, PdfBul
 const SERVICE_METRIC_LABELS: Record<string, Record<string, string>> = {
   media_buying: { spend: 'Spend', roas: 'ROAS', conversions: 'Conversions', cpa: 'CPA' },
   social_media: { reach: 'Reach', engagement_rate: 'Engagement Rate', follower_growth: 'Follower Growth' },
-  seo: { completed_tasks: 'Completed Tasks', on_time_rate: 'On-Time Rate' },
+  // completed_tasks/on_time_rate are the pre-existing delivery proxy; organic_traffic/
+  // keywords_top10_count/backlinks_acquired are additive, from seo_insights' weekly manual entry
+  // (see 20261028000000_seo_insights.sql and reportingEngine.ts's aggregateSeoMetrics) — a real
+  // performance signal alongside the delivery one, not a replacement for it.
+  seo: {
+    completed_tasks: 'Completed Tasks',
+    on_time_rate: 'On-Time Rate',
+    organic_traffic: 'Organic Traffic',
+    keywords_top10_count: 'Keywords in Top 10',
+    backlinks_acquired: 'Backlinks Acquired',
+  },
 };
 
 const SERVICE_METRIC_UNITS: Record<string, Record<string, string>> = {
   media_buying: { spend: ' SAR', roas: 'x', conversions: '', cpa: ' SAR' },
   social_media: { reach: '', engagement_rate: '%', follower_growth: '' },
-  seo: { completed_tasks: '', on_time_rate: '%' },
+  seo: {
+    completed_tasks: '',
+    on_time_rate: '%',
+    organic_traffic: '',
+    keywords_top10_count: '',
+    backlinks_acquired: '',
+  },
 };
 
 export const formatMetricValue = (value: number | null | undefined, unit: string): string => {

@@ -5,6 +5,7 @@ import {
   CampaignRecord,
   TaskRecord,
   SocialInsightRecord,
+  SeoInsightRecord,
   UserRecord,
   ServiceType,
 } from '../../types/database';
@@ -54,9 +55,10 @@ export const DepartmentComparisonPanel: React.FC<{
   campaigns: CampaignRecord[];
   tasks: TaskRecord[];
   socialInsights: SocialInsightRecord[];
+  seoInsights: SeoInsightRecord[];
   users: UserRecord[];
   services?: ServiceType[]; // omit to show all 3 technical departments
-}> = ({ clients, campaigns, tasks, socialInsights, users, services }) => {
+}> = ({ clients, campaigns, tasks, socialInsights, seoInsights, users, services }) => {
   const [granularity, setGranularity] = useState<ComparisonGranularity>('monthly');
   const period = useMemo(() => resolveComparisonPeriods(granularity).current, [granularity]);
 
@@ -76,7 +78,7 @@ export const DepartmentComparisonPanel: React.FC<{
           { label: 'Conversions', value: `${m.conversions}` },
         ];
       } else if (service === 'seo') {
-        const m = aggregateSeoMetrics(tasks, clientIds, period.range);
+        const m = aggregateSeoMetrics(tasks, seoInsights, clientIds, period.range);
         headline = [
           { label: 'Completed Tasks', value: `${m.completed_tasks}` },
           { label: 'On-Time Rate (delivery)', value: m.on_time_rate !== null ? `${m.on_time_rate}%` : 'N/A' },
@@ -104,7 +106,7 @@ export const DepartmentComparisonPanel: React.FC<{
         avgCapacityUtilization: avg(capacityRates),
       };
     });
-  }, [departments, clients, campaigns, tasks, socialInsights, users, period, granularity]);
+  }, [departments, clients, campaigns, tasks, socialInsights, seoInsights, users, period, granularity]);
 
   return (
     <div className="department-comparison p-4 rounded-2xl border space-y-4" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>

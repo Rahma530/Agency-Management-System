@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { DollarSign, Users, TrendingDown, Building2 } from 'lucide-react';
-import { ClientRecord, CampaignRecord, TaskRecord, SocialInsightRecord, UserRecord } from '../../types/database';
+import { ClientRecord, CampaignRecord, TaskRecord, SocialInsightRecord, SeoInsightRecord, UserRecord } from '../../types/database';
 import { ComparisonGranularity, resolveComparisonPeriods } from '../../lib/reportingEngine';
 import { DepartmentComparisonPanel } from './DepartmentComparisonPanel';
 import { isCurrentlyActiveClient } from '../../lib/clientStatus';
@@ -35,8 +35,9 @@ export const ExecutiveDashboard: React.FC<{
   campaigns: CampaignRecord[];
   tasks: TaskRecord[];
   socialInsights: SocialInsightRecord[];
+  seoInsights: SeoInsightRecord[];
   users: UserRecord[];
-}> = ({ clients, campaigns, tasks, socialInsights, users }) => {
+}> = ({ clients, campaigns, tasks, socialInsights, seoInsights, users }) => {
   const [churnGranularity, setChurnGranularity] = useState<ComparisonGranularity>('monthly');
 
   // Revenue and client counts are current-snapshot figures, not period-comparable — there's no
@@ -129,6 +130,7 @@ export const ExecutiveDashboard: React.FC<{
         campaigns={campaigns}
         tasks={tasks}
         socialInsights={socialInsights}
+        seoInsights={seoInsights}
         users={users}
       />
     </div>

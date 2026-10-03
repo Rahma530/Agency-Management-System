@@ -40,6 +40,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   SocialInsightRecord,
+  SeoInsightRecord,
   ClientPortalUserRecord,
   PlatformConnectionRecord,
   PlatformConnectionStatus,
@@ -72,6 +73,7 @@ interface CampaignManagementModuleProps {
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
+  seoInsights?: SeoInsightRecord[];
   clientPortalUsers?: ClientPortalUserRecord[];
   onCreateCampaign: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateCampaign: (id: string, updates: Partial<CampaignRecord>) => Promise<void> | void;
@@ -89,6 +91,11 @@ interface CampaignManagementModuleProps {
     platform: string,
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
+  onLogSeoMetrics?: (
+    clientId: string,
+    weekStartDate: string,
+    metrics: { organic_traffic: number | null; keywords_top10_count: number | null; backlinks_acquired: number | null }
   ) => Promise<void>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
@@ -261,6 +268,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   reports = [],
   clientComparisons = [],
   socialInsights = [],
+  seoInsights = [],
   clientPortalUsers = [],
   onCreateCampaign,
   onUpdateCampaign,
@@ -269,6 +277,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onGenerateAiSummary,
   onGenerateUnifiedReport,
   onLogSocialMetrics,
+  onLogSeoMetrics,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -1874,6 +1883,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}
+          seoInsights={seoInsights}
           clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           initialTab="campaigns"
           onClose={() => setDashboardClientId(null)}
@@ -1885,6 +1895,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onGenerateAiSummary={onGenerateAiSummary}
           onGenerateUnifiedReport={onGenerateUnifiedReport}
           onLogSocialMetrics={onLogSocialMetrics}
+          onLogSeoMetrics={onLogSeoMetrics}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           onCreatePortalLogin={onCreatePortalLogin}
