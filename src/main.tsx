@@ -8,9 +8,12 @@ import './index.css';
 type Route = 'client-portal' | 'invite' | 'app';
 
 function resolveRoute(): Route {
+  // The invite route is chosen by a QUERY STRING param (?verify=...), not a hash — deliberately:
+  // see InvitePage.tsx's own comment for why a hash-based #/invite route doesn't survive being
+  // shared through a chat app's link-preview mechanism, while a query string does.
+  if (new URLSearchParams(window.location.search).has('verify')) return 'invite';
   const hash = window.location.hash;
   if (hash.startsWith('#/client-portal')) return 'client-portal';
-  if (hash.startsWith('#/invite')) return 'invite';
   return 'app';
 }
 
