@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Defense-in-depth alongside public/.htaccess's real Cache-Control header for this same
+         file: a stale cached copy of index.html is the one file that can silently defeat every
+         other fix in this app, since it's what points the browser at which hashed JS bundle to
+         load. Browsers give http-equiv Cache-Control far less weight than a real HTTP header, so
+         this is a backstop, not the primary fix — but it's zero-cost to include. -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <script>
       // Runs synchronously, before any CSS or the app loads, so the correct theme is set on
       // <html> before first paint — avoids a flash of the wrong theme on reload. Kept as a tiny
