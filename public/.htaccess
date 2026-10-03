@@ -1,0 +1,51 @@
+# Version-controlled replacement for whatever .htaccess has been manually sitting on the
+# Hostinger server up to now (that file was never tracked in this repo, so it couldn't be audited
+# or deployed consistently). Vite copies everything in public/ verbatim into dist/, so this ships
+# with every FTP deploy from now on.
+#
+# Confirmed root cause of a multi-day employee-invitation-link investigation: index.html has no
+# content hash in its filename (unlike dist/assets/index-[hash].js/css, which Vite guarantees
+# changes hash whenever its content changes), so it was the one file Apache's default static-file
+# caching could serve stale indefinitely. A browser that had ever loaded index.html before a given
+# deploy kept citing an old, deleted JS bundle by its old hashed filename — no amount of fixing the
+# actual routing/link code mattered, because the browser never even fetched the page that contained
+# the fix. The fix: index.html must always revalidate; the hashed JS/CSS it references are safe to
+# cache aggressively forever, specifically because a content change always produces a new filename.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Serve real files/directories (assets, fonts, etc.) directly — only an unmatched path falls
+  # through to index.html for the SPA's own client-side routing.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule . /index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # index.html: never cache. This is the one file a stale copy of silently defeats every other fix
+  # in the entire app, since it's what points the browser at which JS bundle to load in the first
+  # place.
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+
+  # Vite-built JS/CSS are the only .js/.css files this app ships (confirmed: nothing under
+  # public/ is a .js or .css file) — every one of them carries a content hash in its filename, so
+  # caching them forever is safe BY CONSTRUCTION: a content change always produces a new filename,
+  # never a same-named file with different content.
+  <FilesMatch "\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+
+  # Fonts are checked into public/fonts/ with fixed, non-hashed filenames — a moderate cache, not
+  # "immutable", so replacing one someday doesn't repeat today's exact failure mode.
+  <FilesMatch "\.(woff2?|ttf|otf)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>
