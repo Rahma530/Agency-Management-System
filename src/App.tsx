@@ -334,6 +334,15 @@ export default function App() {
   // app on a session that has no durable password behind it yet.
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
+  // Set synchronously on mount (same pattern/rationale as isRecoveryRedirect below) when a
+  // recovery/invitation link lands back here already consumed or expired — Supabase appends
+  // error/error_code/error_description to the same redirect_to in that case instead of
+  // type=recovery. Previously this was silently ignored and fell through to the plain logged-out
+  // Sign In screen, indistinguishable from "this was never a recovery link at all" — this is what
+  // made the Telegram-crawler-consumes-the-token bug look like a mystery instead of an obvious
+  // "link already used" message.
+  const [authLinkError, setAuthLinkError] = useState<string | null>(null);
+
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isBulkClientUploadOpen, setIsBulkClientUploadOpen] = useState(false);
   const [verifiedTesterId, setVerifiedTesterId] = useState<string | null>(null);
@@ -496,6 +505,18 @@ export default function App() {
 
     if (isRecoveryRedirect) {
       setIsPasswordRecovery(true);
+    } else {
+      // Supabase appends error/error_code/error_description (not type=recovery) to this same
+      // redirect_to when a recovery/invitation link's token has already been used or has expired —
+      // checked in both hash and query, same defensive duality as isRecoveryRedirect above, since
+      // which one GoTrue actually uses for this isn't part of this app's contract either.
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const searchParams = new URLSearchParams(window.location.search);
+      const errorDescription = hashParams.get('error_description') || searchParams.get('error_description');
+      const errorCode = hashParams.get('error') || searchParams.get('error');
+      if (errorDescription || errorCode) {
+        setAuthLinkError(errorDescription || 'This link is invalid.');
+      }
     }
 
     const restoreSession = async () => {
@@ -4329,6 +4350,35 @@ export default function App() {
   // rather than relied upon.
   if (isPasswordRecovery) {
     return <SetPasswordScreen onComplete={handlePasswordRecoveryComplete} />;
+  }
+
+  // Same precedence as isPasswordRecovery above — an already-consumed/expired recovery or
+  // invitation link should never be silently indistinguishable from "no link at all" (the exact
+  // symptom that made the Telegram-crawler-consumes-the-token bug look like a mystery).
+  if (authLinkError) {
+    return (
+      <div
+        className="min-h-screen flex flex-col justify-center items-center py-12 px-4 sm:px-6 lg:px-8 font-sans text-[#e9d9fb] relative"
+        dir="ltr"
+        style={{ background: 'var(--gradient-page)' }}
+      >
+        <div className="fixed inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute -top-32 right-1/3 w-96 h-96 rounded-full blur-[150px] opacity-25" style={{ background: 'var(--purple-dark)' }} />
+          <div className="absolute -bottom-32 left-1/3 w-96 h-96 rounded-full blur-[150px] opacity-20" style={{ background: '#3b82f6' }} />
+        </div>
+        <div
+          className="relative w-full max-w-md rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl border text-center"
+          style={{ background: 'rgba(21, 16, 32, 0.88)', borderColor: 'var(--border-strong)' }}
+        >
+          <AlertCircle className="w-10 h-10 mx-auto mb-4" style={{ color: 'var(--roas-bad)' }} />
+          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white mb-2">
+            This link has already been used or has expired
+          </h1>
+          <p className="text-xs sm:text-sm text-[#a89bb8] mb-4">Ask an admin to resend your invitation link.</p>
+          <p className="text-[11px] text-stone-500">{authLinkError}</p>
+        </div>
+      </div>
+    );
   }
 
   // If no authenticated employee, render the dedicated Employee Portal Login
