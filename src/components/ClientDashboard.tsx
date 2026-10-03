@@ -29,6 +29,7 @@ import {
   Trash2,
   StickyNote,
   Share2,
+  Megaphone,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -46,6 +47,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   SocialInsightRecord,
+  MediaBuyingInsightRecord,
   ClientPortalUserRecord,
   MeetingRecord,
   PlatformConnectionRecord,
@@ -86,6 +88,7 @@ import {
 } from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
 import { LogSocialMetricsModal } from './LogSocialMetricsModal';
+import { LogMediaBuyingMetricsModal } from './LogMediaBuyingMetricsModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
@@ -112,6 +115,7 @@ interface ClientDashboardProps {
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
+  mediaBuyingInsights?: MediaBuyingInsightRecord[];
   initialTab?: DashboardTab;
   onClose: () => void;
   onSaveBrief?: (briefData: {
@@ -207,6 +211,16 @@ interface ClientDashboardProps {
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
   ) => Promise<void>;
+  // Weekly manual-entry write path for media_buying_insights (see
+  // 20261027000000_media_buying_insights.sql) — same optional-prop convention as
+  // onLogSocialMetrics above: omitted entirely means "this viewer can't log media buying metrics
+  // for this client".
+  onLogMediaBuyingMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { spend: number; conversions: number; roas: number | null }
+  ) => Promise<void>;
 }
 
 type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
@@ -225,6 +239,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   reports = [],
   clientComparisons = [],
   socialInsights = [],
+  mediaBuyingInsights = [],
   initialTab,
   onClose,
   onSaveBrief,
@@ -261,6 +276,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUpdatePaymentTracking,
   onUpdateClientAccess,
   onLogSocialMetrics,
+  onLogMediaBuyingMetrics,
 }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab || 'overview');
   const [isDeletingClient, setIsDeletingClient] = useState(false);
@@ -539,6 +555,22 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
       currentUser.role === 'head_of_technical' ||
       currentUser.role === 'ai_engineer');
+
+  // Weekly manual-entry write gate for media_buying_insights — mirrors
+  // media_buying_insights_write_rls/media_buying_insights_update_rls in
+  // 20261027000000_media_buying_insights.sql exactly (same roles, same client_has_service/
+  // agent_assigned/client_am_agent_is_caller checks), so the UI never offers an action the
+  // database would reject. No head_of_technical/ai_engineer bridge here, unlike
+  // canLogSocialMetrics: media_buying_team_lead/media_buying_agent are already real, actively-used
+  // roles (campaigns CRUD shipped this morning), so there's no "role doesn't exist yet" gap to
+  // bridge. am_agent is included (own client only) since campaigns_update_rls already lets an AM
+  // Agent edit campaign data for their own client — logging a real weekly number is the same
+  // capability tier.
+  const canLogMediaBuyingMetrics =
+    clientHasService(client, 'media_buying') &&
+    ((currentUser.role === 'media_buying_agent' && isAssignedToService('media_buying')) ||
+      (currentUser.role === 'media_buying_team_lead' && clientHasService(client, 'media_buying')) ||
+      (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id));
 
   // Which service(s) this viewer may see on this client's comparison rows. undefined means "show
   // everything" (every hasReportsAccess role) — a department agent/team lead only ever sees their
@@ -2357,6 +2389,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   ? (platform, weekStartDate, metrics) => onLogSocialMetrics(client.id, platform, weekStartDate, metrics)
                   : undefined
               }
+              canLogMediaBuyingMetrics={canLogMediaBuyingMetrics && !!onLogMediaBuyingMetrics}
+              onLogMediaBuyingMetrics={
+                onLogMediaBuyingMetrics
+                  ? (platform, weekStartDate, metrics) => onLogMediaBuyingMetrics(client.id, platform, weekStartDate, metrics)
+                  : undefined
+              }
               onEnsureComparisonForSummary={ensureComparisonForSummary}
             />
           )}
@@ -2517,6 +2555,12 @@ interface ReportsAndComparisonsTabProps {
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
   ) => Promise<void>;
+  canLogMediaBuyingMetrics: boolean;
+  onLogMediaBuyingMetrics?: (
+    platform: string,
+    weekStartDate: string,
+    metrics: { spend: number; conversions: number; roas: number | null }
+  ) => Promise<void>;
   // UX-flow change: backs both the per-service DirectAiSummaryPanel below and UnifiedReportPanel's
   // own on-demand generation — looks up an existing row for the current period/mode first, computes
   // and saves one via the same onGenerateComparison path otherwise. See ClientDashboard's own
@@ -2557,10 +2601,13 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
   briefFieldSchemas,
   canLogSocialMetrics,
   onLogSocialMetrics,
+  canLogMediaBuyingMetrics,
+  onLogMediaBuyingMetrics,
   onEnsureComparisonForSummary,
 }) => {
   const [selectedDraftReport, setSelectedDraftReport] = useState<ReportRecord | null>(null);
   const [isLogSocialMetricsOpen, setIsLogSocialMetricsOpen] = useState(false);
+  const [isLogMediaBuyingMetricsOpen, setIsLogMediaBuyingMetricsOpen] = useState(false);
 
   // Same rolling-baseline check ReportsHub.tsx runs — this tab is single-client, so there's only
   // ever one result to compute, applied only to that client's latest comparison row.
@@ -2605,6 +2652,29 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
           clientName={client.name}
           onClose={() => setIsLogSocialMetricsOpen(false)}
           onSubmit={onLogSocialMetrics}
+        />
+      )}
+
+      {canLogMediaBuyingMetrics && onLogMediaBuyingMetrics && (
+        <div className="p-4 rounded-xl border border-amber-900/30 bg-[#161224]/80 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Megaphone className="w-4 h-4 text-amber-400" />
+            <span className="text-sm font-bold text-white">Weekly Media Buying Metrics</span>
+          </div>
+          <button
+            onClick={() => setIsLogMediaBuyingMetricsOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition-all"
+          >
+            Log This Week's Media Buying Metrics
+          </button>
+        </div>
+      )}
+
+      {isLogMediaBuyingMetricsOpen && onLogMediaBuyingMetrics && (
+        <LogMediaBuyingMetricsModal
+          clientName={client.name}
+          onClose={() => setIsLogMediaBuyingMetricsOpen(false)}
+          onSubmit={onLogMediaBuyingMetrics}
         />
       )}
 

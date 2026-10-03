@@ -37,6 +37,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   SocialInsightRecord,
+  MediaBuyingInsightRecord,
   ClientPortalUserRecord,
   PlatformConnectionRecord,
   PlatformConnectionStatus,
@@ -71,6 +72,7 @@ interface ServiceBriefsRoutingViewProps {
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
+  mediaBuyingInsights?: MediaBuyingInsightRecord[];
   clientPortalUsers?: ClientPortalUserRecord[];
   onAssignServiceAgent: (
     clientId: string,
@@ -95,6 +97,12 @@ interface ServiceBriefsRoutingViewProps {
     platform: string,
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
+  onLogMediaBuyingMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { spend: number; conversions: number; roas: number | null }
   ) => Promise<void>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
@@ -162,6 +170,7 @@ const AMServiceBriefsPanel: React.FC<{
   reports: ReportRecord[];
   clientComparisons: ClientComparisonRecord[];
   socialInsights: SocialInsightRecord[];
+  mediaBuyingInsights: MediaBuyingInsightRecord[];
   clientPortalUsers: ClientPortalUserRecord[];
   onGenerateComparison?: (
     scope: ReportScope,
@@ -231,6 +240,7 @@ const AMServiceBriefsPanel: React.FC<{
   reports,
   clientComparisons,
   socialInsights,
+  mediaBuyingInsights,
   clientPortalUsers,
   onGenerateComparison,
   onGenerateReport,
@@ -362,6 +372,7 @@ const AMServiceBriefsPanel: React.FC<{
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}
+          mediaBuyingInsights={mediaBuyingInsights}
           clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           initialTab="briefs"
           onClose={() => setDashboardClientId(null)}
@@ -404,6 +415,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   reports = [],
   clientComparisons = [],
   socialInsights = [],
+  mediaBuyingInsights = [],
   clientPortalUsers = [],
   onAssignServiceAgent,
   onMarkBriefViewed,
@@ -414,6 +426,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onGenerateAiSummary,
   onGenerateUnifiedReport,
   onLogSocialMetrics,
+  onLogMediaBuyingMetrics,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -448,6 +461,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         reports={reports}
         clientComparisons={clientComparisons}
         socialInsights={socialInsights}
+        mediaBuyingInsights={mediaBuyingInsights}
         clientPortalUsers={clientPortalUsers}
         onGenerateComparison={onGenerateComparison}
         onGenerateReport={onGenerateReport}
@@ -1138,6 +1152,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}
+          mediaBuyingInsights={mediaBuyingInsights}
           clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           onMarkAssignmentViewed={onMarkAssignmentViewed}
           onClose={() => setDashboardClientId(null)}
@@ -1161,6 +1176,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onUpdatePaymentTracking={onUpdatePaymentTracking}
           onUpdateClientAccess={onUpdateClientAccess}
           onLogSocialMetrics={onLogSocialMetrics}
+          onLogMediaBuyingMetrics={onLogMediaBuyingMetrics}
         />
       )}
 

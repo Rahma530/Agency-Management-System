@@ -3,6 +3,7 @@ import { BarChart3, Gauge } from 'lucide-react';
 import {
   ClientRecord,
   CampaignRecord,
+  MediaBuyingInsightRecord,
   TaskRecord,
   SocialInsightRecord,
   UserRecord,
@@ -52,11 +53,12 @@ interface DepartmentRow {
 export const DepartmentComparisonPanel: React.FC<{
   clients: ClientRecord[];
   campaigns: CampaignRecord[];
+  mediaBuyingInsights: MediaBuyingInsightRecord[];
   tasks: TaskRecord[];
   socialInsights: SocialInsightRecord[];
   users: UserRecord[];
   services?: ServiceType[]; // omit to show all 3 technical departments
-}> = ({ clients, campaigns, tasks, socialInsights, users, services }) => {
+}> = ({ clients, campaigns, mediaBuyingInsights, tasks, socialInsights, users, services }) => {
   const [granularity, setGranularity] = useState<ComparisonGranularity>('monthly');
   const period = useMemo(() => resolveComparisonPeriods(granularity).current, [granularity]);
 
@@ -69,7 +71,7 @@ export const DepartmentComparisonPanel: React.FC<{
 
       let headline: { label: string; value: string }[];
       if (service === 'media_buying') {
-        const m = aggregateMediaBuyingMetrics(campaigns, clientIds, period.range);
+        const m = aggregateMediaBuyingMetrics(campaigns, mediaBuyingInsights, clientIds, period.range);
         headline = [
           { label: 'ROAS', value: m.roas !== null ? `${m.roas}x` : 'N/A' },
           { label: 'Spend', value: `${m.spend.toLocaleString()} SAR` },
@@ -104,7 +106,7 @@ export const DepartmentComparisonPanel: React.FC<{
         avgCapacityUtilization: avg(capacityRates),
       };
     });
-  }, [departments, clients, campaigns, tasks, socialInsights, users, period, granularity]);
+  }, [departments, clients, campaigns, mediaBuyingInsights, tasks, socialInsights, users, period, granularity]);
 
   return (
     <div className="department-comparison p-4 rounded-2xl border space-y-4" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>

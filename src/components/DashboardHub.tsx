@@ -3,6 +3,7 @@ import {
   UserRecord,
   ClientRecord,
   CampaignRecord,
+  MediaBuyingInsightRecord,
   TaskRecord,
   SocialInsightRecord,
   AssignmentRecord,
@@ -24,6 +25,7 @@ interface DashboardHubProps {
   users: UserRecord[];
   clients: ClientRecord[];
   campaigns: CampaignRecord[];
+  mediaBuyingInsights: MediaBuyingInsightRecord[];
   tasks: TaskRecord[];
   socialInsights: SocialInsightRecord[];
   assignments: AssignmentRecord[];
@@ -36,6 +38,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
   users,
   clients,
   campaigns,
+  mediaBuyingInsights,
   tasks,
   socialInsights,
   assignments,
@@ -47,6 +50,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
       <ExecutiveDashboard
         clients={clients}
         campaigns={campaigns}
+        mediaBuyingInsights={mediaBuyingInsights}
         tasks={tasks}
         socialInsights={socialInsights}
         users={users}
@@ -59,6 +63,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
       <HeadOfTechnicalDashboard
         clients={clients}
         campaigns={campaigns}
+        mediaBuyingInsights={mediaBuyingInsights}
         tasks={tasks}
         socialInsights={socialInsights}
         users={users}

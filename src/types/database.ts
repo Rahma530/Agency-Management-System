@@ -397,6 +397,26 @@ export interface SocialInsightRecord {
   week_start_date?: string | null;
 }
 
+// 8a. media_buying_insights — weekly manual-entry periodic metrics for media buying, the
+// fact-table counterpart campaigns (an entity table, cumulative lifetime totals) cannot provide.
+// See supabase/migrations/20261027000000_media_buying_insights.sql for the full reasoning.
+export interface MediaBuyingInsightRecord {
+  id: string;
+  client_id: string;
+  platform: 'meta' | 'google' | 'tiktok' | 'linkedin' | 'snapchat' | 'x' | string;
+  week_start_date: string;
+  spend: number;
+  conversions: number;
+  roas?: number | null;
+  // 'manual' for every row entered through LogMediaBuyingMetricsModal.tsx today; 'platform_api' is
+  // reserved for real ad-platform integration (Meta/Google/TikTok) landing later — a synced row
+  // joins this same table additively, distinguished only by this column, with no schema change.
+  source?: 'manual' | 'platform_api';
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 // Module 6 (External Integrations Hub) scaffolding — see
 // supabase/migrations/20260915100000_platform_connections.sql. No
 // credential/token field exists here on purpose; see that migration's
@@ -706,6 +726,7 @@ export interface Database {
       task_attachments: { Row: TaskAttachmentRecord; Insert: Partial<TaskAttachmentRecord>; Update: Partial<TaskAttachmentRecord>; Relationships: any[] };
       campaigns: { Row: CampaignRecord; Insert: Partial<CampaignRecord>; Update: Partial<CampaignRecord>; Relationships: any[] };
       social_insights: { Row: SocialInsightRecord; Insert: Partial<SocialInsightRecord>; Update: Partial<SocialInsightRecord>; Relationships: any[] };
+      media_buying_insights: { Row: MediaBuyingInsightRecord; Insert: Partial<MediaBuyingInsightRecord>; Update: Partial<MediaBuyingInsightRecord>; Relationships: any[] };
       reports: { Row: ReportRecord; Insert: Partial<ReportRecord>; Update: Partial<ReportRecord>; Relationships: any[] };
       capacity_logs: { Row: CapacityLogRecord; Insert: Partial<CapacityLogRecord>; Update: Partial<CapacityLogRecord>; Relationships: any[] };
       daily_logs: { Row: DailyLogRecord; Insert: Partial<DailyLogRecord>; Update: Partial<DailyLogRecord>; Relationships: any[] };

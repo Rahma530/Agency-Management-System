@@ -8,6 +8,7 @@ import {
   ComparisonMediaBuyingMetrics,
   ComparisonSeoMetrics,
   ComparisonSocialMetrics,
+  MediaBuyingInsightRecord,
   ServiceType,
   SocialInsightRecord,
   TaskRecord,
@@ -270,30 +271,22 @@ function campaignOverlapsRange(c: CampaignRecord, range: DateRange): boolean {
   return start <= range.end; // still running (or single-date row) — active for any period from its start onward
 }
 
-export function aggregateMediaBuyingMetrics(
-  campaigns: CampaignRecord[],
-  clientIds: string[],
-  range: DateRange
-): ComparisonMediaBuyingMetrics {
-  const scoped = campaigns.filter((c) => clientIds.includes(c.client_id) && campaignOverlapsRange(c, range));
-
-  const spend = scoped.reduce((sum, c) => sum + (c.spend || 0), 0);
-  const conversions = scoped.reduce((sum, c) => {
-    const v = c.results?.conversions;
-    return sum + (typeof v === 'number' ? v : 0);
-  }, 0);
+// Shared by both the periodic-row path and the campaigns-cumulative fallback below: spend,
+// conversions, and spend-weighted ROAS entries all reduce to the same pooled-totals math
+// regardless of which source produced the per-row numbers.
+function poolMediaBuyingRows(rows: { spend: number; conversions: number; roas?: number | null }[]): ComparisonMediaBuyingMetrics {
+  const spend = rows.reduce((sum, r) => sum + (r.spend || 0), 0);
+  const conversions = rows.reduce((sum, r) => sum + (r.conversions || 0), 0);
 
   // CPA is a true ratio, so it's recomputed from the pooled totals rather than averaged
-  // per-campaign — averaging per-campaign CPA would weight a $50 campaign the same as a $50k
-  // one. This also corrects the original single-client implementation, which had the same flaw
-  // at smaller scale.
+  // per-row — averaging per-row CPA would weight a $50 row the same as a $50k one.
   const cpa = conversions > 0 ? Math.round((spend / conversions) * 100) / 100 : null;
 
   // No revenue field exists to recompute a true ROAS ratio (unlike CPA), so this is the best
-  // available proxy: each campaign's own reported ROAS, weighted by its spend, rather than a
-  // flat average — still better than treating every campaign as equally sized.
-  const roasEntries = scoped
-    .map((c) => ({ roas: c.results?.roas, spend: c.spend || 0 }))
+  // available proxy: each row's own reported ROAS, weighted by its spend, rather than a flat
+  // average — still better than treating every row as equally sized.
+  const roasEntries = rows
+    .map((r) => ({ roas: r.roas, spend: r.spend || 0 }))
     .filter((e): e is { roas: number; spend: number } => typeof e.roas === 'number' && e.spend > 0);
   const roasWeight = roasEntries.reduce((sum, e) => sum + e.spend, 0);
   const roas = roasWeight > 0
@@ -301,6 +294,34 @@ export function aggregateMediaBuyingMetrics(
     : null;
 
   return { spend, roas, conversions, cpa };
+}
+
+// Prefers media_buying_insights' real per-week numbers when any exist for this client pool +
+// period — they're the accurate source (see 20261027000000_media_buying_insights.sql). Falls back
+// to the campaigns-cumulative-overlap proxy only when zero periodic rows exist for this exact
+// scope/period, so a client pool with no manual entries yet doesn't silently zero out instead of
+// showing its best-available (if imprecise) number.
+export function aggregateMediaBuyingMetrics(
+  campaigns: CampaignRecord[],
+  mediaBuyingInsights: MediaBuyingInsightRecord[],
+  clientIds: string[],
+  range: DateRange
+): ComparisonMediaBuyingMetrics {
+  const periodicRows = mediaBuyingInsights.filter(
+    (i) => clientIds.includes(i.client_id) && inRange(i.week_start_date, range)
+  );
+  if (periodicRows.length > 0) {
+    return poolMediaBuyingRows(periodicRows);
+  }
+
+  const scoped = campaigns.filter((c) => clientIds.includes(c.client_id) && campaignOverlapsRange(c, range));
+  return poolMediaBuyingRows(
+    scoped.map((c) => ({
+      spend: c.spend || 0,
+      conversions: typeof c.results?.conversions === 'number' ? c.results.conversions : 0,
+      roas: typeof c.results?.roas === 'number' ? c.results.roas : null,
+    }))
+  );
 }
 
 // ----------------------------------------------------------------------------
@@ -373,6 +394,7 @@ export function generateClientComparisonMetrics(
   clients: ClientRecord[],
   range: DateRange,
   campaigns: CampaignRecord[],
+  mediaBuyingInsights: MediaBuyingInsightRecord[],
   tasks: TaskRecord[],
   socialInsights: SocialInsightRecord[],
   serviceFilter?: ServiceType[]
@@ -384,7 +406,7 @@ export function generateClientComparisonMetrics(
 
   if (wantsService('media_buying')) {
     const ids = clientIdsWith('media_buying');
-    if (ids.length) metrics.media_buying = aggregateMediaBuyingMetrics(campaigns, ids, range);
+    if (ids.length) metrics.media_buying = aggregateMediaBuyingMetrics(campaigns, mediaBuyingInsights, ids, range);
   }
   if (wantsService('seo')) {
     const ids = clientIdsWith('seo');
@@ -544,6 +566,7 @@ export function generateClientComparison(
   currentPeriod: ComparisonPeriod,
   previousPeriod: ComparisonPeriod,
   campaigns: CampaignRecord[],
+  mediaBuyingInsights: MediaBuyingInsightRecord[],
   tasks: TaskRecord[],
   socialInsights: SocialInsightRecord[],
   serviceFilter?: ServiceType[]
@@ -561,6 +584,7 @@ export function generateClientComparison(
     clients,
     currentPeriod.range,
     campaigns,
+    mediaBuyingInsights,
     tasks,
     socialInsights,
     serviceFilter
@@ -569,6 +593,7 @@ export function generateClientComparison(
     clients,
     previousPeriod.range,
     campaigns,
+    mediaBuyingInsights,
     tasks,
     socialInsights,
     serviceFilter
@@ -598,6 +623,7 @@ export function generatePeriodSummary(
   clients: ClientRecord[],
   period: ComparisonPeriod,
   campaigns: CampaignRecord[],
+  mediaBuyingInsights: MediaBuyingInsightRecord[],
   tasks: TaskRecord[],
   socialInsights: SocialInsightRecord[],
   serviceFilter?: ServiceType[]
@@ -615,6 +641,7 @@ export function generatePeriodSummary(
     clients,
     period.range,
     campaigns,
+    mediaBuyingInsights,
     tasks,
     socialInsights,
     serviceFilter

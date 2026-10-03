@@ -40,6 +40,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   SocialInsightRecord,
+  MediaBuyingInsightRecord,
   ClientPortalUserRecord,
   PlatformConnectionRecord,
   PlatformConnectionStatus,
@@ -72,6 +73,7 @@ interface CampaignManagementModuleProps {
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
+  mediaBuyingInsights?: MediaBuyingInsightRecord[];
   clientPortalUsers?: ClientPortalUserRecord[];
   onCreateCampaign: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateCampaign: (id: string, updates: Partial<CampaignRecord>) => Promise<void> | void;
@@ -89,6 +91,12 @@ interface CampaignManagementModuleProps {
     platform: string,
     weekStartDate: string,
     metrics: { reach: number | null; engagement_rate: number | null; follower_growth: number | null }
+  ) => Promise<void>;
+  onLogMediaBuyingMetrics?: (
+    clientId: string,
+    platform: string,
+    weekStartDate: string,
+    metrics: { spend: number; conversions: number; roas: number | null }
   ) => Promise<void>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
@@ -261,6 +269,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   reports = [],
   clientComparisons = [],
   socialInsights = [],
+  mediaBuyingInsights = [],
   clientPortalUsers = [],
   onCreateCampaign,
   onUpdateCampaign,
@@ -269,6 +278,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onGenerateAiSummary,
   onGenerateUnifiedReport,
   onLogSocialMetrics,
+  onLogMediaBuyingMetrics,
   onGenerateMonthlyReportDraft,
   onApproveReport,
   onCreatePortalLogin,
@@ -1874,6 +1884,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}
+          mediaBuyingInsights={mediaBuyingInsights}
           clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === activeDashboardClient.id) || null}
           initialTab="campaigns"
           onClose={() => setDashboardClientId(null)}
@@ -1885,6 +1896,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onGenerateAiSummary={onGenerateAiSummary}
           onGenerateUnifiedReport={onGenerateUnifiedReport}
           onLogSocialMetrics={onLogSocialMetrics}
+          onLogMediaBuyingMetrics={onLogMediaBuyingMetrics}
           onGenerateMonthlyReportDraft={onGenerateMonthlyReportDraft}
           onApproveReport={onApproveReport}
           onCreatePortalLogin={onCreatePortalLogin}
