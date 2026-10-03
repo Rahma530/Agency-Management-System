@@ -156,8 +156,22 @@ Deno.serve(async (req) => {
       return response({ error: 'Could not generate an invitation link.' }, 500);
     }
 
+    // Wrap the raw verify URL behind a neutral landing page instead of handing it out directly.
+    // Confirmed root cause of "works only from the browser that generated it": a chat app's
+    // link-preview crawler (Telegram, Slack, WhatsApp, etc.) fetches any URL pasted into a message
+    // server-side to build a preview card, and /auth/v1/verify performs its one-time-token
+    // consumption on a plain GET — so that crawl alone silently burns the token before the real
+    // recipient ever taps it. invitationRedirectUrl (validated above, always a bare origin) is
+    // unchanged — it's still where Supabase itself redirects after a real verify attempt, success
+    // or failure. This wrapped link is the one actually handed to the admin to share: it points at
+    // this app's own /invite route (src/components/InvitePage.tsx), which renders nothing but a
+    // static "Continue" button with no redirect/fetch on load. The real action_link is embedded in
+    // the hash fragment, which a server-side crawler never receives (fragments are never sent over
+    // HTTP) — only a genuine click ever reaches /auth/v1/verify.
+    const shareableLink = `${invitationRedirectUrl}/#/invite?verify=${encodeURIComponent(link.properties.action_link)}`;
+
     return response({
-      actionLink: link.properties.action_link,
+      actionLink: shareableLink,
       authId: authUser.id,
       wasNewAccount,
     });
