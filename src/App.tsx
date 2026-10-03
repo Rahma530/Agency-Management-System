@@ -334,6 +334,14 @@ export default function App() {
   // app on a session that has no durable password behind it yet.
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
+  // Mirrors "a recovery session is pending/unconfirmed" for the onAuthStateChange closure below,
+  // which subscribes once (effect has an empty dependency array) and must see live updates inside
+  // an async callback that can fire at any later time — isPasswordRecovery state itself would be
+  // stale there (captured at the render that defined the effect, not updated by a later
+  // setIsPasswordRecovery call in the same synchronous effect body). Starts false so a normal,
+  // non-recovery login is entirely unaffected.
+  const isRecoveryPendingRef = useRef(false);
+
   // Set synchronously on mount (same pattern/rationale as isRecoveryRedirect below) when a
   // recovery/invitation link lands back here already consumed or expired — Supabase appends
   // error/error_code/error_description to the same redirect_to in that case instead of
@@ -496,14 +504,33 @@ export default function App() {
     // isPasswordRecovery is set synchronously from this check right below,
     // rather than waiting on the onAuthStateChange listener's PASSWORD_RECOVERY
     // event, since that's a one-shot event that can be lost if the listener
-    // isn't attached yet when it fires (e.g. React StrictMode's mount ->
-    // cleanup -> re-mount cycle tearing down the very listener that would
-    // have caught it). The event-based branch below stays as a secondary,
-    // defensive path only.
+    // isn't attached yet when it fires. The event-based branch below stays as
+    // a secondary, defensive path only.
+    //
+    // The primary signal here is index.html's inline script, NOT a fresh read of
+    // window.location — confirmed root cause: @supabase/auth-js's _getSessionFromURL()
+    // awaits a network round-trip (_getUser(access_token)) and only then clears
+    // window.location.hash, as a background promise chain it starts on its own the moment the
+    // Supabase client is constructed, with no synchronization with this effect. A plain read of
+    // window.location here can lose the recovery marker if that clearing wins the race — this
+    // sessionStorage flag was captured synchronously before any module JS (including the
+    // Supabase client) could even begin loading, so it reflects the original URL unconditionally.
+    // Read-and-clear: this page load consumes it at most once.
+    let recoveryFlagConsumed = false;
+    try {
+      recoveryFlagConsumed = sessionStorage.getItem('agency_recovery_pending') === '1';
+      sessionStorage.removeItem('agency_recovery_pending');
+    } catch {
+      // sessionStorage unavailable — fall through to the (racy) URL checks below only.
+    }
+
     const isRecoveryRedirect =
-      window.location.hash.includes('type=recovery') || window.location.search.includes('type=recovery');
+      recoveryFlagConsumed ||
+      window.location.hash.includes('type=recovery') ||
+      window.location.search.includes('type=recovery');
 
     if (isRecoveryRedirect) {
+      isRecoveryPendingRef.current = true;
       setIsPasswordRecovery(true);
     } else {
       // Supabase appends error/error_code/error_description (not type=recovery) to this same
@@ -564,7 +591,19 @@ export default function App() {
     if (isSupabaseConfigured()) {
       const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'PASSWORD_RECOVERY') {
+          isRecoveryPendingRef.current = true;
           setIsPasswordRecovery(true);
+          return;
+        }
+        // Confirmed root cause (auth-js source, GoTrueClient.js _emitInitialSession): a listener
+        // that subscribes (as this one does, inside a React effect) AFTER GoTrue's own recovery
+        // session processing has already finished receives 'INITIAL_SESSION' here instead of
+        // 'PASSWORD_RECOVERY' — an event name the check above does not match. Without this guard,
+        // that branch below would treat an unconfirmed recovery session (password never set) as a
+        // normal completed login purely because of which event name happened to win that race.
+        // isRecoveryPendingRef is cleared only by handlePasswordRecoveryComplete, i.e. only once
+        // supabase.auth.updateUser({ password }) has genuinely already succeeded.
+        if (isRecoveryPendingRef.current) {
           return;
         }
         if (session?.user) {
@@ -1159,6 +1198,11 @@ export default function App() {
   // matching employee row and finish login exactly like a real sign-in,
   // same as restoreSession()/onAuthStateChange do elsewhere in this file.
   const handlePasswordRecoveryComplete = async () => {
+    // supabase.auth.updateUser({ password }) has already succeeded by the time SetPasswordScreen
+    // calls this (see comment above) — setup is now genuinely confirmed complete, so this is the
+    // one place that clears isRecoveryPendingRef, closing the window the presence/heartbeat effect
+    // and the onAuthStateChange listener above both check before treating this session as live.
+    isRecoveryPendingRef.current = false;
     setIsPasswordRecovery(false);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -1913,9 +1957,98 @@ export default function App() {
     };
   }, [authenticatedUser?.id, supabaseActive]);
 
+  // Real-time users table delivery, mirroring the chat/notifications/activities effects above.
+  // Confirmed root cause of a reported bug: EmployeeAdminHub's "Awaiting Setup" view (and anything
+  // else reading `users`) was a one-time snapshot taken by loadData() at this session's own
+  // login/mount — loadData only re-runs on this admin's own authenticatedUser.id changing, and no
+  // postgres_changes subscription existed for `users` at all (the separate `online-users` channel
+  // below is a pure ephemeral Presence tracker with no column data). So another employee's
+  // last_seen_at update — from completing setup via either the admin-invitation link or the
+  // separate self-service "Forgot Password" flow; both update the same column the same way —
+  // never reached an already-open admin tab until a manual reload re-ran loadData(). Realtime
+  // enforces each subscriber's own RLS SELECT policy (users_select_rls -> employee_visible()) per
+  // row before delivering an event here, so this can never surface a row or column this employee's
+  // own existing `select('*')` fetch above wouldn't already return — no new exposure, just a push
+  // channel for data already visible to that role.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+
+    const refetchUsers = async () => {
+      const { data, error } = await supabaseRaw.from('users').select('*');
+      if (!cancelled && !error) {
+        setUsers((data as UserRecord[]) || []);
+      }
+    };
+
+    const startPollFallback = () => {
+      if (intervalId) return;
+      intervalId = setInterval(refetchUsers, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        startPollFallback();
+        return;
+      }
+
+      const upsertUser = (payload: { new: UserRecord }) => {
+        const row = payload.new;
+        setUsers((prev) => {
+          const existingIndex = prev.findIndex((u) => u.id === row.id);
+          if (existingIndex === -1) return [...prev, row];
+          return prev.map((u, i) => (i === existingIndex ? row : u));
+        });
+      };
+
+      channel = supabaseRaw
+        .channel('users_lifecycle')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, upsertUser)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, upsertUser)
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+          } else {
+            console.warn(`Users realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
+    })();
+
+    return () => {
+      cancelled = true;
+      stopPollFallback();
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
+  }, [authenticatedUser?.id, supabaseActive]);
+
   // Real-time online users (Presence) & heartbeat
   useEffect(() => {
-    if (!authenticatedUser || !supabaseActive) return;
+    // isPasswordRecovery is checked here too, not just upstream in restoreSession/
+    // onAuthStateChange — defense in depth: this effect must never mark someone "Online" (track()
+    // + the last_seen_at write below) off a session that has not been confirmed as a genuinely
+    // completed login (password actually set), regardless of which upstream detection path
+    // caught — or missed — that this was a recovery session. isPasswordRecovery only goes false
+    // via handlePasswordRecoveryComplete, i.e. only once supabase.auth.updateUser({ password })
+    // has already succeeded; a normal, non-recovery login never sets it true in the first place,
+    // so this adds no delay there.
+    if (!authenticatedUser || !supabaseActive || isPasswordRecovery) return;
 
     // 1. Setup Presence Channel
     const channel = supabaseRaw.channel('online-users', {
@@ -1957,8 +2090,12 @@ export default function App() {
     // tore down and recreated the presence channel (and its heartbeat interval) on every
     // reference-only update, briefly flickering this user offline/online for everyone else on a
     // tab refocus. An actual login/logout/user-switch is the only thing that should do that.
+    // isPasswordRecovery IS included below (unlike the object-identity case above, this is a
+    // plain boolean the effect must actually react to): when it flips false in
+    // handlePasswordRecoveryComplete, this effect needs to re-run and start tracking presence for
+    // the now-genuinely-logged-in user, not wait for some unrelated id/supabaseActive change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticatedUser?.id, supabaseActive]);
+  }, [authenticatedUser?.id, supabaseActive, isPasswordRecovery]);
 
   // allowedRoles is a list rather than a single role because the "Account Manager" slot accepts
   // either an am_agent OR an am_team_lead self-assigning as the responsible person — the

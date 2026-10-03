@@ -12,6 +12,30 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <script>
+      // Captures a password-recovery/invitation link's marker from the URL synchronously, before
+      // any module JS — including the Supabase client — has even begun loading. This closes a
+      // confirmed race, not just narrows it: @supabase/auth-js's _getSessionFromURL() does a
+      // network round-trip (awaiting _getUser(access_token)) and only THEN clears
+      // window.location.hash, as part of a background promise chain it starts on its own the
+      // moment the client is constructed — fully independent of React's render/effect cycle. If
+      // App.tsx's mount effect (or its onAuthStateChange listener, which can receive this same
+      // already-processed session relabeled as 'INITIAL_SESSION' instead of 'PASSWORD_RECOVERY')
+      // reads window.location.hash/search AFTER that clearing has already happened, the "this is
+      // an unconfirmed recovery session" signal is silently lost and the session gets treated as a
+      // normal completed login. This script runs to completion before the browser even requests
+      // /src/main.tsx, so it reads the URL exactly as the server sent it — no code, including
+      // GoTrue's own, has had any chance to mutate it yet.
+      (function () {
+        try {
+          if (location.hash.includes('type=recovery') || location.search.includes('type=recovery')) {
+            sessionStorage.setItem('agency_recovery_pending', '1');
+          }
+        } catch (e) {
+          // sessionStorage unavailable (private browsing, disabled storage) — App.tsx's own
+          // window.location checks remain as a fallback, racy in exactly the way described above.
+        }
+      })();
+
       // Runs synchronously, before any CSS or the app loads, so the correct theme is set on
       // <html> before first paint — avoids a flash of the wrong theme on reload. Kept as a tiny
       // inline script rather than app JS specifically so it isn't gated behind React mounting.
