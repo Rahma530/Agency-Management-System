@@ -30,13 +30,14 @@ jobs:
 
       # Diffs against the sync-state file it maintains on the server, so each run only uploads
       # changed files and removes files that no longer exist in dist/ — not a plain additive
-      # upload. server-dir is "public_html/" (trailing slash required by this action), confirmed
-      # directly from Hostinger's FTP Accounts panel for the kms.kesraa.com subdomain's own
-      # dedicated FTP account (u934284991.kms.kesraa.com) — its "Folder to upload files" is
-      # public_html itself, not a shared root containing multiple subdomains. The previous value,
-      # /kms/, silently uploaded every "successful" deploy into a stray subfolder under this
-      # account's own root, while the live site kept serving the public_html folder populated once
-      # manually at initial Hostinger setup and never touched by any automated deploy since.
+      # upload. server-dir is "./": the current FTP account (u934284991.kmsdeploy) is rooted
+      # directly at the subdomain's own document root,
+      # /home/u934284991/domains/kesraa.com/public_html/kms — so no subpath is needed at all.
+      # The previous FTP account was rooted elsewhere (one level up, at the shared public_html/),
+      # which is why server-dir was "public_html/" at that time; kept as-is here, "public_html/"
+      # would have created a stray nested public_html/public_html/ folder the site never serves.
+      # If the FTP account is ever swapped again, re-check what it's rooted at before assuming
+      # either value still applies.
       - name: Deploy to Hostinger via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
