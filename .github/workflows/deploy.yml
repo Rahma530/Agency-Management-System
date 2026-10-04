@@ -27,6 +27,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_ENABLE_EMPLOYEE_IMPERSONATION: ${{ secrets.VITE_ENABLE_EMPLOYEE_IMPERSONATION }}
 
       # Diffs against the sync-state file it maintains on the server, so each run only uploads
       # changed files and removes files that no longer exist in dist/ — not a plain additive
