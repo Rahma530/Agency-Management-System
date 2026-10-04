@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/database';
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
-import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients } from '../lib/permissions';
+import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients, assignableRolesFor } from '../lib/permissions';
 import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
 import { isTaskDone } from '../lib/taskLifecycle';
 
@@ -872,7 +872,13 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                           onChange={(e) => setEditDraft((d) => ({ ...d, role: e.target.value as UserRole }))}
                           className={`${inputClass} cursor-pointer`}
                         >
-                          {VALID_ROLES.map((r) => (
+                          {/* Mirrors users_update_guard_trigger's rule 4 (confirmed gap this
+                              closes: this dropdown previously offered every role to every caller
+                              who can reach this form, including team leads — the trigger would
+                              reject most of those choices server-side, but only after a failed
+                              save). u.role is always included even if outside the caller's own
+                              assignable set, so leaving it unchanged stays possible. */}
+                          {assignableRolesFor(currentUser.role, u.role, VALID_ROLES).map((r) => (
                             <option key={r} value={r} className="bg-stone-900">{getRoleInfo(r).englishTitle}</option>
                           ))}
                         </select>

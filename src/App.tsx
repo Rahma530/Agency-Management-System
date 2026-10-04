@@ -3078,9 +3078,14 @@ export default function App() {
         const { error } = await supabaseRaw.from('users').update(updates).eq('id', userId);
         if (error) throw error;
       } catch (err: any) {
+        // Re-thrown rather than swallowed into a generic notification — EmployeeAdminHub's own
+        // edit-form catch block (handleSaveEdit) surfaces err.message directly in its error box,
+        // and that needs to be the REAL error, in particular users_update_guard_trigger's specific
+        // raise exception messages (self role-change blocked, out-of-department role change
+        // blocked, team/manager_id restricted to exec/HoT/ai_engineer, etc.) rather than a generic
+        // "Unable to save employee changes" that hides exactly why the save was rejected.
         console.error('Supabase error updating employee:', err);
-        showNotification('Unable to save employee changes.', 'info');
-        return;
+        throw err;
       }
     }
 
