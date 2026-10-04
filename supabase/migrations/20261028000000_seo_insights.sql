@@ -73,5 +73,6 @@ with check (
 );
 
 grant select, insert, update on public.seo_insights to authenticated;
+grant select, insert, update, delete on public.seo_insights to service_role;
 
 commit;
