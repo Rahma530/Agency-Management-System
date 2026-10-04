@@ -384,9 +384,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     [campaigns, client.id]
   );
 
-  // Client Logs & Notes — filtered directly by daily_logs.client_id (see
-  // 20261028100000_daily_logs_report_scope_visibility.sql's RLS widening, which makes this tab's
-  // underlying data visible in the first place). Previously a fragile heuristic
+  // Client Logs & Notes — filtered directly by daily_logs.client_id. This tab has no department
+  // filter of its own, so who actually sees which logs here is entirely down to RLS
+  // (daily_logs_select_rls, 20261028100000_daily_logs_report_scope_visibility.sql): executive,
+  // head_of_technical, ai_engineer, am_team_lead, and the client's own am_agent see every
+  // department's logs for this client; every other (department) role only sees logs covered by
+  // direct_report_visible — their own, or their direct reports'. Previously a fragile heuristic
   // (summary_text.includes(client.name), with a linked-task-id fallback) that both missed logs
   // whose text didn't happen to mention the client by name and could false-positive on a log for a
   // differently-named client whose summary happened to contain this one's name as a substring.
