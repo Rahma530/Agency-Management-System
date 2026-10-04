@@ -9,24 +9,19 @@
 -- handleUpdateEmployee wrapper entirely (e.g. from browser devtools). This trigger closes that gap
 -- at the one place no RLS policy can reach: per-column enforcement within a single UPDATE.
 --
--- Audited role list used below (confirmed from the live schema, not assumed):
---   - users_role_check (20260928100000_canonical_schema_v4.sql) currently permits 16 values:
---     executive, head_of_technical, sales, am_team_lead, am_agent, media_buying_team_lead,
---     media_buying_agent, seo_team_lead, seo_agent, programming_agent, social_media_team_lead,
---     social_media_agent, graphic_designer, video_editor, ai_engineer, marketing_manager.
---   - src/types/database.ts's UserRole union additionally includes seo_content_agent and
---     seo_backlink_agent (18 values total) — used throughout the frontend (roles.ts,
---     CapacityManagement.tsx) as full SEO department members, but users_role_check was never
---     widened to admit them. Two separate, pre-existing bugs, NOT fixed by this migration:
---       1. A user cannot actually be inserted/updated to role = 'seo_content_agent' or
---          'seo_backlink_agent' today — Postgres rejects it at the check constraint.
---       2. employee_visible() (20261019000000_ai_engineer_full_application_authorization.sql)
---          grants seo_team_lead visibility into 'seo_agent'/'programming_agent' only — it does not
---          list seo_content_agent/seo_backlink_agent, so even once bug 1 is fixed, a seo_team_lead
---          still wouldn't be able to see those rows without a separate employee_visible() change.
---   This trigger's seo_team_lead agent-set below is written to be correct once both of those are
---   fixed (it lists all four SEO agent-level roles), rather than silently reinforcing bug 1/2 by
---   only allowing what happens to work today.
+-- Audited role list used below (confirmed against the live schema): users_role_check permits all
+-- 18 UserRole values, including seo_content_agent and seo_backlink_agent — both are real,
+-- insertable/updatable roles today, not a frontend-only aspiration. (An earlier pass at this audit
+-- had incorrectly concluded users_role_check was missing these two; corrected here — no migration
+-- is needed for the constraint itself.)
+--
+-- One separate, pre-existing bug remains, NOT fixed by this migration: employee_visible()
+-- (20261019000000_ai_engineer_full_application_authorization.sql) grants seo_team_lead visibility
+-- into 'seo_agent'/'programming_agent' only — it does not list seo_content_agent/
+-- seo_backlink_agent, so a seo_team_lead can't see those rows at all today, even though this
+-- trigger (correctly) lets them change role on one once they can see it. This trigger's
+-- seo_team_lead agent-set below is written to be correct once employee_visible() is fixed (a
+-- separate migration), rather than quietly matching today's narrower, broken visibility.
 --
 -- Department team-lead -> agent-level-role mapping used below, cross-checked against
 -- src/data/roles.ts's TEAM_LEAD_TO_AGENT_ROLE (the frontend's own "single source of truth" for
