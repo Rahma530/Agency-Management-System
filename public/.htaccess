@@ -17,12 +17,28 @@
   RewriteBase /
 
   # Serve real files/directories (assets, fonts, etc.) directly — only an unmatched path falls
-  # through to index.html for the SPA's own client-side routing.
+  # through to the catch-all below for the SPA's own client-side routing. This check MUST stay
+  # before the catch-all: the catch-all's pattern matches literally any request, so if it ran
+  # first, every asset request (JS/CSS/fonts) would get rewritten to index.html too. Deliberately
+  # untouched by the no-cache flag below: JS/CSS/fonts must stay cached by LSCache too, exactly as
+  # aggressively as the Cache-Control headers further down already tell any other cache to.
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  RewriteRule . /index.html [L]
+  # This catch-all only actually fires for a non-existent SPA sub-route (e.g. a deep link) — a
+  # direct request for "/" or "/index.html" matches the passthrough rule above instead (the file/
+  # directory already exists) and never reaches this line. That asymmetry is fine: the mod_headers
+  # Cache-Control/X-LiteSpeed-Cache-Control block further down is what gives index.html full,
+  # routing-path-independent coverage (it matches on the FILE Apache ends up serving, not on which
+  # rule got it there). The E=Cache-Control flag here is additional, partial-coverage
+  # defense-in-depth for the one case this file CAN reach, using LSCache's own second, independent
+  # cache-control surface: LiteSpeed's documented devguide (docs.litespeedtech.com/lscache/devguide/
+  # controls/) describes RewriteRule-set `E=Cache-Control:<value>` environment variables as a
+  # mechanism its cache engine inspects directly, separate from the ordinary HTTP Cache-Control
+  # header a browser/CDN would read — relevant here because LSCache can apply its own caching
+  # decisions on top of (not strictly bound by) standard Cache-Control semantics.
+  RewriteRule . /index.html [L,E=Cache-Control:no-cache]
 </IfModule>
 
 <IfModule mod_headers.c>
@@ -33,6 +49,15 @@
     Header set Cache-Control "no-cache, no-store, must-revalidate"
     Header set Pragma "no-cache"
     Header set Expires "0"
+    # LiteSpeed-specific, and deliberately in addition to (not instead of) the standard
+    # Cache-Control header above: LiteSpeed's own devguide documents X-LiteSpeed-Cache-Control as a
+    # response header LSCache's engine reads directly, overriding any cache decision it would
+    # otherwise make from the standard Cache-Control header — i.e. it's possible for LSCache to
+    # still cache a response whose Cache-Control header says not to, unless this header is also
+    # present. This is the confirmed, documented reason a manual "Purge All" didn't fix staleness:
+    # the standard header alone was never guaranteed to stop LSCache from re-caching index.html on
+    # its own next crawl/request after a purge.
+    Header set X-LiteSpeed-Cache-Control "no-cache"
   </FilesMatch>
 
   # Vite-built JS/CSS are the only .js/.css files this app ships (confirmed: nothing under
