@@ -104,6 +104,43 @@ export const DEPARTMENT_TEAM_LEAD_ROLES: UserRole[] = [
 export const canManageEmployeesOrClients = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
 
+// Each team lead's own department agent-level roles — mirrors users_update_guard_trigger's rule 4
+// exactly (20261030000000_users_update_guard_trigger.sql): the only role values that trigger lets
+// that team lead move someone between (never a team lead role, never another department). Kept
+// separate from TEAM_LEAD_TO_AGENT_ROLE (data/roles.ts) rather than reusing it: that constant has
+// its own other consumers (capacity edit rights, report scoping, task board filtering) and its SEO
+// entry omits programming_agent, while employee_visible() includes it and this trigger — matching
+// this request's explicit instruction — includes it too. Changing TEAM_LEAD_TO_AGENT_ROLE itself
+// would ripple into those unrelated consumers; this is its own single source of truth for the one
+// thing it's for: role-change rights.
+const TEAM_LEAD_ASSIGNABLE_AGENT_ROLES: Partial<Record<UserRole, UserRole[]>> = {
+  am_team_lead: ['am_agent'],
+  media_buying_team_lead: ['media_buying_agent'],
+  seo_team_lead: ['seo_agent', 'programming_agent', 'seo_content_agent', 'seo_backlink_agent'],
+  social_media_team_lead: ['social_media_agent'],
+};
+
+// The role VALUES a given caller may set on someone else's row, per users_update_guard_trigger's
+// rule 4 — executive/head_of_technical/ai_engineer may set any role (allRoles, passed in since
+// that full list lives in data/roles.ts's AGENCY_ROLES, which this file doesn't otherwise need);
+// each team lead is restricted to their own department's agent-level set above; anyone else gets
+// none (and never reaches the Edit Employee form at all — canManageEmployeesOrClients gates that
+// higher up). currentRoleOnRow is always included even when it falls outside the caller's own set,
+// so a team lead editing a row they can only VIEW but not role-change (employee_visible() can show
+// more than it lets them edit) still has their existing value selectable as a no-op — the trigger,
+// not this list, is what actually blocks a real change away from it.
+export const assignableRolesFor = (
+  callerRole: UserRole,
+  currentRoleOnRow: UserRole,
+  allRoles: UserRole[]
+): UserRole[] => {
+  if (callerRole === 'executive' || callerRole === 'head_of_technical' || callerRole === 'ai_engineer') {
+    return allRoles;
+  }
+  const deptRoles = TEAM_LEAD_ASSIGNABLE_AGENT_ROLES[callerRole] || [];
+  return deptRoles.includes(currentRoleOnRow) ? deptRoles : [...deptRoles, currentRoleOnRow];
+};
+
 // Who can access the "Client Onboarding" sidebar tab at all: sales sees SalesPortalView there,
 // every other role in this list sees AMQueue's onboarding & reassignment queue. Shared by both
 // App.tsx's sidebar nav visibility and AMQueue's own "Access Restricted" gate, so a role that
