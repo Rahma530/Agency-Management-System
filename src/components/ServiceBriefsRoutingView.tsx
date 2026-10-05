@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import {
   ClientRecord,
+  ClientAccessFields,
   UserRecord,
   BriefRecord,
   BriefRevisionRecord,
@@ -133,21 +134,8 @@ interface ServiceBriefsRoutingViewProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
-  onUpdateClientAccess?: (
-    clientId: string,
-    updates: {
-      general_email?: string | null;
-      general_email_password?: string | null;
-      store_platform_username?: string | null;
-      store_platform_password?: string | null;
-      social_media_username?: string | null;
-      social_media_password?: string | null;
-      ad_account_username?: string | null;
-      ad_account_password?: string | null;
-      ad_account_setup_type?: 'existing' | 'new' | null;
-      payment_card_details?: string | null;
-    }
-  ) => Promise<void>;
+  onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
+  onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
 }
 
 // AM roles (am_team_lead, am_agent) don't work a single service — they need visibility into
@@ -210,21 +198,8 @@ const AMServiceBriefsPanel: React.FC<{
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
-  onUpdateClientAccess?: (
-    clientId: string,
-    updates: {
-      general_email?: string | null;
-      general_email_password?: string | null;
-      store_platform_username?: string | null;
-      store_platform_password?: string | null;
-      social_media_username?: string | null;
-      social_media_password?: string | null;
-      ad_account_username?: string | null;
-      ad_account_password?: string | null;
-      ad_account_setup_type?: 'existing' | 'new' | null;
-      payment_card_details?: string | null;
-    }
-  ) => Promise<void>;
+  onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
+  onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
 }> = ({
   currentUser,
   clients,
@@ -260,6 +235,7 @@ const AMServiceBriefsPanel: React.FC<{
   onDeleteClient,
   onUpdatePaymentTracking,
   onUpdateClientAccess,
+  onFetchClientAccess,
 }) => {
   const isTeamLead = currentUser.role === 'am_team_lead';
 
@@ -394,6 +370,7 @@ const AMServiceBriefsPanel: React.FC<{
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
           onUpdateClientAccess={onUpdateClientAccess}
+          onFetchClientAccess={onFetchClientAccess}
         />
       )}
     </div>
@@ -441,6 +418,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onDeleteClient,
   onUpdatePaymentTracking,
   onUpdateClientAccess,
+  onFetchClientAccess,
 }) => {
   // AM roles get a dedicated cross-service overview instead of the single-service specialist
   // workflow below (they manage the overall client relationship, not one department's queue).
@@ -481,6 +459,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         onDeleteClient={onDeleteClient}
         onUpdatePaymentTracking={onUpdatePaymentTracking}
         onUpdateClientAccess={onUpdateClientAccess}
+        onFetchClientAccess={onFetchClientAccess}
       />
     );
   }
@@ -1174,6 +1153,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
           onUpdateClientAccess={onUpdateClientAccess}
+          onFetchClientAccess={onFetchClientAccess}
           onLogSocialMetrics={onLogSocialMetrics}
           onLogSeoMetrics={onLogSeoMetrics}
         />

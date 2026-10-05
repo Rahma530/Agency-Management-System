@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { supabase, supabaseRaw } from './lib/supabase';
-import { ClientRecord, ClientPortalUserRecord } from './types/database';
+import { ClientRecord, ClientPortalUserRecord, NON_SENSITIVE_CLIENT_COLUMNS } from './types/database';
 import { ClientPortalLogin } from './components/clientPortal/ClientPortalLogin';
 import { ClientPortalView } from './components/clientPortal/ClientPortalView';
 
@@ -42,7 +42,11 @@ export default function ClientPortalApp() {
 
       setPortalUser(pu as ClientPortalUserRecord);
 
-      const { data: c } = await supabaseRaw.from('clients').select('*').eq('id', pu.client_id).single();
+      const { data: c } = await supabaseRaw
+        .from('clients')
+        .select(NON_SENSITIVE_CLIENT_COLUMNS)
+        .eq('id', pu.client_id)
+        .single();
       setClient((c as ClientRecord) || null);
     } catch (err) {
       console.warn('Client portal session check warning:', err);

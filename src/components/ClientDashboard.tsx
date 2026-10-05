@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Building2,
@@ -30,9 +30,12 @@ import {
   StickyNote,
   Share2,
   Search,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   ClientRecord,
+  ClientAccessFields,
   ClientStatus,
   UserRecord,
   BriefRecord,
@@ -187,21 +190,13 @@ interface ClientDashboardProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
-  onUpdateClientAccess?: (
-    clientId: string,
-    updates: {
-      general_email?: string | null;
-      general_email_password?: string | null;
-      store_platform_username?: string | null;
-      store_platform_password?: string | null;
-      social_media_username?: string | null;
-      social_media_password?: string | null;
-      ad_account_username?: string | null;
-      ad_account_password?: string | null;
-      ad_account_setup_type?: 'existing' | 'new' | null;
-      payment_card_details?: string | null;
-    }
-  ) => Promise<void>;
+  onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
+  // Fetches the 10 Client Access columns via the get_client_access() RPC — called only when the
+  // Client Access section is opened (not eagerly with the rest of the client), since
+  // public.clients no longer grants authenticated SELECT on these columns at all; they only ever
+  // reach the browser through this narrow, audit-logged RPC. Returns null on any failure
+  // (permission denied, network error) — same non-throwing convention as onGenerateAiSummary.
+  onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
   // Weekly manual-entry write path for social_insights (see
   // 20261025000000_social_insights_weekly_manual_entry.sql) — omitted entirely means "this viewer
   // can't log social metrics for this client", same optional-prop convention as onGenerateAiSummary.
@@ -273,6 +268,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onDeleteClientContract,
   onUpdatePaymentTracking,
   onUpdateClientAccess,
+  onFetchClientAccess,
   onLogSocialMetrics,
   onLogSeoMetrics,
 }) => {
@@ -307,19 +303,32 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isSavingPaymentTracking, setIsSavingPaymentTracking] = useState(false);
   const [isEditingClientAccess, setIsEditingClientAccess] = useState(false);
   const [isClientAccessSelected, setIsClientAccessSelected] = useState(false);
+  // public.clients no longer carries these 10 columns in `client` (the app's shared select no
+  // longer grants them) — clientAccessData is fetched separately, on demand, via
+  // get_client_access() below, and is this screen's own source of truth for them (never merged
+  // into the shared `clients` app state).
+  const [clientAccessData, setClientAccessData] = useState<ClientAccessFields | null>(null);
+  const [isLoadingClientAccess, setIsLoadingClientAccess] = useState(false);
+  const [clientAccessLoadError, setClientAccessLoadError] = useState('');
   const [clientAccessDraft, setClientAccessDraft] = useState({
-    general_email: client.general_email || '',
-    general_email_password: client.general_email_password || '',
-    store_platform_username: client.store_platform_username || '',
-    store_platform_password: client.store_platform_password || '',
-    social_media_username: client.social_media_username || '',
-    social_media_password: client.social_media_password || '',
-    ad_account_username: client.ad_account_username || '',
-    ad_account_password: client.ad_account_password || '',
-    ad_account_setup_type: client.ad_account_setup_type || ('' as '' | 'existing' | 'new'),
-    payment_card_details: client.payment_card_details || '',
+    general_email: '',
+    general_email_password: '',
+    store_platform_username: '',
+    store_platform_password: '',
+    social_media_username: '',
+    social_media_password: '',
+    ad_account_username: '',
+    ad_account_password: '',
+    ad_account_setup_type: '' as '' | 'existing' | 'new',
+    payment_card_details: '',
   });
   const [isSavingClientAccess, setIsSavingClientAccess] = useState(false);
+  // Show/hide toggles for the 4 password fields + payment_card_details, keyed by field name —
+  // masked by default (screen-share safety); applies in both the edit draft and the read-only view.
+  const [visibleAccessFields, setVisibleAccessFields] = useState<Record<string, boolean>>({});
+  const toggleAccessFieldVisibility = (field: string) =>
+    setVisibleAccessFields((prev) => ({ ...prev, [field]: !prev[field] }));
+  const maskSecret = (value: string) => '•'.repeat(Math.min(Math.max(value.length, 8), 32));
 
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
   const services: ServiceType[] = useMemo(() => normalizeClientServices(client.services), [client.services]);
@@ -464,16 +473,43 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // + setup type, and payment card details, collected during the Brief phase (rendered as a
   // selectable section alongside the per-service brief buttons in the Service Briefs tab below,
   // not a separate top-level dashboard tab). Both visibility (whether the selector even appears)
-  // AND edit rights are the single shared canAccessClientSensitiveInfo() check — all four roles
-  // (executive/head_of_technical/am_team_lead/am_agent) can both view and edit; every field is
-  // independently optional and never blocks saving. Unlike Payment Tracking above, am_agent's
-  // write path here goes through the update_client_access() RPC (App.tsx's
+  // AND edit rights are the single shared canAccessClientSensitiveInfo() check — all five roles
+  // (executive/head_of_technical/am_team_lead/am_agent/ai_engineer) can both view and edit; every
+  // field is independently optional and never blocks saving. Unlike Payment Tracking above,
+  // am_agent's write path here goes through the update_client_access() RPC (App.tsx's
   // handleUpdateClientAccess), not a direct table update — that RPC scopes am_agent's write to
   // exactly these Client Access columns on their own assigned client, since
   // clients_update_am_assignment_rls (the only general UPDATE policy on clients) still excludes
-  // am_agent entirely.
+  // am_agent entirely. Reading these columns goes through the separate get_client_access() RPC
+  // (fetched on demand below, only once this section is opened) — public.clients itself no longer
+  // grants authenticated SELECT on any of these 10 columns at all.
   const canSeeClientAccessTab = canAccessClientSensitiveInfo(currentUser.role);
   const canEditClientAccess = canAccessClientSensitiveInfo(currentUser.role);
+
+  // Fetches Client Access only when the section is actually opened — never eagerly with the rest
+  // of the client, since this is the one path allowed to see these columns at all. Re-fetches if
+  // the viewer switches to a different client while the section stays selected.
+  useEffect(() => {
+    if (!isClientAccessSelected || !canSeeClientAccessTab || !onFetchClientAccess) return;
+    let cancelled = false;
+    setIsLoadingClientAccess(true);
+    setClientAccessLoadError('');
+    onFetchClientAccess(client.id)
+      .then((result) => {
+        if (cancelled) return;
+        if (result) {
+          setClientAccessData(result);
+        } else {
+          setClientAccessLoadError('Unable to load Client Access details.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingClientAccess(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isClientAccessSelected, client.id, canSeeClientAccessTab, onFetchClientAccess]);
 
   // Brief content editing is restricted to Account Management + leadership only — see
   // canEditServiceBrief's own comment in lib/permissions.ts for why department team leads/agents
@@ -693,7 +729,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     if (!onUpdateClientAccess) return;
     setIsSavingClientAccess(true);
     try {
-      await onUpdateClientAccess(client.id, {
+      const payload: ClientAccessFields = {
         general_email: clientAccessDraft.general_email || null,
         general_email_password: clientAccessDraft.general_email_password || null,
         store_platform_username: clientAccessDraft.store_platform_username || null,
@@ -704,7 +740,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
         ad_account_password: clientAccessDraft.ad_account_password || null,
         ad_account_setup_type: clientAccessDraft.ad_account_setup_type || null,
         payment_card_details: clientAccessDraft.payment_card_details || null,
-      });
+      };
+      await onUpdateClientAccess(client.id, payload);
+      // update_client_access() no longer returns the sensitive columns (so the shared `clients`
+      // app state never carries them) — reflect the just-saved values in this screen's own
+      // separately-fetched clientAccessData instead of re-fetching.
+      setClientAccessData(payload);
       setIsEditingClientAccess(false);
     } finally {
       setIsSavingClientAccess(false);
@@ -1769,9 +1810,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           <KeyRound className="w-4 h-4 text-purple-400" />
                           <span>Client Access</span>
                         </h3>
-                        {canEditClientAccess && onUpdateClientAccess && !isEditingClientAccess && (
+                        {canEditClientAccess && onUpdateClientAccess && !isEditingClientAccess && clientAccessData && (
                           <button
-                            onClick={() => setIsEditingClientAccess(true)}
+                            onClick={() => {
+                              setClientAccessDraft({
+                                general_email: clientAccessData.general_email || '',
+                                general_email_password: clientAccessData.general_email_password || '',
+                                store_platform_username: clientAccessData.store_platform_username || '',
+                                store_platform_password: clientAccessData.store_platform_password || '',
+                                social_media_username: clientAccessData.social_media_username || '',
+                                social_media_password: clientAccessData.social_media_password || '',
+                                ad_account_username: clientAccessData.ad_account_username || '',
+                                ad_account_password: clientAccessData.ad_account_password || '',
+                                ad_account_setup_type: clientAccessData.ad_account_setup_type || '',
+                                payment_card_details: clientAccessData.payment_card_details || '',
+                              });
+                              setIsEditingClientAccess(true);
+                            }}
                             className="text-[11px] font-bold text-purple-300 hover:text-white flex items-center gap-1"
                           >
                             <Edit2 className="w-3 h-3" />
@@ -1785,7 +1840,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         added later.
                       </p>
 
-                      {isEditingClientAccess ? (
+                      {isLoadingClientAccess && (
+                        <p className="text-[11px] text-stone-500">Loading Client Access details...</p>
+                      )}
+                      {!isLoadingClientAccess && clientAccessLoadError && (
+                        <p className="text-[11px] text-red-400">{clientAccessLoadError}</p>
+                      )}
+
+                      {!isLoadingClientAccess && (clientAccessData || isEditingClientAccess) && (isEditingClientAccess ? (
                         <div className="space-y-3">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <label className="text-[11px] text-stone-400 space-y-1 block">
@@ -1801,14 +1863,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             </label>
                             <label className="text-[11px] text-stone-400 space-y-1 block">
                               <span>General Email Password</span>
-                              <input
-                                type="text"
-                                value={clientAccessDraft.general_email_password}
-                                onChange={(e) =>
-                                  setClientAccessDraft((prev) => ({ ...prev, general_email_password: e.target.value }))
-                                }
-                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
-                              />
+                              <div className="relative">
+                                <input
+                                  type={visibleAccessFields.general_email_password ? 'text' : 'password'}
+                                  value={clientAccessDraft.general_email_password}
+                                  onChange={(e) =>
+                                    setClientAccessDraft((prev) => ({ ...prev, general_email_password: e.target.value }))
+                                  }
+                                  className="w-full px-2.5 py-1.5 pr-8 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAccessFieldVisibility('general_email_password')}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white"
+                                >
+                                  {visibleAccessFields.general_email_password ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
                             </label>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1825,14 +1896,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             </label>
                             <label className="text-[11px] text-stone-400 space-y-1 block">
                               <span>Store Platform Password</span>
-                              <input
-                                type="text"
-                                value={clientAccessDraft.store_platform_password}
-                                onChange={(e) =>
-                                  setClientAccessDraft((prev) => ({ ...prev, store_platform_password: e.target.value }))
-                                }
-                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
-                              />
+                              <div className="relative">
+                                <input
+                                  type={visibleAccessFields.store_platform_password ? 'text' : 'password'}
+                                  value={clientAccessDraft.store_platform_password}
+                                  onChange={(e) =>
+                                    setClientAccessDraft((prev) => ({ ...prev, store_platform_password: e.target.value }))
+                                  }
+                                  className="w-full px-2.5 py-1.5 pr-8 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAccessFieldVisibility('store_platform_password')}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white"
+                                >
+                                  {visibleAccessFields.store_platform_password ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
                             </label>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1849,14 +1929,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             </label>
                             <label className="text-[11px] text-stone-400 space-y-1 block">
                               <span>Social Media Account Password</span>
-                              <input
-                                type="text"
-                                value={clientAccessDraft.social_media_password}
-                                onChange={(e) =>
-                                  setClientAccessDraft((prev) => ({ ...prev, social_media_password: e.target.value }))
-                                }
-                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
-                              />
+                              <div className="relative">
+                                <input
+                                  type={visibleAccessFields.social_media_password ? 'text' : 'password'}
+                                  value={clientAccessDraft.social_media_password}
+                                  onChange={(e) =>
+                                    setClientAccessDraft((prev) => ({ ...prev, social_media_password: e.target.value }))
+                                  }
+                                  className="w-full px-2.5 py-1.5 pr-8 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAccessFieldVisibility('social_media_password')}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white"
+                                >
+                                  {visibleAccessFields.social_media_password ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
                             </label>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1873,14 +1962,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             </label>
                             <label className="text-[11px] text-stone-400 space-y-1 block">
                               <span>Advertising Account Password</span>
-                              <input
-                                type="text"
-                                value={clientAccessDraft.ad_account_password}
-                                onChange={(e) =>
-                                  setClientAccessDraft((prev) => ({ ...prev, ad_account_password: e.target.value }))
-                                }
-                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
-                              />
+                              <div className="relative">
+                                <input
+                                  type={visibleAccessFields.ad_account_password ? 'text' : 'password'}
+                                  value={clientAccessDraft.ad_account_password}
+                                  onChange={(e) =>
+                                    setClientAccessDraft((prev) => ({ ...prev, ad_account_password: e.target.value }))
+                                  }
+                                  className="w-full px-2.5 py-1.5 pr-8 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAccessFieldVisibility('ad_account_password')}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white"
+                                >
+                                  {visibleAccessFields.ad_account_password ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
                             </label>
                           </div>
                           <label className="text-[11px] text-stone-400 space-y-1 block">
@@ -1901,16 +1999,37 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             </select>
                           </label>
                           <label className="text-[11px] text-stone-400 space-y-1 block">
-                            <span>Payment Method / Card (Visa) Details</span>
-                            <textarea
-                              rows={2}
-                              value={clientAccessDraft.payment_card_details}
-                              onChange={(e) =>
-                                setClientAccessDraft((prev) => ({ ...prev, payment_card_details: e.target.value }))
-                              }
-                              placeholder="Card to later link to ad campaigns..."
-                              className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none resize-y"
-                            />
+                            <div className="flex items-center justify-between">
+                              <span>Payment Method / Card (Visa) Details</span>
+                              <button
+                                type="button"
+                                onClick={() => toggleAccessFieldVisibility('payment_card_details')}
+                                className="text-purple-300 hover:text-white flex items-center gap-1 text-[10px] font-bold"
+                              >
+                                {visibleAccessFields.payment_card_details ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                <span>{visibleAccessFields.payment_card_details ? 'Hide' : 'Show'}</span>
+                              </button>
+                            </div>
+                            {visibleAccessFields.payment_card_details ? (
+                              <textarea
+                                rows={2}
+                                value={clientAccessDraft.payment_card_details}
+                                onChange={(e) =>
+                                  setClientAccessDraft((prev) => ({ ...prev, payment_card_details: e.target.value }))
+                                }
+                                placeholder="Card to later link to ad campaigns..."
+                                className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none resize-y"
+                              />
+                            ) : (
+                              <div className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-stone-500 font-mono tracking-widest">
+                                {clientAccessDraft.payment_card_details
+                                  ? maskSecret(clientAccessDraft.payment_card_details)
+                                  : 'Not set — click Show to enter'}
+                              </div>
+                            )}
+                            <p className="text-[10px] text-amber-300/80">
+                              Sensitive data. Don't display it during screen sharing.
+                            </p>
                           </label>
                           <div className="flex items-center gap-2">
                             <button
@@ -1924,16 +2043,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                               onClick={() => {
                                 setIsEditingClientAccess(false);
                                 setClientAccessDraft({
-                                  general_email: client.general_email || '',
-                                  general_email_password: client.general_email_password || '',
-                                  store_platform_username: client.store_platform_username || '',
-                                  store_platform_password: client.store_platform_password || '',
-                                  social_media_username: client.social_media_username || '',
-                                  social_media_password: client.social_media_password || '',
-                                  ad_account_username: client.ad_account_username || '',
-                                  ad_account_password: client.ad_account_password || '',
-                                  ad_account_setup_type: client.ad_account_setup_type || '',
-                                  payment_card_details: client.payment_card_details || '',
+                                  general_email: clientAccessData?.general_email || '',
+                                  general_email_password: clientAccessData?.general_email_password || '',
+                                  store_platform_username: clientAccessData?.store_platform_username || '',
+                                  store_platform_password: clientAccessData?.store_platform_password || '',
+                                  social_media_username: clientAccessData?.social_media_username || '',
+                                  social_media_password: clientAccessData?.social_media_password || '',
+                                  ad_account_username: clientAccessData?.ad_account_username || '',
+                                  ad_account_password: clientAccessData?.ad_account_password || '',
+                                  ad_account_setup_type: clientAccessData?.ad_account_setup_type || '',
+                                  payment_card_details: clientAccessData?.payment_card_details || '',
                                 });
                               }}
                               className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-stone-300 bg-stone-800 hover:bg-stone-700"
@@ -1947,12 +2066,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <span className="text-[11px] text-stone-400 block">General Email (Gmail)</span>
-                              <p className="text-sm font-bold text-white font-mono">{client.general_email || 'Not set'}</p>
+                              <p className="text-sm font-bold text-white font-mono">{clientAccessData?.general_email || 'Not set'}</p>
                             </div>
                             <div>
-                              <span className="text-[11px] text-stone-400 block">General Email Password</span>
+                              <span className="text-[11px] text-stone-400 flex items-center justify-between">
+                                <span>General Email Password</span>
+                                {clientAccessData?.general_email_password && (
+                                  <button type="button" onClick={() => toggleAccessFieldVisibility('general_email_password')} className="text-stone-400 hover:text-white">
+                                    {visibleAccessFields.general_email_password ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.general_email_password || 'Not set'}
+                                {clientAccessData?.general_email_password
+                                  ? (visibleAccessFields.general_email_password
+                                      ? clientAccessData.general_email_password
+                                      : maskSecret(clientAccessData.general_email_password))
+                                  : 'Not set'}
                               </p>
                             </div>
                           </div>
@@ -1960,13 +2090,24 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             <div>
                               <span className="text-[11px] text-stone-400 block">Store Platform Username</span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.store_platform_username || 'Not set'}
+                                {clientAccessData?.store_platform_username || 'Not set'}
                               </p>
                             </div>
                             <div>
-                              <span className="text-[11px] text-stone-400 block">Store Platform Password</span>
+                              <span className="text-[11px] text-stone-400 flex items-center justify-between">
+                                <span>Store Platform Password</span>
+                                {clientAccessData?.store_platform_password && (
+                                  <button type="button" onClick={() => toggleAccessFieldVisibility('store_platform_password')} className="text-stone-400 hover:text-white">
+                                    {visibleAccessFields.store_platform_password ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.store_platform_password || 'Not set'}
+                                {clientAccessData?.store_platform_password
+                                  ? (visibleAccessFields.store_platform_password
+                                      ? clientAccessData.store_platform_password
+                                      : maskSecret(clientAccessData.store_platform_password))
+                                  : 'Not set'}
                               </p>
                             </div>
                           </div>
@@ -1974,13 +2115,24 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             <div>
                               <span className="text-[11px] text-stone-400 block">Social Media Account Username</span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.social_media_username || 'Not set'}
+                                {clientAccessData?.social_media_username || 'Not set'}
                               </p>
                             </div>
                             <div>
-                              <span className="text-[11px] text-stone-400 block">Social Media Account Password</span>
+                              <span className="text-[11px] text-stone-400 flex items-center justify-between">
+                                <span>Social Media Account Password</span>
+                                {clientAccessData?.social_media_password && (
+                                  <button type="button" onClick={() => toggleAccessFieldVisibility('social_media_password')} className="text-stone-400 hover:text-white">
+                                    {visibleAccessFields.social_media_password ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.social_media_password || 'Not set'}
+                                {clientAccessData?.social_media_password
+                                  ? (visibleAccessFields.social_media_password
+                                      ? clientAccessData.social_media_password
+                                      : maskSecret(clientAccessData.social_media_password))
+                                  : 'Not set'}
                               </p>
                             </div>
                           </div>
@@ -1988,34 +2140,64 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             <div>
                               <span className="text-[11px] text-stone-400 block">Advertising Account Username</span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.ad_account_username || 'Not set'}
+                                {clientAccessData?.ad_account_username || 'Not set'}
                               </p>
                             </div>
                             <div>
-                              <span className="text-[11px] text-stone-400 block">Advertising Account Password</span>
+                              <span className="text-[11px] text-stone-400 flex items-center justify-between">
+                                <span>Advertising Account Password</span>
+                                {clientAccessData?.ad_account_password && (
+                                  <button type="button" onClick={() => toggleAccessFieldVisibility('ad_account_password')} className="text-stone-400 hover:text-white">
+                                    {visibleAccessFields.ad_account_password ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </span>
                               <p className="text-sm font-bold text-white font-mono">
-                                {client.ad_account_password || 'Not set'}
+                                {clientAccessData?.ad_account_password
+                                  ? (visibleAccessFields.ad_account_password
+                                      ? clientAccessData.ad_account_password
+                                      : maskSecret(clientAccessData.ad_account_password))
+                                  : 'Not set'}
                               </p>
                             </div>
                           </div>
                           <div>
                             <span className="text-[11px] text-stone-400 block">Ad Account Setup</span>
                             <p className="text-sm font-bold text-white">
-                              {client.ad_account_setup_type === 'existing'
+                              {clientAccessData?.ad_account_setup_type === 'existing'
                                 ? 'Rent/use an existing ad account'
-                                : client.ad_account_setup_type === 'new'
+                                : clientAccessData?.ad_account_setup_type === 'new'
                                 ? 'Create a new ad account'
                                 : 'Not decided / unknown'}
                             </p>
                           </div>
                           <div>
-                            <span className="text-[11px] text-stone-400 block">Payment Method / Card (Visa) Details</span>
-                            <p className="text-xs text-stone-200 whitespace-pre-wrap">
-                              {client.payment_card_details || 'Not set'}
+                            <span className="text-[11px] text-stone-400 flex items-center justify-between">
+                              <span>Payment Method / Card (Visa) Details</span>
+                              {clientAccessData?.payment_card_details && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAccessFieldVisibility('payment_card_details')}
+                                  className="text-purple-300 hover:text-white flex items-center gap-1 text-[10px] font-bold"
+                                >
+                                  {visibleAccessFields.payment_card_details ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  <span>{visibleAccessFields.payment_card_details ? 'Hide' : 'Show'}</span>
+                                </button>
+                              )}
+                            </span>
+                            <p className="text-xs text-stone-200 whitespace-pre-wrap font-mono">
+                              {clientAccessData?.payment_card_details
+                                ? (visibleAccessFields.payment_card_details
+                                    ? clientAccessData.payment_card_details
+                                    : maskSecret(clientAccessData.payment_card_details))
+                                : 'Not set'}
+                            </p>
+                            <p className="text-[10px] text-amber-300/80 mt-1">
+                              Sensitive data. Don't display it during screen sharing.
                             </p>
                           </div>
                         </div>
-                      )}
+                      ))}
                     </div>
                   ) : selectedBriefService ? (
                     (() => {

@@ -30,6 +30,7 @@ import {
   CampaignRecord,
   CampaignStatus,
   ClientRecord,
+  ClientAccessFields,
   UserRecord,
   BriefRecord,
   BriefRevisionRecord,
@@ -116,21 +117,8 @@ interface CampaignManagementModuleProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
-  onUpdateClientAccess?: (
-    clientId: string,
-    updates: {
-      general_email?: string | null;
-      general_email_password?: string | null;
-      store_platform_username?: string | null;
-      store_platform_password?: string | null;
-      social_media_username?: string | null;
-      social_media_password?: string | null;
-      ad_account_username?: string | null;
-      ad_account_password?: string | null;
-      ad_account_setup_type?: 'existing' | 'new' | null;
-      payment_card_details?: string | null;
-    }
-  ) => Promise<void>;
+  onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
+  onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
 }
 
 // Helpers to extract campaign attributes safely whether stored at top-level or in results JSON
@@ -289,6 +277,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onDeleteClient,
   onUpdatePaymentTracking,
   onUpdateClientAccess,
+  onFetchClientAccess,
 }) => {
   const roleInfo = getRoleInfo(currentUser.role);
 
@@ -1903,6 +1892,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
           onUpdateClientAccess={onUpdateClientAccess}
+          onFetchClientAccess={onFetchClientAccess}
         />
       )}
     </div>

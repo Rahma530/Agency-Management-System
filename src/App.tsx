@@ -96,6 +96,8 @@ import {
   BriefFieldDef,
   PlatformCategory,
   PlatformConnectionStatus,
+  ClientAccessFields,
+  NON_SENSITIVE_CLIENT_COLUMNS,
 } from './types/database';
 import {
   INITIAL_USERS,
@@ -1295,7 +1297,9 @@ export default function App() {
     if (configured) {
       try {
         // Fetch clients
-        const { data: clientData, error: clientErr } = await supabaseRaw.from('clients').select('*');
+        const { data: clientData, error: clientErr } = await supabaseRaw
+          .from('clients')
+          .select(NON_SENSITIVE_CLIENT_COLUMNS);
         if (clientErr) {
           console.error('Failed to load clients from Supabase:', clientErr);
           showNotification(`Failed to load clients from the server: ${clientErr.message}`, 'info');
@@ -2263,7 +2267,10 @@ export default function App() {
 
     let persistedClient: ClientRecord;
     try {
-      const { data, error } = await supabaseRaw.from('clients').insert([newClientPayload]).select();
+      const { data, error } = await supabaseRaw
+        .from('clients')
+        .insert([newClientPayload])
+        .select(NON_SENSITIVE_CLIENT_COLUMNS);
       if (error) throw error;
       if (!data?.[0]) throw new Error('Client creation returned no persisted row.');
       persistedClient = data[0] as ClientRecord;
@@ -2362,7 +2369,10 @@ export default function App() {
     };
 
     try {
-      const { data, error } = await supabaseRaw.from('clients').insert([newClientPayload]).select();
+      const { data, error } = await supabaseRaw
+        .from('clients')
+        .insert([newClientPayload])
+        .select(NON_SENSITIVE_CLIENT_COLUMNS);
       if (error) throw error;
       if (!data?.[0]) throw new Error('Client creation returned no persisted row.');
       const persistedClient = data[0] as ClientRecord;
@@ -2455,7 +2465,7 @@ export default function App() {
       .from('clients')
       .update(updates)
       .eq('id', clientId)
-      .select('*')
+      .select(NON_SENSITIVE_CLIENT_COLUMNS)
       .single();
     if (error) throw error;
     if (!data) throw new Error('Client update returned no persisted row.');
@@ -2568,34 +2578,27 @@ export default function App() {
 
   // 2a-3. "Client Access": general email, store platform login, social media login, ad account
   // login + setup type, and payment card details — collected during the Brief phase, rendered in
-  // ClientDashboard.tsx's Service Briefs tab. All four roles gated by
-  // canAccessClientSensitiveInfo (executive/head_of_technical/am_team_lead/am_agent) can edit —
-  // routed through the update_client_access() RPC rather than a direct table update, since
+  // ClientDashboard.tsx's Service Briefs tab. All five roles gated by canAccessClientSensitiveInfo
+  // (executive/head_of_technical/am_team_lead/am_agent/ai_engineer) can edit — routed through the
+  // update_client_access() RPC rather than a direct table update, since
   // clients_update_am_assignment_rls (the only general UPDATE policy on clients) doesn't cover
-  // am_agent at all. The RPC re-checks the same four-role/own-client rule server-side and scopes
-  // the write to exactly these columns. Every field is optional; leaving any/all blank is expected
-  // (the client often hasn't shared them yet) and never blocks this save or anything downstream.
-  const handleUpdateClientAccess = async (
-    clientId: string,
-    updates: {
-      general_email?: string | null;
-      general_email_password?: string | null;
-      store_platform_username?: string | null;
-      store_platform_password?: string | null;
-      social_media_username?: string | null;
-      social_media_password?: string | null;
-      ad_account_username?: string | null;
-      ad_account_password?: string | null;
-      ad_account_setup_type?: 'existing' | 'new' | null;
-      payment_card_details?: string | null;
-    }
-  ) => {
+  // am_agent at all. The RPC re-checks the same role/own-client rule server-side and scopes the
+  // write to exactly these columns. Every field is optional; leaving any/all blank is expected (the
+  // client often hasn't shared them yet) and never blocks this save or anything downstream.
+  //
+  // update_client_access() now returns void (20261030500000_protect_client_access_columns.sql) —
+  // it used to return the full persisted clients row and merge it into the shared `clients` app
+  // state, which meant every one of these 10 sensitive columns briefly lived in state readable by
+  // every component that consumes `clients`, for every viewer with edit rights. ClientDashboard
+  // now keeps its own local copy of the just-saved values instead (see its handleSaveClientAccess);
+  // this handler no longer touches `clients` state at all.
+  const handleUpdateClientAccess = async (clientId: string, updates: Partial<ClientAccessFields>) => {
     if (!supabaseActive) {
       showNotification('Supabase is not configured; the client was not updated.', 'info');
       return;
     }
     try {
-      const { data, error } = await supabaseRaw.rpc('update_client_access', {
+      const { error } = await supabaseRaw.rpc('update_client_access', {
         p_client_id: clientId,
         p_general_email: updates.general_email ?? null,
         p_general_email_password: updates.general_email_password ?? null,
@@ -2609,15 +2612,32 @@ export default function App() {
         p_payment_card_details: updates.payment_card_details ?? null,
       });
       if (error) throw error;
-      if (!data) throw new Error('Client access update returned no persisted row.');
-      const persistedClient = data as ClientRecord;
-      setClients((prev) => prev.map((client) => (client.id === clientId ? persistedClient : client)));
     } catch (err) {
       console.error('Supabase update client access error:', err);
       showNotification('Unable to save client access details.', 'info');
       return;
     }
     showNotification('Client access details updated.');
+  };
+
+  // Fetches the 10 Client Access columns via the get_client_access() RPC — the only way this app
+  // ever reads them now that public.clients doesn't grant authenticated SELECT on them at all. The
+  // RPC itself re-checks the role/own-client rule server-side and logs every successful call into
+  // client_access_log (client_id, accessed_by, accessed_at) before returning. Never throws to its
+  // caller — returns null on any failure (permission denied, network error), same non-throwing
+  // convention as handleGenerateCampaignSummary; ClientDashboard treats null as "couldn't load."
+  const handleFetchClientAccess = async (clientId: string): Promise<ClientAccessFields | null> => {
+    if (!supabaseActive) return null;
+    try {
+      const { data, error } = await supabaseRaw.rpc('get_client_access', { p_client_id: clientId });
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) throw new Error('get_client_access returned no row.');
+      return row as ClientAccessFields;
+    } catch (err) {
+      console.error('Supabase get_client_access error:', err);
+      return null;
+    }
   };
 
   // 2b-2. Invite a client to the Client Portal: creates the placeholder client_portal_users row
@@ -5198,6 +5218,7 @@ export default function App() {
                     onDeleteClientContract={handleDeleteClientContract}
                     onUpdatePaymentTracking={handleUpdatePaymentTracking}
                     onUpdateClientAccess={handleUpdateClientAccess}
+                    onFetchClientAccess={handleFetchClientAccess}
                   />
                 )}
               </div>
@@ -5247,6 +5268,7 @@ export default function App() {
                   onSetPlatformConnectionStatus={handleSetPlatformConnectionStatus}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
                   onUpdateClientAccess={handleUpdateClientAccess}
+                  onFetchClientAccess={handleFetchClientAccess}
                 />
               </div>
             )}
@@ -5349,6 +5371,7 @@ export default function App() {
                   onDeleteClient={handleDeleteClient}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
                   onUpdateClientAccess={handleUpdateClientAccess}
+                  onFetchClientAccess={handleFetchClientAccess}
                 />
               </div>
             )}

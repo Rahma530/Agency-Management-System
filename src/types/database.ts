@@ -138,29 +138,42 @@ export interface ClientRecord {
   // period-scoped gained/lost client metrics in MyWorkHub; not a general "assigned since" display
   // field beyond that.
   am_agent_assigned_at?: string | null;
-  // "Client Access" — collected during the Brief phase (ClientDashboard.tsx's Service Briefs tab,
-  // alongside the per-service brief questions), one shared record per client rather than one per
-  // service, since none of these credentials vary by service. Every field is independently
-  // optional: this data is frequently unavailable when the AM is first talking to the client, and
-  // leaving any/all of it blank must never block saving a brief, submitting a form, or any
-  // downstream workflow. Plain text, same convention as phone_number/UserRecord.password
-  // elsewhere in this schema; visibility and edit rights are gated in the UI via
-  // canAccessClientSensitiveInfo(), not by a DB-level view. Distinct from client_portal_users,
-  // which is the CLIENT's own login into THIS app's portal.
-  general_email?: string | null;
-  general_email_password?: string | null;
-  store_platform_username?: string | null;
-  store_platform_password?: string | null;
-  social_media_username?: string | null;
-  social_media_password?: string | null;
-  ad_account_username?: string | null;
-  ad_account_password?: string | null;
-  // Whether the ad account used for this client's campaigns is an existing one being rented/
-  // reused, or a brand-new one created for them. Null = not yet decided/known.
-  ad_account_setup_type?: 'existing' | 'new' | null;
-  payment_card_details?: string | null;
   created_at?: string;
 }
+
+// The 10 "Client Access" columns, factored out of ClientRecord: public.clients no longer grants
+// authenticated SELECT on these (see 20261030500000_protect_client_access_columns.sql) — they are
+// only ever fetched via the get_client_access(p_client_id) RPC (role-gated, audit-logged into
+// client_access_log) and written via the existing update_client_access() RPC. Partial<...> of this
+// is reused for update_client_access's updates argument instead of duplicating the field list.
+export interface ClientAccessFields {
+  general_email: string | null;
+  general_email_password: string | null;
+  store_platform_username: string | null;
+  store_platform_password: string | null;
+  social_media_username: string | null;
+  social_media_password: string | null;
+  ad_account_username: string | null;
+  ad_account_password: string | null;
+  ad_account_setup_type: 'existing' | 'new' | null;
+  payment_card_details: string | null;
+}
+
+// Every public.clients column EXCEPT the 10 ClientAccessFields above — authenticated no longer
+// holds a column-level SELECT grant on those 10 at all (see
+// 20261030500000_protect_client_access_columns.sql), so a bare select('*') against public.clients
+// now fails with "permission denied for table clients" for every authenticated caller, employee or
+// client-portal session alike. Every select/insert/update('...').select() against clients (in both
+// App.tsx and ClientPortalApp.tsx) uses this explicit list instead. Any new column added to
+// public.clients in the future must be added here explicitly, or it will silently never appear in
+// this app's client state even though the table itself has it.
+//
+// Must stay a single string literal with `as const` (not built via string concatenation) — the
+// Supabase client's generated types parse this exact literal to infer the returned row shape;
+// built from pieces, it widens to plain `string` and every .select(...) call site below falls back
+// to an untyped `GenericStringError` result instead.
+export const NON_SENSITIVE_CLIENT_COLUMNS =
+  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, notes, am_agent_assigned_at, created_at' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
