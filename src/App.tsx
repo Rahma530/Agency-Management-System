@@ -2069,10 +2069,18 @@ export default function App() {
         }
       });
 
-    // 2. Heartbeat to update last_seen_at in DB
+    // 2. Heartbeat to update last_seen_at in DB — via the touch_last_seen() RPC
+    // (20261030200000_touch_last_seen_rpc.sql), not a direct .update(): a direct update is subject
+    // to users_update_*'s row-level policies, which only permit the 7 privileged roles — a regular
+    // agent-level caller's own heartbeat silently affected 0 rows under those policies. The RPC is
+    // SECURITY DEFINER specifically to bypass that gap, and takes no parameters, so it can only
+    // ever touch the caller's own row.
     const updateLastSeen = async () => {
       try {
-        await supabaseRaw.from('users').update({ last_seen_at: new Date().toISOString() }).eq('id', authenticatedUser.id);
+        const { error } = await supabaseRaw.rpc('touch_last_seen');
+        if (error) {
+          console.warn('Failed to update last_seen_at heartbeat', error);
+        }
       } catch (err) {
         console.warn('Failed to update last_seen_at heartbeat', err);
       }
