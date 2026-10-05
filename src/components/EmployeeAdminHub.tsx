@@ -123,9 +123,10 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onDeactivateEmployee,
   onSendInvitation,
 }) => {
-  // Add Employee (single + bulk) stays executive/head_of_technical(+ai_engineer, Request 1) only —
-  // matches users_insert_admin_rls (Phase E will add ai_engineer there too). Manage Employees
-  // (edit/deactivate) below is the newly-broadened section: exec/HoT + all 5 team leads.
+  // Add Employee (single + bulk) stays executive/head_of_technical/ai_engineer only — matches
+  // users_insert_admin_rls's with_check, which allows the same three roles (both were aligned by
+  // 20261018000000_align_ai_engineer_with_head_of_technical.sql). Manage Employees (edit/deactivate)
+  // below is the newly-broadened section: exec/HoT + all 5 team leads.
   const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const canManageEmployees = canManageEmployeesOrClients(currentUser.role);
 
