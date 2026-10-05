@@ -147,8 +147,15 @@ $$;
 revoke execute on function public.get_client_access(text) from public, anon;
 grant execute on function public.get_client_access(text) to authenticated, service_role;
 
--- 4. update_client_access() now returns void — the role gate is otherwise byte-for-byte unchanged
--- from the current definition (20261019000000_ai_engineer_full_application_authorization.sql).
+-- 4. update_client_access() now returns void instead of public.clients — the role gate is
+-- otherwise byte-for-byte unchanged from the current definition
+-- (20261019000000_ai_engineer_full_application_authorization.sql). CREATE OR REPLACE FUNCTION
+-- cannot change a function's return type (Postgres raises "cannot change return type of existing
+-- function" and refuses), so the old public.clients-returning signature must be dropped first;
+-- no cascade, so this fails loudly instead of silently dropping any dependent object.
+drop function if exists public.update_client_access(
+  text, text, text, text, text, text, text, text, text, text, text
+);
 create or replace function public.update_client_access(
   p_client_id text,
   p_general_email text,
