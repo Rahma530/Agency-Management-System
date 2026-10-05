@@ -65,6 +65,11 @@
 --    is added explicitly here or in its own migration).
 begin;
 
+-- notes was defined by 20261015100000_client_notes.sql but was never applied to the live
+-- database, and the column-level grant below names it — without this, that grant would fail
+-- outright on a database that never got the earlier migration.
+alter table public.clients add column if not exists notes text;
+
 -- 1. Column-level SELECT grant on public.clients: every column except the 10 Client Access ones.
 revoke select on public.clients from authenticated;
 grant select (
