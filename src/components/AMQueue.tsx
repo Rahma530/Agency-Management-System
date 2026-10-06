@@ -55,7 +55,7 @@ import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
-import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
@@ -289,7 +289,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       };
     }
 
-    const services = normalizeClientServices(client.services);
+    const services = getClientServices(client);
     const clientBriefs = getClientBriefs(client.id);
     const hasAllBriefs =
       services.length > 0 &&
@@ -427,7 +427,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 ? visibleClients.filter((c) => !c.am_agent_id).length
                 : visibleClients.filter((c) => {
                     const brfs = getClientBriefs(c.id);
-                    return normalizeClientServices(c.services).some((s) => !brfs.some((b) => b.service_type === s));
+                    return getClientServices(c).some((s) => !brfs.some((b) => b.service_type === s));
                   }).length}
             </p>
           </div>
@@ -552,7 +552,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 {displayedClients.map((client) => {
                   const assignedAgent = amAgents.find((u) => u.id === client.am_agent_id);
                   const lifecycle = getClientLifecycleStatus(client);
-                  const services = normalizeClientServices(client.services);
+                  const services = getClientServices(client);
 
                   return (
                     <tr

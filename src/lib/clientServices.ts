@@ -47,6 +47,41 @@ export function normalizeClientServices(values: readonly string[] | null | undef
   return CLIENT_SERVICES.filter((service) => selected.has(service));
 }
 
+// The one place allowed to read `.services`/`.other_services` directly off a client object —
+// every other call site should go through one of these two instead (enforced by
+// scripts/checkClientServicesAccess.ts, run as part of `npm run lint`). Phase 1 only: the
+// `other_services` column doesn't exist in the database yet (types only, see ClientRecord), so
+// both functions currently only ever receive `other_services: undefined` from real data — this is
+// infrastructure for the column landing later, not a behavior change today.
+
+// Deduped union of `services` + `other_services`, normalized down to official ServiceType values
+// only (recognized aliases included, same as normalizeClientServices already does) — the
+// canonical-values-only list every gating/routing/brief call site should keep using.
+export function getClientServices(client: {
+  services?: string[] | null;
+  other_services?: string[] | null;
+}): ServiceType[] {
+  return normalizeClientServices([...(client.services || []), ...(client.other_services || [])]);
+}
+
+// `other_services` entries that are NOT a recognized ServiceType value or alias — i.e. genuine
+// free text (a service this app has no dedicated handling for at all). Trimmed, deduped
+// case-insensitively, blanks dropped, original casing of the first occurrence preserved.
+export function getClientCustomServices(client: { other_services?: string[] | null }): string[] {
+  const seen = new Set<string>();
+  const custom: string[] = [];
+  for (const raw of client.other_services || []) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (normalizeClientServices([trimmed]).length > 0) continue; // a recognized value/alias, not "custom"
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    custom.push(trimmed);
+  }
+  return custom;
+}
+
 export const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',

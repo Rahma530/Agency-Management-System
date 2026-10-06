@@ -15,7 +15,7 @@ import {
   UserRole,
 } from '../types/database';
 import { getCampaignStartDate, getCampaignEndDate } from '../components/CampaignManagementModule';
-import { normalizeClientServices } from './clientServices';
+import { getClientServices } from './clientServices';
 import { isTaskDone } from './taskLifecycle';
 
 // ----------------------------------------------------------------------------
@@ -186,7 +186,7 @@ export async function ensureComparisonForSummary(params: {
 // Module 13 Phase 5: reads ClientRecord.services directly — no more package_id -> packages
 // indirection.
 export function clientHasService(client: ClientRecord, service: ServiceType): boolean {
-  return normalizeClientServices(client.services).includes(service);
+  return getClientServices(client).includes(service);
 }
 
 // Every client subscribed to a given service — the same set a team lead for that department

@@ -100,7 +100,7 @@ import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, can
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
-import { normalizeClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { isTaskDone } from '../lib/taskLifecycle';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
@@ -331,7 +331,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const maskSecret = (value: string) => '•'.repeat(Math.min(Math.max(value.length, 8), 32));
 
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
-  const services: ServiceType[] = useMemo(() => normalizeClientServices(client.services), [client.services]);
+  const services: ServiceType[] = useMemo(() => getClientServices(client), [client]);
 
   // Initialize active brief service
   React.useEffect(() => {

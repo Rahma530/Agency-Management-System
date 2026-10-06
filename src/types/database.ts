@@ -101,6 +101,12 @@ export interface ClientRecord {
   // Never empty in practice, but the type allows it since a brand-new client mid-registration may
   // transiently have none selected yet.
   services: ServiceType[];
+  // Phase 1: type only — this column does not exist in the database yet (not in
+  // NON_SENSITIVE_CLIENT_COLUMNS, no migration). Reserved for free-text service entries a client
+  // subscribes to that aren't one of the fixed ServiceType values; see
+  // src/lib/clientServices.ts's getClientServices()/getClientCustomServices() for the intended
+  // read shape once the column lands.
+  other_services?: string[];
   status: ClientStatus;
   sales_owner_id?: string | null;
   am_agent_id?: string | null;

@@ -31,7 +31,7 @@ import {
 import { ClientDashboard } from './ClientDashboard';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
-import { normalizeClientServices, SERVICE_LABELS } from '../lib/clientServices';
+import { getClientServices, SERVICE_LABELS } from '../lib/clientServices';
 
 interface SalesPortalViewProps {
   currentUser: UserRecord;
@@ -258,9 +258,9 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        {client.services && client.services.length > 0 ? (
+                        {getClientServices(client).length > 0 ? (
                           <div className="flex flex-wrap gap-1">
-                            {normalizeClientServices(client.services).map((s) => (
+                            {getClientServices(client).map((s) => (
                               <span
                                 key={s}
                                 className="text-[9px] px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-800/40 uppercase"

@@ -3,7 +3,7 @@ import { Building2, Search, Clock, ChevronDown, ChevronRight, ExternalLink } fro
 import { BriefFieldDef, ClientRecord, BriefRecord, BriefRevisionRecord, UserRecord, ServiceType } from '../types/database';
 import { BriefFieldsReadOnly } from './BriefFieldsReadOnly';
 import { BriefEditHistory } from './BriefEditHistory';
-import { normalizeClientServices } from '../lib/clientServices';
+import { getClientServices } from '../lib/clientServices';
 
 interface BriefRepositoryViewProps {
   clients: ClientRecord[];
@@ -73,7 +73,7 @@ export const BriefRepositoryView: React.FC<BriefRepositoryViewProps> = ({
           (c.industry || '').toLowerCase().includes(searchQuery.toLowerCase())
       )
       .map((client) => {
-        const services = normalizeClientServices(client.services);
+        const services = getClientServices(client);
         const serviceRows = services
           .filter((s) => serviceFilter === 'all' || s === serviceFilter)
           .map((s) => {

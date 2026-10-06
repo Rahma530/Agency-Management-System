@@ -40,7 +40,7 @@ import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, 
 import { isTeamLeadRole } from './lib/capacity';
 import { isTaskDone } from './lib/taskLifecycle';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
-import { normalizeClientServices, SERVICE_LABELS } from './lib/clientServices';
+import { normalizeClientServices, getClientServices, SERVICE_LABELS } from './lib/clientServices';
 import {
   ComparisonGranularity,
   ComparisonPeriod,
@@ -1305,7 +1305,7 @@ export default function App() {
           showNotification(`Failed to load clients from the server: ${clientErr.message}`, 'info');
         } else {
           setClients(((clientData as ClientRecord[]) || []).map((client) => ({
-            ...client, services: normalizeClientServices(client.services),
+            ...client, services: getClientServices(client),
           })));
         }
 
@@ -1610,7 +1610,7 @@ export default function App() {
         const renewal = new Date(client.renewal_date);
         if (Number.isNaN(renewal.getTime()) || renewal < now || renewal > in7Days) continue;
 
-        const activeServiceLeadRoles = client.services
+        const activeServiceLeadRoles = getClientServices(client)
           .map((service): UserRole | null => {
             if (service === 'seo') return 'seo_team_lead';
             if (service === 'media_buying') return 'media_buying_team_lead';
@@ -2177,7 +2177,7 @@ export default function App() {
       }
     }
 
-    const activeServiceLeadRoles = normalizeClientServices(client.services)
+    const activeServiceLeadRoles = getClientServices(client)
       .map((service): UserRole | null => {
         if (service === 'seo') return 'seo_team_lead';
         if (service === 'media_buying') return 'media_buying_team_lead';
