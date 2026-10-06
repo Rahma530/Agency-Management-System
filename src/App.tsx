@@ -2587,18 +2587,33 @@ export default function App() {
 
   // 2a-2b. start_date/renewal_date inline edit (ClientDashboard.tsx), gated by
   // canEditClientDates (lib/permissions.ts) — not canManageLifecycle, and never touches
-  // client.status. Deliberately does NOT catch-and-swallow like handleUpdatePaymentTracking above:
-  // clients_update_am_assignment_rls (the only UPDATE policy on public.clients) has no am_agent
-  // clause at all, so an am_agent who passes canEditClientDates's own-client check is still
-  // rejected by RLS — updatePersistedClient's .select(...).single() turns that 0-row update into a
-  // real thrown error (PGRST116) rather than a silent no-op, and ClientDashboard's inline editor
+  // client.status. Goes through the update_client_dates() RPC
+  // (20261030800000_update_client_dates_rpc.sql) rather than a direct updatePersistedClient
+  // update: clients_update_am_assignment_rls (the only UPDATE policy on public.clients) has no
+  // am_agent clause at all, and a row-level policy can't be widened to add one without also
+  // letting am_agent update every OTHER column on their own client's row (RLS has no column-level
+  // equivalent of a column GRANT) — the RPC is SECURITY DEFINER and only ever touches these two
+  // columns. Deliberately does NOT catch-and-swallow like handleUpdatePaymentTracking above: the
+  // RPC's own role gate raises a real exception for a caller it rejects (e.g. am_agent on a client
+  // they don't manage, or any role outside its gate entirely), and ClientDashboard's inline editor
   // needs that real error to reach it and display verbatim, not a generic toast that would look
   // like nothing happened.
   const handleUpdateClientDates = async (
     clientId: string,
     updates: { start_date: string | null; renewal_date: string | null }
   ) => {
-    await updatePersistedClient(clientId, updates);
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not updated.');
+    const { error } = await supabaseRaw.rpc('update_client_dates', {
+      p_client_id: clientId,
+      p_start_date: updates.start_date,
+      p_renewal_date: updates.renewal_date,
+    });
+    if (error) throw error;
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === clientId ? { ...c, start_date: updates.start_date, renewal_date: updates.renewal_date } : c
+      )
+    );
     showNotification('Client dates updated.');
   };
 
