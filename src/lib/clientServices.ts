@@ -136,6 +136,28 @@ export function getClientCustomServices(client: { other_services?: string[] | nu
   return custom;
 }
 
+// Order-independent comparison of a client's ACTUAL services/other_services columns against a
+// freshly computed splitClientServices() result — used by EditClientModal.tsx to decide whether
+// either key belongs in its update_client_details() patch at all. Needs the raw per-column values
+// (not getClientServices()' merged/normalized view) since a patch is built against real columns,
+// not the union read path every other consumer should use instead.
+function sameServiceValues(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((value, index) => value === sortedB[index]);
+}
+
+export function clientServicesChanged(
+  client: { services?: string[] | null; other_services?: string[] | null },
+  next: { services: string[]; other_services: string[] }
+): { servicesChanged: boolean; otherServicesChanged: boolean } {
+  return {
+    servicesChanged: !sameServiceValues(next.services, client.services || []),
+    otherServicesChanged: !sameServiceValues(next.other_services, client.other_services || []),
+  };
+}
+
 export const SERVICE_LABELS: Record<ServiceType, string> = {
   seo: 'SEO',
   social_media: 'Social Media',

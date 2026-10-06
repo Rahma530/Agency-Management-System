@@ -180,16 +180,22 @@ export const canEditServiceBrief = (
   return false;
 };
 
-// Who may edit a client's start_date/renewal_date (ClientDashboard.tsx's inline date editor).
-// Deliberately its own function, not ClientDashboard.tsx's local canManageLifecycle — these two
-// dates are plain data fields, not a status transition, and the two gates are free to diverge.
-// Executive/head_of_technical/am_team_lead/ai_engineer may edit any client; am_agent only their
-// own assigned client (am_agent_id === them); sales only their own registered client
-// (sales_owner_id === them). NOTE: the DB-level counterpart, clients_update_am_assignment_rls
-// (20261018000000_align_ai_engineer_with_head_of_technical.sql), has NO am_agent clause at all —
-// an am_agent passes this check but is rejected by RLS (0 rows affected). The caller must detect
-// and surface that (see ClientDashboard.tsx's inline date editor).
-export const canEditClientDates = (
+// Who may edit a client's own data fields — originally just start_date/renewal_date
+// (ClientDashboard.tsx's inline date editor), now also the broader "Edit Client" modal (name,
+// contact info, services, sales_brief, contract/payment figures). Deliberately its own function,
+// not ClientDashboard.tsx's local canManageLifecycle — none of this is a status transition or an
+// AM/Team Lead assignment change, and the two gates are free to diverge. Executive/
+// head_of_technical/am_team_lead/ai_engineer may edit any client; am_agent only their own assigned
+// client (am_agent_id === them); sales only their own registered client (sales_owner_id === them).
+// NOTE: the DB-level counterpart for both consumers — update_client_dates() and
+// update_client_details() (20261030800000_update_client_dates_rpc.sql,
+// 20261030900000_update_client_details_rpc.sql) — repeats this exact same role gate itself, since
+// clients_update_am_assignment_rls (the only UPDATE policy on public.clients) has NO am_agent
+// clause at all; an am_agent passes this check but would be rejected by a direct table update
+// (0 rows affected). Both RPCs are SECURITY DEFINER specifically to grant that one capability
+// without widening what else am_agent could update on the row. The caller must still detect and
+// surface an RPC's rejection (see ClientDashboard.tsx's inline date editor and Edit Client modal).
+export const canEditClient = (
   user: Pick<UserRecord, 'id' | 'role'>,
   client: Pick<ClientRecord, 'am_agent_id' | 'sales_owner_id'>
 ): boolean => {

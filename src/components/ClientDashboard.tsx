@@ -96,7 +96,8 @@ import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClientDates } from '../lib/permissions';
+import { EditClientModal } from './EditClientModal';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient } from '../lib/permissions';
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -193,11 +194,15 @@ interface ClientDashboardProps {
   // Unlike every other onUpdate* handler here, this one is expected to REJECT on failure (it
   // doesn't swallow its own error into a generic toast) — the inline editor below needs the real
   // error message to tell "RLS silently blocked this" apart from a genuine failure. See
-  // canEditClientDates (lib/permissions.ts) for who gets the editor at all.
+  // canEditClient (lib/permissions.ts) for who gets the editor at all.
   onUpdateClientDates?: (
     clientId: string,
     updates: { start_date: string | null; renewal_date: string | null }
   ) => Promise<void>;
+  // "Edit Client" modal (EditClientModal.tsx) — same reject-on-failure contract as
+  // onUpdateClientDates above, for the same reason (update_client_details's own role gate, or its
+  // key allow-list/validation, can reject a patch this modal's own client-side checks let through).
+  onUpdateClientDetails?: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   // Fetches the 10 Client Access columns via the get_client_access() RPC — called only when the
   // Client Access section is opened (not eagerly with the rest of the client), since
@@ -276,6 +281,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onDeleteClientContract,
   onUpdatePaymentTracking,
   onUpdateClientDates,
+  onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
   onLogSocialMetrics,
@@ -318,6 +324,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isSavingDates, setIsSavingDates] = useState(false);
   const [datesSaveError, setDatesSaveError] = useState('');
   const [showRenewalDateMissingMessage, setShowRenewalDateMissingMessage] = useState(false);
+  const [isEditClientModalOpen, setIsEditClientModalOpen] = useState(false);
   const [isEditingClientAccess, setIsEditingClientAccess] = useState(false);
   const [isClientAccessSelected, setIsClientAccessSelected] = useState(false);
   // public.clients no longer carries these 10 columns in `client` (the app's shared select no
@@ -487,9 +494,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const canEditPaymentTracking =
     currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead' || currentUser.role === 'ai_engineer';
 
-  // start_date/renewal_date inline editor below. Deliberately canEditClientDates (lib/permissions.ts),
-  // not canManageLifecycle above — editing these two dates is not a status transition.
-  const canEditDates = canEditClientDates(currentUser, client);
+  // Shared gate for the Client Dates inline editor AND the "Edit Client" button/modal below.
+  // Deliberately canEditClient (lib/permissions.ts), not canManageLifecycle above — none of this
+  // is a status transition.
+  const canEditThisClient = canEditClient(currentUser, client);
 
   // "Client Access" — general email, store platform login, social media login, ad account login
   // + setup type, and payment card details, collected during the Brief phase (rendered as a
@@ -778,7 +786,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // above, this does NOT swallow its own error: onUpdateClientDates (App.tsx) re-throws whatever
   // updatePersistedClient raises, including the real PGRST116 "0 rows returned" error an
   // RLS-blocked am_agent update produces (clients_update_am_assignment_rls has no am_agent clause
-  // at all — see lib/permissions.ts's canEditClientDates) — that real message is what
+  // at all — see lib/permissions.ts's canEditClient) — that real message is what
   // datesSaveError shows, not a generic "something went wrong" toast, so a blocked am_agent sees
   // why, not a silent no-op that looks like it worked. Does not touch client.status.
   const handleSaveDates = async () => {
@@ -980,6 +988,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             </div>
           </div>
 
+          {canEditThisClient && onUpdateClientDetails && (
+            <button
+              onClick={() => setIsEditClientModalOpen(true)}
+              className="p-2 rounded-xl bg-purple-900/30 hover:bg-purple-900/60 text-purple-300 hover:text-white transition-colors self-end sm:self-center"
+              title="Edit Client"
+            >
+              <Edit2 className="w-5 h-5" />
+            </button>
+          )}
           {canManageEmployeesOrClients(currentUser.role) && onDeleteClient && (
             <button
               onClick={handleOpenDeleteCheck}
@@ -1344,7 +1361,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
               )}
 
-              {/* Client Dates (start_date/renewal_date) — editable by canEditClientDates
+              {/* Client Dates (start_date/renewal_date) — editable by canEditClient
                   (lib/permissions.ts), independent of canManageLifecycle/status transitions.
                   Visible to everyone who can see this screen at all (both columns are already in
                   NON_SENSITIVE_CLIENT_COLUMNS and shown in the top bar); only the Edit control and
@@ -1363,7 +1380,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       </span>
                     )}
                   </h3>
-                  {canEditDates && onUpdateClientDates && !isEditingDates && (
+                  {canEditThisClient && onUpdateClientDates && !isEditingDates && (
                     <button
                       onClick={() => {
                         setDatesDraft({ start_date: client.start_date || '', renewal_date: client.renewal_date || '' });
@@ -2790,6 +2807,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           clientName={client.name}
           onClose={() => setIsCreatePortalLoginOpen(false)}
           onSubmit={(email) => onCreatePortalLogin(client.id, email)}
+        />
+      )}
+
+      {isEditClientModalOpen && onUpdateClientDetails && (
+        <EditClientModal
+          isOpen={isEditClientModalOpen}
+          onClose={() => setIsEditClientModalOpen(false)}
+          client={client}
+          onSave={onUpdateClientDetails}
         />
       )}
 

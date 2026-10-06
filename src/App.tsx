@@ -2586,7 +2586,7 @@ export default function App() {
   };
 
   // 2a-2b. start_date/renewal_date inline edit (ClientDashboard.tsx), gated by
-  // canEditClientDates (lib/permissions.ts) — not canManageLifecycle, and never touches
+  // canEditClient (lib/permissions.ts) — not canManageLifecycle, and never touches
   // client.status. Goes through the update_client_dates() RPC
   // (20261030800000_update_client_dates_rpc.sql) rather than a direct updatePersistedClient
   // update: clients_update_am_assignment_rls (the only UPDATE policy on public.clients) has no
@@ -2615,6 +2615,29 @@ export default function App() {
       )
     );
     showNotification('Client dates updated.');
+  };
+
+  // 2a-2c. EditClientModal.tsx's broader "Edit Client" patch — name/contact/services/sales_brief/
+  // contract figures, gated by the same canEditClient (lib/permissions.ts) as the dates editor.
+  // Goes through the update_client_details() RPC (20261030900000_update_client_details_rpc.sql),
+  // which has its own copy of this exact role gate plus the real field allow-list/validation
+  // (unknown key, invalid sector/services, negative numbers, overlapping services/other_services
+  // all raise there) — same reasoning as handleUpdateClientDates above for not using a direct
+  // table update. Deliberately does NOT catch-and-swallow: EditClientModal needs the RPC's real
+  // error message (a validation failure or a permission rejection look identical from here) to
+  // display verbatim. On success, merges only the patch's own keys into local state — the RPC
+  // returns void, so there's nothing else to merge, and this never touches a key the patch didn't
+  // send (status, assignments, and the 10 Client Access columns are never in that patch at all —
+  // EditClientModal never builds one that names them, and the RPC would reject it if it tried).
+  const handleUpdateClientDetails = async (clientId: string, patch: Record<string, unknown>) => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not updated.');
+    const { error } = await supabaseRaw.rpc('update_client_details', {
+      p_client_id: clientId,
+      p_patch: patch,
+    });
+    if (error) throw error;
+    setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, ...patch } : c)));
+    showNotification('Client updated.');
   };
 
   // 2a-3. "Client Access": general email, store platform login, social media login, ad account
@@ -5259,6 +5282,7 @@ export default function App() {
                     onDeleteClientContract={handleDeleteClientContract}
                     onUpdatePaymentTracking={handleUpdatePaymentTracking}
                     onUpdateClientDates={handleUpdateClientDates}
+                    onUpdateClientDetails={handleUpdateClientDetails}
                     onUpdateClientAccess={handleUpdateClientAccess}
                     onFetchClientAccess={handleFetchClientAccess}
                   />
@@ -5310,6 +5334,7 @@ export default function App() {
                   onSetPlatformConnectionStatus={handleSetPlatformConnectionStatus}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
                   onUpdateClientDates={handleUpdateClientDates}
+                  onUpdateClientDetails={handleUpdateClientDetails}
                   onUpdateClientAccess={handleUpdateClientAccess}
                   onFetchClientAccess={handleFetchClientAccess}
                 />
@@ -5414,6 +5439,7 @@ export default function App() {
                   onDeleteClient={handleDeleteClient}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
                   onUpdateClientDates={handleUpdateClientDates}
+                  onUpdateClientDetails={handleUpdateClientDetails}
                   onUpdateClientAccess={handleUpdateClientAccess}
                   onFetchClientAccess={handleFetchClientAccess}
                 />
