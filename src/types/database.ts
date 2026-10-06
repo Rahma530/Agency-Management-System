@@ -101,11 +101,12 @@ export interface ClientRecord {
   // Never empty in practice, but the type allows it since a brand-new client mid-registration may
   // transiently have none selected yet.
   services: ServiceType[];
-  // Phase 1: type only — this column does not exist in the database yet (not in
-  // NON_SENSITIVE_CLIENT_COLUMNS, no migration). Reserved for free-text service entries a client
-  // subscribes to that aren't one of the fixed ServiceType values; see
-  // src/lib/clientServices.ts's getClientServices()/getClientCustomServices() for the intended
-  // read shape once the column lands.
+  // Non-core service entries: interface/creation/branding plus any genuinely free-text service a
+  // client subscribes to that isn't one of the 3 core ServiceType values (seo/social_media/
+  // media_buying — the only values `services` above ever holds now). Populated by
+  // splitClientServices() (src/lib/clientServices.ts) at every write path; read via
+  // getClientServices()/getClientCustomServices(), never directly (see
+  // scripts/checkClientServicesAccess.ts). See 20261030700000_client_other_services_sales_brief.sql.
   other_services?: string[];
   status: ClientStatus;
   sales_owner_id?: string | null;
@@ -137,8 +138,9 @@ export interface ClientRecord {
   // Content visibility mirrors contract_value/the Signed Contract file exactly (see
   // canSeeContractValue): Executive/Head of Technical/AM Team Lead/the specific responsible AM
   // Agent, plus Sales for their own registered clients only (sales_owner_id === them). Optional;
-  // never blocks registration.
-  notes?: string | null;
+  // never blocks registration. Named `sales_brief` (not `notes`) as of
+  // 20261030700000_client_other_services_sales_brief.sql.
+  sales_brief?: string | null;
   // Module 13 Phase 4: cleared to null whenever am_agent_id changes, set to now() when it's
   // assigned — mirrors the viewed_at-clearing convention from Module 12 Phase 5. Drives the
   // period-scoped gained/lost client metrics in MyWorkHub; not a general "assigned since" display
@@ -179,7 +181,7 @@ export interface ClientAccessFields {
 // built from pieces, it widens to plain `string` and every .select(...) call site below falls back
 // to an untyped `GenericStringError` result instead.
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, notes, am_agent_assigned_at, created_at' as const;
+  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, created_at' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the

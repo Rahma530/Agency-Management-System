@@ -100,7 +100,7 @@ import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, can
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
-import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { getClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { isTaskDone } from '../lib/taskLifecycle';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
@@ -332,6 +332,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
   const services: ServiceType[] = useMemo(() => getClientServices(client), [client]);
+  const customServices: string[] = useMemo(() => getClientCustomServices(client), [client]);
 
   // Initialize active brief service
   React.useEffect(() => {
@@ -1091,6 +1092,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         {SERVICE_LABELS[s]}
                       </span>
                     ))}
+                    {customServices.map((s) => (
+                      <span
+                        key={s}
+                        className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                        style={{ background: 'rgba(148, 163, 184, 0.2)', color: '#cbd5e1' }}
+                        title="Custom service (free text)"
+                      >
+                        {s}
+                      </span>
+                    ))}
                   </div>
                 </div>
 
@@ -1271,17 +1282,18 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
               )}
 
-              {/* Notes (Module 16) — collected at registration. Reuses showContractValue exactly:
-                  the final rule is identical to contract_value/the Signed Contract file —
-                  Executive/Head of Technical/AM Team Lead/the specific responsible AM Agent, PLUS
-                  Sales for their own registered clients only (sales_owner_id === them). */}
-              {client.notes && showContractValue && (
+              {/* Sales Brief (Module 16; named `sales_brief`, was `notes`) — collected at
+                  registration. Reuses showContractValue exactly: the final rule is identical to
+                  contract_value/the Signed Contract file — Executive/Head of Technical/AM Team
+                  Lead/the specific responsible AM Agent, PLUS Sales for their own registered
+                  clients only (sales_owner_id === them). */}
+              {client.sales_brief && showContractValue && (
                 <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-2">
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
                     <StickyNote className="w-4 h-4 text-purple-400" />
-                    <span>Notes</span>
+                    <span>Sales Brief</span>
                   </h3>
-                  <p className="text-xs text-stone-200 whitespace-pre-wrap">{client.notes}</p>
+                  <p className="text-xs text-stone-200 whitespace-pre-wrap">{client.sales_brief}</p>
                 </div>
               )}
 

@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Phone, Layers, Globe, ChevronDown, FileSignature, StickyNote } from 'lucide-react';
+import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Phone, Layers, Globe, ChevronDown, FileSignature, StickyNote, Plus } from 'lucide-react';
 import { ClientSector, ServiceType, UserRecord } from '../types/database';
-import { COMPREHENSIVE_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption } from '../lib/clientServices';
+import { COMPREHENSIVE_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption, splitClientServices } from '../lib/clientServices';
 import { CONTRACT_ALLOWED_MIME_TYPES, CONTRACT_MAX_FILE_SIZE_BYTES, formatContractFileSize } from '../lib/clientContracts';
 
 interface ClientRegistrationModalProps {
@@ -17,6 +17,7 @@ interface ClientRegistrationModalProps {
       sector: ClientSector;
       industry: string;
       services: ServiceType[];
+      other_services: string[];
       phone_number?: string;
       website_or_social_link?: string;
       contract_value: number;
@@ -27,7 +28,7 @@ interface ClientRegistrationModalProps {
       renewal_date: string;
       am_team_lead_id?: string;
       am_agent_id?: string;
-      notes?: string;
+      sales_brief?: string;
     },
     contractFile: File | null
   ) => Promise<void>;
@@ -72,6 +73,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [phoneNumber, setPhoneNumber] = useState('');
   const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState('');
   const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
+  const [customServices, setCustomServices] = useState<string[]>([]);
+  const [customServiceInput, setCustomServiceInput] = useState('');
   const [contractValue, setContractValue] = useState<number | ''>('');
   const [dueValue, setDueValue] = useState<number | ''>('');
   const [remainingValue, setRemainingValue] = useState<number | ''>('');
@@ -80,7 +83,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
   const [amAgentId, setAmAgentId] = useState('');
-  const [notes, setNotes] = useState('');
+  const [salesBrief, setSalesBrief] = useState('');
   const [contractFile, setContractFile] = useState<File | null>(null);
   const [contractFileError, setContractFileError] = useState('');
   const contractFileInputRef = useRef<HTMLInputElement>(null);
@@ -115,7 +118,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setErrorMsg('Please select or enter an industry.');
       return;
     }
-    if (selectedServices.length === 0) {
+    if (selectedServices.length === 0 && customServices.length === 0) {
       setErrorMsg('Please select at least one service.');
       return;
     }
@@ -123,13 +126,15 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
     setIsSubmitting(true);
     setErrorMsg('');
     try {
+      const { services, other_services } = splitClientServices([...selectedServices, ...customServices]);
       await onSubmit(
         {
           name: name.trim(),
           client_contact_name: contactName.trim() || undefined,
           sector,
           industry: industry.trim(),
-          services: selectedServices,
+          services,
+          other_services,
           phone_number: phoneNumber.trim() || undefined,
           website_or_social_link: websiteOrSocialLink.trim() || undefined,
           contract_value: contractValue ? Number(contractValue) : 0,
@@ -140,7 +145,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           renewal_date: renewalDate,
           am_team_lead_id: soleActiveAmTeamLeadId,
           ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
-          notes: notes.trim() || undefined,
+          sales_brief: salesBrief.trim() || undefined,
         },
         contractFile
       );
@@ -154,6 +159,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setPhoneNumber('');
       setWebsiteOrSocialLink('');
       setSelectedServices([]);
+      setCustomServices([]);
+      setCustomServiceInput('');
       setContractValue('');
       setDueValue('');
       setRemainingValue('');
@@ -161,7 +168,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       if (isManagementForm) {
         setAmAgentId('');
       }
-      setNotes('');
+      setSalesBrief('');
       setContractFile(null);
       setContractFileError('');
       setRenewalDateTouched(false);
@@ -175,8 +182,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
   const toggleService = (service: ClientServiceOption) => {
     if (service === 'comprehensive') {
-      // Orthogonal to Creation/Branding (the "Additional Services" section below) — only ever
-      // adds/removes the 4 COMPREHENSIVE_SERVICES, never touching whatever additional-service
+      // Orthogonal to interface/creation/branding (the "Other Services" section below) — only
+      // ever adds/removes the 4 COMPREHENSIVE_SERVICES, never touching whatever other-service
       // selections already exist, so a client can be شاملة + Branding at the same time.
       setSelectedServices((prev) => {
         const allCoreSelected = COMPREHENSIVE_SERVICES.every((s) => prev.includes(s));
@@ -189,6 +196,19 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
     setSelectedServices((prev) =>
       prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]
     );
+  };
+
+  const addCustomService = () => {
+    const trimmed = customServiceInput.trim();
+    if (!trimmed) return;
+    setCustomServices((prev) =>
+      prev.some((s) => s.toLowerCase() === trimmed.toLowerCase()) ? prev : [...prev, trimmed]
+    );
+    setCustomServiceInput('');
+  };
+
+  const removeCustomService = (value: string) => {
+    setCustomServices((prev) => prev.filter((s) => s !== value));
   };
 
   // Client-side validation only, mirroring ClientContractsPanel.tsx's own check exactly (same
@@ -656,13 +676,14 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              Additional Services
+              Other Services
             </label>
             <p className="text-[11px] text-stone-400 mb-1.5">
-              Optional add-ons — independent of شاملة and every other service above.
+              Optional add-ons — independent of شاملة and every other service above. Anything not
+              listed can be added as free text below.
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {CLIENT_SERVICE_OPTIONS.filter((opt) => opt.group === 'additional').map((opt) => {
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+              {CLIENT_SERVICE_OPTIONS.filter((opt) => opt.group === 'other').map((opt) => {
                 const isSelected = selectedServices.includes(opt.value as ServiceType);
                 return (
                   <button
@@ -682,6 +703,55 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                 );
               })}
             </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={customServiceInput}
+                onChange={(e) => setCustomServiceInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addCustomService();
+                  }
+                }}
+                placeholder="Add another service..."
+                className="flex-1 px-3 py-2 rounded-xl text-xs transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                style={{
+                  background: 'rgba(10, 10, 13, 0.8)',
+                  border: '1px solid var(--border-soft)',
+                  color: 'var(--white)',
+                }}
+              />
+              <button
+                type="button"
+                onClick={addCustomService}
+                className="px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1"
+                style={{ background: 'rgba(123, 47, 247, 0.3)', color: 'var(--purple-light)', border: '1px solid var(--purple)' }}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add
+              </button>
+            </div>
+            {customServices.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {customServices.map((service) => (
+                  <span
+                    key={service}
+                    className="px-2 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5"
+                    style={{ background: 'rgba(10, 10, 13, 0.8)', color: 'var(--grey)', border: '1px solid var(--border-soft)' }}
+                  >
+                    {service}
+                    <button
+                      type="button"
+                      onClick={() => removeCustomService(service)}
+                      className="text-stone-400 hover:text-white"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -714,13 +784,13 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-              Notes (optional)
+              Sales Brief (optional)
             </label>
             <div className="relative">
               <StickyNote className="w-4 h-4 absolute left-3 top-3 text-purple-400 pointer-events-none" />
               <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                value={salesBrief}
+                onChange={(e) => setSalesBrief(e.target.value)}
                 rows={2}
                 placeholder="Any extra info about this client..."
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"

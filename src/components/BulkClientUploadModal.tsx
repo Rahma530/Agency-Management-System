@@ -1,10 +1,10 @@
 import React, { useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import { X, Download, FileSpreadsheet, Upload, AlertCircle, Loader2, UploadCloud } from 'lucide-react';
+import { X, Download, FileSpreadsheet, Upload, AlertCircle, Loader2, UploadCloud, AlertTriangle } from 'lucide-react';
 import { ClientRecord, ClientSector, ServiceType, UserRecord } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
-import { normalizeClientServices } from '../lib/clientServices';
+import { splitClientServices } from '../lib/clientServices';
 
 interface BulkClientUploadModalProps {
   isOpen: boolean;
@@ -18,9 +18,10 @@ interface BulkClientUploadModalProps {
     sector?: ClientSector;
     industry: string;
     services: ServiceType[];
+    other_services: string[];
     phone_number?: string;
     website_or_social_link?: string;
-    notes?: string;
+    sales_brief?: string;
     contract_value: number;
     due_value?: number;
     remaining_value?: number;
@@ -31,12 +32,6 @@ interface BulkClientUploadModalProps {
   }) => Promise<void>;
 }
 
-const VALID_SERVICES = [
-  'seo', 'social_media', 'media_buying', 'interface', 'واجهة',
-  'creation', 'إنشاء', 'branding', 'الهوية البصرية', 'هوية',
-  'comprehensive', 'شاملة', 'creative',
-];
-const isValidService = (val: string): boolean => VALID_SERVICES.includes(val);
 const normalizeSector = (value: string): ClientSector | null => {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'e-commerce') return 'E-Commerce';
@@ -58,6 +53,7 @@ const CSV_TEMPLATE_HEADERS = [
   'sector',
   'industry',
   'services',
+  'other_services',
   'contract_value',
   'due_value',
   'remaining_value',
@@ -65,7 +61,7 @@ const CSV_TEMPLATE_HEADERS = [
   'renewal_date',
   'phone_number',
   'website_or_social_link',
-  'notes',
+  'sales_brief',
   'am_team_lead_name',
 ];
 const MANAGEMENT_TEMPLATE_HEADERS = [...CSV_TEMPLATE_HEADERS, 'am_agent_name'];
@@ -75,6 +71,7 @@ const CSV_TEMPLATE_EXAMPLE = [
   'E-Commerce',
   'عطور/بخور',
   'seo;media_buying',
+  'interface;Photography',
   '5000',
   '',
   '',
@@ -94,18 +91,51 @@ interface RowResult {
   reason?: string;
 }
 
-// Normalizes whatever papaparse/xlsx hands back into plain string-keyed rows, lowercasing
-// headers so "Name"/"name"/"NAME" all match — mirrors EmployeeAdminHub's bulk uploader.
-const normalizeRows = (rawRows: Record<string, any>[]): Record<string, string>[] =>
-  rawRows.map((raw) => {
+// Every header this uploader actually reads, canonical spelling — used to warn on anything in the
+// uploaded file that isn't one of these (after normalization/alias resolution below), instead of
+// silently ignoring an unrecognized column. Superset of both templates (am_agent_name included)
+// since a non-management upload simply never populates that field either way.
+const KNOWN_HEADERS = new Set(MANAGEMENT_TEMPLATE_HEADERS);
+
+// A header typo/variant this uploader accepts as a synonym for the canonical name on the right,
+// keyed by the header AFTER normalizeHeaderKey() below has already run (lowercased, every run of
+// spaces/dots/hyphens collapsed to a single underscore) — e.g. "End Date" / "end-date" / "end.date"
+// all normalize to "end_date" before this lookup ever runs.
+const HEADER_ALIASES: Record<string, string> = {
+  end_date: 'renewal_date',
+  a_m_agent_name: 'am_agent_name',
+  sales_breif: 'sales_brief',
+  other_sevices: 'other_services',
+};
+
+const normalizeHeaderKey = (key: string): string => key.trim().toLowerCase().replace(/[\s.-]+/g, '_');
+
+// Normalizes whatever papaparse/xlsx hands back into plain string-keyed rows: lowercases headers
+// and collapses spaces/dots/hyphens to underscores so "Name"/"name"/"NAME" and "End Date"/
+// "end-date" all match the same key, then resolves known aliases (HEADER_ALIASES) to their
+// canonical column name — mirrors EmployeeAdminHub's bulk uploader, extended with alias
+// resolution. Also collects every header that's neither a canonical name nor a known alias, so the
+// caller can warn on it instead of silently dropping it.
+const normalizeRows = (
+  rawRows: Record<string, any>[]
+): { rows: Record<string, string>[]; unrecognizedHeaders: string[] } => {
+  const unrecognized = new Set<string>();
+  const rows = rawRows.map((raw) => {
     const normalized: Record<string, string> = {};
     for (const key of Object.keys(raw)) {
-      normalized[key.trim().toLowerCase()] = String(raw[key] ?? '').trim();
+      const normalizedKey = normalizeHeaderKey(key);
+      const resolvedKey = HEADER_ALIASES[normalizedKey] || normalizedKey;
+      if (!KNOWN_HEADERS.has(resolvedKey)) {
+        unrecognized.add(key.trim());
+      }
+      normalized[resolvedKey] = String(raw[key] ?? '').trim();
     }
     return normalized;
   });
+  return { rows, unrecognizedHeaders: [...unrecognized] };
+};
 
-const parseFile = (file: File): Promise<Record<string, string>[]> => {
+const parseFile = (file: File): Promise<{ rows: Record<string, string>[]; unrecognizedHeaders: string[] }> => {
   const isCsv = file.name.toLowerCase().endsWith('.csv');
   if (isCsv) {
     return new Promise((resolve, reject) => {
@@ -137,6 +167,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [results, setResults] = useState<RowResult[] | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [unrecognizedHeaders, setUnrecognizedHeaders] = useState<string[]>([]);
 
   // am_team_lead_name is optional for every role now (see the auto-assign-or-reject logic below);
   // am_agent_name stays management-only — Sales/AM Agent uploads never pick an Account Manager.
@@ -186,10 +217,12 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
 
     setFileError(null);
     setResults(null);
+    setUnrecognizedHeaders([]);
     setIsProcessingFile(true);
 
     try {
-      const rows = await parseFile(file);
+      const { rows, unrecognizedHeaders: unknownHeaders } = await parseFile(file);
+      setUnrecognizedHeaders(unknownHeaders);
       if (rows.length === 0) {
         setFileError('That file has no data rows.');
         return;
@@ -208,6 +241,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const rowSector = (raw.sector || '').trim();
         const rowIndustry = (raw.industry || '').trim();
         const rowServicesRaw = (raw.services || '').trim();
+        const rowOtherServicesRaw = (raw.other_services || '').trim();
         const rowContractValue = (raw.contract_value || '').trim();
         const rowDueValue = (raw.due_value || '').trim();
         const rowRemainingValue = (raw.remaining_value || '').trim();
@@ -215,7 +249,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         const rowRenewalDate = (raw.renewal_date || '').trim();
         const rowPhone = (raw.phone_number || '').trim();
         const rowWebsiteOrSocial = (raw.website_or_social_link || '').trim();
-        const rowNotes = (raw.notes || '').trim();
+        const rowSalesBrief = (raw.sales_brief || '').trim();
         const rowAmLeadName = (raw.am_team_lead_name || '').trim();
         const rowAmAgentName = (raw.am_agent_name || '').trim();
 
@@ -224,7 +258,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
           continue;
         }
 
-        if (!rowServicesRaw) {
+        if (!rowServicesRaw && !rowOtherServicesRaw) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'Missing services' });
           continue;
         }
@@ -237,21 +271,20 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
         // separator, so a comma-separated list needs quoting to survive — semicolon needs none);
         // comma is still accepted here for files where that quoting was done correctly, or that
         // came from Excel/Sheets where the cell content isn't re-split by the outer parser.
-        const serviceTokens = rowServicesRaw
-          .split(/[,;]/)
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean);
-        const invalidTokens = serviceTokens.filter((s) => !isValidService(s));
-        if (serviceTokens.length === 0 || invalidTokens.length > 0) {
-          rowResults.push({
-            row: rowNum,
-            name: rowName,
-            status: 'skipped',
-            reason: `Invalid services "${rowServicesRaw}" (valid: seo, social_media, media_buying, interface, creation, branding, comprehensive / شاملة)`,
-          });
+        // Tokens from BOTH columns are combined and passed through splitClientServices together —
+        // same classifier the registration form uses — so a core value typed into the
+        // other_services column (or a non-core/free-text value typed into services) still lands in
+        // the right place, and no token can ever be rejected as "invalid": anything not recognized
+        // as seo/social_media/media_buying/interface/creation/branding/شاملة/comprehensive is kept
+        // as a genuine free-text other_services entry instead.
+        const serviceTokens = [rowServicesRaw, rowOtherServicesRaw]
+          .filter(Boolean)
+          .flatMap((val) => val.split(/[,;]/).map((s) => s.trim()).filter(Boolean));
+        const { services, other_services: otherServices } = splitClientServices(serviceTokens);
+        if (services.length === 0 && otherServices.length === 0) {
+          rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: `No usable services in "${rowServicesRaw}" / "${rowOtherServicesRaw}"` });
           continue;
         }
-        const services = normalizeClientServices(serviceTokens);
 
         if (rowContractValue && Number.isNaN(Number(rowContractValue))) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'contract_value is not a number' });
@@ -339,9 +372,10 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             sector: sector || undefined,
             industry: rowIndustry || 'General',
             services,
+            other_services: otherServices,
             phone_number: rowPhone || undefined,
             website_or_social_link: rowWebsiteOrSocial || undefined,
-            notes: rowNotes || undefined,
+            sales_brief: rowSalesBrief || undefined,
             contract_value: contractValue,
             due_value: dueValue,
             remaining_value: remainingValue,
@@ -405,7 +439,9 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             <p className="text-xs text-stone-400">
               Columns: <code className="font-mono">{(isManagementUpload ? MANAGEMENT_TEMPLATE_HEADERS : CSV_TEMPLATE_HEADERS).join(', ')}</code>
               <br />
-              Required: name, services. Everything else is optional.
+              Required: name, and at least one of services / other_services. Everything else is optional.
+              <br />
+              services only accepts seo, social_media, media_buying, or شاملة / comprehensive — anything else (interface, creation, branding, or free text) goes in other_services; either column accepts any of them and they'll be sorted automatically.
               <br />
               Leave am_team_lead_name blank to auto-assign the sole active AM Team Lead — the row is rejected if none or more than one exist.
             </p>
@@ -444,6 +480,18 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
             >
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               {fileError}
+            </div>
+          )}
+
+          {unrecognizedHeaders.length > 0 && (
+            <div
+              className="p-3 rounded-xl text-xs flex items-start gap-2"
+              style={{ background: 'rgba(251, 191, 36, 0.1)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.4)' }}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>
+                Unrecognized column{unrecognizedHeaders.length > 1 ? 's' : ''} (ignored): {unrecognizedHeaders.join(', ')}
+              </span>
             </div>
           )}
 

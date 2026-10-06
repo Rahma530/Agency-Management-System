@@ -1,21 +1,23 @@
 /**
- * Fails if any file other than src/lib/clientServices.ts reads `.services` directly off a
- * client-shaped object (client.services / c.services) in application code.
+ * Fails if any file other than src/lib/clientServices.ts reads `.services` or `.other_services`
+ * directly off a client-shaped object (client.services / c.services / client.other_services /
+ * c.other_services) in application code.
  *
- * Why: once public.clients.other_services exists, a client's real set of subscribed services is
- * the union of `services` and `other_services` — getClientServices(client) in
- * src/lib/clientServices.ts is the one place that union is computed. A call site that keeps
- * reading `client.services` directly would silently miss anything a client only has in
- * `other_services`, with no compile error to catch it. This check exists so that gap can never be
- * reintroduced by accident; it isn't full type-aware analysis, just a targeted text scan for the
- * exact identifier patterns this codebase uses for an existing ClientRecord (`client`, `c`) —
- * matches inside `//` line comments are stripped first so prose explaining this exact file (like
- * this one) doesn't trip it.
+ * Why: a client's real set of subscribed services is the union of `services` and
+ * `other_services` — getClientServices(client) in src/lib/clientServices.ts is the one place that
+ * union is computed, and getClientCustomServices(client) is the one place `other_services`'
+ * genuine free-text entries are read out. A call site that reads either column directly would
+ * silently miss the other, with no compile error to catch it. This check exists so that gap can
+ * never be reintroduced by accident; it isn't full type-aware analysis, just a targeted text scan
+ * for the exact identifier patterns this codebase uses for an existing ClientRecord (`client`,
+ * `c`) — matches inside `//` line comments are stripped first so prose explaining this exact file
+ * (like this one) doesn't trip it.
  *
- * Deliberately does NOT match `clientData.services`: that identifier is this codebase's
- * convention for a registration-form/CSV-row payload describing a client not yet created (see
- * handleRegisterClient/handleBulkAddClient in App.tsx) — never an existing ClientRecord — so it
- * has no other_services field to union with and is out of this check's scope.
+ * Deliberately does NOT match `clientData.services`/`clientData.other_services`: that identifier
+ * is this codebase's convention for a registration-form/CSV-row payload describing a client not
+ * yet created (see handleRegisterClient/handleBulkAddClient in App.tsx) — never an existing
+ * ClientRecord — so it's out of this check's scope; those payloads are themselves expected to
+ * already be the output of splitClientServices(), not raw selections.
  *
  * Run via `npm run lint` (chained after tsc --noEmit) or directly: `npx tsx
  * scripts/checkClientServicesAccess.ts`.
@@ -27,7 +29,7 @@ import { fileURLToPath } from 'url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = join(ROOT, 'src');
 const ALLOWED_FILE = join('src', 'lib', 'clientServices.ts');
-const PATTERN = /\b(?:client|c)\.services\b/;
+const PATTERN = /\b(?:client|c)\.(?:services|other_services)\b/;
 
 function listSourceFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -75,7 +77,7 @@ function main(): void {
   }
 
   if (violations.length > 0) {
-    console.error('Found direct client.services access outside src/lib/clientServices.ts:\n');
+    console.error('Found direct client.services/other_services access outside src/lib/clientServices.ts:\n');
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}: ${v.text}`);
     }
@@ -86,7 +88,7 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log('OK: no direct client.services access outside src/lib/clientServices.ts.');
+  console.log('OK: no direct client.services/other_services access outside src/lib/clientServices.ts.');
 }
 
 main();

@@ -12,17 +12,19 @@ export const COMPREHENSIVE_SERVICES: ServiceType[] = ['seo', 'social_media', 'me
 
 export type ClientServiceOption = ServiceType | 'comprehensive';
 
-// `group` drives the Register New Client form's two sections: 'main' renders alongside the شاملة
-// toggle, 'additional' renders in its own separate "Additional Services" section — Creation/
-// Branding are optional add-ons, orthogonal to whichever main service(s) or شاملة is selected.
-export const CLIENT_SERVICE_OPTIONS: { value: ClientServiceOption; label: string; group: 'main' | 'additional' }[] = [
+// `group` drives the Register New Client form's two sections. 'main' = the 3 core services
+// (seo/social_media/media_buying, which is all `public.clients.services` ever holds now — see
+// splitClientServices below) plus the شاملة toggle. 'other' = everything that always lands in
+// `other_services` instead — interface/creation/branding, rendered as its own "Other Services"
+// section alongside the free-text "Add another service" input (ClientRegistrationModal.tsx).
+export const CLIENT_SERVICE_OPTIONS: { value: ClientServiceOption; label: string; group: 'main' | 'other' }[] = [
   { value: 'seo', label: 'SEO', group: 'main' },
   { value: 'social_media', label: 'Social Media (designs & videos)', group: 'main' },
   { value: 'media_buying', label: 'Media Buying', group: 'main' },
-  { value: 'interface', label: 'واجهة', group: 'main' },
   { value: 'comprehensive', label: 'شاملة', group: 'main' },
-  { value: 'creation', label: 'Creation (Store/Website Setup) — إنشاء', group: 'additional' },
-  { value: 'branding', label: 'Branding — الهوية البصرية', group: 'additional' },
+  { value: 'interface', label: 'واجهة', group: 'other' },
+  { value: 'creation', label: 'Creation (Store/Website Setup) — إنشاء', group: 'other' },
+  { value: 'branding', label: 'Branding — الهوية البصرية', group: 'other' },
 ];
 
 /** Expand the bundle and map historical Creative subscriptions to Social Media. */
@@ -47,12 +49,64 @@ export function normalizeClientServices(values: readonly string[] | null | undef
   return CLIENT_SERVICES.filter((service) => selected.has(service));
 }
 
+const CORE_SERVICES: ServiceType[] = ['seo', 'social_media', 'media_buying'];
+
+// The one place that decides which column a service entry belongs in, used at every write path
+// (ClientRegistrationModal, BulkClientUploadModal) instead of each building `services`/
+// `other_services` ad hoc. Storage rule: `services` only ever holds the 3 core types (seo/
+// social_media/media_buying) — interface, creation, branding, and any value this function doesn't
+// recognize at all (genuine free text) all go in `other_services` instead. شاملة expands to the 3
+// core types in `services` plus interface in `other_services` (mirrors COMPREHENSIVE_SERVICES,
+// minus the 3 core types it also contains). Values are matched case-insensitively (Arabic values
+// have no case, so comparing them as-is is already case-insensitive); recognized values are
+// returned as their canonical ServiceType; everything else is kept as free text with its original
+// casing (trimmed, deduped case-insensitively against other free-text entries) — never
+// lowercased, so a custom entry like "Photography" isn't mangled into "photography". By
+// construction, `services` and `other_services` can never share a value: every branch below
+// writes to exactly one of the three sets (core / other-canonical / free text), never both.
+export function splitClientServices(values: readonly string[] | null | undefined): {
+  services: ServiceType[];
+  other_services: string[];
+} {
+  const core = new Set<ServiceType>();
+  const otherCanonical = new Set<ServiceType>();
+  const customSeen = new Set<string>();
+  const custom: string[] = [];
+
+  for (const raw of values || []) {
+    const trimmed = (raw ?? '').trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+
+    if (lower === 'comprehensive' || trimmed === 'شاملة') {
+      CORE_SERVICES.forEach((service) => core.add(service));
+      otherCanonical.add('interface');
+    } else if (lower === 'creative') {
+      core.add('social_media');
+    } else if (lower === 'seo' || lower === 'social_media' || lower === 'media_buying') {
+      core.add(lower as ServiceType);
+    } else if (trimmed === 'واجهة' || lower === 'ui/ux' || lower === 'ui_ux' || lower === 'interface') {
+      otherCanonical.add('interface');
+    } else if (trimmed === 'إنشاء' || lower === 'creation') {
+      otherCanonical.add('creation');
+    } else if (trimmed === 'الهوية البصرية' || trimmed === 'هوية' || lower === 'branding') {
+      otherCanonical.add('branding');
+    } else {
+      if (customSeen.has(lower)) continue;
+      customSeen.add(lower);
+      custom.push(trimmed);
+    }
+  }
+
+  return {
+    services: CORE_SERVICES.filter((service) => core.has(service)),
+    other_services: [...CLIENT_SERVICES.filter((service) => otherCanonical.has(service)), ...custom],
+  };
+}
+
 // The one place allowed to read `.services`/`.other_services` directly off a client object —
 // every other call site should go through one of these two instead (enforced by
-// scripts/checkClientServicesAccess.ts, run as part of `npm run lint`). Phase 1 only: the
-// `other_services` column doesn't exist in the database yet (types only, see ClientRecord), so
-// both functions currently only ever receive `other_services: undefined` from real data — this is
-// infrastructure for the column landing later, not a behavior change today.
+// scripts/checkClientServicesAccess.ts, run as part of `npm run lint`).
 
 // Deduped union of `services` + `other_services`, normalized down to official ServiceType values
 // only (recognized aliases included, same as normalizeClientServices already does) — the

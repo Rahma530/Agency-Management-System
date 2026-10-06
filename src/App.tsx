@@ -2218,6 +2218,7 @@ export default function App() {
     sector: ClientSector;
     industry: string;
     services: ServiceType[];
+    other_services: string[];
     phone_number?: string;
     website_or_social_link?: string;
     contract_value: number;
@@ -2228,7 +2229,7 @@ export default function App() {
     renewal_date: string;
     am_team_lead_id?: string;
     am_agent_id?: string;
-    notes?: string;
+    sales_brief?: string;
   }, contractFile: File | null) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
@@ -2248,6 +2249,7 @@ export default function App() {
       sector: clientData.sector,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
+      other_services: clientData.other_services || [],
       phone_number: clientData.phone_number || null,
       website_or_social_link: clientData.website_or_social_link || null,
       status: isManagementRegistration ? 'onboarding' : isAmRegistration ? 'active' : 'onboarding',
@@ -2261,7 +2263,7 @@ export default function App() {
       start_date: clientData.start_date,
       contract_duration_months: clientData.contract_duration_months ?? null,
       renewal_date: clientData.renewal_date,
-      notes: clientData.notes || null,
+      sales_brief: clientData.sales_brief || null,
       created_at: new Date().toISOString(),
     };
 
@@ -2324,6 +2326,7 @@ export default function App() {
     sector?: ClientSector;
     industry: string;
     services: ServiceType[];
+    other_services: string[];
     phone_number?: string;
     website_or_social_link?: string;
     contract_value: number;
@@ -2333,7 +2336,7 @@ export default function App() {
     renewal_date: string;
     am_team_lead_id?: string;
     am_agent_id?: string;
-    notes?: string;
+    sales_brief?: string;
   }) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmUpload = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
@@ -2352,6 +2355,7 @@ export default function App() {
       sector: clientData.sector || null,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
+      other_services: clientData.other_services || [],
       phone_number: clientData.phone_number || null,
       website_or_social_link: clientData.website_or_social_link || null,
       status: isManagementUpload ? 'onboarding' : isAmUpload ? 'active' : 'onboarding',
@@ -2364,7 +2368,7 @@ export default function App() {
       remaining_value: clientData.remaining_value ?? null,
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
-      notes: clientData.notes || null,
+      sales_brief: clientData.sales_brief || null,
       created_at: new Date().toISOString(),
     };
 
