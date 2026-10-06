@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Building2, UserCheck, Globe, Briefcase, Phone, Layers, Plus, StickyNote, ChevronDown, Save } from 'lucide-react';
+import { X, Building2, UserCheck, Globe, Briefcase, Phone, Layers, Plus, StickyNote, ChevronDown, Save, DollarSign, Calendar } from 'lucide-react';
 import { ClientRecord, ClientSector, ServiceType } from '../types/database';
 import {
   CLIENT_SERVICE_OPTIONS,
@@ -41,6 +41,12 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
   const [customServices, setCustomServices] = useState<string[]>(getClientCustomServices(client));
   const [customServiceInput, setCustomServiceInput] = useState('');
   const [salesBrief, setSalesBrief] = useState(client.sales_brief || '');
+  const [contractValue, setContractValue] = useState<number | ''>(client.contract_value ?? '');
+  const [dueValue, setDueValue] = useState<number | ''>(client.due_value ?? '');
+  const [remainingValue, setRemainingValue] = useState<number | ''>(client.remaining_value ?? '');
+  const [contractDurationMonths, setContractDurationMonths] = useState<number | ''>(client.contract_duration_months ?? '');
+  const [startDate, setStartDate] = useState(client.start_date || '');
+  const [renewalDate, setRenewalDate] = useState(client.renewal_date || '');
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -79,9 +85,25 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
       setSaveError('Please enter the client / company name.');
       return;
     }
+    if (!industry.trim()) {
+      setSaveError('Please enter an industry.');
+      return;
+    }
     if (selectedServices.length === 0 && customServices.length === 0) {
       setSaveError('Please select at least one service.');
       return;
+    }
+    const numericFields: [number | '', string][] = [
+      [contractValue, 'Monthly Retainer'],
+      [dueValue, 'Due Value'],
+      [remainingValue, 'Remaining Value'],
+      [contractDurationMonths, 'Contract Duration'],
+    ];
+    for (const [value, label] of numericFields) {
+      if (value !== '' && Number(value) < 0) {
+        setSaveError(`${label} must be >= 0.`);
+        return;
+      }
     }
 
     const { services, other_services } = splitClientServices([...selectedServices, ...customServices]);
@@ -106,6 +128,20 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
     if (servicesChanged) patch.services = services;
     if (otherServicesChanged) patch.other_services = other_services;
     if ((salesBrief.trim() || null) !== (client.sales_brief || null)) patch.sales_brief = salesBrief.trim() || null;
+    if ((contractValue === '' ? null : Number(contractValue)) !== (client.contract_value ?? null)) {
+      patch.contract_value = contractValue === '' ? null : Number(contractValue);
+    }
+    if ((dueValue === '' ? null : Number(dueValue)) !== (client.due_value ?? null)) {
+      patch.due_value = dueValue === '' ? null : Number(dueValue);
+    }
+    if ((remainingValue === '' ? null : Number(remainingValue)) !== (client.remaining_value ?? null)) {
+      patch.remaining_value = remainingValue === '' ? null : Number(remainingValue);
+    }
+    if ((contractDurationMonths === '' ? null : Number(contractDurationMonths)) !== (client.contract_duration_months ?? null)) {
+      patch.contract_duration_months = contractDurationMonths === '' ? null : Number(contractDurationMonths);
+    }
+    if ((startDate || null) !== (client.start_date || null)) patch.start_date = startDate || null;
+    if ((renewalDate || null) !== (client.renewal_date || null)) patch.renewal_date = renewalDate || null;
 
     if (Object.keys(patch).length === 0) {
       onClose();
@@ -157,7 +193,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
           style={{ background: 'rgba(123, 47, 247, 0.1)', border: '1px solid var(--border-soft)', color: 'var(--grey)' }}
         >
           AM/Sales assignment, status, and the signed contract aren't edited here — use AM Queue for
-          assignments, and the Client Lifecycle / Payment Tracking / Client Dates cards for those.
+          assignments, and the Client Lifecycle card for status changes.
         </p>
 
         {saveError && (
@@ -238,7 +274,9 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
             </div>
 
             <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Industry</label>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Industry <span className="text-red-400">*</span>
+              </label>
               <div className="relative">
                 <Briefcase className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
                 <input
@@ -326,6 +364,100 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
                 style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Monthly Retainer (optional)</label>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  min={0}
+                  value={contractValue}
+                  onChange={(e) => setContractValue(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Start Date</label>
+              <div className="relative">
+                <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Due Value (optional)</label>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  min={0}
+                  value={dueValue}
+                  onChange={(e) => setDueValue(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Remaining Value (optional)</label>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  min={0}
+                  value={remainingValue}
+                  onChange={(e) => setRemainingValue(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Contract Duration (months, optional)</label>
+              <div className="relative">
+                <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="number"
+                  min={0}
+                  value={contractDurationMonths}
+                  onChange={(e) => setContractDurationMonths(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Renewal Date</label>
+              <div className="relative">
+                <Calendar className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={renewalDate}
+                  onChange={(e) => setRenewalDate(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
             </div>
           </div>
 
