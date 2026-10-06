@@ -96,7 +96,7 @@ import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClientDates } from '../lib/permissions';
 import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -190,6 +190,14 @@ interface ClientDashboardProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
+  // Unlike every other onUpdate* handler here, this one is expected to REJECT on failure (it
+  // doesn't swallow its own error into a generic toast) — the inline editor below needs the real
+  // error message to tell "RLS silently blocked this" apart from a genuine failure. See
+  // canEditClientDates (lib/permissions.ts) for who gets the editor at all.
+  onUpdateClientDates?: (
+    clientId: string,
+    updates: { start_date: string | null; renewal_date: string | null }
+  ) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   // Fetches the 10 Client Access columns via the get_client_access() RPC — called only when the
   // Client Access section is opened (not eagerly with the rest of the client), since
@@ -267,6 +275,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUploadClientContract,
   onDeleteClientContract,
   onUpdatePaymentTracking,
+  onUpdateClientDates,
   onUpdateClientAccess,
   onFetchClientAccess,
   onLogSocialMetrics,
@@ -301,6 +310,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     contract_duration_months: client.contract_duration_months != null ? String(client.contract_duration_months) : '',
   });
   const [isSavingPaymentTracking, setIsSavingPaymentTracking] = useState(false);
+  const [isEditingDates, setIsEditingDates] = useState(false);
+  const [datesDraft, setDatesDraft] = useState({
+    start_date: client.start_date || '',
+    renewal_date: client.renewal_date || '',
+  });
+  const [isSavingDates, setIsSavingDates] = useState(false);
+  const [datesSaveError, setDatesSaveError] = useState('');
+  const [showRenewalDateMissingMessage, setShowRenewalDateMissingMessage] = useState(false);
   const [isEditingClientAccess, setIsEditingClientAccess] = useState(false);
   const [isClientAccessSelected, setIsClientAccessSelected] = useState(false);
   // public.clients no longer carries these 10 columns in `client` (the app's shared select no
@@ -469,6 +486,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
   const canEditPaymentTracking =
     currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead' || currentUser.role === 'ai_engineer';
+
+  // start_date/renewal_date inline editor below. Deliberately canEditClientDates (lib/permissions.ts),
+  // not canManageLifecycle above — editing these two dates is not a status transition.
+  const canEditDates = canEditClientDates(currentUser, client);
 
   // "Client Access" — general email, store platform login, social media login, ad account login
   // + setup type, and payment card details, collected during the Brief phase (rendered as a
@@ -750,6 +771,47 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       setIsEditingClientAccess(false);
     } finally {
       setIsSavingClientAccess(false);
+    }
+  };
+
+  // start_date/renewal_date inline editor. Unlike handleSaveClientAccess/handleSavePaymentTracking
+  // above, this does NOT swallow its own error: onUpdateClientDates (App.tsx) re-throws whatever
+  // updatePersistedClient raises, including the real PGRST116 "0 rows returned" error an
+  // RLS-blocked am_agent update produces (clients_update_am_assignment_rls has no am_agent clause
+  // at all — see lib/permissions.ts's canEditClientDates) — that real message is what
+  // datesSaveError shows, not a generic "something went wrong" toast, so a blocked am_agent sees
+  // why, not a silent no-op that looks like it worked. Does not touch client.status.
+  const handleSaveDates = async () => {
+    if (!onUpdateClientDates) return;
+    setDatesSaveError('');
+    setIsSavingDates(true);
+    try {
+      await onUpdateClientDates(client.id, {
+        start_date: datesDraft.start_date.trim() || null,
+        renewal_date: datesDraft.renewal_date.trim() || null,
+      });
+      setIsEditingDates(false);
+    } catch (err: any) {
+      setDatesSaveError(err?.message || 'Unable to save these dates.');
+    } finally {
+      setIsSavingDates(false);
+    }
+  };
+
+  // One-click shortcut to null both dates at once, rather than requiring the two inputs to be
+  // hand-cleared first — same error handling as handleSaveDates above.
+  const handleClearDates = async () => {
+    if (!onUpdateClientDates) return;
+    setDatesSaveError('');
+    setIsSavingDates(true);
+    try {
+      await onUpdateClientDates(client.id, { start_date: null, renewal_date: null });
+      setDatesDraft({ start_date: '', renewal_date: '' });
+      setIsEditingDates(false);
+    } catch (err: any) {
+      setDatesSaveError(err?.message || 'Unable to clear these dates.');
+    } finally {
+      setIsSavingDates(false);
     }
   };
 
@@ -1282,6 +1344,105 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
               )}
 
+              {/* Client Dates (start_date/renewal_date) — editable by canEditClientDates
+                  (lib/permissions.ts), independent of canManageLifecycle/status transitions.
+                  Visible to everyone who can see this screen at all (both columns are already in
+                  NON_SENSITIVE_CLIENT_COLUMNS and shown in the top bar); only the Edit control and
+                  inputs are gated. */}
+              <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-purple-400" />
+                    <span>Client Dates</span>
+                    {(!client.start_date || !client.renewal_date) && (
+                      <span
+                        className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                        style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}
+                      >
+                        Missing Dates
+                      </span>
+                    )}
+                  </h3>
+                  {canEditDates && onUpdateClientDates && !isEditingDates && (
+                    <button
+                      onClick={() => {
+                        setDatesDraft({ start_date: client.start_date || '', renewal_date: client.renewal_date || '' });
+                        setDatesSaveError('');
+                        setShowRenewalDateMissingMessage(false);
+                        setIsEditingDates(true);
+                      }}
+                      className="text-[11px] font-bold text-purple-300 hover:text-white flex items-center gap-1"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+                </div>
+
+                {isEditingDates ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="text-[11px] text-stone-400 space-y-1 block">
+                        <span>Start Date</span>
+                        <input
+                          type="date"
+                          value={datesDraft.start_date}
+                          onChange={(e) => setDatesDraft((prev) => ({ ...prev, start_date: e.target.value }))}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                        />
+                      </label>
+                      <label className="text-[11px] text-stone-400 space-y-1 block">
+                        <span>Renewal Date</span>
+                        <input
+                          type="date"
+                          value={datesDraft.renewal_date}
+                          onChange={(e) => setDatesDraft((prev) => ({ ...prev, renewal_date: e.target.value }))}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
+                        />
+                      </label>
+                    </div>
+                    {datesSaveError && <p className="text-[11px] text-red-400">{datesSaveError}</p>}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSaveDates}
+                        disabled={isSavingDates}
+                        className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+                      >
+                        {isSavingDates ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        onClick={handleClearDates}
+                        disabled={isSavingDates}
+                        className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-amber-200 bg-amber-900/30 hover:bg-amber-800/50 disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsEditingDates(false);
+                          setDatesSaveError('');
+                          setDatesDraft({ start_date: client.start_date || '', renewal_date: client.renewal_date || '' });
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-stone-300 bg-stone-800 hover:bg-stone-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[11px] text-stone-400 block">Start Date</span>
+                      <p className="text-sm font-bold text-white font-mono">{client.start_date || 'Not set'}</p>
+                    </div>
+                    <div>
+                      <span className="text-[11px] text-stone-400 block">Renewal Date</span>
+                      <p className="text-sm font-bold text-white font-mono">{client.renewal_date || 'Not set'}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Sales Brief (Module 16; named `sales_brief`, was `notes`) — collected at
                   registration. Reuses showContractValue exactly: the final rule is identical to
                   contract_value/the Signed Contract file — Executive/Head of Technical/AM Team
@@ -1378,20 +1539,28 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                     {client.status === 'renewal' && canManageLifecycle && onUpdateClientStatus && (
                       <button
                         onClick={() => {
-                          const nextRenewal = client.renewal_date
-                            ? (() => {
-                                const d = new Date(client.renewal_date as string);
-                                d.setFullYear(d.getFullYear() + 1);
-                                return d.toISOString().split('T')[0];
-                              })()
-                            : undefined;
-                          handleTransition('active', nextRenewal ? { renewal_date: nextRenewal } : undefined);
+                          // A null renewal_date means there's no date to bump by a year — confirming
+                          // would either silently no-op the date (the old behavior) or need a
+                          // fabricated one; neither is right, so this blocks instead and points at
+                          // the Client Dates editor above, rather than transitioning status anyway.
+                          if (!client.renewal_date) {
+                            setShowRenewalDateMissingMessage(true);
+                            return;
+                          }
+                          const d = new Date(client.renewal_date);
+                          d.setFullYear(d.getFullYear() + 1);
+                          handleTransition('active', { renewal_date: d.toISOString().split('T')[0] });
                         }}
                         disabled={isUpdatingStatus}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 hover:text-white border border-emerald-700/40 transition-all"
                       >
                         Confirm Renewal
                       </button>
+                    )}
+                    {showRenewalDateMissingMessage && (
+                      <p className="text-[11px] text-amber-400 w-full">
+                        This client has no renewal date set. Set one in Client Dates above before confirming renewal.
+                      </p>
                     )}
 
                     {(client.status === 'onboarding' ||

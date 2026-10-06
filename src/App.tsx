@@ -2260,9 +2260,12 @@ export default function App() {
       contract_value: clientData.contract_value,
       due_value: clientData.due_value ?? null,
       remaining_value: clientData.remaining_value ?? null,
-      start_date: clientData.start_date,
+      // ClientRegistrationModal's date inputs default to today/+1-year but can be hand-cleared to
+      // '' before submit; '' is not a valid `date` column value, so it's converted to null here
+      // rather than reaching Supabase as an empty string.
+      start_date: clientData.start_date || null,
       contract_duration_months: clientData.contract_duration_months ?? null,
-      renewal_date: clientData.renewal_date,
+      renewal_date: clientData.renewal_date || null,
       sales_brief: clientData.sales_brief || null,
       created_at: new Date().toISOString(),
     };
@@ -2332,8 +2335,8 @@ export default function App() {
     contract_value: number;
     due_value?: number;
     remaining_value?: number;
-    start_date: string;
-    renewal_date: string;
+    start_date: string | null;
+    renewal_date: string | null;
     am_team_lead_id?: string;
     am_agent_id?: string;
     sales_brief?: string;
@@ -2366,6 +2369,8 @@ export default function App() {
       contract_value: clientData.contract_value,
       due_value: clientData.due_value ?? null,
       remaining_value: clientData.remaining_value ?? null,
+      // Passed straight through — BulkClientUploadModal already resolves a blank cell to null
+      // (not a today/+1-year default), so there's nothing left to convert here.
       start_date: clientData.start_date,
       renewal_date: clientData.renewal_date,
       sales_brief: clientData.sales_brief || null,
@@ -2578,6 +2583,23 @@ export default function App() {
       return;
     }
     showNotification('Payment tracking updated.');
+  };
+
+  // 2a-2b. start_date/renewal_date inline edit (ClientDashboard.tsx), gated by
+  // canEditClientDates (lib/permissions.ts) — not canManageLifecycle, and never touches
+  // client.status. Deliberately does NOT catch-and-swallow like handleUpdatePaymentTracking above:
+  // clients_update_am_assignment_rls (the only UPDATE policy on public.clients) has no am_agent
+  // clause at all, so an am_agent who passes canEditClientDates's own-client check is still
+  // rejected by RLS — updatePersistedClient's .select(...).single() turns that 0-row update into a
+  // real thrown error (PGRST116) rather than a silent no-op, and ClientDashboard's inline editor
+  // needs that real error to reach it and display verbatim, not a generic toast that would look
+  // like nothing happened.
+  const handleUpdateClientDates = async (
+    clientId: string,
+    updates: { start_date: string | null; renewal_date: string | null }
+  ) => {
+    await updatePersistedClient(clientId, updates);
+    showNotification('Client dates updated.');
   };
 
   // 2a-3. "Client Access": general email, store platform login, social media login, ad account
@@ -5221,6 +5243,7 @@ export default function App() {
                     onUploadClientContract={handleUploadClientContract}
                     onDeleteClientContract={handleDeleteClientContract}
                     onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                    onUpdateClientDates={handleUpdateClientDates}
                     onUpdateClientAccess={handleUpdateClientAccess}
                     onFetchClientAccess={handleFetchClientAccess}
                   />
@@ -5271,6 +5294,7 @@ export default function App() {
                   platformConnections={platformConnections}
                   onSetPlatformConnectionStatus={handleSetPlatformConnectionStatus}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                  onUpdateClientDates={handleUpdateClientDates}
                   onUpdateClientAccess={handleUpdateClientAccess}
                   onFetchClientAccess={handleFetchClientAccess}
                 />
@@ -5374,6 +5398,7 @@ export default function App() {
                   briefFieldSchemaRows={briefFieldSchemaRows}
                   onDeleteClient={handleDeleteClient}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                  onUpdateClientDates={handleUpdateClientDates}
                   onUpdateClientAccess={handleUpdateClientAccess}
                   onFetchClientAccess={handleFetchClientAccess}
                 />

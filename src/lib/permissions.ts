@@ -180,6 +180,25 @@ export const canEditServiceBrief = (
   return false;
 };
 
+// Who may edit a client's start_date/renewal_date (ClientDashboard.tsx's inline date editor).
+// Deliberately its own function, not ClientDashboard.tsx's local canManageLifecycle — these two
+// dates are plain data fields, not a status transition, and the two gates are free to diverge.
+// Executive/head_of_technical/am_team_lead/ai_engineer may edit any client; am_agent only their
+// own assigned client (am_agent_id === them); sales only their own registered client
+// (sales_owner_id === them). NOTE: the DB-level counterpart, clients_update_am_assignment_rls
+// (20261018000000_align_ai_engineer_with_head_of_technical.sql), has NO am_agent clause at all —
+// an am_agent passes this check but is rejected by RLS (0 rows affected). The caller must detect
+// and surface that (see ClientDashboard.tsx's inline date editor).
+export const canEditClientDates = (
+  user: Pick<UserRecord, 'id' | 'role'>,
+  client: Pick<ClientRecord, 'am_agent_id' | 'sales_owner_id'>
+): boolean => {
+  if (user.role === 'executive' || user.role === 'head_of_technical' || user.role === 'am_team_lead' || user.role === 'ai_engineer') return true;
+  if (user.role === 'am_agent') return client.am_agent_id === user.id;
+  if (user.role === 'sales') return client.sales_owner_id === user.id;
+  return false;
+};
+
 // CapacityManagement.tsx's "إدارة العملاء"/"إدارة الموظفين" buttons — deliberately separate from
 // canManageEmployeesOrClients above, which already has two different, real consumers
 // (EmployeeAdminHub.tsx's edit/deactivate rights, ClientDashboard.tsx's hard-delete rights) with a

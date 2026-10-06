@@ -235,18 +235,31 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     [visibleClients]
   );
 
+  // A client missing either date can't be reliably tracked for renewal — the automated renewal
+  // sweep (App.tsx) and every isRenewalApproaching check already just skip a null renewal_date, so
+  // this surfaces the gap instead of leaving it silently invisible.
+  const missingDatesClients = useMemo(
+    () => visibleClients.filter((c) => !c.start_date || !c.renewal_date),
+    [visibleClients]
+  );
+
   const [dashboardClientId, setDashboardClientId] = useState<string | null>(null);
   const [assigningAgentId, setAssigningAgentId] = useState<Record<string, string>>({});
   const [isAssigning, setIsAssigning] = useState<string | null>(null);
   const [assignMessage, setAssignMessage] = useState<{ id: string; text: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showMissingDatesOnly, setShowMissingDatesOnly] = useState(false);
 
   // Module 14: search narrows only the rendered list below — the stats bar and Renewal Queue
   // above stay scoped to the full visibleClients portfolio, same precedent as SalesPortalView's
-  // stat cards staying on personalClients while only its table rows use filteredClients.
+  // stat cards staying on personalClients while only its table rows use filteredClients. The
+  // missing-dates toggle narrows the same way search does.
   const displayedClients = useMemo(
-    () => visibleClients.filter((c) => matchesClientQuery(c, searchQuery)),
-    [visibleClients, searchQuery]
+    () =>
+      visibleClients
+        .filter((c) => matchesClientQuery(c, searchQuery))
+        .filter((c) => !showMissingDatesOnly || !c.start_date || !c.renewal_date),
+    [visibleClients, searchQuery, showMissingDatesOnly]
   );
 
   const amAgents = users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u));
@@ -396,7 +409,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       </div>
 
       {/* Overview Stats Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div
           className="p-4 rounded-xl flex items-center justify-between"
           data-accent="neutral"
@@ -451,6 +464,30 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             <FileText className="w-4 h-4" />
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowMissingDatesOnly((prev) => !prev)}
+          className="p-4 rounded-xl flex items-center justify-between text-left transition-all"
+          data-accent="warning"
+          style={{
+            background: 'var(--gradient-card)',
+            border: showMissingDatesOnly ? '1px solid var(--stat-warning-alt)' : '1px solid var(--border-soft)',
+          }}
+        >
+          <div>
+            <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Clients with Missing Dates</p>
+            <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--stat-warning-alt)' }}>
+              {missingDatesClients.length}
+            </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
+              {showMissingDatesOnly ? 'Showing only these — click to clear' : 'Click to filter the list below'}
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-950/30 text-amber-300 border border-amber-800/30">
+            <Calendar className="w-4 h-4" />
+          </div>
+        </button>
       </div>
 
       {/* Module 12 Phase 8: Renewal Queue — clients in 'renewal' status, with quick access to

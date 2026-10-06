@@ -280,6 +280,14 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
 
                       <td className="py-3.5 px-4 text-stone-400 font-mono">
                         {client.start_date || 'Immediate'}
+                        {(!client.start_date || !client.renewal_date) && (
+                          <span
+                            className="block mt-1 w-fit px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
+                            style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}
+                          >
+                            Missing Dates
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">

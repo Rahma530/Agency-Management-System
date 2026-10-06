@@ -25,8 +25,8 @@ interface BulkClientUploadModalProps {
     contract_value: number;
     due_value?: number;
     remaining_value?: number;
-    start_date: string;
-    renewal_date: string;
+    start_date: string | null;
+    renewal_date: string | null;
     am_team_lead_id?: string;
     am_agent_id?: string;
   }) => Promise<void>;
@@ -39,13 +39,6 @@ const normalizeSector = (value: string): ClientSector | null => {
   return null;
 };
 const isValidDateStr = (val: string) => !Number.isNaN(new Date(val).getTime());
-const todayIso = () => new Date().toISOString().split('T')[0];
-const addOneYear = (dateStr: string): string => {
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return dateStr;
-  d.setFullYear(d.getFullYear() + 1);
-  return d.toISOString().split('T')[0];
-};
 
 const CSV_TEMPLATE_HEADERS = [
   'name',
@@ -308,13 +301,18 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'start_date is not a valid date' });
           continue;
         }
-        const startDate = rowStartDate || todayIso();
+        // Blank uploads as null, not a today/+1-year default — this differs deliberately from
+        // ClientRegistrationModal's single-client form, which still pre-fills both fields. A bulk
+        // file with blank date cells means "unknown", not "starts now"; defaulting it would quietly
+        // fabricate a date nobody entered, for every row in a file that simply didn't have the
+        // column filled in.
+        const startDate = rowStartDate || null;
 
         if (rowRenewalDate && !isValidDateStr(rowRenewalDate)) {
           rowResults.push({ row: rowNum, name: rowName, status: 'skipped', reason: 'renewal_date is not a valid date' });
           continue;
         }
-        const renewalDate = rowRenewalDate || addOneYear(startDate);
+        const renewalDate = rowRenewalDate || null;
 
         // am_team_lead_name is optional for every uploader role (not just management): a blank
         // value auto-assigns the sole active AM Team Lead if exactly one exists, and rejects the
