@@ -97,6 +97,7 @@ import {
   PlatformCategory,
   PlatformConnectionStatus,
   ClientAccessFields,
+  ClientLifecyclePeriodRecord,
   NON_SENSITIVE_CLIENT_COLUMNS,
 } from './types/database';
 import {
@@ -218,6 +219,15 @@ export default function App() {
   const [users, setUsers] = useState<UserRecord[]>(INITIAL_USERS);
   const [usersLoadedFromSupabase, setUsersLoadedFromSupabase] = useState(false);
   const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [clientLifecyclePeriods, setClientLifecyclePeriods] = useState<ClientLifecyclePeriodRecord[]>([]);
+  const clientLifecyclePeriodsByClientId = useMemo(
+    () =>
+      clientLifecyclePeriods.reduce<Record<string, ClientLifecyclePeriodRecord[]>>((lookup, period) => {
+        (lookup[period.client_id] ||= []).push(period);
+        return lookup;
+      }, {}),
+    [clientLifecyclePeriods]
+  );
   const [briefs, setBriefs] = useState<BriefRecord[]>(INITIAL_BRIEFS);
   const [briefRevisions, setBriefRevisions] = useState<BriefRevisionRecord[]>([]);
   // Global per-service brief question list — moved here from a static import (data/briefFieldSchemas.ts)
@@ -1270,6 +1280,27 @@ export default function App() {
     setAssignments((data as AssignmentRecord[]) || []);
   }, []);
 
+  const refreshClientLifecyclePeriods = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) {
+      setClientLifecyclePeriods([]);
+      return;
+    }
+
+    // One read-only query for every lifecycle row the current user may see. The table's SELECT
+    // policy reuses public.clients visibility, so RLS — not frontend filtering — remains the
+    // security boundary and no service-role credentials are involved.
+    const { data, error } = await supabaseRaw
+      .from('client_lifecycle_periods')
+      .select('*')
+      .order('started_on', { ascending: true });
+    if (error) {
+      console.error('Failed to refresh client lifecycle periods from Supabase:', error);
+      return;
+    }
+
+    setClientLifecyclePeriods((data as ClientLifecyclePeriodRecord[]) || []);
+  }, []);
+
   // Fetch initial data directly from Supabase (or fallback to initial state)
   //
   // Does NOT clear `clients` to [] before refetching (it used to) — that premature wipe
@@ -1320,6 +1351,10 @@ export default function App() {
             ...client, services: getClientServices(client),
           })));
         }
+
+        // A single RLS-scoped read supplies lifecycle history for every visible client; this
+        // intentionally avoids a per-client query loop.
+        await refreshClientLifecyclePeriods();
 
         // Fetch briefs
         const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
@@ -1468,7 +1503,7 @@ export default function App() {
     // SIGNED_IN/TOKEN_REFRESHED re-notification Supabase's own client fires on tab refocus,
     // even for the same already-logged-in person — see the effect below that calls loadData().
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticatedUser?.id, refreshAssignments]);
+  }, [authenticatedUser?.id, refreshAssignments, refreshClientLifecyclePeriods]);
 
   // chat_messages, chat_directory, and notifications load independently of loadData's big
   // sequential fetch batch above — deliberately not awaited inside it. That batch runs ~20
@@ -2575,6 +2610,18 @@ export default function App() {
     setClients((prev) => prev.map((client) => client.id === clientId ? persistedClient : client));
   };
 
+  const refreshPersistedClient = async (clientId: string) => {
+    const { data, error } = await supabaseRaw
+      .from('clients')
+      .select(NON_SENSITIVE_CLIENT_COLUMNS)
+      .eq('id', clientId)
+      .single();
+    if (error) throw error;
+    if (!data) throw new Error('Client refresh returned no persisted row.');
+    const persistedClient = data as ClientRecord;
+    setClients((prev) => prev.map((client) => client.id === clientId ? persistedClient : client));
+  };
+
   // 2. Assign the client to an Account Manager (AM Agent)
   const handleAssignAMTeamLead = async (clientId: string, leadId: string) => {
     if (!['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead'].includes(currentUser.role)) {
@@ -2615,32 +2662,85 @@ export default function App() {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => {
-    const updatePayload: Partial<ClientRecord> = { status: newStatus };
     // Field names kept as churn_reason/churned_at (Module 13 only renamed the status VALUE
     // 'churned' -> 'closed', not these columns — see types/database.ts).
     if (newStatus === 'closed') {
       if (!options?.churned_at) {
         throw new Error('Stop / Loss Date is required when closing a client.');
       }
-      updatePayload.churn_reason = options?.churn_reason || null;
-      updatePayload.churned_at = `${options.churned_at.slice(0, 10)}T00:00:00.000Z`;
-    }
-    if (options?.renewal_date) {
-      updatePayload.renewal_date = options.renewal_date;
-    }
 
-    try {
-      await updatePersistedClient(clientId, updatePayload);
-    } catch (err) {
-      console.error('Supabase update client status error:', err);
-      showNotification('Unable to update this client status.', 'info');
-      return;
+      try {
+        if (!supabaseActive) throw new Error('Supabase is not configured; the client was not closed.');
+        const { error } = await supabaseRaw.rpc('close_client', {
+          p_client_id: clientId,
+          p_stop_date: options.churned_at.slice(0, 10),
+          p_closure_reason: options.churn_reason || null,
+        });
+        if (error) throw error;
+        await Promise.all([refreshPersistedClient(clientId), refreshClientLifecyclePeriods()]);
+      } catch (err) {
+        console.error('Supabase close client error:', err);
+        showNotification('Unable to close this client.', 'info');
+        throw err;
+      }
+    } else {
+      const updatePayload: Partial<ClientRecord> = { status: newStatus };
+      if (options?.renewal_date) {
+        updatePayload.renewal_date = options.renewal_date;
+      }
+
+      try {
+        await updatePersistedClient(clientId, updatePayload);
+      } catch (err) {
+        console.error('Supabase update client status error:', err);
+        showNotification('Unable to update this client status.', 'info');
+        return;
+      }
     }
 
     const client = clients.find((c) => c.id === clientId);
     await logActivity('status_change', 'client', clientId, client?.name || 'Client', `Status updated to ${newStatus}`);
 
     showNotification(`Client "${client?.name || clientId}" status updated to ${newStatus}.`);
+  };
+
+  const handleConfirmClientRenewal = async (clientId: string) => {
+    try {
+      if (!supabaseActive) throw new Error('Supabase is not configured; the renewal was not confirmed.');
+      const { error } = await supabaseRaw.rpc('confirm_client_renewal', {
+        p_client_id: clientId,
+      });
+      if (error) throw error;
+      await refreshPersistedClient(clientId);
+    } catch (err) {
+      console.error('Supabase confirm client renewal error:', err);
+      showNotification('Unable to confirm this client renewal.', 'info');
+      throw err;
+    }
+
+    const client = clients.find((c) => c.id === clientId);
+    await logActivity('status_change', 'client', clientId, client?.name || 'Client', 'Status updated to active');
+    showNotification(`Client "${client?.name || clientId}" status updated to active.`);
+  };
+
+  const handleReopenClient = async (clientId: string, reopenDate: string) => {
+    try {
+      if (!supabaseActive) throw new Error('Supabase is not configured; the client was not reopened.');
+      const { error } = await supabaseRaw.rpc('reopen_client', {
+        p_client_id: clientId,
+        p_reopen_date: reopenDate.slice(0, 10),
+      });
+      if (error) throw error;
+      await Promise.all([refreshPersistedClient(clientId), refreshClientLifecyclePeriods()]);
+    } catch (err) {
+      console.error('Supabase reopen client error:', err);
+      showNotification('Unable to reopen this client.', 'info');
+      throw err;
+    }
+
+    const client = clients.find((c) => c.id === clientId);
+    await logActivity('status_change', 'client', clientId, client?.name || 'Client', 'Status updated to active');
+    showNotification(`Client "${client?.name || clientId}" reopened.`);
   };
 
   // 2a-3. Hard delete a client (point 6/7) — real DELETE, not deactivation, since clients have no
@@ -5321,12 +5421,14 @@ export default function App() {
                   <SalesPortalView
                     currentUser={currentUser}
                     clients={clients}
+                    clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
                     users={users}
                     assignments={assignments}
                     onRefreshAssignments={refreshAssignments}
                     onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
                     onOpenBulkUploadModal={() => setIsBulkClientUploadOpen(true)}
                     onUpdateClientStatus={handleUpdateClientStatus}
+                    onReopenClient={handleReopenClient}
                     clientContracts={clientContracts}
                     onUploadClientContract={handleUploadClientContract}
                     onDeleteClientContract={handleDeleteClientContract}
@@ -5338,6 +5440,7 @@ export default function App() {
                 ) : (
                   <AMQueue
                     clients={clients}
+                    clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
                     users={users}
                     briefs={briefs}
                     briefRevisions={briefRevisions}
@@ -5366,6 +5469,8 @@ export default function App() {
                     onOpenRegisterModal={canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
                     onOpenBulkUploadModal={canRegisterClients ? () => setIsBulkClientUploadOpen(true) : undefined}
                     onUpdateClientStatus={handleUpdateClientStatus}
+                    onConfirmClientRenewal={handleConfirmClientRenewal}
+                    onReopenClient={handleReopenClient}
                     onMarkClientViewed={handleMarkClientViewedByAMLead}
                     onNavigateToModule={handleNavigateToModule}
                     onGenerateComparison={handleGenerateComparison}
@@ -5399,6 +5504,7 @@ export default function App() {
                 <ServiceBriefsRoutingView
                   currentUser={currentUser}
                   clients={clients}
+                  clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
                   briefs={briefs}
                   briefRevisions={briefRevisions}
                   assignments={assignments}
@@ -5511,6 +5617,7 @@ export default function App() {
                 <CampaignManagementModule
                   campaigns={campaigns}
                   clients={clients}
+                  clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
                   users={users}
                   currentUser={currentUser}
                   briefs={briefs}

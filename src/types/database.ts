@@ -115,6 +115,7 @@ export interface ClientRecord {
   contract_value?: number | null;
   start_date?: string | null;
   renewal_date?: string | null;
+  renewal_history_count?: number | null;
   am_team_lead_viewed_at?: string | null;
   // Field names kept as-is (Module 13 only renamed the status VALUE 'churned' -> 'closed', not
   // these columns) — set automatically by handleUpdateClientStatus (App.tsx) the moment status
@@ -149,6 +150,20 @@ export interface ClientRecord {
   created_at?: string;
 }
 
+// Phase 1 lifecycle history: one row per continuous period during which a client worked with
+// KMS. `ended_on = null` identifies the current open period; the database guarantees at most one
+// open period per client. These rows are the source of truth for relationship tenure whenever
+// any history exists for a client.
+export interface ClientLifecyclePeriodRecord {
+  id: string;
+  client_id: string;
+  started_on: string;
+  ended_on: string | null;
+  closure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // The 10 "Client Access" columns, factored out of ClientRecord: public.clients no longer grants
 // authenticated SELECT on these (see 20261030500000_protect_client_access_columns.sql) — they are
 // only ever fetched via the get_client_access(p_client_id) RPC (role-gated, audit-logged into
@@ -181,7 +196,7 @@ export interface ClientAccessFields {
 // built from pieces, it widens to plain `string` and every .select(...) call site below falls back
 // to an untyped `GenericStringError` result instead.
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, created_at' as const;
+  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, created_at' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
