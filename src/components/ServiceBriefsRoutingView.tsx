@@ -49,13 +49,17 @@ import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices } from '../lib/clientServices';
+import {
+  getEligibleServiceAssignees,
+  getServiceAssignmentConfigForRole,
+} from '../lib/serviceAssignment';
 import { ClientDashboard } from './ClientDashboard';
 import { BriefRepositoryView } from './BriefRepositoryView';
 import { DynamicBriefForm } from './DynamicBriefForm';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
-import { canSeeContractValue, isActiveEmployee, canEditBriefFieldSchema, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
+import { canSeeContractValue, canEditBriefFieldSchema, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
 
@@ -482,14 +486,18 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
     );
   }
 
-  // Determine service and role context
+  // Determine service and role context. Assignee role eligibility lives in the shared
+  // serviceAssignment helper so this existing Team Leader flow and ClientDashboard cannot drift.
   const getServiceContext = (role: UserRole) => {
-    if (role === 'seo_team_lead' || role === 'seo_agent' || role === 'seo_content_agent' || role === 'seo_backlink_agent') {
+    const assignmentConfig = getServiceAssignmentConfigForRole(role);
+    if (!assignmentConfig) return null;
+
+    const { serviceType, teamLeadRole } = assignmentConfig;
+    if (serviceType === 'seo') {
       return {
-        serviceType: 'seo' as ServiceType,
-        isTeamLead: role === 'seo_team_lead',
-        teamLeadRole: 'seo_team_lead' as UserRole,
-        agentRole: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'] as UserRole[],
+        serviceType,
+        isTeamLead: role === teamLeadRole,
+        teamLeadRole,
         serviceNameEn: 'Search Engine Optimization (SEO)',
         departmentName: 'SEO & Organic Growth Department',
         leadRoleTitle: 'SEO Team Leader',
@@ -500,12 +508,11 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         icon: <Globe className="w-5 h-5 text-emerald-400" />,
       };
     }
-    if (role === 'media_buying_team_lead' || role === 'media_buying_agent') {
+    if (serviceType === 'media_buying') {
       return {
-        serviceType: 'media_buying' as ServiceType,
-        isTeamLead: role === 'media_buying_team_lead',
-        teamLeadRole: 'media_buying_team_lead' as UserRole,
-        agentRole: ['media_buying_agent'] as UserRole[],
+        serviceType,
+        isTeamLead: role === teamLeadRole,
+        teamLeadRole,
         serviceNameEn: 'Paid Advertising (Media Buying)',
         departmentName: 'Digital Media Buying Department',
         leadRoleTitle: 'Media Buying Team Leader',
@@ -516,12 +523,11 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         icon: <Target className="w-5 h-5 text-sky-400" />,
       };
     }
-    if (role === 'social_media_team_lead' || role === 'social_media_agent') {
+    if (serviceType === 'social_media') {
       return {
-        serviceType: 'social_media' as ServiceType,
-        isTeamLead: role === 'social_media_team_lead',
-        teamLeadRole: 'social_media_team_lead' as UserRole,
-        agentRole: ['social_media_agent'] as UserRole[],
+        serviceType,
+        isTeamLead: role === teamLeadRole,
+        teamLeadRole,
         serviceNameEn: 'Social Media Management',
         departmentName: 'Social Media & Community Department',
         leadRoleTitle: 'Social Media Team Leader',
@@ -553,7 +559,6 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
     serviceType,
     isTeamLead,
     teamLeadRole,
-    agentRole,
     serviceNameEn,
     departmentName,
     leadRoleTitle,
@@ -599,12 +604,14 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
 
   // Includes the department's own Team Leader alongside its Agents — a Team Leader must be able
   // to self-assign as the responsible person for their department, not just delegate to an Agent.
-  const eligibleAgents = users.filter(
-    (u) => (agentRole.includes(u.role) || u.role === teamLeadRole) && isActiveEmployee(u)
-  );
+  const eligibleAgents = getEligibleServiceAssignees(users, serviceType);
 
   const selectedClient =
     authorizedClients.find((c) => c.id === selectedClientId) || authorizedClients[0] || null;
+
+  React.useEffect(() => {
+    setSelectedAgentId('');
+  }, [selectedClient?.id, serviceType]);
 
   const serviceBrief = briefs.find(
     (b) => b.client_id === selectedClient?.id && b.service_type === serviceType
@@ -679,6 +686,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       await onAssignServiceAgent(selectedClient.id, serviceType, selectedAgentId, assignmentNotes);
       const agentObj = eligibleAgents.find((u) => u.id === selectedAgentId);
       setSuccessMsg(`Successfully assigned to ${agentObj?.name || 'Specialist'}`);
+      setSelectedAgentId('');
       setAssignmentNotes('');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
@@ -911,7 +919,10 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                 return (
                   <div
                     key={client.id}
-                    onClick={() => setSelectedClientId(client.id)}
+                    onClick={() => {
+                      setSelectedAgentId('');
+                      setSelectedClientId(client.id);
+                    }}
                     className={`p-3.5 rounded-xl cursor-pointer transition-all border ${
                       isSelected
                         ? 'ring-2 ring-purple-500 shadow-xl bg-purple-950/30'
@@ -1060,7 +1071,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
 
                     <div className="flex items-center gap-2">
                       <select
-                        value={selectedAgentId || currentAssignment?.agent_id || ''}
+                        value={selectedAgentId}
                         onChange={(e) => setSelectedAgentId(e.target.value)}
                         className="flex-1 px-3 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-purple-900/40 text-white focus:outline-none"
                       >

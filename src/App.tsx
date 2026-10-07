@@ -5254,6 +5254,7 @@ export default function App() {
                     currentUserId={currentUser.id}
                     onAssignAMAgent={handleAssignAMAgent}
                     onAssignAMTeamLead={handleAssignAMTeamLead}
+                    onAssignServiceAgent={handleAssignServiceAgent}
                     onSaveBrief={handleSaveBrief}
                     onSubmitBrief={handleSubmitBrief}
                     briefFieldSchemas={briefFieldSchemas}
@@ -5424,6 +5425,7 @@ export default function App() {
                   clientPortalUsers={clientPortalUsers}
                   onCreateCampaign={handleCreateCampaign}
                   onUpdateCampaign={handleUpdateCampaign}
+                  onAssignServiceAgent={handleAssignServiceAgent}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}

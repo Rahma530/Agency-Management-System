@@ -78,6 +78,12 @@ interface CampaignManagementModuleProps {
   clientPortalUsers?: ClientPortalUserRecord[];
   onCreateCampaign: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateCampaign: (id: string, updates: Partial<CampaignRecord>) => Promise<void> | void;
+  onAssignServiceAgent: (
+    clientId: string,
+    serviceType: ServiceType,
+    agentId: string,
+    reasonNotes?: string
+  ) => Promise<void>;
   onGenerateComparison?: (
     scope: ReportScope,
     mode: ReportMode,
@@ -265,6 +271,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   clientPortalUsers = [],
   onCreateCampaign,
   onUpdateCampaign,
+  onAssignServiceAgent,
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
@@ -1898,6 +1905,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           platformConnections={platformConnections}
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onAssignServiceAgent={onAssignServiceAgent}
           onUpdateClientDates={onUpdateClientDates}
           onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}

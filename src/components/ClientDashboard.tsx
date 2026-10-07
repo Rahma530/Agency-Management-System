@@ -102,8 +102,15 @@ import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
 import { getClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import {
+  AssignableServiceType,
+  getEligibleServiceAssignees,
+  SERVICE_ASSIGNMENT_CONFIG,
+} from '../lib/serviceAssignment';
 import { isTaskDone } from '../lib/taskLifecycle';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
+
+const UNASSIGN_SELECTION = '__unassigned__';
 
 interface ClientDashboardProps {
   client: ClientRecord;
@@ -139,6 +146,12 @@ interface ClientDashboardProps {
   onDeleteClient?: (clientId: string) => Promise<void>;
   onAssignAMAgent?: (clientId: string, agentId: string) => Promise<void>;
   onAssignAMTeamLead?: (clientId: string, leadId: string) => Promise<void>;
+  onAssignServiceAgent?: (
+    clientId: string,
+    serviceType: ServiceType,
+    agentId: string,
+    reasonNotes?: string
+  ) => Promise<void>;
   onUpdateTaskStatus?: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onCreateCampaign?: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateClientStatus?: (
@@ -258,6 +271,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onDeleteClient,
   onAssignAMAgent,
   onAssignAMTeamLead,
+  onAssignServiceAgent,
   onUpdateTaskStatus,
   onCreateCampaign,
   onUpdateClientStatus,
@@ -294,9 +308,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isSchemaEditorOpen, setIsSchemaEditorOpen] = useState(false);
   const [selectedBriefService, setSelectedBriefService] = useState<ServiceType | null>(null);
   const [isAssigningAM, setIsAssigningAM] = useState(false);
-  const [selectedAMId, setSelectedAMId] = useState(client.am_agent_id || '');
-  const [selectedLeadId, setSelectedLeadId] = useState(client.am_team_lead_id || '');
+  const [selectedAMId, setSelectedAMId] = useState('');
+  const [selectedLeadId, setSelectedLeadId] = useState('');
   const [isAssigningLead, setIsAssigningLead] = useState(false);
+  const [selectedServiceAgentIds, setSelectedServiceAgentIds] = useState<
+    Partial<Record<AssignableServiceType, string>>
+  >({});
+  const [assigningServiceType, setAssigningServiceType] = useState<AssignableServiceType | null>(null);
   const [assignmentError, setAssignmentError] = useState('');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showChurnConfirm, setShowChurnConfirm] = useState(false);
@@ -357,6 +375,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
   const services: ServiceType[] = useMemo(() => getClientServices(client), [client]);
   const customServices: string[] = useMemo(() => getClientCustomServices(client), [client]);
+
+  // Assignment dropdowns represent a new choice, never the persisted assignment. Reset all
+  // temporary choices whenever the dashboard moves to a different client.
+  React.useEffect(() => {
+    setSelectedAMId('');
+    setSelectedLeadId('');
+    setSelectedServiceAgentIds({});
+    setAssignmentError('');
+  }, [client.id]);
 
   // Initialize active brief service
   React.useEffect(() => {
@@ -886,11 +913,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const amTeamLeaders = users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u));
 
   const handleAssignAM = async () => {
-    if (!onAssignAMAgent) return;
+    if (!onAssignAMAgent || !selectedAMId) return;
     setIsAssigningAM(true);
     try {
       setAssignmentError('');
-      await onAssignAMAgent(client.id, selectedAMId);
+      await onAssignAMAgent(
+        client.id,
+        selectedAMId === UNASSIGN_SELECTION ? '' : selectedAMId
+      );
+      setSelectedAMId('');
     } catch (err: any) {
       setAssignmentError(err?.message || 'Unable to update AM Agent assignment.');
     } finally {
@@ -899,16 +930,123 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   };
 
   const handleAssignLead = async () => {
-    if (!onAssignAMTeamLead) return;
+    if (!onAssignAMTeamLead || !selectedLeadId) return;
     setIsAssigningLead(true);
     try {
       setAssignmentError('');
-      await onAssignAMTeamLead(client.id, selectedLeadId);
+      await onAssignAMTeamLead(
+        client.id,
+        selectedLeadId === UNASSIGN_SELECTION ? '' : selectedLeadId
+      );
+      setSelectedLeadId('');
     } catch (err: any) {
       setAssignmentError(err?.message || 'Unable to update AM Team Leader assignment.');
     } finally {
       setIsAssigningLead(false);
     }
+  };
+
+  const handleAssignServiceAgent = async (serviceType: AssignableServiceType) => {
+    const agentId = selectedServiceAgentIds[serviceType];
+    if (!onAssignServiceAgent || !agentId) return;
+
+    setAssigningServiceType(serviceType);
+    try {
+      setAssignmentError('');
+      await onAssignServiceAgent(client.id, serviceType, agentId);
+      setSelectedServiceAgentIds((prev) => ({ ...prev, [serviceType]: '' }));
+    } catch (err: any) {
+      setAssignmentError(err?.message || 'Unable to update service specialist assignment.');
+    } finally {
+      setAssigningServiceType(null);
+    }
+  };
+
+  const canManageServiceAssignments =
+    currentUser.role === 'executive' ||
+    currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'ai_engineer';
+
+  const renderServiceAssignmentCard = ({
+    serviceType,
+    title,
+    assignedUser,
+    emptyLabel,
+    departmentLabel,
+    accentTextClass,
+    avatarClass,
+    emptyInitial,
+  }: {
+    serviceType: AssignableServiceType;
+    title: string;
+    assignedUser: UserRecord | null | undefined;
+    emptyLabel: string;
+    departmentLabel: string;
+    accentTextClass: string;
+    avatarClass: string;
+    emptyInitial: string;
+  }) => {
+    if (!services.includes(serviceType)) return null;
+
+    const assignmentConfig = SERVICE_ASSIGNMENT_CONFIG[serviceType];
+    const eligibleAssignees = getEligibleServiceAssignees(users, serviceType);
+    const selectedAgentId = selectedServiceAgentIds[serviceType] || '';
+    const currentAssignment = clientAssignments.find((a) => a.service_type === serviceType);
+    const isAssigning = assigningServiceType === serviceType;
+
+    return (
+      <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
+        <span className={`text-xs font-semibold uppercase tracking-wider block mb-3 ${accentTextClass}`}>
+          {title}
+        </span>
+        <div className="flex items-center gap-3">
+          <div className={`w-9 h-9 rounded-lg border flex items-center justify-center font-bold text-sm ${avatarClass}`}>
+            {assignedUser?.name?.charAt(0) || emptyInitial}
+          </div>
+          <div>
+            <p className="text-sm font-bold text-white">
+              {assignedUser?.name || emptyLabel}
+              {assignedUser?.role === assignmentConfig.teamLeadRole && ' (Team Leader)'}
+            </p>
+            <p className="text-xs text-stone-400">{assignedUser?.email || departmentLabel}</p>
+          </div>
+        </div>
+
+        {canManageServiceAssignments && onAssignServiceAgent && (
+          <div className="mt-3 pt-3 border-t border-stone-800 flex items-center gap-2">
+            <select
+              value={selectedAgentId}
+              onChange={(event) =>
+                setSelectedServiceAgentIds((prev) => ({
+                  ...prev,
+                  [serviceType]: event.target.value,
+                }))
+              }
+              className="flex-1 min-w-0 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
+            >
+              <option value="" disabled>Select a specialist...</option>
+              {eligibleAssignees.map((assignee) => (
+                <option key={assignee.id} value={assignee.id}>
+                  {assignee.name} ({assignee.email})
+                  {assignee.role === assignmentConfig.teamLeadRole ? ' (Team Leader)' : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => handleAssignServiceAgent(serviceType)}
+              disabled={
+                isAssigning ||
+                !selectedAgentId ||
+                selectedAgentId === currentAssignment?.agent_id
+              }
+              className="text-xs px-2.5 py-2 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all disabled:opacity-50"
+            >
+              {isAssigning ? 'Assigning...' : 'Assign'}
+            </button>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Lifecycle transition permissions
@@ -1723,16 +1861,22 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-semibold text-purple-300 uppercase tracking-wider">AM Team Leader</span>
                     {canEditAM && onAssignAMTeamLead && (
-                      <button onClick={handleAssignLead} disabled={isAssigningLead} className="text-xs px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold disabled:opacity-50">
+                      <button onClick={handleAssignLead} disabled={isAssigningLead || !selectedLeadId} className="text-xs px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold disabled:opacity-50">
                         {isAssigningLead ? 'Saving...' : 'Update Lead'}
                       </button>
                     )}
                   </div>
                   {canEditAM && onAssignAMTeamLead ? (
-                    <select value={selectedLeadId} onChange={(e) => setSelectedLeadId(e.target.value)} className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
-                      <option value="">-- Unassigned --</option>
-                      {amTeamLeaders.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}
-                    </select>
+                    <div className="space-y-2">
+                      <select value={selectedLeadId} onChange={(e) => setSelectedLeadId(e.target.value)} className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+                        <option value="" disabled>Select an AM Team Leader...</option>
+                        <option value={UNASSIGN_SELECTION}>-- Unassign --</option>
+                        {amTeamLeaders.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}
+                      </select>
+                      <p className="text-xs text-stone-400">
+                        Current Assigned Lead: <strong className="text-white">{amLead?.name || 'Unassigned'}</strong>
+                      </p>
+                    </div>
                   ) : <p className="text-sm text-white">{amLead?.name || 'Unassigned'}</p>}
                 </div>
                 {/* Account Manager Card */}
@@ -1744,7 +1888,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                     {canEditAM && (
                       <button
                         onClick={handleAssignAM}
-                        disabled={isAssigningAM}
+                        disabled={isAssigningAM || !selectedAMId}
                         className="text-xs px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all disabled:opacity-50"
                       >
                         {isAssigningAM ? 'Assigning...' : 'Update AM'}
@@ -1758,7 +1902,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         onChange={(e) => setSelectedAMId(e.target.value)}
                         className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
                       >
-                        <option value="">-- Unassigned --</option>
+                        <option value="" disabled>Select an Account Manager...</option>
+                        <option value={UNASSIGN_SELECTION}>-- Unassign --</option>
                         {amTeamLeaders.map((lead) => (
                           <option key={lead.id} value={lead.id}>
                             {lead.name} (Team Leader)
@@ -1770,11 +1915,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           </option>
                         ))}
                       </select>
-                      {assignedAM && (
-                        <p className="text-xs text-stone-400 mt-1">
-                          Current Assigned AM: <strong className="text-white">{assignedAM.name}</strong>
-                        </p>
-                      )}
+                      <p className="text-xs text-stone-400 mt-1">
+                        Current Assigned AM: <strong className="text-white">{assignedAM?.name || 'Unassigned'}</strong>
+                      </p>
                     </div>
                   ) : (
                     <div className="flex items-center gap-3 mt-1">
@@ -1789,68 +1932,38 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   )}
                 </div>
 
-                {/* Media Buying Specialist */}
-                {services.includes('media_buying') && (
-                  <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-                    <span className="text-xs font-semibold text-sky-400 uppercase tracking-wider block mb-3">
-                      Media Buying Specialist
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-sky-900/20 border border-sky-700/30 flex items-center justify-center font-bold text-sm text-sky-300">
-                        {assignedMediaBuyer?.name?.charAt(0) || 'M'}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {assignedMediaBuyer?.name || 'Assigned per Campaign'}
-                          {assignedMediaBuyer?.role === 'media_buying_team_lead' && ' (Team Leader)'}
-                        </p>
-                        <p className="text-xs text-stone-400">{assignedMediaBuyer?.email || 'Paid Media Department'}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {renderServiceAssignmentCard({
+                  serviceType: 'media_buying',
+                  title: 'Media Buying Specialist',
+                  assignedUser: assignedMediaBuyer,
+                  emptyLabel: 'Assigned per Campaign',
+                  departmentLabel: 'Paid Media Department',
+                  accentTextClass: 'text-sky-400',
+                  avatarClass: 'bg-sky-900/20 border-sky-700/30 text-sky-300',
+                  emptyInitial: 'M',
+                })}
 
-                {/* SEO Specialist */}
-                {services.includes('seo') && (
-                  <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-                    <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-3">
-                      SEO Specialist
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-emerald-900/20 border border-emerald-700/30 flex items-center justify-center font-bold text-sm text-emerald-300">
-                        {assignedSEOSpecialist?.name?.charAt(0) || 'S'}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {assignedSEOSpecialist?.name || 'Assigned per Brief'}
-                          {assignedSEOSpecialist?.role === 'seo_team_lead' && ' (Team Leader)'}
-                        </p>
-                        <p className="text-xs text-stone-400">{assignedSEOSpecialist?.email || 'Organic Search Department'}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {renderServiceAssignmentCard({
+                  serviceType: 'seo',
+                  title: 'SEO Specialist',
+                  assignedUser: assignedSEOSpecialist,
+                  emptyLabel: 'Assigned per Brief',
+                  departmentLabel: 'Organic Search Department',
+                  accentTextClass: 'text-emerald-400',
+                  avatarClass: 'bg-emerald-900/20 border-emerald-700/30 text-emerald-300',
+                  emptyInitial: 'S',
+                })}
 
-                {/* Social Media Specialist */}
-                {services.includes('social_media') && (
-                  <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-                    <span className="text-xs font-semibold text-pink-400 uppercase tracking-wider block mb-3">
-                      Social Media Specialist
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-pink-900/20 border border-pink-700/30 flex items-center justify-center font-bold text-sm text-pink-300">
-                        {assignedSocialSpecialist?.name?.charAt(0) || 'C'}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {assignedSocialSpecialist?.name || 'Assigned per Calendar'}
-                          {assignedSocialSpecialist?.role === 'social_media_team_lead' && ' (Team Leader)'}
-                        </p>
-                        <p className="text-xs text-stone-400">{assignedSocialSpecialist?.email || 'Social Media Department'}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {renderServiceAssignmentCard({
+                  serviceType: 'social_media',
+                  title: 'Social Media Specialist',
+                  assignedUser: assignedSocialSpecialist,
+                  emptyLabel: 'Assigned per Calendar',
+                  departmentLabel: 'Social Media Department',
+                  accentTextClass: 'text-pink-400',
+                  avatarClass: 'bg-pink-900/20 border-pink-700/30 text-pink-300',
+                  emptyInitial: 'C',
+                })}
 
                 {/* Client Portal Access */}
                 <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
