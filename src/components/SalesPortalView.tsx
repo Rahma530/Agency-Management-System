@@ -43,6 +43,7 @@ interface SalesPortalViewProps {
   dailyLogs?: DailyLogRecord[];
   extraNotes?: ExtraNoteRecord[];
   assignments?: AssignmentRecord[];
+  onRefreshAssignments: () => Promise<void>;
   onOpenRegisterModal: () => void;
   onOpenBulkUploadModal: () => void;
   onUpdateClientStatus?: (
@@ -72,6 +73,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   dailyLogs = [],
   extraNotes = [],
   assignments = [],
+  onRefreshAssignments,
   onOpenRegisterModal,
   onOpenBulkUploadModal,
   onUpdateClientStatus,
@@ -346,6 +348,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          onRefreshAssignments={onRefreshAssignments}
           onUpdateClientStatus={onUpdateClientStatus}
           clientContracts={clientContracts}
           onUploadClientContract={onUploadClientContract}
