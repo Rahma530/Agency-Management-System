@@ -5232,6 +5232,8 @@ export default function App() {
                     clientContracts={clientContracts}
                     onUploadClientContract={handleUploadClientContract}
                     onDeleteClientContract={handleDeleteClientContract}
+                    onUpdateClientDates={handleUpdateClientDates}
+                    onUpdateClientDetails={handleUpdateClientDetails}
                     briefFieldSchemas={briefFieldSchemas}
                     briefFieldSchemaRows={briefFieldSchemaRows}
                   />

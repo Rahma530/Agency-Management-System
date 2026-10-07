@@ -137,6 +137,11 @@ interface AMQueueProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
+  onUpdateClientDates: (
+    clientId: string,
+    updates: { start_date: string | null; renewal_date: string | null }
+  ) => Promise<void>;
+  onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
 }
@@ -190,6 +195,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUploadClientContract,
   onDeleteClientContract,
   onUpdatePaymentTracking,
+  onUpdateClientDates,
+  onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
 }) => {
@@ -782,6 +789,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onUploadClientContract={onUploadClientContract}
           onDeleteClientContract={onDeleteClientContract}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientDates={onUpdateClientDates}
+          onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
         />

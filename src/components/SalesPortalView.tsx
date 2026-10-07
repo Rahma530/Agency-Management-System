@@ -53,6 +53,11 @@ interface SalesPortalViewProps {
   clientContracts?: ClientContractRecord[];
   onUploadClientContract?: (clientId: string, file: File) => Promise<void>;
   onDeleteClientContract?: (contractId: string) => Promise<void>;
+  onUpdateClientDates: (
+    clientId: string,
+    updates: { start_date: string | null; renewal_date: string | null }
+  ) => Promise<void>;
+  onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
 }
@@ -73,6 +78,8 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   clientContracts = [],
   onUploadClientContract,
   onDeleteClientContract,
+  onUpdateClientDates,
+  onUpdateClientDetails,
   briefFieldSchemas,
   briefFieldSchemaRows,
 }) => {
@@ -343,6 +350,8 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           clientContracts={clientContracts}
           onUploadClientContract={onUploadClientContract}
           onDeleteClientContract={onDeleteClientContract}
+          onUpdateClientDates={onUpdateClientDates}
+          onUpdateClientDetails={onUpdateClientDetails}
           briefFieldSchemas={briefFieldSchemas}
           briefFieldSchemaRows={briefFieldSchemaRows}
           onClose={() => setDashboardClientId(null)}

@@ -195,14 +195,14 @@ interface ClientDashboardProps {
   // doesn't swallow its own error into a generic toast) — the inline editor below needs the real
   // error message to tell "RLS silently blocked this" apart from a genuine failure. See
   // canEditClient (lib/permissions.ts) for who gets the editor at all.
-  onUpdateClientDates?: (
+  onUpdateClientDates: (
     clientId: string,
     updates: { start_date: string | null; renewal_date: string | null }
   ) => Promise<void>;
   // "Edit Client" modal (EditClientModal.tsx) — same reject-on-failure contract as
   // onUpdateClientDates above, for the same reason (update_client_details's own role gate, or its
   // key allow-list/validation, can reject a patch this modal's own client-side checks let through).
-  onUpdateClientDetails?: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
+  onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   // Fetches the 10 Client Access columns via the get_client_access() RPC — called only when the
   // Client Access section is opened (not eagerly with the rest of the client), since

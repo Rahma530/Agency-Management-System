@@ -134,6 +134,11 @@ interface ServiceBriefsRoutingViewProps {
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
+  onUpdateClientDates: (
+    clientId: string,
+    updates: { start_date: string | null; renewal_date: string | null }
+  ) => Promise<void>;
+  onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
 }
@@ -198,6 +203,11 @@ const AMServiceBriefsPanel: React.FC<{
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
   ) => Promise<void>;
+  onUpdateClientDates: (
+    clientId: string,
+    updates: { start_date: string | null; renewal_date: string | null }
+  ) => Promise<void>;
+  onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
 }> = ({
@@ -234,6 +244,8 @@ const AMServiceBriefsPanel: React.FC<{
   onDeleteBriefFieldSchema,
   onDeleteClient,
   onUpdatePaymentTracking,
+  onUpdateClientDates,
+  onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
 }) => {
@@ -369,6 +381,8 @@ const AMServiceBriefsPanel: React.FC<{
           platformConnections={platformConnections}
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientDates={onUpdateClientDates}
+          onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
         />
@@ -417,6 +431,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onDeleteBriefFieldSchema,
   onDeleteClient,
   onUpdatePaymentTracking,
+  onUpdateClientDates,
+  onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
 }) => {
@@ -458,6 +474,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
         onDeleteClient={onDeleteClient}
         onUpdatePaymentTracking={onUpdatePaymentTracking}
+        onUpdateClientDates={onUpdateClientDates}
+        onUpdateClientDetails={onUpdateClientDetails}
         onUpdateClientAccess={onUpdateClientAccess}
         onFetchClientAccess={onFetchClientAccess}
       />
@@ -1152,6 +1170,8 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           platformConnections={platformConnections}
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
+          onUpdateClientDates={onUpdateClientDates}
+          onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
           onLogSocialMetrics={onLogSocialMetrics}
