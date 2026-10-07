@@ -123,6 +123,7 @@ interface ClientDashboardProps {
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
   assignments: AssignmentRecord[];
+  onRefreshAssignments: () => Promise<void>;
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
@@ -255,6 +256,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   dailyLogs,
   extraNotes,
   assignments,
+  onRefreshAssignments,
   reports = [],
   clientComparisons = [],
   socialInsights = [],
@@ -328,6 +330,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isGeneratingComparison, setIsGeneratingComparison] = useState(false);
   const [generatingReportForComparisonId, setGeneratingReportForComparisonId] = useState<string | null>(null);
   const [isEditingPaymentTracking, setIsEditingPaymentTracking] = useState(false);
+
+  React.useEffect(() => {
+    void onRefreshAssignments().catch((error) => {
+      console.error('Failed to refresh assignments for ClientDashboard:', error);
+    });
+  }, [client.id, onRefreshAssignments]);
   const [paymentTrackingDraft, setPaymentTrackingDraft] = useState({
     due_value: client.due_value != null ? String(client.due_value) : '',
     remaining_value: client.remaining_value != null ? String(client.remaining_value) : '',

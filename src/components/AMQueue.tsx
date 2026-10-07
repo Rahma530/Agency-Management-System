@@ -70,6 +70,7 @@ interface AMQueueProps {
   dailyLogs?: DailyLogRecord[];
   extraNotes?: ExtraNoteRecord[];
   assignments?: AssignmentRecord[];
+  onRefreshAssignments: () => Promise<void>;
   reports?: ReportRecord[];
   clientComparisons?: ClientComparisonRecord[];
   socialInsights?: SocialInsightRecord[];
@@ -162,6 +163,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   dailyLogs = [],
   extraNotes = [],
   assignments = [],
+  onRefreshAssignments,
   reports = [],
   clientComparisons = [],
   socialInsights = [],
@@ -761,6 +763,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          onRefreshAssignments={onRefreshAssignments}
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}

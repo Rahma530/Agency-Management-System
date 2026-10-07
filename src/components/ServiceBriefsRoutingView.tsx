@@ -69,6 +69,7 @@ interface ServiceBriefsRoutingViewProps {
   briefs: BriefRecord[];
   briefRevisions?: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
+  onRefreshAssignments: () => Promise<void>;
   users: UserRecord[];
   campaigns?: CampaignRecord[];
   tasks?: TaskRecord[];
@@ -158,6 +159,7 @@ const AMServiceBriefsPanel: React.FC<{
   briefs: BriefRecord[];
   briefRevisions: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
+  onRefreshAssignments: () => Promise<void>;
   users: UserRecord[];
   campaigns: CampaignRecord[];
   tasks: TaskRecord[];
@@ -220,6 +222,7 @@ const AMServiceBriefsPanel: React.FC<{
   briefs,
   briefRevisions,
   assignments,
+  onRefreshAssignments,
   users,
   campaigns,
   tasks,
@@ -360,6 +363,7 @@ const AMServiceBriefsPanel: React.FC<{
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          onRefreshAssignments={onRefreshAssignments}
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}
@@ -401,6 +405,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   briefs,
   briefRevisions = [],
   assignments,
+  onRefreshAssignments,
   users,
   campaigns = [],
   tasks = [],
@@ -450,6 +455,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         briefs={briefs}
         briefRevisions={briefRevisions}
         assignments={assignments}
+        onRefreshAssignments={onRefreshAssignments}
         users={users}
         campaigns={campaigns}
         tasks={tasks}
@@ -1156,6 +1162,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           dailyLogs={dailyLogs}
           extraNotes={extraNotes}
           assignments={assignments}
+          onRefreshAssignments={onRefreshAssignments}
           reports={reports}
           clientComparisons={clientComparisons}
           socialInsights={socialInsights}

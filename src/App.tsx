@@ -1258,6 +1258,18 @@ export default function App() {
     showNotification('Signed out successfully.');
   };
 
+  const refreshAssignments = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('assignments').select('*');
+    if (error) {
+      console.error('Failed to refresh assignments from Supabase:', error);
+      return;
+    }
+
+    setAssignments((data as AssignmentRecord[]) || []);
+  }, []);
+
   // Fetch initial data directly from Supabase (or fallback to initial state)
   //
   // Does NOT clear `clients` to [] before refetching (it used to) — that premature wipe
@@ -1384,10 +1396,7 @@ export default function App() {
         }
 
         // Fetch assignments (service specialist delegation records)
-        const { data: assignmentData, error: assignmentErr } = await supabase.from('assignments').select('*');
-        if (!assignmentErr && assignmentData) {
-          setAssignments(assignmentData as AssignmentRecord[]);
-        }
+        await refreshAssignments();
 
         // Fetch social_insights (Reporting Engine: social media comparison indicators)
         const { data: socialInsightData, error: socialInsightErr } = await supabase
@@ -1459,7 +1468,7 @@ export default function App() {
     // SIGNED_IN/TOKEN_REFRESHED re-notification Supabase's own client fires on tab refocus,
     // even for the same already-logged-in person — see the effect below that calls loadData().
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticatedUser?.id]);
+  }, [authenticatedUser?.id, refreshAssignments]);
 
   // chat_messages, chat_directory, and notifications load independently of loadData's big
   // sequential fetch batch above — deliberately not awaited inside it. That batch runs ~20
@@ -5226,6 +5235,8 @@ export default function App() {
                     currentUser={currentUser}
                     clients={clients}
                     users={users}
+                    assignments={assignments}
+                    onRefreshAssignments={refreshAssignments}
                     onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
                     onOpenBulkUploadModal={() => setIsBulkClientUploadOpen(true)}
                     onUpdateClientStatus={handleUpdateClientStatus}
@@ -5250,6 +5261,8 @@ export default function App() {
                     socialInsights={socialInsights}
                     seoInsights={seoInsights}
                     clientPortalUsers={clientPortalUsers}
+                    assignments={assignments}
+                    onRefreshAssignments={refreshAssignments}
                     currentUser={currentUser}
                     currentUserId={currentUser.id}
                     onAssignAMAgent={handleAssignAMAgent}
@@ -5302,6 +5315,7 @@ export default function App() {
                   briefs={briefs}
                   briefRevisions={briefRevisions}
                   assignments={assignments}
+                  onRefreshAssignments={refreshAssignments}
                   users={users}
                   campaigns={campaigns}
                   tasks={tasks}
@@ -5418,6 +5432,7 @@ export default function App() {
                   dailyLogs={dailyLogs}
                   extraNotes={extraNotes}
                   assignments={assignments}
+                  onRefreshAssignments={refreshAssignments}
                   reports={reports}
                   clientComparisons={clientComparisons}
                   socialInsights={socialInsights}
