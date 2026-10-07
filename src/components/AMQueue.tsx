@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import {
   ClientRecord,
+  ClientLifecyclePeriodRecord,
   ClientAccessFields,
   ClientStatus,
   UserRecord,
@@ -62,6 +63,7 @@ import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientRep
 
 interface AMQueueProps {
   clients: ClientRecord[];
+  clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
   users: UserRecord[];
   briefs: BriefRecord[];
   briefRevisions?: BriefRevisionRecord[];
@@ -109,6 +111,8 @@ interface AMQueueProps {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
+  onConfirmClientRenewal?: (clientId: string) => Promise<void>;
+  onReopenClient?: (clientId: string, reopenDate: string) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   onGenerateComparison?: (
@@ -155,6 +159,7 @@ interface AMQueueProps {
 
 export const AMQueue: React.FC<AMQueueProps> = ({
   clients,
+  clientLifecyclePeriodsByClientId,
   users,
   briefs,
   briefRevisions = [],
@@ -186,6 +191,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onOpenBulkUploadModal,
   onUpdateTaskStatus,
   onUpdateClientStatus,
+  onConfirmClientRenewal,
+  onReopenClient,
   onMarkClientViewed,
   onNavigateToModule,
   onGenerateComparison,
@@ -754,6 +761,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={resolvedUser}
           briefs={briefs}
@@ -783,6 +791,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onAssignServiceAgent={onAssignServiceAgent}
           onUpdateTaskStatus={onUpdateTaskStatus}
           onUpdateClientStatus={onUpdateClientStatus}
+          onConfirmClientRenewal={onConfirmClientRenewal}
+          onReopenClient={onReopenClient}
           onMarkClientViewed={onMarkClientViewed}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}

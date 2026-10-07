@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import {
   ClientRecord,
+  ClientLifecyclePeriodRecord,
   ClientAccessFields,
   ClientStatus,
   UserRecord,
@@ -98,7 +99,7 @@ import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
 import { EditClientModal } from './EditClientModal';
 import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient } from '../lib/permissions';
-import { CLIENT_STATUS_META, formatClientRelationshipDuration, isPausedClient } from '../lib/clientStatus';
+import { CLIENT_STATUS_META, formatClientLifecycleDuration, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
 import { getClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
@@ -122,6 +123,7 @@ const getLocalCalendarDate = (): string => {
 
 interface ClientDashboardProps {
   client: ClientRecord;
+  lifecyclePeriods: ClientLifecyclePeriodRecord[];
   users: UserRecord[];
   currentUser: UserRecord;
   briefs: BriefRecord[];
@@ -168,6 +170,8 @@ interface ClientDashboardProps {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
+  onConfirmClientRenewal?: (clientId: string) => Promise<void>;
+  onReopenClient?: (clientId: string, reopenDate: string) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
   // Returns the saved row (or null) so the "Generate AI Summary" entry points below can
@@ -255,6 +259,7 @@ type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'lo
 
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   client,
+  lifecyclePeriods,
   users,
   currentUser,
   briefs,
@@ -285,6 +290,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUpdateTaskStatus,
   onCreateCampaign,
   onUpdateClientStatus,
+  onConfirmClientRenewal,
+  onReopenClient,
   onMarkClientViewed,
   onMarkAssignmentViewed,
   onGenerateComparison,
@@ -332,6 +339,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [churnReasonInput, setChurnReasonInput] = useState('');
   const [churnDateInput, setChurnDateInput] = useState(getLocalCalendarDate);
   const [churnValidationError, setChurnValidationError] = useState('');
+  const [showReopenConfirm, setShowReopenConfirm] = useState(false);
+  const [reopenDateInput, setReopenDateInput] = useState(getLocalCalendarDate);
+  const [reopenValidationError, setReopenValidationError] = useState('');
   const [isCreatePortalLoginOpen, setIsCreatePortalLoginOpen] = useState(false);
   const [reportMode, setReportMode] = useState<ReportMode>('comparison');
   const [reportGranularity, setReportGranularity] = useState<ComparisonGranularity | 'custom'>('monthly');
@@ -401,6 +411,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     setSelectedLeadId('');
     setSelectedServiceAgentIds({});
     setAssignmentError('');
+  }, [client.id]);
+
+  React.useEffect(() => {
+    setShowChurnConfirm(false);
+    setChurnReasonInput('');
+    setChurnDateInput(getLocalCalendarDate());
+    setChurnValidationError('');
+    setShowReopenConfirm(false);
+    setReopenDateInput(getLocalCalendarDate());
+    setReopenValidationError('');
   }, [client.id]);
 
   // Initialize active brief service
@@ -1089,6 +1109,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
         setChurnDateInput(getLocalCalendarDate());
         setChurnValidationError('');
       }
+    } catch (error) {
+      console.error('Client lifecycle transition failed:', error);
+      if (newStatus === 'closed') {
+        setChurnValidationError('Unable to close this client. Please try again.');
+      }
     } finally {
       setIsUpdatingStatus(false);
     }
@@ -1119,6 +1144,63 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     });
   };
 
+  const handleConfirmReopen = async () => {
+    if (!onReopenClient) return;
+
+    const reopenDate = reopenDateInput.trim();
+    const today = getLocalCalendarDate();
+    const closedOn = client.churned_at?.slice(0, 10);
+    const originalStartDate = client.start_date?.slice(0, 10);
+
+    if (!reopenDate) {
+      setReopenValidationError('Reopen Date is required.');
+      return;
+    }
+    if (reopenDate > today) {
+      setReopenValidationError('Reopen Date cannot be in the future.');
+      return;
+    }
+    if (closedOn && reopenDate < closedOn) {
+      setReopenValidationError('Reopen Date cannot be earlier than the Stop Date.');
+      return;
+    }
+    if (!closedOn && originalStartDate && reopenDate < originalStartDate) {
+      setReopenValidationError('Reopen Date cannot be earlier than the original Start Date.');
+      return;
+    }
+
+    setReopenValidationError('');
+    setIsUpdatingStatus(true);
+    try {
+      await onReopenClient(client.id, reopenDate);
+      setShowReopenConfirm(false);
+      setReopenDateInput(getLocalCalendarDate());
+    } catch (error) {
+      console.error('Client reopen failed:', error);
+      setReopenValidationError('Unable to reopen this client. Please try again.');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleConfirmRenewal = async () => {
+    if (!onConfirmClientRenewal) return;
+    if (!client.renewal_date) {
+      setShowRenewalDateMissingMessage(true);
+      return;
+    }
+
+    setShowRenewalDateMissingMessage(false);
+    setIsUpdatingStatus(true);
+    try {
+      await onConfirmClientRenewal(client.id);
+    } catch (error) {
+      console.error('Client renewal confirmation failed:', error);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
   const isRenewalApproaching =
     client.status === 'active' &&
     !!client.renewal_date &&
@@ -1128,7 +1210,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     })();
 
   const stopDate = client.churned_at?.slice(0, 10) || null;
-  const relationshipDuration = formatClientRelationshipDuration(client.start_date, client.churned_at);
+  const relationshipDuration = formatClientLifecycleDuration(client, lifecyclePeriods, getLocalCalendarDate());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-fadeIn">
@@ -1700,6 +1782,74 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   </div>
                 )}
 
+                {client.status !== 'closed' && (
+                  <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-800/40 text-xs text-emerald-200">
+                    <strong className="block mb-0.5">Worked with KMS</strong>
+                    <span>{relationshipDuration}</span>
+                  </div>
+                )}
+
+                {client.status === 'closed' && canManageLifecycle && onReopenClient && !showReopenConfirm && (
+                  <button
+                    onClick={() => {
+                      setReopenDateInput(getLocalCalendarDate());
+                      setReopenValidationError('');
+                      setShowReopenConfirm(true);
+                    }}
+                    disabled={isUpdatingStatus}
+                    className="w-fit px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 hover:text-white border border-emerald-700/40 transition-all disabled:opacity-50"
+                  >
+                    Reopen Client
+                  </button>
+                )}
+
+                {client.status === 'closed' && canManageLifecycle && onReopenClient && showReopenConfirm && (
+                  <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-800/40 space-y-2">
+                    <p className="text-xs text-emerald-200">
+                      Reopening creates a new active lifecycle period and keeps the previous closure in history.
+                    </p>
+                    <label className="block text-xs font-semibold text-emerald-300">
+                      Reopen Date <span className="text-emerald-400">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={reopenDateInput}
+                      min={stopDate || client.start_date?.slice(0, 10) || undefined}
+                      max={getLocalCalendarDate()}
+                      onChange={(event) => {
+                        setReopenDateInput(event.target.value);
+                        setReopenValidationError('');
+                      }}
+                      className="w-full px-3 py-2 rounded-lg text-xs bg-black/30 border border-emerald-900/40 text-white outline-none focus:border-emerald-400"
+                    />
+                    {reopenValidationError && (
+                      <p className="text-xs text-red-300" role="alert">
+                        {reopenValidationError}
+                      </p>
+                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setShowReopenConfirm(false);
+                          setReopenDateInput(getLocalCalendarDate());
+                          setReopenValidationError('');
+                        }}
+                        disabled={isUpdatingStatus}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300 bg-stone-800/40 hover:bg-stone-800/70 border border-stone-700/40 transition-all disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleConfirmReopen}
+                        disabled={isUpdatingStatus || !reopenDateInput.trim()}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 transition-all"
+                      >
+                        Confirm Reopen
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {isRenewalApproaching && (
                   <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-800/40 text-xs text-amber-300 flex items-center gap-2">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -1752,21 +1902,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       </button>
                     )}
 
-                    {client.status === 'renewal' && canManageLifecycle && onUpdateClientStatus && (
+                    {client.status === 'renewal' && canManageLifecycle && onConfirmClientRenewal && (
                       <button
-                        onClick={() => {
-                          // A null renewal_date means there's no date to bump by a year — confirming
-                          // would either silently no-op the date (the old behavior) or need a
-                          // fabricated one; neither is right, so this blocks instead and points at
-                          // the Client Dates editor above, rather than transitioning status anyway.
-                          if (!client.renewal_date) {
-                            setShowRenewalDateMissingMessage(true);
-                            return;
-                          }
-                          const d = new Date(client.renewal_date);
-                          d.setFullYear(d.getFullYear() + 1);
-                          handleTransition('active', { renewal_date: d.toISOString().split('T')[0] });
-                        }}
+                        onClick={handleConfirmRenewal}
                         disabled={isUpdatingStatus}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 hover:text-white border border-emerald-700/40 transition-all"
                       >
@@ -1803,7 +1941,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 {showChurnConfirm && (
                   <div className="p-3 rounded-lg bg-red-950/20 border border-red-800/40 space-y-2">
                     <label className="block text-xs font-semibold text-red-300">
-                      Closure Reason <span className="text-red-400">*</span> (required, this action is permanent)
+                      Closure Reason <span className="text-red-400">*</span> (required)
                     </label>
                     <textarea
                       value={churnReasonInput}
