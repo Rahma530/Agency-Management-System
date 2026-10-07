@@ -1,4 +1,4 @@
-import { ClientRecord, ClientStatus } from '../types/database';
+import { ClientLifecyclePeriodRecord, ClientRecord, ClientStatus } from '../types/database';
 
 // Module 13: single source of truth for client-status display and status-derived business
 // rules, replacing what used to be two independently-maintained copies of the same label/color
@@ -87,6 +87,37 @@ const addCalendarMonths = (date: CalendarDate, monthsToAdd: number): number => {
   return Date.UTC(year, monthIndex, Math.min(date.day, daysInTargetMonth));
 };
 
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+const formatElapsedCalendarDays = (totalDays: number, anchor: CalendarDate): string => {
+  const safeTotalDays = Math.max(0, Math.trunc(totalDays));
+  const syntheticEndDate = new Date(anchor.timestamp + safeTotalDays * DAY_IN_MS);
+  const end: CalendarDate = {
+    year: syntheticEndDate.getUTCFullYear(),
+    month: syntheticEndDate.getUTCMonth() + 1,
+    day: syntheticEndDate.getUTCDate(),
+    timestamp: syntheticEndDate.getTime(),
+  };
+
+  let totalMonths = (end.year - anchor.year) * 12 + end.month - anchor.month;
+  let monthAnchor = addCalendarMonths(anchor, totalMonths);
+  if (monthAnchor > end.timestamp) {
+    totalMonths -= 1;
+    monthAnchor = addCalendarMonths(anchor, totalMonths);
+  }
+
+  const years = Math.floor(totalMonths / 12);
+  const months = totalMonths % 12;
+  const days = Math.round((end.timestamp - monthAnchor) / DAY_IN_MS);
+
+  const parts: string[] = [];
+  if (years) parts.push(`${years} ${years === 1 ? 'year' : 'years'}`);
+  if (months) parts.push(`${months} ${months === 1 ? 'month' : 'months'}`);
+  if (days) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+
+  return parts.length ? parts.join(', ') : '0 days';
+};
+
 export const formatClientRelationshipDuration = (
   startDate: string | null | undefined,
   churnedAt: string | null | undefined
@@ -98,21 +129,84 @@ export const formatClientRelationshipDuration = (
   const end = parseCalendarDate(churnedAt);
   if (!start || !end || end.timestamp < start.timestamp) return 'Unknown';
 
-  let totalMonths = (end.year - start.year) * 12 + end.month - start.month;
-  let monthAnchor = addCalendarMonths(start, totalMonths);
-  if (monthAnchor > end.timestamp) {
-    totalMonths -= 1;
-    monthAnchor = addCalendarMonths(start, totalMonths);
+  const totalDays = Math.round((end.timestamp - start.timestamp) / DAY_IN_MS);
+  return formatElapsedCalendarDays(totalDays, start);
+};
+
+export const formatClientLifecycleDuration = (
+  client: ClientRecord,
+  lifecyclePeriods: ClientLifecyclePeriodRecord[],
+  today: string
+): string => {
+  const parsedToday = parseCalendarDate(today);
+  if (!parsedToday) return 'Unknown';
+
+  if (lifecyclePeriods.length > 0) {
+    const parsedPeriods = lifecyclePeriods.map((period) => {
+      const start = parseCalendarDate(period.started_on);
+      const end = period.ended_on ? parseCalendarDate(period.ended_on) : parsedToday;
+      return { period, start, end };
+    });
+
+    if (
+      parsedPeriods.some(
+        ({ start, end }) =>
+          !start ||
+          !end ||
+          start.timestamp > parsedToday.timestamp ||
+          end.timestamp > parsedToday.timestamp ||
+          end.timestamp < start.timestamp
+      )
+    ) {
+      return 'Unknown — Lifecycle history is inconsistent';
+    }
+
+    const openPeriodCount = lifecyclePeriods.filter((period) => !period.ended_on).length;
+    if (
+      openPeriodCount > 1 ||
+      (client.status === 'closed' && openPeriodCount !== 0) ||
+      (client.status !== 'closed' && openPeriodCount !== 1)
+    ) {
+      return 'Unknown — Lifecycle history is inconsistent';
+    }
+
+    const orderedPeriods = parsedPeriods
+      .map(({ period, start, end }) => ({ period, start: start!, end: end! }))
+      .sort((a, b) => a.start.timestamp - b.start.timestamp);
+
+    for (let index = 1; index < orderedPeriods.length; index += 1) {
+      if (orderedPeriods[index].start.timestamp < orderedPeriods[index - 1].end.timestamp) {
+        return 'Unknown — Lifecycle history is inconsistent';
+      }
+    }
+
+    const totalActiveDays = orderedPeriods.reduce(
+      (sum, { start, end }) => sum + Math.round((end.timestamp - start.timestamp) / DAY_IN_MS),
+      0
+    );
+
+    return formatElapsedCalendarDays(totalActiveDays, orderedPeriods[0].start);
   }
 
-  const years = Math.floor(totalMonths / 12);
-  const months = totalMonths % 12;
-  const days = Math.round((end.timestamp - monthAnchor) / (24 * 60 * 60 * 1000));
+  if (!client.start_date) return 'Unavailable — Start Date not set';
 
-  const parts: string[] = [];
-  if (years) parts.push(`${years} ${years === 1 ? 'year' : 'years'}`);
-  if (months) parts.push(`${months} ${months === 1 ? 'month' : 'months'}`);
-  if (days) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+  const start = parseCalendarDate(client.start_date);
+  const end = client.status === 'closed'
+    ? client.churned_at
+      ? parseCalendarDate(client.churned_at)
+      : null
+    : parsedToday;
 
-  return parts.length ? parts.join(', ') : '0 days';
+  if (
+    !start ||
+    !end ||
+    start.timestamp > parsedToday.timestamp ||
+    end.timestamp > parsedToday.timestamp ||
+    end.timestamp < start.timestamp
+  ) {
+    return 'Unknown';
+  }
+
+  const totalActiveDays = Math.round((end.timestamp - start.timestamp) / DAY_IN_MS);
+  return formatElapsedCalendarDays(totalActiveDays, start);
 };

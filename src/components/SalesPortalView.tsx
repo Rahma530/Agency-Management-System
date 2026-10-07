@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import {
   ClientRecord,
+  ClientLifecyclePeriodRecord,
   ClientStatus,
   UserRecord,
   BriefRecord,
@@ -36,6 +37,7 @@ import { getClientServices, SERVICE_LABELS } from '../lib/clientServices';
 interface SalesPortalViewProps {
   currentUser: UserRecord;
   clients: ClientRecord[];
+  clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
   users: UserRecord[];
   briefs?: BriefRecord[];
   campaigns?: CampaignRecord[];
@@ -51,6 +53,7 @@ interface SalesPortalViewProps {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
+  onReopenClient?: (clientId: string, reopenDate: string) => Promise<void>;
   clientContracts?: ClientContractRecord[];
   onUploadClientContract?: (clientId: string, file: File) => Promise<void>;
   onDeleteClientContract?: (contractId: string) => Promise<void>;
@@ -66,6 +69,7 @@ interface SalesPortalViewProps {
 export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   currentUser,
   clients,
+  clientLifecyclePeriodsByClientId,
   users,
   briefs = [],
   campaigns = [],
@@ -77,6 +81,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   onOpenRegisterModal,
   onOpenBulkUploadModal,
   onUpdateClientStatus,
+  onReopenClient,
   clientContracts = [],
   onUploadClientContract,
   onDeleteClientContract,
@@ -340,6 +345,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}
@@ -350,6 +356,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
           assignments={assignments}
           onRefreshAssignments={onRefreshAssignments}
           onUpdateClientStatus={onUpdateClientStatus}
+          onReopenClient={onReopenClient}
           clientContracts={clientContracts}
           onUploadClientContract={onUploadClientContract}
           onDeleteClientContract={onDeleteClientContract}
