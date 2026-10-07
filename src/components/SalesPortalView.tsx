@@ -49,7 +49,7 @@ interface SalesPortalViewProps {
   onUpdateClientStatus?: (
     clientId: string,
     newStatus: ClientStatus,
-    options?: { churn_reason?: string; renewal_date?: string }
+    options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
   clientContracts?: ClientContractRecord[];
   onUploadClientContract?: (clientId: string, file: File) => Promise<void>;

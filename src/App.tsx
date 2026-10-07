@@ -2613,14 +2613,17 @@ export default function App() {
   const handleUpdateClientStatus = async (
     clientId: string,
     newStatus: ClientStatus,
-    options?: { churn_reason?: string; renewal_date?: string }
+    options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => {
     const updatePayload: Partial<ClientRecord> = { status: newStatus };
     // Field names kept as churn_reason/churned_at (Module 13 only renamed the status VALUE
     // 'churned' -> 'closed', not these columns — see types/database.ts).
     if (newStatus === 'closed') {
+      if (!options?.churned_at) {
+        throw new Error('Stop / Loss Date is required when closing a client.');
+      }
       updatePayload.churn_reason = options?.churn_reason || null;
-      updatePayload.churned_at = new Date().toISOString();
+      updatePayload.churned_at = `${options.churned_at.slice(0, 10)}T00:00:00.000Z`;
     }
     if (options?.renewal_date) {
       updatePayload.renewal_date = options.renewal_date;

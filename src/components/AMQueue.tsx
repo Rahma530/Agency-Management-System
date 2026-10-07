@@ -107,7 +107,7 @@ interface AMQueueProps {
   onUpdateClientStatus?: (
     clientId: string,
     newStatus: ClientStatus,
-    options?: { churn_reason?: string; renewal_date?: string }
+    options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;

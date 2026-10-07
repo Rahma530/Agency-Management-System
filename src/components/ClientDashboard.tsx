@@ -98,7 +98,7 @@ import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
 import { EditClientModal } from './EditClientModal';
 import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient } from '../lib/permissions';
-import { CLIENT_STATUS_META, isPausedClient } from '../lib/clientStatus';
+import { CLIENT_STATUS_META, formatClientRelationshipDuration, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
 import { getClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
@@ -111,6 +111,14 @@ import { isTaskDone } from '../lib/taskLifecycle';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
 const UNASSIGN_SELECTION = '__unassigned__';
+
+const getLocalCalendarDate = (): string => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 interface ClientDashboardProps {
   client: ClientRecord;
@@ -158,7 +166,7 @@ interface ClientDashboardProps {
   onUpdateClientStatus?: (
     clientId: string,
     newStatus: ClientStatus,
-    options?: { churn_reason?: string; renewal_date?: string }
+    options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
@@ -322,6 +330,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [showChurnConfirm, setShowChurnConfirm] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [churnReasonInput, setChurnReasonInput] = useState('');
+  const [churnDateInput, setChurnDateInput] = useState(getLocalCalendarDate);
+  const [churnValidationError, setChurnValidationError] = useState('');
   const [isCreatePortalLoginOpen, setIsCreatePortalLoginOpen] = useState(false);
   const [reportMode, setReportMode] = useState<ReportMode>('comparison');
   const [reportGranularity, setReportGranularity] = useState<ComparisonGranularity | 'custom'>('monthly');
@@ -1065,7 +1075,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
-  const handleTransition = async (newStatus: ClientStatus, options?: { churn_reason?: string; renewal_date?: string }) => {
+  const handleTransition = async (
+    newStatus: ClientStatus,
+    options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
+  ) => {
     if (!onUpdateClientStatus) return;
     setIsUpdatingStatus(true);
     try {
@@ -1073,10 +1086,37 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       if (newStatus === 'closed') {
         setShowChurnConfirm(false);
         setChurnReasonInput('');
+        setChurnDateInput(getLocalCalendarDate());
+        setChurnValidationError('');
       }
     } finally {
       setIsUpdatingStatus(false);
     }
+  };
+
+  const handleConfirmClosure = async () => {
+    const stopDate = churnDateInput.trim();
+    const today = getLocalCalendarDate();
+    const startDate = client.start_date?.slice(0, 10);
+
+    if (!stopDate) {
+      setChurnValidationError('Stop / Loss Date is required.');
+      return;
+    }
+    if (stopDate > today) {
+      setChurnValidationError('Stop / Loss Date cannot be in the future.');
+      return;
+    }
+    if (startDate && stopDate < startDate) {
+      setChurnValidationError('Stop / Loss Date cannot be earlier than the Start Date.');
+      return;
+    }
+
+    setChurnValidationError('');
+    await handleTransition('closed', {
+      churn_reason: churnReasonInput.trim(),
+      churned_at: stopDate,
+    });
   };
 
   const isRenewalApproaching =
@@ -1086,6 +1126,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       const daysUntil = (new Date(client.renewal_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
       return daysUntil <= 30 && daysUntil >= -365;
     })();
+
+  const stopDate = client.churned_at?.slice(0, 10) || null;
+  const relationshipDuration = formatClientRelationshipDuration(client.start_date, client.churned_at);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-fadeIn">
@@ -1641,9 +1684,19 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
 
                 {client.status === 'closed' && (
-                  <div className="p-3 rounded-lg bg-red-950/30 border border-red-800/40 text-xs text-red-300">
-                    <strong className="block mb-0.5">Closure Reason</strong>
-                    <span>{client.churn_reason || 'No reason recorded.'}</span>
+                  <div className="p-3 rounded-lg bg-red-950/30 border border-red-800/40 text-xs text-red-300 space-y-2">
+                    <div>
+                      <strong className="block mb-0.5">Stop Date</strong>
+                      <span>{stopDate || 'Unknown'}</span>
+                    </div>
+                    <div>
+                      <strong className="block mb-0.5">Closure Reason</strong>
+                      <span>{client.churn_reason || 'No reason recorded.'}</span>
+                    </div>
+                    <div>
+                      <strong className="block mb-0.5">Worked with KMS</strong>
+                      <span>{relationshipDuration}</span>
+                    </div>
                   </div>
                 )}
 
@@ -1733,7 +1786,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       canManageLifecycle &&
                       onUpdateClientStatus && (
                         <button
-                          onClick={() => setShowChurnConfirm(true)}
+                          onClick={() => {
+                            setChurnDateInput(getLocalCalendarDate());
+                            setChurnValidationError('');
+                            setShowChurnConfirm(true);
+                          }}
                           disabled={isUpdatingStatus}
                           className="px-3 py-1.5 rounded-lg text-xs font-bold text-red-300 bg-red-950/30 hover:bg-red-900/50 hover:text-white border border-red-800/40 transition-all"
                         >
@@ -1755,18 +1812,38 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       rows={2}
                       className="w-full px-3 py-2 rounded-lg text-xs bg-black/30 border border-red-900/40 text-white outline-none focus:border-red-400"
                     />
+                    <label className="block text-xs font-semibold text-red-300">
+                      Stop / Loss Date <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={churnDateInput}
+                      max={getLocalCalendarDate()}
+                      onChange={(e) => {
+                        setChurnDateInput(e.target.value);
+                        setChurnValidationError('');
+                      }}
+                      className="w-full px-3 py-2 rounded-lg text-xs bg-black/30 border border-red-900/40 text-white outline-none focus:border-red-400"
+                    />
+                    {churnValidationError && (
+                      <p className="text-xs text-red-300" role="alert">
+                        {churnValidationError}
+                      </p>
+                    )}
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => {
                           setShowChurnConfirm(false);
                           setChurnReasonInput('');
+                          setChurnDateInput(getLocalCalendarDate());
+                          setChurnValidationError('');
                         }}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300 bg-stone-800/40 hover:bg-stone-800/70 border border-stone-700/40 transition-all"
                       >
                         Cancel
                       </button>
                       <button
-                        onClick={() => handleTransition('closed', { churn_reason: churnReasonInput.trim() })}
+                        onClick={handleConfirmClosure}
                         disabled={isUpdatingStatus || !churnReasonInput.trim()}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-700 hover:bg-red-600 disabled:opacity-50 transition-all"
                       >
