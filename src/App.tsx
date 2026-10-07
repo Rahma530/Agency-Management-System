@@ -2051,6 +2051,90 @@ export default function App() {
     };
   }, [authenticatedUser?.id, supabaseActive]);
 
+  // Keep the shared assignments snapshot synchronized across employee sessions. Realtime events
+  // are invalidation signals only: the RLS-filtered SELECT in refreshAssignments remains the
+  // source of truth, including for DELETE events whose old-row payload is intentionally limited.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+    let refreshInFlight = false;
+    let refreshQueued = false;
+
+    const runCoalescedRefresh = async (): Promise<void> => {
+      if (cancelled) return;
+      if (refreshInFlight) {
+        refreshQueued = true;
+        return;
+      }
+
+      refreshInFlight = true;
+      try {
+        await refreshAssignments();
+      } finally {
+        refreshInFlight = false;
+        if (!cancelled && refreshQueued) {
+          refreshQueued = false;
+          void runCoalescedRefresh();
+        }
+      }
+    };
+
+    const startPollFallback = () => {
+      if (intervalId) return;
+      intervalId = setInterval(() => {
+        void runCoalescedRefresh();
+      }, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        startPollFallback();
+        return;
+      }
+
+      const invalidateAssignments = () => {
+        void runCoalescedRefresh();
+      };
+
+      channel = supabaseRaw
+        .channel('assignments_global')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'assignments' }, invalidateAssignments)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'assignments' }, invalidateAssignments)
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'assignments' }, invalidateAssignments)
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+            void runCoalescedRefresh();
+          } else {
+            console.warn(`Assignments realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
+    })();
+
+    return () => {
+      cancelled = true;
+      stopPollFallback();
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
+  }, [authenticatedUser?.id, supabaseActive, refreshAssignments]);
+
   // Real-time online users (Presence) & heartbeat
   useEffect(() => {
     // isPasswordRecovery is checked here too, not just upstream in restoreSession/
