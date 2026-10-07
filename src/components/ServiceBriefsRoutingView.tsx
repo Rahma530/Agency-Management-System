@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import {
   ClientRecord,
+  ClientLifecyclePeriodRecord,
   ClientAccessFields,
   UserRecord,
   BriefRecord,
@@ -66,6 +67,7 @@ import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
 interface ServiceBriefsRoutingViewProps {
   currentUser: UserRecord;
   clients: ClientRecord[];
+  clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
   briefs: BriefRecord[];
   briefRevisions?: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
@@ -156,6 +158,7 @@ interface ServiceBriefsRoutingViewProps {
 const AMServiceBriefsPanel: React.FC<{
   currentUser: UserRecord;
   clients: ClientRecord[];
+  clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
   briefs: BriefRecord[];
   briefRevisions: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
@@ -219,6 +222,7 @@ const AMServiceBriefsPanel: React.FC<{
 }> = ({
   currentUser,
   clients,
+  clientLifecyclePeriodsByClientId,
   briefs,
   briefRevisions,
   assignments,
@@ -354,6 +358,7 @@ const AMServiceBriefsPanel: React.FC<{
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}
@@ -402,6 +407,7 @@ const AMServiceBriefsPanel: React.FC<{
 export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> = ({
   currentUser,
   clients,
+  clientLifecyclePeriodsByClientId,
   briefs,
   briefRevisions = [],
   assignments,
@@ -452,6 +458,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       <AMServiceBriefsPanel
         currentUser={currentUser}
         clients={clients}
+        clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
         briefs={briefs}
         briefRevisions={briefRevisions}
         assignments={assignments}
@@ -1153,6 +1160,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}
