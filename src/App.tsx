@@ -956,6 +956,27 @@ export default function App() {
     return data as SendInvitationResult;
   };
 
+  const handleConfirmEmployeePortalEntry = async (employeeId: string) => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; portal entry was not confirmed.');
+    if (testHandoff || impersonationHandoff) {
+      throw new Error('Portal entry cannot be confirmed from a testing or impersonation session.');
+    }
+
+    const { error } = await supabaseRaw.rpc('confirm_employee_portal_entry', { employee_id: employeeId });
+    if (error) throw error;
+
+    const { data, error: refreshError } = await supabaseRaw
+      .from('users')
+      .select('*')
+      .eq('id', employeeId)
+      .single();
+    if (refreshError) throw refreshError;
+    if (!data) throw new Error('Employee refresh returned no persisted row.');
+
+    setUsers((prev) => prev.map((user) => (user.id === employeeId ? data as UserRecord : user)));
+    showNotification('Employee portal entry marked Done.');
+  };
+
   // Phase 4 (AI Orchestrator): one row's AI call shouldn't be able to hang the button forever —
   // races the real request against a timeout, same pattern as EmployeeAdminHub.tsx's own
   // withTimeout/ROW_TIMEOUT_MS (used there for CSV-import row writes). Not imported from there
@@ -5689,6 +5710,7 @@ export default function App() {
                   onUpdateEmployee={handleUpdateEmployee}
                   onDeactivateEmployee={handleDeactivateEmployee}
                   onSendInvitation={handleSendInvitation}
+                  onConfirmPortalEntry={handleConfirmEmployeePortalEntry}
                 />
               </div>
             )}

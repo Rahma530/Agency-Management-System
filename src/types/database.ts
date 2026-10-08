@@ -64,6 +64,7 @@ export interface UserRecord {
   // lib/permissions.ts's isPendingEmployee() rather than checking this directly everywhere.
   auth_id: string | null;
   last_seen_at?: string | null;
+  portal_entry_confirmed_at?: string | null;
   // Null while active. Set the moment an executive/head_of_technical/team-lead deactivates this
   // employee — the row is never deleted (so their name still displays correctly on every
   // historical task/brief/daily-log/report they're referenced from), but they lose all

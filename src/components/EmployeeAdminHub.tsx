@@ -63,6 +63,7 @@ interface EmployeeAdminHubProps {
   onUpdateEmployee: (userId: string, updates: EmployeeUpdateInput) => Promise<void>;
   onDeactivateEmployee: (userId: string) => Promise<void>;
   onSendInvitation: (employeeId: string) => Promise<SendInvitationResult>;
+  onConfirmPortalEntry: (employeeId: string) => Promise<void>;
 }
 
 const VALID_ROLES = Object.keys(AGENCY_ROLES) as UserRole[];
@@ -122,6 +123,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onUpdateEmployee,
   onDeactivateEmployee,
   onSendInvitation,
+  onConfirmPortalEntry,
 }) => {
   // Add Employee (single + bulk) stays executive/head_of_technical/ai_engineer only — matches
   // users_insert_admin_rls's with_check, which allows the same three roles (both were aligned by
@@ -154,6 +156,8 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [invitationError, setInvitationError] = useState<string | null>(null);
   const [invitationResult, setInvitationResult] = useState<{ employee: UserRecord } & SendInvitationResult | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [confirmingPortalEntryId, setConfirmingPortalEntryId] = useState<string | null>(null);
+  const [portalEntryError, setPortalEntryError] = useState<string | null>(null);
 
   const handleSendInvitation = async (employee: UserRecord) => {
     setSendingInvitationId(employee.id);
@@ -166,6 +170,19 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       setInvitationError(err instanceof Error ? err.message : 'Could not send the invitation.');
     } finally {
       setSendingInvitationId(null);
+    }
+  };
+
+  const handleMarkDone = async (employee: UserRecord) => {
+    if (confirmingPortalEntryId) return;
+    setConfirmingPortalEntryId(employee.id);
+    setPortalEntryError(null);
+    try {
+      await onConfirmPortalEntry(employee.id);
+    } catch (err) {
+      setPortalEntryError(err instanceof Error ? err.message : 'Could not confirm employee portal entry.');
+    } finally {
+      setConfirmingPortalEntryId(null);
     }
   };
 
@@ -422,12 +439,14 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
   const pendingEmployees = useMemo(() => users.filter(isPendingEmployee), [users]);
   const deactivatedEmployees = useMemo(() => users.filter(isDeactivatedEmployee), [users]);
-  // Invited but never actually signed in yet: a real Auth account exists (auth_id set — so they're
-  // no longer "pending"), but last_seen_at (App.tsx's login heartbeat) has never been set, which
-  // only happens once someone completes a real authenticated session. No new column: fully derived
-  // from two fields that already exist for other reasons.
+  // Provisioning, recent activity, and explicit portal-entry confirmation are separate states.
+  // last_seen_at remains presence-only and must never move an employee out of this list.
   const awaitingSetupEmployees = useMemo(
-    () => users.filter((u) => !isPendingEmployee(u) && !isDeactivatedEmployee(u) && !u.last_seen_at),
+    () => users.filter((u) => !isPendingEmployee(u) && !isDeactivatedEmployee(u) && !u.portal_entry_confirmed_at),
+    [users]
+  );
+  const completedSetupEmployees = useMemo(
+    () => users.filter((u) => !isDeactivatedEmployee(u) && !!u.portal_entry_confirmed_at),
     [users]
   );
 
@@ -747,8 +766,8 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
         </div>
       )}
 
-      {/* Real Auth account exists but this employee has never actually signed in yet — derived
-          from auth_id !== null && !last_seen_at, no new column. */}
+      {/* A linked Auth account exists, but an authorized administrator has not explicitly
+          confirmed portal entry. Recent activity and impersonation do not change this state. */}
       {awaitingSetupEmployees.length > 0 && (
         <div className="p-4 rounded-2xl border border-sky-700/30 bg-[#161224]/80">
           <h3 className="text-xs font-bold text-white flex items-center gap-2 mb-3">
@@ -766,18 +785,57 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                   <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-sky-400 bg-sky-500/10">Awaiting Setup</span>
                   {canAddEmployees && (
-                    <button
-                      onClick={() => handleSendInvitation(u)}
-                      disabled={sendingInvitationId === u.id}
-                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
-                    >
-                      {sendingInvitationId === u.id ? 'Sending...' : 'Resend Invitation'}
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleSendInvitation(u)}
+                        disabled={sendingInvitationId === u.id}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
+                      >
+                        {sendingInvitationId === u.id ? 'Sending...' : 'Resend Invitation'}
+                      </button>
+                      <button
+                        onClick={() => void handleMarkDone(u)}
+                        disabled={confirmingPortalEntryId !== null}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shrink-0"
+                      >
+                        {confirmingPortalEntryId === u.id ? 'Confirming...' : 'Mark Done'}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {completedSetupEmployees.length > 0 && (
+        <div className="p-4 rounded-2xl border border-emerald-700/30 bg-[#161224]/80">
+          <h3 className="text-xs font-bold text-white flex items-center gap-2 mb-3">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            Done ({completedSetupEmployees.length})
+          </h3>
+          <div className="space-y-1.5">
+            {completedSetupEmployees.map((u) => (
+              <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/20 text-xs">
+                <div>
+                  <span className="text-white font-semibold">{u.name}</span>
+                  <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-400 bg-emerald-500/10">Done</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {portalEntryError && (
+        <div className="p-3 rounded-xl text-xs flex items-center gap-2" style={{ background: 'rgba(245,163,163,0.12)', color: 'var(--roas-bad)', border: '1px solid var(--roas-bad)' }}>
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          {portalEntryError}
         </div>
       )}
 
