@@ -477,6 +477,13 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     setRoleChangeWarning(null);
   };
 
+  const startEditFromStatus = (u: UserRecord) => {
+    startEdit(u);
+    requestAnimationFrame(() => {
+      document.getElementById(`manage-employee-${u.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
   const handleSaveEdit = async (originalRole: UserRole) => {
     if (!editingId) return;
     setEditError(null);
@@ -822,9 +829,26 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                   <span className="text-white font-semibold">{u.name}</span>
                   <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-400 bg-emerald-500/10">Done</span>
+                  {canManageEmployees && (
+                    <button
+                      onClick={() => startEditFromStatus(u)}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-purple-200 bg-purple-900/50 hover:bg-purple-800/60 shrink-0"
+                    >
+                      Edit Employee
+                    </button>
+                  )}
+                  {canAddEmployees && (
+                    <button
+                      onClick={() => handleSendInvitation(u)}
+                      disabled={sendingInvitationId === u.id}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
+                    >
+                      {sendingInvitationId === u.id ? 'Sending...' : 'Resend Invitation'}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -896,7 +920,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             {manageableEmployees.map((u) => {
               const isEditing = editingId === u.id;
               return (
-                <div key={u.id} className="p-2.5 rounded-lg bg-black/20 text-xs space-y-2">
+                <div id={`manage-employee-${u.id}`} key={u.id} className="p-2.5 rounded-lg bg-black/20 text-xs space-y-2">
                   {isEditing ? (
                     <div className="space-y-2">
                       {editError && (
