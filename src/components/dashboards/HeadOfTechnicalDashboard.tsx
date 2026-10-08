@@ -1,10 +1,10 @@
 import React from 'react';
 import { ClientRecord, CampaignRecord, TaskRecord, SocialInsightRecord, SeoInsightRecord, UserRecord } from '../../types/database';
 import { DepartmentComparisonPanel } from './DepartmentComparisonPanel';
+import { ClientKpiOverview } from './ClientKpiOverview';
 
-// Head of Technical owns the 3 technical delivery teams (SEO, Media Buying, Social Media), not
-// the org's financials — so unlike ExecutiveDashboard, this is purely the department comparison,
-// with no revenue/client-count/churn tiles above it.
+// Head of Technical and AI Engineer share the same organization-wide client KPI scope while
+// retaining the technical department comparison below it.
 export const HeadOfTechnicalDashboard: React.FC<{
   clients: ClientRecord[];
   campaigns: CampaignRecord[];
@@ -14,6 +14,8 @@ export const HeadOfTechnicalDashboard: React.FC<{
   users: UserRecord[];
 }> = ({ clients, campaigns, tasks, socialInsights, seoInsights, users }) => (
   <div className="space-y-6">
+    <ClientKpiOverview clients={clients} />
+
     <DepartmentComparisonPanel
       clients={clients}
       campaigns={campaigns}
