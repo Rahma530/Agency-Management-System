@@ -15,6 +15,7 @@ import { getUserCapacityData } from '../../lib/capacity';
 import { isActiveEmployee } from '../../lib/permissions';
 import { isPausedClient } from '../../lib/clientStatus';
 import { getClientServices } from '../../lib/clientServices';
+import { ClientKpiOverview } from './ClientKpiOverview';
 
 interface DeptConfig {
   team: string;
@@ -65,16 +66,18 @@ export const TeamLeadDashboard: React.FC<{
   currentUser: UserRecord;
   users: UserRecord[];
   clients: ClientRecord[];
+  scopedClients?: ClientRecord[];
   assignments: AssignmentRecord[];
   tasks: TaskRecord[];
   briefs: BriefRecord[];
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
-}> = ({ currentUser, users, clients, assignments, tasks, briefs, onNavigateToModule }) => {
+}> = ({ currentUser, users, clients, scopedClients, assignments, tasks, briefs, onNavigateToModule }) => {
   const config = TEAM_LEAD_DEPT_CONFIG[currentUser.role];
+  const isAMTeamLead = currentUser.role === 'am_team_lead';
 
   const deptClients = useMemo(
-    () => (config ? resolveClientsForSubject(currentUser, clients, assignments) : []),
-    [config, currentUser, clients, assignments]
+    () => scopedClients ?? (config ? resolveClientsForSubject(currentUser, clients, assignments) : []),
+    [scopedClients, config, currentUser, clients, assignments]
   );
 
   const statusCounts = useMemo(() => {
@@ -131,12 +134,16 @@ export const TeamLeadDashboard: React.FC<{
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
-          <span className="text-[11px] font-semibold text-stone-400 block mb-1">Active Clients</span>
-          <p className="text-2xl font-bold text-white">{statusCounts.active + statusCounts.renewal}</p>
-          <p className="text-[10px] text-stone-500 mt-1">{statusCounts.onboarding} onboarding</p>
-        </div>
+      {isAMTeamLead && <ClientKpiOverview clients={deptClients} />}
+
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${isAMTeamLead ? 'lg:grid-cols-3' : 'lg:grid-cols-4'}`}>
+        {!isAMTeamLead && (
+          <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
+            <span className="text-[11px] font-semibold text-stone-400 block mb-1">Active Clients</span>
+            <p className="text-2xl font-bold text-white">{statusCounts.active + statusCounts.renewal}</p>
+            <p className="text-[10px] text-stone-500 mt-1">{statusCounts.onboarding} onboarding</p>
+          </div>
+        )}
         <div className="p-4 rounded-xl bg-stone-900/60 border border-stone-800">
           <span className="text-[11px] font-semibold text-stone-400 block mb-1">Pending Briefs</span>
           <p className="text-2xl font-bold" style={{ color: pendingBriefsCount > 0 ? 'var(--roas-mid)' : 'var(--roas-good)' }}>
