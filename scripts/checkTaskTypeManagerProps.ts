@@ -1,11 +1,14 @@
 /**
  * Fails if any JSX render site of a Task Types-related component, or of a component requiring
- * the taskDirectoryUsers merged-name list, is missing one of its required props:
+ * the taskDirectoryUsers merged-name list or the daily_logs edit/delete handlers, is missing one
+ * of its required props:
  *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType, taskDirectoryUsers
  *   - <TaskTypeInlineManager>: taskTypes, scopeTeam, onSelectType, onCreateTaskType,
  *     onUpdateTaskType (scopeRole is intentionally optional — a form with no assignee selected
  *     yet has nothing to pass there)
- *   - <DailyOperationsModule>: taskDirectoryUsers
+ *   - <DailyOperationsModule>: taskDirectoryUsers, onUpdateDailyLog, onDeleteDailyLog
+ *   - <MyWorkHub>: onUpdateDailyLog, onDeleteDailyLog
+ *   - <ReportsHub>: onUpdateDailyLog, onDeleteDailyLog
  *
  * Why: this project has no @types/react or @types/react-dom installed (confirmed by direct
  * experiment — a JSX element with a missing or extra prop produces zero tsc errors here, because
@@ -34,7 +37,12 @@ const CHECKS: { tag: string; requiredProps: string[] }[] = [
     tag: '<TaskTypeInlineManager',
     requiredProps: ['taskTypes', 'scopeTeam', 'onSelectType', 'onCreateTaskType', 'onUpdateTaskType'],
   },
-  { tag: '<DailyOperationsModule', requiredProps: ['taskDirectoryUsers'] },
+  {
+    tag: '<DailyOperationsModule',
+    requiredProps: ['taskDirectoryUsers', 'onUpdateDailyLog', 'onDeleteDailyLog'],
+  },
+  { tag: '<MyWorkHub', requiredProps: ['onUpdateDailyLog', 'onDeleteDailyLog'] },
+  { tag: '<ReportsHub', requiredProps: ['onUpdateDailyLog', 'onDeleteDailyLog'] },
 ];
 
 function listSourceFiles(dir: string): string[] {

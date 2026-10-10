@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search } from 'lucide-react';
+import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2 } from 'lucide-react';
 import {
   ClientRecord,
   UserRecord,
@@ -8,6 +8,7 @@ import {
   ClientComparisonRecord,
   DailyLogRecord,
   ServiceType,
+  TaskRecord,
 } from '../types/database';
 import {
   ComparisonGranularity,
@@ -21,6 +22,7 @@ import {
 } from '../lib/reportingEngine';
 import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
+import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
@@ -31,6 +33,7 @@ import {
   CampaignSummaryPayload,
   CampaignSummaryDetailedResult,
 } from './reporting/ComparisonDisplay';
+import { DailyLogEditModal } from './DailyLogEditModal';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
 
@@ -42,6 +45,9 @@ interface ReportsHubProps {
   reports: ReportRecord[];
   clientComparisons: ClientComparisonRecord[];
   dailyLogs?: DailyLogRecord[];
+  // Only needed for the Daily Activity Log feed's Edit modal (a log's own linked-tasks checklist)
+  // — never used for scoping/filtering anything else in this hub.
+  tasks?: TaskRecord[];
   onGenerateComparison: (
     scope: ReportScope,
     mode: ReportMode,
@@ -54,6 +60,11 @@ interface ReportsHubProps {
   // reach ReportsHub at all already sees canGenerateReport below unconditionally, so the AI button
   // gets no separate check either).
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onUpdateDailyLog: (
+    logId: string,
+    updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
+  ) => Promise<void>;
+  onDeleteDailyLog: (logId: string) => Promise<void>;
 }
 
 // Role-agnostic reporting entry point: unlike ClientDashboard's per-client "Reports &
@@ -71,9 +82,12 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   reports,
   clientComparisons,
   dailyLogs = [],
+  tasks = [],
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
+  onUpdateDailyLog,
+  onDeleteDailyLog,
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
@@ -114,13 +128,39 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const canSeeDailyActivityReport =
     currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || isTeamLead;
   const [dailyLogClientFilter, setDailyLogClientFilter] = useState('all');
+  // Sorted by the log's own `date` (newest first), then by `created_at` as a tiebreaker for logs
+  // sharing the same date — so a backdated or future-dated entry sits where its date says.
   const filteredDailyLogs = useMemo(
     () =>
       dailyLogs
         .filter((l) => dailyLogClientFilter === 'all' || l.client_id === dailyLogClientFilter)
-        .sort((a, b) => b.date.localeCompare(a.date)),
+        .sort((a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '')),
     [dailyLogs, dailyLogClientFilter]
   );
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
+  const [dailyLogActionError, setDailyLogActionError] = useState<string | null>(null);
+
+  const handleSaveEditedDailyLog = async (updates: {
+    date: string;
+    summary_text: string;
+    linked_task_ids: string[];
+    client_id: string | null;
+  }) => {
+    if (!editingDailyLog) return;
+    await onUpdateDailyLog(editingDailyLog.id, updates);
+    setEditingDailyLog(null);
+  };
+
+  const handleDeleteDailyLogClick = async (log: DailyLogRecord) => {
+    if (!window.confirm('Delete this daily log? This cannot be undone.')) return;
+    setDailyLogActionError(null);
+    try {
+      await onDeleteDailyLog(log.id);
+    } catch (err: any) {
+      setDailyLogActionError(err?.message || 'Unable to delete this log.');
+    }
+  };
   const clientsWithLogs = useMemo(
     () => clients.filter((c) => dailyLogs.some((l) => l.client_id === c.id)),
     [clients, dailyLogs]
@@ -501,6 +541,10 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             )}
           </div>
 
+          {dailyLogActionError && (
+            <p className="text-xs text-[var(--roas-bad)] font-semibold">{dailyLogActionError}</p>
+          )}
+
           {filteredDailyLogs.length === 0 ? (
             <p className="text-xs text-stone-500 py-4 text-center">No daily activity logged yet for this scope.</p>
           ) : (
@@ -508,6 +552,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               {filteredDailyLogs.map((log) => {
                 const logUser = users.find((u) => u.id === log.user_id);
                 const logClient = log.client_id ? clients.find((c) => c.id === log.client_id) : null;
+                const isFutureLog = log.date > todayStr;
+                const canEditThisLog = canEditOwnDailyLog(log, currentUser.id);
                 return (
                   <div key={log.id} className="p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 text-xs">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -520,15 +566,50 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                           </span>
                         )}
                       </div>
-                      <span className="text-[11px] font-mono text-stone-500">{log.date}</span>
+                      <div className="flex items-center gap-1.5">
+                        {isFutureLog && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-sky-900/60 text-sky-300 border border-sky-700/50">
+                            Future
+                          </span>
+                        )}
+                        <span className="text-[11px] font-mono text-stone-500">{log.date}</span>
+                        {canEditThisLog && (
+                          <>
+                            <button
+                              onClick={() => setEditingDailyLog(log)}
+                              className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
+                              title="Edit this log"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDailyLogClick(log)}
+                              className="p-1 rounded bg-stone-900 text-stone-400 hover:text-red-400"
+                              title="Delete this log"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-stone-300 mt-1.5 whitespace-pre-wrap">{log.summary_text}</p>
+                    <p className="text-stone-300 mt-1.5 whitespace-pre-wrap break-words">{log.summary_text}</p>
                   </div>
                 );
               })}
             </div>
           )}
         </div>
+      )}
+
+      {editingDailyLog && (
+        <DailyLogEditModal
+          log={editingDailyLog}
+          clients={clients}
+          tasks={tasks}
+          onSave={handleSaveEditedDailyLog}
+          onClose={() => setEditingDailyLog(null)}
+        />
       )}
     </div>
   );

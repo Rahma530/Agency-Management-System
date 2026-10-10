@@ -3999,7 +3999,7 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      const { data, error } = await supabase.from('daily_logs').insert([newLogPayload]).select();
+      const { data, error } = await supabaseRaw.from('daily_logs').insert([newLogPayload]).select();
       if (error) {
         console.error('Supabase daily_logs insert error:', error);
         throw error;
@@ -4010,6 +4010,48 @@ export default function App() {
     }
 
     showNotification('Daily activity report logged and saved successfully.');
+  };
+
+  // Edit own daily_logs row — the column-level grant (20261101200000_daily_logs_edit_own.sql)
+  // only allows date/summary_text/linked_task_ids/client_id, so this payload must never include
+  // id/user_id/created_at or the UPDATE is rejected outright. RLS (daily_logs_update_own_rls)
+  // separately enforces the author-only, 7-day-since-created_at window the UI already checks via
+  // lib/dailyLogs.ts's canEditOwnDailyLog before ever offering the Edit button.
+  const handleUpdateDailyLog = async (
+    logId: string,
+    updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
+  ) => {
+    const payload = {
+      date: updates.date,
+      summary_text: updates.summary_text,
+      linked_task_ids: updates.linked_task_ids,
+      client_id: updates.client_id,
+    };
+
+    if (supabaseActive) {
+      const { data, error } = await supabaseRaw.from('daily_logs').update(payload).eq('id', logId).select();
+      if (error) {
+        console.error('Supabase daily_logs update error:', error);
+        throw error;
+      }
+      const updated = (data?.[0] as DailyLogRecord) || undefined;
+      setDailyLogs((prev) => prev.map((l) => (l.id === logId ? (updated || { ...l, ...payload }) : l)));
+    } else {
+      setDailyLogs((prev) => prev.map((l) => (l.id === logId ? { ...l, ...payload } : l)));
+    }
+  };
+
+  // Delete own daily_logs row — same author-only, 7-day window as the update above
+  // (daily_logs_delete_own_rls).
+  const handleDeleteDailyLog = async (logId: string) => {
+    if (supabaseActive) {
+      const { error } = await supabaseRaw.from('daily_logs').delete().eq('id', logId);
+      if (error) {
+        console.error('Supabase daily_logs delete error:', error);
+        throw error;
+      }
+    }
+    setDailyLogs((prev) => prev.filter((l) => l.id !== logId));
   };
 
   // 8. Document an extra note or blocker (Extra Notes)
@@ -5513,6 +5555,8 @@ export default function App() {
                   capacityLogs={capacityLogs}
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onCreateDailyLog={handleCreateDailyLog}
+                  onUpdateDailyLog={handleUpdateDailyLog}
+                  onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
@@ -5717,6 +5761,8 @@ export default function App() {
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onUpdateTask={handleUpdateTask}
                   onCreateDailyLog={handleCreateDailyLog}
+                  onUpdateDailyLog={handleUpdateDailyLog}
+                  onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
                 />
               </div>
@@ -5781,9 +5827,12 @@ export default function App() {
                   reports={reports}
                   clientComparisons={clientComparisons}
                   dailyLogs={dailyLogs}
+                  tasks={tasks}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onUpdateDailyLog={handleUpdateDailyLog}
+                  onDeleteDailyLog={handleDeleteDailyLog}
                 />
               </div>
             )}
