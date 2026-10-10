@@ -345,6 +345,26 @@ export interface TaskRecord {
   // reaches 'completed' and reviewed by the creator/assignee/head_of_technical before manually
   // closing the task — see canCloseTask() in lib/taskLifecycle.ts.
   done_link?: string | null;
+  // Optional, admin-editable task type tag. task_type is a task_types.id (or null if untagged);
+  // task_type_other holds the free-text value when that row's is_other flag is set. See
+  // TaskTypeRecord below.
+  task_type?: string | null;
+  task_type_other?: string | null;
+}
+
+// 6a. task_types — admin-managed reference list of selectable task types, each scoped to either
+// a team (scope_value is an OPERATIONAL_TEAMS value) or a role (scope_value is a UserRole). See
+// supabase/migrations/20261031900000_task_types.sql.
+export interface TaskTypeRecord {
+  id: string;
+  scope_type: 'team' | 'role';
+  scope_value: string;
+  label: string;
+  is_other: boolean;
+  sort_order: number;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // 6b. task_comments — threaded comments on a task, capped at 3 levels

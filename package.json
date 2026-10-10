@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit && tsx scripts/checkClientServicesAccess.ts",
+    "lint": "tsc --noEmit && tsx scripts/checkClientServicesAccess.ts && tsx scripts/checkTaskTypeManagerProps.ts",
     "check-client-services-access": "tsx scripts/checkClientServicesAccess.ts",
     "bootstrap-first-admin": "tsx scripts/bootstrapFirstAdmin.ts",
     "provision-auth-users": "tsx scripts/provisionAuthUsers.ts",
