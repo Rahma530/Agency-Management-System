@@ -136,6 +136,7 @@ export function isEmployeeAccessibleUnderRLS(
   if (viewer.role === 'seo_team_lead') {
     return (
       targetEmployee.role === 'seo_agent' ||
+      targetEmployee.role === 'store_manager' ||
       targetEmployee.role === 'seo_content_agent' ||
       targetEmployee.role === 'seo_backlink_agent' ||
       targetEmployee.role === 'seo_team_lead'
@@ -165,9 +166,15 @@ export function isEmployeeAccessibleUnderRLS(
     return targetEmployee.role === 'media_buying_agent' || targetEmployee.role === 'media_buying_team_lead';
   }
 
-  if (viewer.role === 'seo_agent' || viewer.role === 'seo_content_agent' || viewer.role === 'seo_backlink_agent') {
+  if (
+    viewer.role === 'seo_agent' ||
+    viewer.role === 'store_manager' ||
+    viewer.role === 'seo_content_agent' ||
+    viewer.role === 'seo_backlink_agent'
+  ) {
     return (
       targetEmployee.role === 'seo_agent' ||
+      targetEmployee.role === 'store_manager' ||
       targetEmployee.role === 'seo_content_agent' ||
       targetEmployee.role === 'seo_backlink_agent' ||
       targetEmployee.role === 'seo_team_lead'
@@ -196,6 +203,7 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
       'media_buying_agent',
       'seo_team_lead',
       'seo_agent',
+      'store_manager',
       'seo_content_agent',
       'seo_backlink_agent',
       'programming_agent',
@@ -216,7 +224,7 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
     return ['media_buying_team_lead', 'media_buying_agent', 'graphic_designer', 'video_editor'];
   }
   if (viewerRole === 'seo_team_lead') {
-    return ['seo_team_lead', 'seo_agent', 'seo_content_agent', 'seo_backlink_agent', 'graphic_designer', 'video_editor'];
+    return ['seo_team_lead', 'seo_agent', 'store_manager', 'seo_content_agent', 'seo_backlink_agent', 'graphic_designer', 'video_editor'];
   }
   if (viewerRole === 'social_media_team_lead') {
     return ['social_media_team_lead', 'social_media_agent', 'graphic_designer', 'video_editor'];
@@ -234,8 +242,13 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
   if (viewerRole === 'media_buying_agent') {
     return ['media_buying_agent', 'media_buying_team_lead', 'graphic_designer', 'video_editor'];
   }
-  if (viewerRole === 'seo_agent' || viewerRole === 'seo_content_agent' || viewerRole === 'seo_backlink_agent') {
-    return ['seo_agent', 'seo_content_agent', 'seo_backlink_agent', 'seo_team_lead', 'graphic_designer', 'video_editor'];
+  if (
+    viewerRole === 'seo_agent' ||
+    viewerRole === 'store_manager' ||
+    viewerRole === 'seo_content_agent' ||
+    viewerRole === 'seo_backlink_agent'
+  ) {
+    return ['seo_agent', 'store_manager', 'seo_content_agent', 'seo_backlink_agent', 'seo_team_lead', 'graphic_designer', 'video_editor'];
   }
   if (viewerRole === 'social_media_agent') {
     return ['social_media_agent', 'social_media_team_lead', 'graphic_designer', 'video_editor'];
@@ -305,6 +318,7 @@ export function isClientAccessibleUnderRLS(
   // 8. Other Agents: Assigned clients
   if (
     viewer.role === 'seo_agent' ||
+    viewer.role === 'store_manager' ||
     viewer.role === 'seo_content_agent' ||
     viewer.role === 'seo_backlink_agent' ||
     viewer.role === 'social_media_agent'

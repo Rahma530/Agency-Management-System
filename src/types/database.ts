@@ -13,6 +13,7 @@ export type UserRole =
   | 'media_buying_agent'        // Media Buying Agent
   | 'seo_team_lead'             // SEO Team Leader
   | 'seo_agent'                 // SEO Agent
+  | 'store_manager'             // Store Manager — identical treatment to seo_agent everywhere
   | 'seo_content_agent'         // SEO Content Specialist — identical treatment to seo_agent everywhere
   | 'seo_backlink_agent'        // SEO Backlink Specialist — identical treatment to seo_agent everywhere
   // No dedicated team lead of its own — folded under seo_team_lead's oversight, the same way

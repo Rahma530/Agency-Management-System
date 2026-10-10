@@ -13,7 +13,7 @@ export const SERVICE_ASSIGNMENT_CONFIG: Record<AssignableServiceType, ServiceAss
   seo: {
     serviceType: 'seo',
     teamLeadRole: 'seo_team_lead',
-    agentRoles: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
+    agentRoles: ['seo_agent', 'store_manager', 'seo_content_agent', 'seo_backlink_agent'],
   },
   media_buying: {
     serviceType: 'media_buying',

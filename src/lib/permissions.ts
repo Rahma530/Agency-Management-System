@@ -116,7 +116,7 @@ export const canManageEmployeesOrClients = (role: UserRole): boolean =>
 const TEAM_LEAD_ASSIGNABLE_AGENT_ROLES: Partial<Record<UserRole, UserRole[]>> = {
   am_team_lead: ['am_agent'],
   media_buying_team_lead: ['media_buying_agent'],
-  seo_team_lead: ['seo_agent', 'programming_agent', 'seo_content_agent', 'seo_backlink_agent'],
+  seo_team_lead: ['seo_agent', 'store_manager', 'programming_agent', 'seo_content_agent', 'seo_backlink_agent'],
   social_media_team_lead: ['social_media_agent'],
 };
 

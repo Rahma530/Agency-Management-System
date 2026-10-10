@@ -221,6 +221,7 @@ export function resolveClientsForSubject(
     case 'seo_team_lead':
       return resolveDepartmentClients('seo', clients);
     case 'seo_agent':
+    case 'store_manager':
     case 'seo_content_agent':
     case 'seo_backlink_agent':
       return resolveDepartmentClients('seo', clients).filter((c) => isAssigned(c, 'seo'));
@@ -245,6 +246,7 @@ export function serviceFilterForRole(role: UserRole): ServiceType[] | undefined 
       return ['media_buying'];
     case 'seo_team_lead':
     case 'seo_agent':
+    case 'store_manager':
     case 'seo_content_agent':
     case 'seo_backlink_agent':
       return ['seo'];

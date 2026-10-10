@@ -28,7 +28,7 @@ interface DeptConfig {
 const TEAM_LEAD_DEPT_CONFIG: Partial<Record<UserRole, DeptConfig>> = {
   am_team_lead: { team: 'Account Management', agentRole: ['am_agent'], service: null, label: 'Account Management', clientsModule: 'onboarding' },
   media_buying_team_lead: { team: 'Media Buying', agentRole: ['media_buying_agent'], service: 'media_buying', label: 'Media Buying', clientsModule: 'service_briefs' },
-  seo_team_lead: { team: 'SEO', agentRole: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'], service: 'seo', label: 'SEO', clientsModule: 'service_briefs' },
+  seo_team_lead: { team: 'SEO', agentRole: ['seo_agent', 'store_manager', 'seo_content_agent', 'seo_backlink_agent'], service: 'seo', label: 'SEO', clientsModule: 'service_briefs' },
   social_media_team_lead: { team: 'Social Media', agentRole: ['social_media_agent'], service: 'social_media', label: 'Social Media', clientsModule: 'service_briefs' },
 };
 

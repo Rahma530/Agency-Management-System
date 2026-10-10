@@ -88,6 +88,7 @@ const SERVICE_BY_ROLE: Partial<Record<UserRole, ServiceType>> = {
   media_buying_agent: 'media_buying',
   seo_team_lead: 'seo',
   seo_agent: 'seo',
+  store_manager: 'seo',
   seo_content_agent: 'seo',
   seo_backlink_agent: 'seo',
   social_media_team_lead: 'social_media',
