@@ -65,6 +65,7 @@ import { TaskCalendarView } from './TaskCalendarView';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanTaskCardContent } from './KanbanTaskCard';
 import { TaskTypeManager } from './TaskTypeManager';
+import { TaskTypeInlineManager } from './TaskTypeInlineManager';
 
 interface CrossTeamTaskBoardProps {
   tasks: TaskRecord[];
@@ -1948,13 +1949,27 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Task Type (optional) — only shown once there's at least one matching option for
-                  the selected Team/assignee role; never required. */}
-              {newTaskTypeOptions.length > 0 && (
+              {/* Task Type (optional) — shown once there's at least one matching option for the
+                  selected Team/assignee role; never required. Managers (executive/
+                  head_of_technical) additionally see it even with zero options, so they can add
+                  the first type for a new team/role right from here. */}
+              {(newTaskTypeOptions.length > 0 || canManageTaskTypes) && (
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Task Type (optional):
                   </label>
+                  {canManageTaskTypes && (
+                    <div className="mb-1.5">
+                      <TaskTypeInlineManager
+                        taskTypes={taskTypes}
+                        scopeTeam={newTeam}
+                        scopeRole={newAssigneeRole}
+                        onSelectType={setNewTaskType}
+                        onCreateTaskType={onCreateTaskType}
+                        onUpdateTaskType={onUpdateTaskType}
+                      />
+                    </div>
+                  )}
                   <select
                     value={newTaskType}
                     onChange={(e) => setNewTaskType(e.target.value)}
@@ -2199,12 +2214,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
 
               {/* Task Type (optional) — includes the task's current type even if it's since been
-                  deactivated, so editing never silently drops it. */}
-              {editTaskTypeOptions.length > 0 && (
+                  deactivated, so editing never silently drops it. Managers additionally see this
+                  field even with zero options, so they can add the first type right from here. */}
+              {(editTaskTypeOptions.length > 0 || canManageTaskTypes) && (
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Task Type (optional):
                   </label>
+                  {canManageTaskTypes && (
+                    <div className="mb-1.5">
+                      <TaskTypeInlineManager
+                        taskTypes={taskTypes}
+                        scopeTeam={editTeam}
+                        scopeRole={editAssigneeRole}
+                        onSelectType={setEditTaskType}
+                        onCreateTaskType={onCreateTaskType}
+                        onUpdateTaskType={onUpdateTaskType}
+                      />
+                    </div>
+                  )}
                   <select
                     value={editTaskType}
                     onChange={(e) => setEditTaskType(e.target.value)}
