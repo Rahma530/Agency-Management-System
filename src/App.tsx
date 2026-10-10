@@ -3989,7 +3989,11 @@ export default function App() {
     client_id?: string | null;
   }) => {
     const newLogPayload: DailyLogRecord = {
-      id: `log-${Date.now().toString().slice(-4)}`,
+      // Date.now() alone collides when the multi-client create form fires several inserts in the
+      // same Promise.allSettled batch (DailyOperationsModule.tsx/MyWorkHub.tsx) — those calls
+      // share the same millisecond since there's no await between them. Same fix as the cl-/usr-
+      // id schemes elsewhere in this file (e.g. handleBulkAddClient/handleAddEmployee).
+      id: `log-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       user_id: logData.user_id,
       date: logData.date,
       summary_text: logData.summary_text,
@@ -3999,7 +4003,7 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      const { data, error } = await supabase.from('daily_logs').insert([newLogPayload]).select();
+      const { data, error } = await supabaseRaw.from('daily_logs').insert([newLogPayload]).select();
       if (error) {
         console.error('Supabase daily_logs insert error:', error);
         throw error;
@@ -4010,6 +4014,63 @@ export default function App() {
     }
 
     showNotification('Daily activity report logged and saved successfully.');
+  };
+
+  // Edit own daily_logs row — the column-level grant (20261101200000_daily_logs_edit_own.sql)
+  // only allows date/summary_text/linked_task_ids/client_id, so this payload must never include
+  // id/user_id/created_at or the UPDATE is rejected outright. RLS (daily_logs_update_own_rls)
+  // separately enforces the author-only, 7-day-since-created_at window the UI already checks via
+  // lib/dailyLogs.ts's canEditOwnDailyLog before ever offering the Edit button.
+  const handleUpdateDailyLog = async (
+    logId: string,
+    updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
+  ) => {
+    const payload = {
+      date: updates.date,
+      summary_text: updates.summary_text,
+      linked_task_ids: updates.linked_task_ids,
+      client_id: updates.client_id,
+    };
+
+    if (supabaseActive) {
+      const { data, error } = await supabaseRaw.from('daily_logs').update(payload).eq('id', logId).select();
+      if (error) {
+        console.error('Supabase daily_logs update error:', error);
+        throw error;
+      }
+      // RLS silently filters out a row the caller isn't allowed to touch — a stale or
+      // someone-else's/past-the-window log UPDATE affects zero rows with no error at all. Only
+      // ever reflect what the database actually changed, never an optimistic local guess.
+      if (!data || data.length === 0) {
+        throw new Error(
+          'This log could not be updated. The 7-day edit window may have passed, or you are not its author.'
+        );
+      }
+      const updated = data[0] as DailyLogRecord;
+      setDailyLogs((prev) => prev.map((l) => (l.id === logId ? updated : l)));
+    } else {
+      setDailyLogs((prev) => prev.map((l) => (l.id === logId ? { ...l, ...payload } : l)));
+    }
+  };
+
+  // Delete own daily_logs row — same author-only, 7-day window as the update above
+  // (daily_logs_delete_own_rls).
+  const handleDeleteDailyLog = async (logId: string) => {
+    if (supabaseActive) {
+      const { data, error } = await supabaseRaw.from('daily_logs').delete().eq('id', logId).select();
+      if (error) {
+        console.error('Supabase daily_logs delete error:', error);
+        throw error;
+      }
+      // Same RLS-silently-filtered-zero-rows case as the update above — a DELETE outside the
+      // window or by a non-author matches nothing, succeeds with no error, and returns no rows.
+      if (!data || data.length === 0) {
+        throw new Error(
+          'This log could not be deleted. The 7-day window may have passed, or you are not its author.'
+        );
+      }
+    }
+    setDailyLogs((prev) => prev.filter((l) => l.id !== logId));
   };
 
   // 8. Document an extra note or blocker (Extra Notes)
@@ -5513,6 +5574,8 @@ export default function App() {
                   capacityLogs={capacityLogs}
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onCreateDailyLog={handleCreateDailyLog}
+                  onUpdateDailyLog={handleUpdateDailyLog}
+                  onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
@@ -5717,6 +5780,8 @@ export default function App() {
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onUpdateTask={handleUpdateTask}
                   onCreateDailyLog={handleCreateDailyLog}
+                  onUpdateDailyLog={handleUpdateDailyLog}
+                  onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
                 />
               </div>
@@ -5781,9 +5846,12 @@ export default function App() {
                   reports={reports}
                   clientComparisons={clientComparisons}
                   dailyLogs={dailyLogs}
+                  tasks={tasks}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onUpdateDailyLog={handleUpdateDailyLog}
+                  onDeleteDailyLog={handleDeleteDailyLog}
                 />
               </div>
             )}

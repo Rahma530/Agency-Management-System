@@ -32,6 +32,8 @@ import {
   Check,
   Star,
   Link2,
+  Edit2,
+  Trash2,
 } from 'lucide-react';
 import {
   TaskRecord,
@@ -48,6 +50,9 @@ import { getTodayStr, isTaskOverdue, isTaskDueToday, sortTasksByPriorityThenDueD
 import { isActiveEmployee } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveCapacityLimit } from '../lib/capacity';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
+import { canEditOwnDailyLog } from '../lib/dailyLogs';
+import { DailyLogClientPicker } from './DailyLogClientPicker';
+import { DailyLogEditModal } from './DailyLogEditModal';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
@@ -67,6 +72,11 @@ interface DailyOperationsModuleProps {
     linked_task_ids: string[];
     client_id?: string | null;
   }) => Promise<void>;
+  onUpdateDailyLog: (
+    logId: string,
+    updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
+  ) => Promise<void>;
+  onDeleteDailyLog: (logId: string) => Promise<void>;
   onCreateExtraNote?: (noteData: {
     user_id: string;
     date: string;
@@ -89,6 +99,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   onUpdateTaskStatus,
   onUpdateTask,
   onCreateDailyLog,
+  onUpdateDailyLog,
+  onDeleteDailyLog,
   onCreateExtraNote,
 }) => {
   // Navigation between sub views
@@ -118,10 +130,19 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Daily Log Form State
   const [dailySummary, setDailySummary] = useState('');
   const [selectedLinkedTasks, setSelectedLinkedTasks] = useState<string[]>([]);
-  const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
-  const [logClientId, setLogClientId] = useState('');
+  const [logDate, setLogDate] = useState(getTodayStr());
+  // Multi-client create form — one daily_logs row gets written per selected client (see
+  // handleSubmitDailyLog below); empty selection keeps the original "not specific to one client"
+  // behavior.
+  const [selectedLogClientIds, setSelectedLogClientIds] = useState<string[]>([]);
+  const [createLogError, setCreateLogError] = useState<string | null>(null);
   const [logClientFilter, setLogClientFilter] = useState('all');
+  // Single-day browsing filter for the logs feed below — '' means "All dates".
+  const [logDateFilter, setLogDateFilter] = useState('');
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
+  // Editing an existing log opens DailyLogEditModal (a separate single-row form, rendered below)
+  // rather than reusing this multi-client create modal.
+  const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
 
   // Extra Effort Log Form State — the genuine "document initiative beyond
   // normal task scope" entry point. Distinct category from the incidental
@@ -360,14 +381,19 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     });
   }, [teamMembers, tasks, todayStr]);
 
-  // Daily Logs filtered for current employee or team
+  // Daily Logs filtered for current employee or team — sorted by the log's own `date` (newest
+  // first), then by `created_at` as a tiebreaker for logs sharing the same date, so a backdated
+  // or future-dated entry sits where its date says, not wherever it happened to be inserted.
   const relevantDailyLogs = useMemo(() => {
-    return dailyLogs.filter((log) => {
-      if (selectedEmployeeId !== 'all' && log.user_id !== effectiveEmployee.id) return false;
-      if (logClientFilter !== 'all' && log.client_id !== logClientFilter) return false;
-      return true;
-    });
-  }, [dailyLogs, effectiveEmployee.id, selectedEmployeeId, logClientFilter]);
+    return dailyLogs
+      .filter((log) => {
+        if (selectedEmployeeId !== 'all' && log.user_id !== effectiveEmployee.id) return false;
+        if (logClientFilter !== 'all' && log.client_id !== logClientFilter) return false;
+        if (logDateFilter && log.date !== logDateFilter) return false;
+        return true;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || ''));
+  }, [dailyLogs, effectiveEmployee.id, selectedEmployeeId, logClientFilter, logDateFilter]);
 
   // Handlers for task status
   const handleAdvanceStatus = async (taskId: string, currentStatus: TaskStatus) => {
@@ -494,30 +520,78 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     }
   };
 
-  // Daily Activity Submission Handler
+  // Daily Activity Submission Handler — writes one daily_logs row per selected client (or a
+  // single client_id: null row when none are selected). Each insert is awaited independently
+  // (Promise.allSettled) so a partial failure never silently drops a client: the form stays open
+  // with only the failed clients still selected, and the error names them.
   const handleSubmitDailyLog = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateLogError(null);
     if (!dailySummary.trim()) return;
 
     setIsSubmittingLog(true);
     try {
-      await onCreateDailyLog({
-        user_id: effectiveEmployee.id,
-        date: logDate,
-        summary_text: dailySummary.trim(),
-        linked_task_ids: selectedLinkedTasks,
-        client_id: logClientId || null,
-      });
+      const targets: (string | null)[] = selectedLogClientIds.length > 0 ? selectedLogClientIds : [null];
+      const results = await Promise.allSettled(
+        targets.map((clientId) =>
+          onCreateDailyLog({
+            user_id: effectiveEmployee.id,
+            date: logDate,
+            summary_text: dailySummary.trim(),
+            linked_task_ids: selectedLinkedTasks,
+            client_id: clientId,
+          })
+        )
+      );
+      const failed = targets.filter((_, i) => results[i].status === 'rejected');
 
-      setDailySummary('');
-      setSelectedLinkedTasks([]);
-      setLogClientId('');
-      setIsLoggingDailyActivity(false);
-      showNotification('Daily activity log saved successfully.');
-    } catch (err) {
-      showNotification('Unable to save the daily activity.', 'error');
+      if (failed.length === 0) {
+        setDailySummary('');
+        setSelectedLinkedTasks([]);
+        setSelectedLogClientIds([]);
+        setIsLoggingDailyActivity(false);
+        showNotification(
+          targets.length > 1
+            ? `Daily activity log saved for ${targets.length} clients.`
+            : 'Daily activity log saved successfully.'
+        );
+      } else {
+        const failedClientNames = failed
+          .filter((id): id is string => !!id)
+          .map((id) => clients.find((c) => c.id === id)?.name || id);
+        setCreateLogError(
+          failedClientNames.length > 0
+            ? `Saved for ${targets.length - failed.length} of ${targets.length} client(s). Failed to save for: ${failedClientNames.join(', ')}. Fix and try again.`
+            : 'Unable to save the daily activity. Try again.'
+        );
+        setSelectedLogClientIds(failed.filter((id): id is string => !!id));
+      }
+    } catch (err: any) {
+      setCreateLogError(err?.message || 'Unable to save the daily activity.');
     } finally {
       setIsSubmittingLog(false);
+    }
+  };
+
+  const handleSaveEditedDailyLog = async (updates: {
+    date: string;
+    summary_text: string;
+    linked_task_ids: string[];
+    client_id: string | null;
+  }) => {
+    if (!editingDailyLog) return;
+    await onUpdateDailyLog(editingDailyLog.id, updates);
+    setEditingDailyLog(null);
+    showNotification('Daily activity log updated successfully.');
+  };
+
+  const handleDeleteDailyLogClick = async (log: DailyLogRecord) => {
+    if (!window.confirm('Delete this daily log? This cannot be undone.')) return;
+    try {
+      await onDeleteDailyLog(log.id);
+      showNotification('Daily activity log deleted.');
+    } catch (err: any) {
+      showNotification(err?.message || 'Unable to delete this log.', 'error');
     }
   };
 
@@ -687,7 +761,11 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           </div>
 
           <button
-            onClick={() => setIsLoggingDailyActivity(true)}
+            onClick={() => {
+              setEditingDailyLog(null);
+              setCreateLogError(null);
+              setIsLoggingDailyActivity(true);
+            }}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white transition-all shadow-md hover:opacity-90 active:scale-98"
             style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
           >
@@ -1482,7 +1560,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </h3>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
               <select
                 value={logClientFilter}
                 onChange={(e) => setLogClientFilter(e.target.value)}
@@ -1495,8 +1573,30 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                   </option>
                 ))}
               </select>
+              <div className="flex items-center gap-1">
+                <input
+                  type="date"
+                  value={logDateFilter}
+                  onChange={(e) => setLogDateFilter(e.target.value)}
+                  title="Filter to a single day — leave blank for all dates"
+                  className="px-2.5 py-1.5 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                />
+                {logDateFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setLogDateFilter('')}
+                    className="px-2 py-1.5 rounded-xl text-[11px] font-semibold text-stone-400 hover:text-white bg-stone-900 border border-stone-800"
+                  >
+                    All dates
+                  </button>
+                )}
+              </div>
               <button
-                onClick={() => setIsLoggingDailyActivity(true)}
+                onClick={() => {
+                  setEditingDailyLog(null);
+                  setCreateLogError(null);
+                  setIsLoggingDailyActivity(true);
+                }}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white transition-all shadow-md hover:opacity-90 shrink-0"
                 style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
               >
@@ -1522,6 +1622,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 const logUser = users.find((u) => u.id === log.user_id);
                 const linkedTasksList = tasks.filter((t) => log.linked_task_ids?.includes(t.id));
                 const logClient = log.client_id ? clients.find((c) => c.id === log.client_id) : null;
+                const isFutureLog = log.date > todayStr;
+                const canEditThisLog = canEditOwnDailyLog(log, currentUser.id);
 
                 return (
                   <div
@@ -1545,12 +1647,37 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         )}
                       </div>
 
-                      <span className="text-[11px] font-mono text-purple-300 bg-purple-950/60 px-2.5 py-0.5 rounded-full border border-purple-800">
-                        Date: {log.date}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {isFutureLog && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-sky-900/60 text-sky-300 border border-sky-700/50">
+                            Future
+                          </span>
+                        )}
+                        <span className="text-[11px] font-mono text-purple-300 bg-purple-950/60 px-2.5 py-0.5 rounded-full border border-purple-800">
+                          Date: {log.date}
+                        </span>
+                        {canEditThisLog && (
+                          <>
+                            <button
+                              onClick={() => setEditingDailyLog(log)}
+                              className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
+                              title="Edit this log"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDailyLogClick(log)}
+                              className="p-1 rounded bg-stone-900 text-stone-400 hover:text-red-400"
+                              title="Delete this log"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
 
-                    <p className="text-xs text-stone-200 leading-relaxed whitespace-pre-wrap">
+                    <p className="text-xs text-stone-200 leading-relaxed whitespace-pre-wrap break-words">
                       {log.summary_text}
                     </p>
 
@@ -2038,12 +2165,31 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <h3 className="text-sm font-bold text-white">Daily Activity Log</h3>
               </div>
               <button
-                onClick={() => setIsLoggingDailyActivity(false)}
+                onClick={() => {
+                  setIsLoggingDailyActivity(false);
+                  setCreateLogError(null);
+                }}
                 className="p-1 rounded-lg text-stone-400 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {createLogError && (
+              <div className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="font-semibold">{createLogError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreateLogError(null)}
+                  className="text-xs opacity-70 hover:opacity-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleSubmitDailyLog} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -2069,19 +2215,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-stone-400 block mb-1">Client (optional):</label>
-                <select
-                  value={logClientId}
-                  onChange={(e) => setLogClientId(e.target.value)}
-                  className="w-full p-2.5 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                >
-                  <option value="" className="bg-stone-900 text-stone-400">-- Not specific to one client --</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-stone-900 text-white">
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="text-[11px] font-semibold text-stone-400 block mb-1">Client(s) (optional):</label>
+                <DailyLogClientPicker
+                  clients={clients}
+                  selectedClientIds={selectedLogClientIds}
+                  onChange={setSelectedLogClientIds}
+                />
               </div>
 
               <div>
@@ -2147,7 +2286,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
                 <button
                   type="button"
-                  onClick={() => setIsLoggingDailyActivity(false)}
+                  onClick={() => {
+                    setIsLoggingDailyActivity(false);
+                    setCreateLogError(null);
+                  }}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-stone-400 hover:text-white"
                 >
                   Cancel
@@ -2164,6 +2306,16 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {editingDailyLog && (
+        <DailyLogEditModal
+          log={editingDailyLog}
+          clients={clients}
+          tasks={tasks}
+          onSave={handleSaveEditedDailyLog}
+          onClose={() => setEditingDailyLog(null)}
+        />
       )}
 
       {/* Extra Effort Log Modal — the genuine "document initiative" entry
