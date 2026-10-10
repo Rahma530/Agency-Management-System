@@ -4034,8 +4034,16 @@ export default function App() {
         console.error('Supabase daily_logs update error:', error);
         throw error;
       }
-      const updated = (data?.[0] as DailyLogRecord) || undefined;
-      setDailyLogs((prev) => prev.map((l) => (l.id === logId ? (updated || { ...l, ...payload }) : l)));
+      // RLS silently filters out a row the caller isn't allowed to touch — a stale or
+      // someone-else's/past-the-window log UPDATE affects zero rows with no error at all. Only
+      // ever reflect what the database actually changed, never an optimistic local guess.
+      if (!data || data.length === 0) {
+        throw new Error(
+          'This log could not be updated. The 7-day edit window may have passed, or you are not its author.'
+        );
+      }
+      const updated = data[0] as DailyLogRecord;
+      setDailyLogs((prev) => prev.map((l) => (l.id === logId ? updated : l)));
     } else {
       setDailyLogs((prev) => prev.map((l) => (l.id === logId ? { ...l, ...payload } : l)));
     }
@@ -4045,10 +4053,17 @@ export default function App() {
   // (daily_logs_delete_own_rls).
   const handleDeleteDailyLog = async (logId: string) => {
     if (supabaseActive) {
-      const { error } = await supabaseRaw.from('daily_logs').delete().eq('id', logId);
+      const { data, error } = await supabaseRaw.from('daily_logs').delete().eq('id', logId).select();
       if (error) {
         console.error('Supabase daily_logs delete error:', error);
         throw error;
+      }
+      // Same RLS-silently-filtered-zero-rows case as the update above — a DELETE outside the
+      // window or by a non-author matches nothing, succeeds with no error, and returns no rows.
+      if (!data || data.length === 0) {
+        throw new Error(
+          'This log could not be deleted. The 7-day window may have passed, or you are not its author.'
+        );
       }
     }
     setDailyLogs((prev) => prev.filter((l) => l.id !== logId));
