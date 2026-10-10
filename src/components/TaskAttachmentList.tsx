@@ -145,7 +145,8 @@ export const TaskAttachmentList: React.FC<TaskAttachmentListProps> = ({
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-white truncate">{att.filename}</p>
                   <p className="text-[10px] text-stone-400">
-                    {uploader?.name || 'Unknown'} • {formatFileSize(att.file_size)}
+                    {uploader ? uploader.name : att.uploaded_by ? 'Unknown employee' : 'Unknown'} •{' '}
+                    {formatFileSize(att.file_size)}
                   </p>
                 </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Kanban,
   Table as TableIcon,
@@ -70,6 +70,11 @@ import { TaskTypeInlineManager } from './TaskTypeInlineManager';
 interface CrossTeamTaskBoardProps {
   tasks: TaskRecord[];
   users: UserRecord[];
+  // Merged users + task_directory() entries — see App.tsx's fetchTaskDirectory. Used only where a
+  // task's assigned_to id is resolved to a display name, so cross-team assignees always show a
+  // real name instead of silently falling back to "Unassigned". Every other use of `users` below
+  // (filters, capacity, rosters) deliberately stays on the raw `users` prop.
+  taskDirectoryUsers: UserRecord[];
   clients: ClientRecord[];
   currentUser?: UserRecord;
   currentUserId?: string;
@@ -118,6 +123,7 @@ export type TaskViewMode = 'kanban' | 'table' | 'timeline';
 export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   tasks,
   users,
+  taskDirectoryUsers,
   clients,
   currentUser,
   currentUserId = currentUser?.id || users[0]?.id || '',
@@ -247,6 +253,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [newTaskTypeOther, setNewTaskTypeOther] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  // Create-modal failure banner — rendered inline at the top of the modal itself, since the
+  // page-level `notification` toast above renders in normal page flow and is visually covered by
+  // the modal's full-viewport overlay while it's open.
+  const [createError, setCreateError] = useState<string | null>(null);
+  // Also rendered just above the Submit/Cancel buttons at the bottom of the (tall, scrollable)
+  // form — the top banner alone can be scrolled out of view by the time a failed submit happens,
+  // since the submit button that triggers it is at the bottom.
+  const createErrorBottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (createError) createErrorBottomRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [createError]);
 
   // Edit task form state
   const [editTitle, setEditTitle] = useState('');
@@ -274,6 +291,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [editTaskType, setEditTaskType] = useState<string>('');
   const [editTaskTypeOther, setEditTaskTypeOther] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  // Edit-modal failure banner — same reasoning as createError above.
+  const [editError, setEditError] = useState<string | null>(null);
+  const editErrorBottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (editError) editErrorBottomRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [editError]);
 
   // Task Type options visible on the create form: active types scoped to either the selected
   // Team or the selected assignee's role — role is read from newTeamAssignees (the
@@ -366,6 +389,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           { id: 'all', label: 'All Teams' },
           ...OPERATIONAL_TEAMS.map((t) => ({ id: t, label: t })),
         ];
+
+  // Team options for the Create/Edit Task forms' own Team select — distinct from `teams` above
+  // (the board's filter dropdown) and from OPERATIONAL_TEAMS itself, which EmployeeAdminHub.tsx
+  // and TaskTypeManager.tsx also depend on and must not be changed. 'Marketing' is offered to
+  // everyone; 'Technical' only to executive. 'Executive' and 'Sales' are never offered — neither
+  // does task-based work.
+  const taskFormTeams = useMemo(() => {
+    const extra = currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing'];
+    return [...OPERATIONAL_TEAMS, ...extra];
+  }, [currentUser?.role]);
 
   // Employee-name filter options when the Team filter is at "All Teams" (or, for
   // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so
@@ -529,7 +562,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const client = clients.find((c) => c.id === t.client_id);
-        const assignee = users.find((u) => u.id === t.assigned_to);
+        const assignee = taskDirectoryUsers.find((u) => u.id === t.assigned_to);
         const matchTitle = t.title.toLowerCase().includes(query);
         const matchDesc = t.description ? t.description.toLowerCase().includes(query) : false;
         const matchClient = client ? client.name.toLowerCase().includes(query) : false;
@@ -552,6 +585,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     searchQuery,
     clients,
     users,
+    taskDirectoryUsers,
     currentUserId,
     todayStr,
   ]);
@@ -559,12 +593,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // Handlers
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateError(null);
     if (!newTitle.trim() || !newClientId || !newDescription.trim() || !newDueDate) {
-      setNotification({
-        text: 'Title, client, description, and due date are all required to create a task.',
-        type: 'error',
-      });
-      setTimeout(() => setNotification(null), 3500);
+      setCreateError('Title, client, description, and due date are all required to create a task.');
       return;
     }
 
@@ -601,16 +632,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setTimeout(() => setNotification(null), 3500);
     } catch (err: any) {
       console.error(err);
-      setNotification({
-        text: `Failed to create task: ${err?.message || 'Unknown Supabase error.'}`,
-        type: 'error',
-      });
+      setCreateError(`Failed to create task: ${err?.message || 'Unknown Supabase error.'}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const openEditModal = (task: TaskRecord) => {
+    setEditError(null);
     setEditingTask(task);
     setEditTitle(task.title);
     setEditDescription(task.description || '');
@@ -631,6 +660,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // subtask (adding a level-3 sub-subtask) — SubtaskList only ever calls
   // this at levels 1-2, since nesting is capped at 3.
   const openAddSubtaskModal = (parentTask: TaskRecord) => {
+    setCreateError(null);
     setAddSubtaskParent(parentTask);
     setNewTitle('');
     setNewDescription('');
@@ -649,12 +679,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTask || !onUpdateTask) return;
+    setEditError(null);
     if (!editTitle.trim() || !editDescription.trim() || !editDueDate) {
-      setNotification({
-        text: 'Title, description, and due date are all required — none can be cleared.',
-        type: 'error',
-      });
-      setTimeout(() => setNotification(null), 3500);
+      setEditError('Title, description, and due date are all required — none can be cleared.');
       return;
     }
 
@@ -701,7 +728,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setTimeout(() => setNotification(null), 3500);
     } catch (err: any) {
       console.error(err);
-      setNotification({ text: `Error updating task: ${err?.message || 'Unknown Supabase error.'}`, type: 'error' });
+      setEditError(`Error updating task: ${err?.message || 'Unknown Supabase error.'}`);
     } finally {
       setIsUpdating(false);
     }
@@ -1061,6 +1088,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           {/* Create Task Button */}
           <button
             onClick={() => {
+              setCreateError(null);
               setAddSubtaskParent(null);
               setIsCreateModalOpen(true);
             }}
@@ -1265,7 +1293,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   tasks={columnTasks}
                   allTasks={tasks}
                   clients={clients}
-                  users={users}
+                  users={taskDirectoryUsers}
                   isOverdue={isOverdue}
                   isDueSoon={isDueSoon}
                   onOpenDetails={setSelectedTaskDetails}
@@ -1284,7 +1312,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <KanbanTaskCardContent
                     task={draggingTask}
                     client={clients.find((c) => c.id === draggingTask.client_id)}
-                    assignee={users.find((u) => u.id === draggingTask.assigned_to)}
+                    assignee={taskDirectoryUsers.find((u) => u.id === draggingTask.assigned_to)}
                     subtaskDone={subtasks.filter((t) => isTaskDone(t.status)).length}
                     subtaskTotal={subtasks.length}
                     overdue={isOverdue(draggingTask)}
@@ -1335,7 +1363,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 ) : (
                   filteredTasks.map((task) => {
                     const client = clients.find((c) => c.id === task.client_id);
-                    const assignee = users.find((u) => u.id === task.assigned_to);
+                    const assignee = taskDirectoryUsers.find((u) => u.id === task.assigned_to);
                     const priority = getPriorityBadge(task.priority);
                     const teamColor = getTeamColor(task.team);
                     const colInfo = columns.find((c) => c.id === task.status);
@@ -1385,7 +1413,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           ) : (
                             <span className="text-amber-400 text-[11px] font-semibold flex items-center gap-1">
                               <UserX className="w-3 h-3" />
-                              <span>Unassigned</span>
+                              <span>{task.assigned_to ? 'Unknown employee' : 'Unassigned'}</span>
                             </span>
                           )}
                         </td>
@@ -1482,7 +1510,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         <TaskCalendarView
           tasks={filteredTasks}
           clients={clients}
-          users={users}
+          users={taskDirectoryUsers}
           onSelectTask={setSelectedTaskDetails}
         />
       )}
@@ -1561,8 +1589,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <div className="flex items-center gap-2">
                     <User className="w-4 h-4 text-purple-400" />
                     <span className="text-xs font-bold text-white">
-                      {users.find((u) => u.id === selectedTaskDetails.assigned_to)?.name || (
-                        <span className="text-amber-400 font-semibold">Unassigned</span>
+                      {taskDirectoryUsers.find((u) => u.id === selectedTaskDetails.assigned_to)?.name || (
+                        <span className="text-amber-400 font-semibold">
+                          {selectedTaskDetails.assigned_to ? 'Unknown employee' : 'Unassigned'}
+                        </span>
                       )}
                     </span>
                   </div>
@@ -1754,7 +1784,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <SubtaskList
                     parentTask={selectedTaskDetails}
                     allTasks={tasks}
-                    users={users}
+                    users={taskDirectoryUsers}
                     level={2}
                     onAddSubtask={openAddSubtaskModal}
                     onEditSubtask={openEditModal}
@@ -1771,7 +1801,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <TaskAttachmentList
                     taskId={selectedTaskDetails.id}
                     attachments={taskAttachments}
-                    users={users}
+                    users={taskDirectoryUsers}
                     currentUserId={currentUserId}
                     onUpload={onUploadTaskAttachment}
                     onDelete={onDeleteTaskAttachment}
@@ -1788,7 +1818,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <TaskCommentThread
                     taskId={selectedTaskDetails.id}
                     comments={taskComments}
-                    users={users}
+                    users={taskDirectoryUsers}
                     currentUserId={currentUserId}
                     onAddComment={onAddTaskComment}
                     onEditComment={onEditTaskComment}
@@ -1856,6 +1886,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </button>
             </div>
 
+            {createError && (
+              <div className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="font-semibold">{createError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreateError(null)}
+                  className="text-xs opacity-70 hover:opacity-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleCreateSubmit} className="space-y-3.5">
               {/* Client Selection — locked to the parent's client when adding a subtask */}
               <div>
@@ -1918,7 +1964,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     onChange={(e) => setNewTeam(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
-                    {OPERATIONAL_TEAMS.map((t) => (
+                    {taskFormTeams.map((t) => (
                       <option key={t} value={t} className="bg-stone-900 text-white">{t}</option>
                     ))}
                   </select>
@@ -2054,6 +2100,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {createError && (
+                <div
+                  ref={createErrorBottomRef}
+                  className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="font-semibold">{createError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCreateError(null)}
+                    className="text-xs opacity-70 hover:opacity-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Submit Buttons */}
               <div className="pt-3 border-t border-stone-800 flex items-center justify-end gap-2">
                 <button
@@ -2102,6 +2167,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {editError && (
+              <div className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="font-semibold">{editError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditError(null)}
+                  className="text-xs opacity-70 hover:opacity-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleEditSubmit} className="space-y-3.5">
               {/* Task Title */}
@@ -2160,7 +2241,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     onChange={(e) => setEditTeam(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
-                    {OPERATIONAL_TEAMS.map((t) => (
+                    {taskFormTeams.map((t) => (
                       <option key={t} value={t} className="bg-stone-900 text-white">{t}</option>
                     ))}
                   </select>
@@ -2317,6 +2398,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   />
                 </div>
               </div>
+
+              {editError && (
+                <div
+                  ref={editErrorBottomRef}
+                  className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="font-semibold">{editError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditError(null)}
+                    className="text-xs opacity-70 hover:opacity-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
 
               {/* Submit Buttons */}
               <div className="pt-3 border-t border-stone-800 flex items-center justify-end gap-2">

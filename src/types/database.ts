@@ -616,6 +616,17 @@ export interface ChatDirectoryEntry {
   last_seen_at?: string | null;
 }
 
+// Minimal org-wide employee directory for resolving a task's assigned_to id to a name across
+// teams, from the task_directory() RPC — same reasoning as ChatDirectoryEntry above: name
+// resolution for a cross-team task's assignee must not be limited by `users`' own
+// employee_visible() RLS scoping.
+export interface TaskDirectoryEntry {
+  id: string;
+  name: string;
+  role: UserRole;
+  team?: string | null;
+}
+
 // 12. extra_notes
 export interface ExtraNoteRecord {
   id: string;

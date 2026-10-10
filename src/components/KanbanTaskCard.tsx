@@ -197,7 +197,7 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
         ) : (
           <span className="text-[10px] text-amber-400 flex items-center gap-1 font-semibold">
             <UserX className="w-3 h-3" />
-            <span>Unassigned</span>
+            <span>{task.assigned_to ? 'Unknown employee' : 'Unassigned'}</span>
           </span>
         )}
 

@@ -98,7 +98,7 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <span className="text-amber-400">Unassigned</span>
+                  <span className="text-amber-400">{child.assigned_to ? 'Unknown employee' : 'Unassigned'}</span>
                 )}
                 {child.due_date && (
                   <span className="flex items-center gap-0.5 font-mono">
