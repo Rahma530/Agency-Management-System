@@ -23,6 +23,7 @@ import {
 import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
+import { getTodayStr } from '../lib/employeeWork';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
@@ -137,7 +138,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         .sort((a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '')),
     [dailyLogs, dailyLogClientFilter]
   );
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => getTodayStr(), []);
   const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
   const [dailyLogActionError, setDailyLogActionError] = useState<string | null>(null);
 

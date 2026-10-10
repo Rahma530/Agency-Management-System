@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, X, AlertTriangle } from 'lucide-react';
 import { TaskRecord, TaskPriority, ClientRecord, UserRecord } from '../types/database';
 import { isTaskDone } from '../lib/taskLifecycle';
+import { getTodayStr } from '../lib/employeeWork';
 
 interface TaskCalendarViewProps {
   tasks: TaskRecord[];
@@ -23,7 +24,19 @@ const priorityStyle = (priority: TaskPriority) => {
   }
 };
 
-const toDateStr = (d: Date) => d.toISOString().split('T')[0];
+// Browser-local calendar day, not UTC — same reasoning as lib/employeeWork.ts's getTodayStr().
+// Every Date this is called on (gridDates below) is constructed as local midnight via
+// new Date(year, month, day)/setDate(), so round-tripping through toISOString() (UTC) shifted it
+// back by the local UTC offset: for Africa/Cairo (UTC+2) a cell meant to represent day D always
+// stringified as D-1, which misaligned the grid's own isToday/tasksByDate-lookup/expandedDay
+// against todayStr and task.due_date (both already plain local YYYY-MM-DD strings with no
+// timezone conversion of their own).
+const toDateStr = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MAX_VISIBLE_PER_DAY = 3;
@@ -35,7 +48,7 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({ tasks, clien
   });
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
-  const todayStr = useMemo(() => toDateStr(new Date()), []);
+  const todayStr = useMemo(() => getTodayStr(), []);
 
   // Fixed 6-week (42-cell) grid — includes leading/trailing days from
   // adjacent months so the grid height never jumps between months.

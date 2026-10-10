@@ -109,6 +109,7 @@ import {
   SERVICE_ASSIGNMENT_CONFIG,
 } from '../lib/serviceAssignment';
 import { isTaskDone } from '../lib/taskLifecycle';
+import { getTodayStr } from '../lib/employeeWork';
 import { BriefFieldSchemaEditor } from './BriefFieldSchemaEditor';
 
 const UNASSIGN_SELECTION = '__unassigned__';
@@ -769,7 +770,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
         activeCount: teamTasks.filter((t) => !isTaskDone(t.status)).length,
         blockedCount: teamTasks.filter((t) => t.status === 'blocked').length,
         overdueCount: teamTasks.filter(
-          (t) => !isTaskDone(t.status) && t.due_date && t.due_date < new Date().toISOString().slice(0, 10)
+          (t) => !isTaskDone(t.status) && t.due_date && t.due_date < getTodayStr()
         ).length,
       }))
       .sort((a, b) => a.team.localeCompare(b.team));
@@ -3023,7 +3024,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   <div className="divide-y divide-purple-900/20">
                     {group.tasks.map((t) => {
                       const assignee = users.find((u) => u.id === t.assigned_to);
-                      const isOverdue = !isTaskDone(t.status) && t.due_date && t.due_date < new Date().toISOString().slice(0, 10);
+                      const isOverdue = !isTaskDone(t.status) && t.due_date && t.due_date < getTodayStr();
                       return (
                         <div key={t.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
                           <div className="min-w-0">
