@@ -70,7 +70,7 @@ const CommentNode: React.FC<CommentNodeProps> = ({
               {author?.name.charAt(0) || '?'}
             </div>
             <span className="text-xs font-bold text-white truncate">
-              {author ? author.name : comment.author_id ? 'Unknown employee' : 'Unassigned'}
+              {author ? author.name : comment.author_id ? 'Unknown employee' : 'Unknown'}
             </span>
             <span className="text-[10px] text-stone-500 shrink-0">
               {comment.created_at.split('T')[0]}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Kanban,
   Table as TableIcon,
@@ -257,6 +257,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // page-level `notification` toast above renders in normal page flow and is visually covered by
   // the modal's full-viewport overlay while it's open.
   const [createError, setCreateError] = useState<string | null>(null);
+  // Also rendered just above the Submit/Cancel buttons at the bottom of the (tall, scrollable)
+  // form — the top banner alone can be scrolled out of view by the time a failed submit happens,
+  // since the submit button that triggers it is at the bottom.
+  const createErrorBottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (createError) createErrorBottomRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [createError]);
 
   // Edit task form state
   const [editTitle, setEditTitle] = useState('');
@@ -286,6 +293,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isUpdating, setIsUpdating] = useState(false);
   // Edit-modal failure banner — same reasoning as createError above.
   const [editError, setEditError] = useState<string | null>(null);
+  const editErrorBottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (editError) editErrorBottomRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [editError]);
 
   // Task Type options visible on the create form: active types scoped to either the selected
   // Team or the selected assignee's role — role is read from newTeamAssignees (the
@@ -2089,6 +2100,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {createError && (
+                <div
+                  ref={createErrorBottomRef}
+                  className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="font-semibold">{createError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCreateError(null)}
+                    className="text-xs opacity-70 hover:opacity-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Submit Buttons */}
               <div className="pt-3 border-t border-stone-800 flex items-center justify-end gap-2">
                 <button
@@ -2368,6 +2398,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   />
                 </div>
               </div>
+
+              {editError && (
+                <div
+                  ref={editErrorBottomRef}
+                  className="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-[rgba(245,163,163,0.15)] border border-[var(--roas-bad)] text-[var(--roas-bad)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="font-semibold">{editError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditError(null)}
+                    className="text-xs opacity-70 hover:opacity-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
 
               {/* Submit Buttons */}
               <div className="pt-3 border-t border-stone-800 flex items-center justify-end gap-2">
