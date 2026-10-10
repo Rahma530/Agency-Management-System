@@ -1,15 +1,18 @@
 /**
- * Fails if any `<CrossTeamTaskBoard ...>` JSX render site is missing one of the three Task Types
- * admin props: taskTypes, onCreateTaskType, onUpdateTaskType.
+ * Fails if any JSX render site of a Task Types-related component is missing one of its required
+ * props:
+ *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType
+ *   - <TaskTypeInlineManager>: taskTypes, scopeTeam, onSelectType, onCreateTaskType,
+ *     onUpdateTaskType (scopeRole is intentionally optional — a form with no assignee selected
+ *     yet has nothing to pass there)
  *
  * Why: this project has no @types/react or @types/react-dom installed (confirmed by direct
  * experiment — a JSX element with a missing or extra prop produces zero tsc errors here, because
- * every JSX expression types as `any`). Declaring these props required in
- * CrossTeamTaskBoardProps therefore gives no actual compile-time protection against a render site
- * silently dropping one of them — only a text-level scan like this one can catch that. Checks
- * `<CrossTeamTaskBoard` specifically rather than every component, since that's the one render site
- * this task's props were added to; a future second render site is caught automatically, since this
- * scans the whole src tree rather than a fixed file list.
+ * every JSX expression types as `any`). Declaring these props required in each component's props
+ * interface therefore gives no actual compile-time protection against a render site silently
+ * dropping one of them — only a text-level scan like this one can catch that. Scanning the whole
+ * src tree (not a fixed file list) means a future second render site of either component is
+ * caught automatically.
  *
  * Run via `npm run lint` (chained after tsc --noEmit) or directly: `npx tsx
  * scripts/checkTaskTypeManagerProps.ts`.
@@ -20,8 +23,14 @@ import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = join(ROOT, 'src');
-const TAG = '<CrossTeamTaskBoard';
-const REQUIRED_PROPS = ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType'];
+
+const CHECKS: { tag: string; requiredProps: string[] }[] = [
+  { tag: '<CrossTeamTaskBoard', requiredProps: ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType'] },
+  {
+    tag: '<TaskTypeInlineManager',
+    requiredProps: ['taskTypes', 'scopeTeam', 'onSelectType', 'onCreateTaskType', 'onUpdateTaskType'],
+  },
+];
 
 function listSourceFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -80,7 +89,35 @@ function findOpeningTagEnd(text: string, startIdx: number): number {
 
 interface Violation {
   file: string;
+  tag: string;
   missing: string[];
+}
+
+function checkTag(text: string, relPath: string, tag: string, requiredProps: string[], violations: Violation[]): void {
+  let searchFrom = 0;
+  while (true) {
+    const tagStart = text.indexOf(tag, searchFrom);
+    if (tagStart === -1) break;
+    // Guard against matching a longer component name that happens to start with this tag
+    // (e.g. `<CrossTeamTaskBoardSomething`) — the character right after the tag name must not be
+    // a further identifier character.
+    const afterTag = text[tagStart + tag.length];
+    if (afterTag && /[A-Za-z0-9_]/.test(afterTag)) {
+      searchFrom = tagStart + tag.length;
+      continue;
+    }
+
+    const tagEnd = findOpeningTagEnd(text, tagStart + tag.length);
+    if (tagEnd === -1) break;
+    const tagText = text.slice(tagStart, tagEnd + 1);
+
+    const missing = requiredProps.filter((prop) => !new RegExp(`[\\s{]${prop}=`).test(tagText));
+    if (missing.length > 0) {
+      violations.push({ file: relPath, tag, missing });
+    }
+
+    searchFrom = tagEnd + 1;
+  }
 }
 
 function main(): void {
@@ -90,45 +127,24 @@ function main(): void {
     const relPath = relative(ROOT, absPath).split(sep).join('/');
     const text = readFileSync(absPath, 'utf8');
 
-    let searchFrom = 0;
-    while (true) {
-      const tagStart = text.indexOf(TAG, searchFrom);
-      if (tagStart === -1) break;
-      // Guard against matching a longer component name that happens to start with this tag
-      // (e.g. `<CrossTeamTaskBoardSomething`) — the character right after the tag name must not
-      // be a further identifier character.
-      const afterTag = text[tagStart + TAG.length];
-      if (afterTag && /[A-Za-z0-9_]/.test(afterTag)) {
-        searchFrom = tagStart + TAG.length;
-        continue;
-      }
-
-      const tagEnd = findOpeningTagEnd(text, tagStart + TAG.length);
-      if (tagEnd === -1) break;
-      const tagText = text.slice(tagStart, tagEnd + 1);
-
-      const missing = REQUIRED_PROPS.filter((prop) => !new RegExp(`[\\s{]${prop}=`).test(tagText));
-      if (missing.length > 0) {
-        violations.push({ file: relPath, missing });
-      }
-
-      searchFrom = tagEnd + 1;
+    for (const { tag, requiredProps } of CHECKS) {
+      checkTag(text, relPath, tag, requiredProps, violations);
     }
   }
 
   if (violations.length > 0) {
-    console.error('Found <CrossTeamTaskBoard> render site(s) missing required Task Types admin props:\n');
+    console.error('Found render site(s) missing required Task Types props:\n');
     for (const v of violations) {
-      console.error(`  ${v.file}: missing ${v.missing.join(', ')}`);
+      console.error(`  ${v.file}: ${v.tag}> missing ${v.missing.join(', ')}`);
     }
     console.error(
-      '\nEvery <CrossTeamTaskBoard> render site must pass taskTypes, onCreateTaskType, and ' +
-        'onUpdateTaskType — tsc cannot catch a missing prop here (no @types/react is installed).'
+      '\ntsc cannot catch a missing prop here (no @types/react is installed) — fix the render ' +
+        'site(s) above so every required prop is passed.'
     );
     process.exit(1);
   }
 
-  console.log('OK: every <CrossTeamTaskBoard> render site passes taskTypes/onCreateTaskType/onUpdateTaskType.');
+  console.log('OK: every CrossTeamTaskBoard/TaskTypeInlineManager render site passes its required Task Types props.');
 }
 
 main();
