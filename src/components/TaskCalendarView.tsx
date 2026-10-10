@@ -24,7 +24,19 @@ const priorityStyle = (priority: TaskPriority) => {
   }
 };
 
-const toDateStr = (d: Date) => d.toISOString().split('T')[0];
+// Browser-local calendar day, not UTC — same reasoning as lib/employeeWork.ts's getTodayStr().
+// Every Date this is called on (gridDates below) is constructed as local midnight via
+// new Date(year, month, day)/setDate(), so round-tripping through toISOString() (UTC) shifted it
+// back by the local UTC offset: for Africa/Cairo (UTC+2) a cell meant to represent day D always
+// stringified as D-1, which misaligned the grid's own isToday/tasksByDate-lookup/expandedDay
+// against todayStr and task.due_date (both already plain local YYYY-MM-DD strings with no
+// timezone conversion of their own).
+const toDateStr = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MAX_VISIBLE_PER_DAY = 3;
