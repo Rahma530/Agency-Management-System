@@ -1949,49 +1949,47 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Task Type (optional) — shown once there's at least one matching option for the
-                  selected Team/assignee role; never required. Managers (executive/
-                  head_of_technical) additionally see it even with zero options, so they can add
-                  the first type for a new team/role right from here. */}
-              {(newTaskTypeOptions.length > 0 || canManageTaskTypes) && (
-                <div>
-                  <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Task Type (optional):
-                  </label>
-                  {canManageTaskTypes && (
-                    <div className="mb-1.5">
-                      <TaskTypeInlineManager
-                        taskTypes={taskTypes}
-                        scopeTeam={newTeam}
-                        scopeRole={newAssigneeRole}
-                        onSelectType={setNewTaskType}
-                        onCreateTaskType={onCreateTaskType}
-                        onUpdateTaskType={onUpdateTaskType}
-                      />
-                    </div>
-                  )}
-                  <select
-                    value={newTaskType}
-                    onChange={(e) => setNewTaskType(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  >
-                    <option value="" className="bg-stone-900 text-stone-400">-- No Task Type --</option>
-                    {newTaskTypeOptions.map((t) => (
-                      <option key={t.id} value={t.id} className="bg-stone-900 text-white">{t.label}</option>
-                    ))}
-                  </select>
-                  {newSelectedTaskType?.is_other && (
-                    <input
-                      type="text"
-                      dir="auto"
-                      value={newTaskTypeOther}
-                      onChange={(e) => setNewTaskTypeOther(e.target.value)}
-                      placeholder="Describe the task type..."
-                      className="w-full mt-2 px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+              {/* Task Type (optional) — always shown, same as every other role; never required.
+                  Managers (executive/head_of_technical) additionally get the Add type/Edit types
+                  controls below, so they can add the first type for a new team/role right from
+                  here. */}
+              <div>
+                <label className="text-xs font-semibold text-stone-300 block mb-1">
+                  Task Type (optional):
+                </label>
+                {canManageTaskTypes && (
+                  <div className="mb-1.5">
+                    <TaskTypeInlineManager
+                      taskTypes={taskTypes}
+                      scopeTeam={newTeam}
+                      scopeRole={newAssigneeRole}
+                      onSelectType={setNewTaskType}
+                      onCreateTaskType={onCreateTaskType}
+                      onUpdateTaskType={onUpdateTaskType}
                     />
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+                <select
+                  value={newTaskType}
+                  onChange={(e) => setNewTaskType(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="" className="bg-stone-900 text-stone-400">-- No Task Type --</option>
+                  {newTaskTypeOptions.map((t) => (
+                    <option key={t.id} value={t.id} className="bg-stone-900 text-white">{t.label}</option>
+                  ))}
+                </select>
+                {newSelectedTaskType?.is_other && (
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={newTaskTypeOther}
+                    onChange={(e) => setNewTaskTypeOther(e.target.value)}
+                    placeholder="Describe the task type..."
+                    className="w-full mt-2 px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                  />
+                )}
+              </div>
 
               {/* Priority & Due Date */}
               <div className="grid grid-cols-2 gap-3">
@@ -2213,50 +2211,49 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Task Type (optional) — includes the task's current type even if it's since been
-                  deactivated, so editing never silently drops it. Managers additionally see this
-                  field even with zero options, so they can add the first type right from here. */}
-              {(editTaskTypeOptions.length > 0 || canManageTaskTypes) && (
-                <div>
-                  <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Task Type (optional):
-                  </label>
-                  {canManageTaskTypes && (
-                    <div className="mb-1.5">
-                      <TaskTypeInlineManager
-                        taskTypes={taskTypes}
-                        scopeTeam={editTeam}
-                        scopeRole={editAssigneeRole}
-                        onSelectType={setEditTaskType}
-                        onCreateTaskType={onCreateTaskType}
-                        onUpdateTaskType={onUpdateTaskType}
-                      />
-                    </div>
-                  )}
-                  <select
-                    value={editTaskType}
-                    onChange={(e) => setEditTaskType(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  >
-                    <option value="" className="bg-stone-900 text-stone-400">-- No Task Type --</option>
-                    {editTaskTypeOptions.map((t) => (
-                      <option key={t.id} value={t.id} className="bg-stone-900 text-white">
-                        {t.label}{!t.is_active ? ' (inactive)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {editSelectedTaskType?.is_other && (
-                    <input
-                      type="text"
-                      dir="auto"
-                      value={editTaskTypeOther}
-                      onChange={(e) => setEditTaskTypeOther(e.target.value)}
-                      placeholder="Describe the task type..."
-                      className="w-full mt-2 px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+              {/* Task Type (optional) — always shown, same as every other role; includes the
+                  task's current type even if it's since been deactivated, so editing never
+                  silently drops it. Managers additionally get the Add type/Edit types controls
+                  below. */}
+              <div>
+                <label className="text-xs font-semibold text-stone-300 block mb-1">
+                  Task Type (optional):
+                </label>
+                {canManageTaskTypes && (
+                  <div className="mb-1.5">
+                    <TaskTypeInlineManager
+                      taskTypes={taskTypes}
+                      scopeTeam={editTeam}
+                      scopeRole={editAssigneeRole}
+                      onSelectType={setEditTaskType}
+                      onCreateTaskType={onCreateTaskType}
+                      onUpdateTaskType={onUpdateTaskType}
                     />
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+                <select
+                  value={editTaskType}
+                  onChange={(e) => setEditTaskType(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="" className="bg-stone-900 text-stone-400">-- No Task Type --</option>
+                  {editTaskTypeOptions.map((t) => (
+                    <option key={t.id} value={t.id} className="bg-stone-900 text-white">
+                      {t.label}{!t.is_active ? ' (inactive)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {editSelectedTaskType?.is_other && (
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={editTaskTypeOther}
+                    onChange={(e) => setEditTaskTypeOther(e.target.value)}
+                    placeholder="Describe the task type..."
+                    className="w-full mt-2 px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                  />
+                )}
+              </div>
 
               {/* Priority & Due Date */}
               <div className="grid grid-cols-2 gap-3">

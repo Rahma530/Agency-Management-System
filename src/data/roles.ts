@@ -318,10 +318,12 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     department: 'AI & Automation',
     badgeBg: 'var(--role-ai-engineer-tint)',
     badgeText: 'var(--role-ai-engineer-ink)',
-    // Application authorization intentionally mirrors head_of_technical. Role identity and
-    // presentation remain distinct, but this role must not receive modules HoT cannot access.
+    // Application authorization intentionally mirrors head_of_technical, with one addition:
+    // my_work, since unlike head_of_technical this role does hands-on, personally-assigned work
+    // (see description below) and needs the same personal task/daily-log hub every other
+    // hands-on role gets. defaultModule stays 'dashboard', matching head_of_technical's landing.
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
