@@ -130,7 +130,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Daily Log Form State
   const [dailySummary, setDailySummary] = useState('');
   const [selectedLinkedTasks, setSelectedLinkedTasks] = useState<string[]>([]);
-  const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
+  const [logDate, setLogDate] = useState(getTodayStr());
   // Multi-client create form — one daily_logs row gets written per selected client (see
   // handleSubmitDailyLog below); empty selection keeps the original "not specific to one client"
   // behavior.

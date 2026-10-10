@@ -333,19 +333,20 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   // backdatable/future-datable (see the date picker in the form below), so sorting by it would
   // make a just-submitted backdated entry vanish from this top-5 view and a future-dated one jump
   // ahead of today's real entries. The date still shows as a label on each row.
-  const myRecentLogs = useMemo(
-    () =>
-      dailyLogs
-        .filter(
-          (l) =>
-            l.user_id === currentUser.id &&
-            (logClientFilter === 'all' || l.client_id === logClientFilter) &&
-            (!logDateFilter || l.date === logDateFilter)
-        )
-        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
-        .slice(0, 5),
-    [dailyLogs, currentUser.id, logClientFilter, logDateFilter]
-  );
+  // The slice(0, 5) cap only applies to the unfiltered "recent" view — once a specific day is
+  // picked via logDateFilter, the point is to see everything logged that day, however many rows
+  // that is.
+  const myRecentLogs = useMemo(() => {
+    const filtered = dailyLogs
+      .filter(
+        (l) =>
+          l.user_id === currentUser.id &&
+          (logClientFilter === 'all' || l.client_id === logClientFilter) &&
+          (!logDateFilter || l.date === logDateFilter)
+      )
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    return logDateFilter ? filtered : filtered.slice(0, 5);
+  }, [dailyLogs, currentUser.id, logClientFilter, logDateFilter]);
   const myRecentExtraNotes = useMemo(
     () =>
       extraNotes

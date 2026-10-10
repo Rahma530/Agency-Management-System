@@ -3989,7 +3989,11 @@ export default function App() {
     client_id?: string | null;
   }) => {
     const newLogPayload: DailyLogRecord = {
-      id: `log-${Date.now().toString().slice(-4)}`,
+      // Date.now() alone collides when the multi-client create form fires several inserts in the
+      // same Promise.allSettled batch (DailyOperationsModule.tsx/MyWorkHub.tsx) — those calls
+      // share the same millisecond since there's no await between them. Same fix as the cl-/usr-
+      // id schemes elsewhere in this file (e.g. handleBulkAddClient/handleAddEmployee).
+      id: `log-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`,
       user_id: logData.user_id,
       date: logData.date,
       summary_text: logData.summary_text,
