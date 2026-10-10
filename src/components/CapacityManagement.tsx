@@ -135,6 +135,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     'media_buying_agent',
     'seo_team_lead',
     'seo_agent',
+    'store_manager',
     'seo_content_agent',
     'seo_backlink_agent',
     'social_media_team_lead',
@@ -161,6 +162,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       result = users.filter(
         (u) =>
           u.role === 'seo_agent' ||
+          u.role === 'store_manager' ||
           u.role === 'seo_content_agent' ||
           u.role === 'seo_backlink_agent' ||
           // programming_agent has no dedicated team lead of its own — exclusively managed by
@@ -264,6 +266,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       { id: 'media_buying_agent', label: 'Media Buying Agent' },
       { id: 'seo_team_lead', label: 'SEO Team Leader' },
       { id: 'seo_agent', label: 'SEO Agent' },
+      { id: 'store_manager', label: 'Store Manager' },
       { id: 'seo_content_agent', label: 'SEO Content Specialist' },
       { id: 'seo_backlink_agent', label: 'SEO Backlink Specialist' },
       { id: 'social_media_team_lead', label: 'Social Media Team Leader' },

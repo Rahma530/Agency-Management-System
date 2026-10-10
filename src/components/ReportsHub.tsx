@@ -100,7 +100,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     ? undefined
     : currentUser.role === 'media_buying_team_lead' || currentUser.role === 'media_buying_agent'
     ? ['media_buying']
-    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent'
+    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent' || currentUser.role === 'store_manager'
     ? ['seo']
     : currentUser.role === 'social_media_team_lead' || currentUser.role === 'social_media_agent'
     ? ['social_media']

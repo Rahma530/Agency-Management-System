@@ -2973,7 +2973,7 @@ export default function App() {
   };
 
   // 2d. Mark an assignment as viewed by its assigned agent (Module 12 Phase 5 — clears the
-  // "New" indicator for seo_agent/media_buying_agent/social_media_agent)
+  // "New" indicator for SEO, media buying, and social media agents)
   const handleMarkAssignmentViewed = async (assignmentId: string) => {
     const viewedAt = new Date().toISOString();
 

@@ -172,6 +172,22 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
     canAssignAM: false,
     description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
   },
+  store_manager: {
+    role: 'store_manager',
+    englishTitle: 'Store Manager',
+    portalTitleEn: 'Store Manager Portal',
+    portalSlug: 'store-manager',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'var(--role-seo-agent-tint)',
+    badgeText: 'var(--role-seo-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Store optimization, catalog SEO, technical SEO tasks, and daily logs.',
+  },
   // Identical treatment to seo_agent everywhere (task visibility/assignment, capacity tracking,
   // brief access, seo_team_lead oversight, allowedModules) — see the migration adding this role
   // alongside every RLS function/policy that previously hardcoded 'seo_agent'.
@@ -345,7 +361,7 @@ export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
 export const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRole, UserRole[]>> = {
   am_team_lead: ['am_agent'],
   media_buying_team_lead: ['media_buying_agent'],
-  seo_team_lead: ['seo_agent', 'seo_content_agent', 'seo_backlink_agent'],
+  seo_team_lead: ['seo_agent', 'store_manager', 'seo_content_agent', 'seo_backlink_agent'],
   social_media_team_lead: ['social_media_agent'],
 };
 

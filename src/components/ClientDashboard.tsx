@@ -444,11 +444,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   }, [client.id]);
 
   // Module 12 Phase 5: same "New" indicator, for the service agent's own assignment on this
-  // client (seo_agent/media_buying_agent/social_media_agent) — mirrors the effect above.
+  // client (SEO/service agents) — mirrors the effect above.
   React.useEffect(() => {
     if (!onMarkAssignmentViewed) return;
     const service =
-      currentUser.role === 'seo_agent' || currentUser.role === 'seo_content_agent' || currentUser.role === 'seo_backlink_agent'
+      currentUser.role === 'seo_agent' || currentUser.role === 'store_manager' || currentUser.role === 'seo_content_agent' || currentUser.role === 'seo_backlink_agent'
         ? 'seo'
         : currentUser.role === 'media_buying_agent'
         ? 'media_buying'
@@ -629,6 +629,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'ai_engineer' ||
     currentUser.role === 'seo_team_lead' ||
     currentUser.role === 'seo_agent' ||
+    currentUser.role === 'store_manager' ||
     currentUser.role === 'seo_content_agent' ||
     currentUser.role === 'seo_backlink_agent' ||
     currentUser.role === 'media_buying_team_lead' ||
@@ -670,7 +671,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     (currentUser.role === 'media_buying_team_lead' && clientHasService(client, 'media_buying')) ||
     (currentUser.role === 'media_buying_agent' && isAssignedToService('media_buying')) ||
     (currentUser.role === 'seo_team_lead' && clientHasService(client, 'seo')) ||
-    (currentUser.role === 'seo_agent' && isAssignedToService('seo')) ||
+    ((currentUser.role === 'seo_agent' || currentUser.role === 'store_manager') && isAssignedToService('seo')) ||
     (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
     (currentUser.role === 'social_media_agent' && isAssignedToService('social_media'));
 
@@ -692,12 +693,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // seo_insights_update_rls in 20261028000000_seo_insights.sql exactly (same roles, same
   // client_has_service/agent_assigned/client_am_agent_is_caller checks), so the UI never offers an
   // action the database would reject. No head_of_technical/ai_engineer bridge here, unlike
-  // canLogSocialMetrics: seo_team_lead/seo_agent are already real, actively-used roles, so there's
+  // canLogSocialMetrics: SEO team leads and agents are already real, actively-used roles, so there's
   // no "role doesn't exist yet" gap to bridge. am_agent is included (own client only), same
   // capability tier as canLogMediaBuyingMetrics.
   const canLogSeoMetrics =
     clientHasService(client, 'seo') &&
-    ((currentUser.role === 'seo_agent' && isAssignedToService('seo')) ||
+    (((currentUser.role === 'seo_agent' || currentUser.role === 'store_manager') && isAssignedToService('seo')) ||
       (currentUser.role === 'seo_team_lead' && clientHasService(client, 'seo')) ||
       (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id));
 
@@ -712,7 +713,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     ? undefined
     : currentUser.role === 'media_buying_team_lead' || currentUser.role === 'media_buying_agent'
     ? ['media_buying']
-    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent'
+    : currentUser.role === 'seo_team_lead' || currentUser.role === 'seo_agent' || currentUser.role === 'store_manager'
     ? ['seo']
     : currentUser.role === 'social_media_team_lead' || currentUser.role === 'social_media_agent'
     ? ['social_media']
