@@ -52,6 +52,7 @@ import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing } 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
   users: UserRecord[];
+  taskDirectoryUsers: UserRecord[];
   clients: ClientRecord[];
   briefs: BriefRecord[];
   dailyLogs: DailyLogRecord[];
@@ -79,6 +80,7 @@ export type OperationSubTab = 'daily_view' | 'my_tasks' | 'blockers' | 'daily_ac
 export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   tasks,
   users,
+  taskDirectoryUsers,
   clients,
   briefs,
   dailyLogs,
@@ -1388,7 +1390,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {allVisibleBlockers.map((task) => {
                 const client = clients.find((c) => c.id === task.client_id);
-                const assignee = users.find((u) => u.id === task.assigned_to);
+                const assignee = taskDirectoryUsers.find((u) => u.id === task.assigned_to);
                 const priority = getPriorityBadge(task.priority);
 
                 return (
@@ -1428,7 +1430,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         </p>
                         <p className="flex items-center gap-1.5">
                           <User className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                          <span>Assignee: {assignee ? assignee.name : 'Unassigned'}</span>
+                          <span>
+                            Assignee:{' '}
+                            {assignee ? assignee.name : task.assigned_to ? 'Unknown employee' : 'Unassigned'}
+                          </span>
                         </p>
                         <p className="flex items-center gap-1.5 font-mono">
                           <Calendar className="w-3.5 h-3.5 text-stone-500 shrink-0" />
@@ -1814,7 +1819,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               {/* Client & Service Info */}
               {(() => {
                 const client = clients.find((c) => c.id === selectedTaskDetails.client_id);
-                const assignee = users.find((u) => u.id === selectedTaskDetails.assigned_to);
+                const assignee = taskDirectoryUsers.find((u) => u.id === selectedTaskDetails.assigned_to);
 
                 return (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1831,7 +1836,13 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                       <span className="text-stone-400 text-[11px] block">Assigned Employee:</span>
                       <p className="font-bold text-white text-sm flex items-center gap-1.5">
                         <User className="w-3.5 h-3.5 text-purple-400" />
-                        <span>{assignee ? assignee.name : 'Unassigned'}</span>
+                        <span>
+                          {assignee
+                            ? assignee.name
+                            : selectedTaskDetails.assigned_to
+                              ? 'Unknown employee'
+                              : 'Unassigned'}
+                        </span>
                       </p>
                       <p className="text-[11px] text-stone-400">Team: {selectedTaskDetails.team || '—'}</p>
                     </div>

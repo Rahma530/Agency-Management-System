@@ -224,7 +224,9 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({ tasks, clien
                     <div className="flex items-center gap-2 mt-1 text-[10px] text-stone-400">
                       <span className="truncate">{client ? client.name : 'Unassigned Client'}</span>
                       <span>•</span>
-                      <span className="truncate">{assignee ? assignee.name : 'Unassigned'}</span>
+                      <span className="truncate">
+                        {assignee ? assignee.name : task.assigned_to ? 'Unknown employee' : 'Unassigned'}
+                      </span>
                     </div>
                   </button>
                 );

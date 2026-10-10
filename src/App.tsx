@@ -85,6 +85,7 @@ import {
   ChatMessageRecord,
   ChatConversationClearRecord,
   ChatDirectoryEntry,
+  TaskDirectoryEntry,
   BriefFieldSchemaRow,
   SocialInsightRecord,
   SeoInsightRecord,
@@ -316,6 +317,19 @@ export default function App() {
   // employee_visible()-scoped `users` array. See chat_directory() RPC: messaging has no
   // role/team restriction by design, unlike every other consumer of `users`.
   const [chatDirectory, setChatDirectory] = useState<ChatDirectoryEntry[]>([]);
+  // Org-wide, id/name/role/team employee directory for resolving a cross-team task's assignee to
+  // a name — same reasoning as chatDirectory above, via the task_directory() RPC. See
+  // taskDirectoryUsers below for the merged list actually passed to task views.
+  const [taskDirectory, setTaskDirectory] = useState<TaskDirectoryEntry[]>([]);
+  // `users` + any task_directory() entries missing from it — passed to task views (instead of
+  // `users` alone) wherever a task's assigned_to id is resolved to a display name, so a
+  // cross-team assignee outside the viewer's own RLS-scoped `users` still shows a real name.
+  const taskDirectoryUsers: UserRecord[] = useMemo(() => {
+    const extra = taskDirectory
+      .filter((d) => !users.some((u) => u.id === d.id))
+      .map((d) => ({ id: d.id, name: d.name, role: d.role, team: d.team, auth_id: null }));
+    return [...users, ...extra];
+  }, [users, taskDirectory]);
   // Set when a notification's link_url ('chat:<senderId>') is clicked — a fresh object each
   // time (not just the userId string) so MiniChat's effect refires even for a second click on
   // a notification from the same sender, since a plain string dependency wouldn't change.
@@ -1599,6 +1613,21 @@ export default function App() {
         }
       } catch (err) {
         console.warn('Failed to load chat_directory:', err);
+      }
+    })();
+
+    (async () => {
+      try {
+        // Org-wide task-assignee directory (id/name/role/team) via the task_directory() RPC —
+        // same reasoning as chat_directory above: a cross-team task's assigned_to id must
+        // resolve to a real name even when the assignee falls outside the viewer's own
+        // employee_visible()-scoped `users` array.
+        const { data: taskDirectoryData, error: taskDirectoryErr } = await supabaseRaw.rpc('task_directory');
+        if (!cancelled && !taskDirectoryErr && taskDirectoryData) {
+          setTaskDirectory(taskDirectoryData as TaskDirectoryEntry[]);
+        }
+      } catch (err) {
+        console.warn('Failed to load task_directory:', err);
       }
     })();
 
@@ -5651,6 +5680,7 @@ export default function App() {
                 <CrossTeamTaskBoard
                   tasks={tasks}
                   users={users}
+                  taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}
                   currentUser={currentUser}
                   currentUserId={currentUser.id}
@@ -5678,6 +5708,7 @@ export default function App() {
                 <DailyOperationsModule
                   tasks={tasks}
                   users={users}
+                  taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}
                   briefs={briefs}
                   dailyLogs={dailyLogs}

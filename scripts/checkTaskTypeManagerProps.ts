@@ -1,10 +1,11 @@
 /**
- * Fails if any JSX render site of a Task Types-related component is missing one of its required
- * props:
- *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType
+ * Fails if any JSX render site of a Task Types-related component, or of a component requiring
+ * the taskDirectoryUsers merged-name list, is missing one of its required props:
+ *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType, taskDirectoryUsers
  *   - <TaskTypeInlineManager>: taskTypes, scopeTeam, onSelectType, onCreateTaskType,
  *     onUpdateTaskType (scopeRole is intentionally optional — a form with no assignee selected
  *     yet has nothing to pass there)
+ *   - <DailyOperationsModule>: taskDirectoryUsers
  *
  * Why: this project has no @types/react or @types/react-dom installed (confirmed by direct
  * experiment — a JSX element with a missing or extra prop produces zero tsc errors here, because
@@ -25,11 +26,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = join(ROOT, 'src');
 
 const CHECKS: { tag: string; requiredProps: string[] }[] = [
-  { tag: '<CrossTeamTaskBoard', requiredProps: ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType'] },
+  {
+    tag: '<CrossTeamTaskBoard',
+    requiredProps: ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType', 'taskDirectoryUsers'],
+  },
   {
     tag: '<TaskTypeInlineManager',
     requiredProps: ['taskTypes', 'scopeTeam', 'onSelectType', 'onCreateTaskType', 'onUpdateTaskType'],
   },
+  { tag: '<DailyOperationsModule', requiredProps: ['taskDirectoryUsers'] },
 ];
 
 function listSourceFiles(dir: string): string[] {
@@ -133,7 +138,7 @@ function main(): void {
   }
 
   if (violations.length > 0) {
-    console.error('Found render site(s) missing required Task Types props:\n');
+    console.error('Found render site(s) missing a required prop:\n');
     for (const v of violations) {
       console.error(`  ${v.file}: ${v.tag}> missing ${v.missing.join(', ')}`);
     }
@@ -144,7 +149,7 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log('OK: every CrossTeamTaskBoard/TaskTypeInlineManager render site passes its required Task Types props.');
+  console.log('OK: every checked render site passes its required props.');
 }
 
 main();
