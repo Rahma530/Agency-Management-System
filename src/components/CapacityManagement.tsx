@@ -39,6 +39,7 @@ import { getRoleInfo, AppModuleId } from '../data/roles';
 import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity } from '../lib/permissions';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { getEmployeesByDepartment } from '../lib/departmentStaffing';
+import { getTodayStr } from '../lib/employeeWork';
 import { ImportDataModal } from './ImportDataModal';
 
 interface CapacityManagementProps {
@@ -97,7 +98,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   // No longer defaults to the unscoped users[0] — synced to logCapacityEmployees by the effect
   // below whenever the modal opens.
   const [logAgentId, setLogAgentId] = useState('');
-  const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
+  const [logDate, setLogDate] = useState(getTodayStr());
   const [logCount, setLogCount] = useState<number>(4);
   const [isLoggingSubmitting, setIsLoggingSubmitting] = useState(false);
 

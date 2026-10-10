@@ -4,7 +4,16 @@ import { isTaskDone } from './taskLifecycle';
 // Shared by DailyOperationsModule.tsx and MyWorkHub.tsx so both compute
 // "overdue"/"due today"/priority order identically instead of drifting.
 
-export const getTodayStr = (): string => new Date().toISOString().split('T')[0];
+// Browser-local calendar day, not UTC (toISOString() lags local time by up to a few hours every
+// night) — getFullYear/getMonth/getDate already read the browser's own OS timezone, which for
+// this app's actual users already is the local day that matters.
+export const getTodayStr = (): string => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export const isTaskOverdue = (task: TaskRecord, todayStr: string): boolean => {
   if (!task.due_date) return false;

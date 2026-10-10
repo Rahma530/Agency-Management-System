@@ -151,7 +151,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // voluntarily-documented effort, not routine blocker bookkeeping.
   const [isLoggingExtraEffort, setIsLoggingExtraEffort] = useState(false);
   const [extraEffortText, setExtraEffortText] = useState('');
-  const [extraEffortDate, setExtraEffortDate] = useState(new Date().toISOString().split('T')[0]);
+  const [extraEffortDate, setExtraEffortDate] = useState(getTodayStr());
   const [isSubmittingExtraEffort, setIsSubmittingExtraEffort] = useState(false);
 
   // Quick Time Logging Modal / Popover State

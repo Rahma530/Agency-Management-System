@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, X, AlertTriangle } from 'lucide-react';
 import { TaskRecord, TaskPriority, ClientRecord, UserRecord } from '../types/database';
 import { isTaskDone } from '../lib/taskLifecycle';
+import { getTodayStr } from '../lib/employeeWork';
 
 interface TaskCalendarViewProps {
   tasks: TaskRecord[];
@@ -35,7 +36,7 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({ tasks, clien
   });
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
-  const todayStr = useMemo(() => toDateStr(new Date()), []);
+  const todayStr = useMemo(() => getTodayStr(), []);
 
   // Fixed 6-week (42-cell) grid — includes leading/trailing days from
   // adjacent months so the grid height never jumps between months.

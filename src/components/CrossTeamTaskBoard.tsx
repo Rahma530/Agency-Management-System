@@ -55,6 +55,7 @@ import {
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
 import { isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
+import { getTodayStr } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { OPERATIONAL_TEAMS, fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
@@ -467,7 +468,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   ];
 
   // Helper date functions
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => getTodayStr(), []);
   
   const isOverdue = (task: TaskRecord) => {
     if (!task.due_date) return false;
