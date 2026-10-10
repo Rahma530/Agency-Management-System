@@ -31,9 +31,11 @@ import {
   Send,
   Flag,
   Link2,
+  Settings,
 } from 'lucide-react';
 import {
   TaskRecord,
+  TaskTypeRecord,
   UserRecord,
   ClientRecord,
   TaskStatus,
@@ -62,6 +64,7 @@ import { TaskAttachmentList } from './TaskAttachmentList';
 import { TaskCalendarView } from './TaskCalendarView';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanTaskCardContent } from './KanbanTaskCard';
+import { TaskTypeManager } from './TaskTypeManager';
 
 interface CrossTeamTaskBoardProps {
   tasks: TaskRecord[];
@@ -82,8 +85,20 @@ interface CrossTeamTaskBoardProps {
     estimated_hours?: number | null;
     actual_hours?: number | null;
     parent_task_id?: string | null;
+    task_type?: string | null;
+    task_type_other?: string | null;
   }) => Promise<void>;
   onUpdateTask?: (taskId: string, updates: Partial<TaskRecord>) => Promise<void>;
+  // Admin-managed Task Type reference list (task_types table) — includes inactive rows so an
+  // existing task's type can still be resolved/shown after it's deactivated. The admin screen
+  // (TaskTypeManager) that creates/renames/reorders/deactivates these is gated to
+  // executive/head_of_technical below, matching task_types_write_rls/task_types_update_rls.
+  // Required (not optional) deliberately: this project has no @types/react installed, so a JSX
+  // element with a missing prop produces zero tsc errors — an omission here would only surface at
+  // runtime. scripts/checkTaskTypeManagerProps.ts enforces this at every render site instead.
+  taskTypes: TaskTypeRecord[];
+  onCreateTaskType: (row: Omit<TaskTypeRecord, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  onUpdateTaskType: (id: string, updates: Partial<TaskTypeRecord>) => Promise<void>;
   // Pre-fills the search box (matches by assignee name) when arriving here via
   // the "Assign via Task Board" link from CapacityManagement's employee cards.
   initialAssigneeFilter?: string;
@@ -108,6 +123,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onUpdateTaskStatus,
   onCreateTask,
   onUpdateTask,
+  taskTypes,
+  onCreateTaskType,
+  onUpdateTaskType,
   initialAssigneeFilter,
   taskComments = [],
   onAddTaskComment,
@@ -167,6 +185,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isTaskTypeManagerOpen, setIsTaskTypeManagerOpen] = useState(false);
+  const canManageTaskTypes = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
   // Module 12 Phase 9: Drive Link draft, synced whenever a different task's details open.
   const [driveLinkDraft, setDriveLinkDraft] = useState('');
@@ -220,6 +240,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [newPriority, setNewPriority] = useState<TaskPriority>('medium');
   const [newEstimatedHours, setNewEstimatedHours] = useState<number>(8);
   const [newActualHours, setNewActualHours] = useState<number>(0);
+  // Task Type (optional) — newTaskType holds a task_types.id, or '' for "no type selected".
+  // newTaskTypeOther only applies when the selected row's is_other flag is set.
+  const [newTaskType, setNewTaskType] = useState<string>('');
+  const [newTaskTypeOther, setNewTaskTypeOther] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -246,7 +270,45 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [editStatus, setEditStatus] = useState<TaskStatus>('todo');
   const [editEstimatedHours, setEditEstimatedHours] = useState<number>(0);
   const [editActualHours, setEditActualHours] = useState<number>(0);
+  const [editTaskType, setEditTaskType] = useState<string>('');
+  const [editTaskTypeOther, setEditTaskTypeOther] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+
+  // Task Type options visible on the create form: active types scoped to either the selected
+  // Team or the selected assignee's role — role is read from newTeamAssignees (the
+  // assignable_employees() roster), never from the `users` prop, since that's scoped to the
+  // current viewer's own RLS-limited visibility and may not include the chosen assignee at all.
+  const newAssigneeRole = newTeamAssignees.find((u) => u.id === newAssignedTo)?.role;
+  const newTaskTypeOptions = useMemo(
+    () =>
+      taskTypes.filter(
+        (t) =>
+          t.is_active &&
+          ((t.scope_type === 'team' && t.scope_value === newTeam) ||
+            (t.scope_type === 'role' && newAssigneeRole && t.scope_value === newAssigneeRole))
+      ),
+    [taskTypes, newTeam, newAssigneeRole]
+  );
+  const newSelectedTaskType = newTaskTypeOptions.find((t) => t.id === newTaskType);
+
+  // Same as above for the edit form, with one addition: the task's CURRENT task_type is always
+  // included even if it's since been deactivated or no longer matches the (possibly since-changed)
+  // team/assignee — otherwise the select would have no option for it and silently drop it.
+  const editAssigneeRole = editTeamAssignees.find((u) => u.id === editAssignedTo)?.role;
+  const editTaskTypeOptions = useMemo(() => {
+    const active = taskTypes.filter(
+      (t) =>
+        t.is_active &&
+        ((t.scope_type === 'team' && t.scope_value === editTeam) ||
+          (t.scope_type === 'role' && editAssigneeRole && t.scope_value === editAssigneeRole))
+    );
+    if (editTaskType && !active.some((t) => t.id === editTaskType)) {
+      const current = taskTypes.find((t) => t.id === editTaskType);
+      if (current) return [...active, current];
+    }
+    return active;
+  }, [taskTypes, editTeam, editAssigneeRole, editTaskType]);
+  const editSelectedTaskType = editTaskTypeOptions.find((t) => t.id === editTaskType);
 
   // Operational task assignees: strictly exclude Executive Management, Head of
   // Technical, and Sales — sales has no task-based work (task_visible()/
@@ -519,6 +581,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         estimated_hours: newEstimatedHours,
         actual_hours: newActualHours,
         parent_task_id: addSubtaskParent?.id || null,
+        task_type: newSelectedTaskType ? newTaskType : null,
+        task_type_other: newSelectedTaskType?.is_other ? newTaskTypeOther.trim() || null : null,
       });
 
       setIsCreateModalOpen(false);
@@ -527,6 +591,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setNewDescription('');
       setNewEstimatedHours(8);
       setNewActualHours(0);
+      setNewTaskType('');
+      setNewTaskTypeOther('');
       setNotification({
         text: addSubtaskParent ? 'Subtask created successfully.' : 'Task created and assigned successfully.',
         type: 'success',
@@ -555,6 +621,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setEditStatus(task.status);
     setEditEstimatedHours(task.estimated_hours || 0);
     setEditActualHours(task.actual_hours || 0);
+    setEditTaskType(task.task_type || '');
+    setEditTaskTypeOther(task.task_type_other || '');
   };
 
   // Opens the Create Task modal in "subtask" mode: client locked to the
@@ -572,6 +640,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setNewPriority('medium');
     setNewEstimatedHours(8);
     setNewActualHours(0);
+    setNewTaskType('');
+    setNewTaskTypeOther('');
     setIsCreateModalOpen(true);
   };
 
@@ -588,6 +658,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     }
 
     setIsUpdating(true);
+    const finalTaskType = editSelectedTaskType ? editTaskType : null;
+    const finalTaskTypeOther = editSelectedTaskType?.is_other ? editTaskTypeOther.trim() || null : null;
     try {
       await onUpdateTask(editingTask.id, {
         title: editTitle.trim(),
@@ -600,6 +672,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         status: editStatus,
         estimated_hours: editEstimatedHours,
         actual_hours: editActualHours,
+        task_type: finalTaskType,
+        task_type_other: finalTaskTypeOther,
       });
 
       // Update selected details if open
@@ -616,6 +690,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           status: editStatus,
           estimated_hours: editEstimatedHours,
           actual_hours: editActualHours,
+          task_type: finalTaskType,
+          task_type_other: finalTaskTypeOther,
         });
       }
 
@@ -968,6 +1044,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
             )}
           </div>
+
+          {/* Task Types admin entry point — executive/head_of_technical only, matching
+              task_types_write_rls/task_types_update_rls server-side. */}
+          {canManageTaskTypes && (
+            <button
+              onClick={() => setIsTaskTypeManagerOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-300 hover:text-white bg-white/5 hover:bg-white/10 border border-stone-800 transition-all shrink-0"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>Task Types</span>
+            </button>
+          )}
 
           {/* Create Task Button */}
           <button
@@ -1860,6 +1948,36 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {/* Task Type (optional) — only shown once there's at least one matching option for
+                  the selected Team/assignee role; never required. */}
+              {newTaskTypeOptions.length > 0 && (
+                <div>
+                  <label className="text-xs font-semibold text-stone-300 block mb-1">
+                    Task Type (optional):
+                  </label>
+                  <select
+                    value={newTaskType}
+                    onChange={(e) => setNewTaskType(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="" className="bg-stone-900 text-stone-400">-- No Task Type --</option>
+                    {newTaskTypeOptions.map((t) => (
+                      <option key={t.id} value={t.id} className="bg-stone-900 text-white">{t.label}</option>
+                    ))}
+                  </select>
+                  {newSelectedTaskType?.is_other && (
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={newTaskTypeOther}
+                      onChange={(e) => setNewTaskTypeOther(e.target.value)}
+                      placeholder="Describe the task type..."
+                      className="w-full mt-2 px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                    />
+                  )}
+                </div>
+              )}
+
               {/* Priority & Due Date */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -2080,6 +2198,38 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {/* Task Type (optional) — includes the task's current type even if it's since been
+                  deactivated, so editing never silently drops it. */}
+              {editTaskTypeOptions.length > 0 && (
+                <div>
+                  <label className="text-xs font-semibold text-stone-300 block mb-1">
+                    Task Type (optional):
+                  </label>
+                  <select
+                    value={editTaskType}
+                    onChange={(e) => setEditTaskType(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="" className="bg-stone-900 text-stone-400">-- No Task Type --</option>
+                    {editTaskTypeOptions.map((t) => (
+                      <option key={t.id} value={t.id} className="bg-stone-900 text-white">
+                        {t.label}{!t.is_active ? ' (inactive)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {editSelectedTaskType?.is_other && (
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={editTaskTypeOther}
+                      onChange={(e) => setEditTaskTypeOther(e.target.value)}
+                      placeholder="Describe the task type..."
+                      className="w-full mt-2 px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                    />
+                  )}
+                </div>
+              )}
+
               {/* Priority & Due Date */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -2164,6 +2314,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {isTaskTypeManagerOpen && canManageTaskTypes && (
+        <TaskTypeManager
+          taskTypes={taskTypes}
+          onCreate={onCreateTaskType}
+          onUpdate={onUpdateTaskType}
+          onClose={() => setIsTaskTypeManagerOpen(false)}
+        />
       )}
     </div>
   );

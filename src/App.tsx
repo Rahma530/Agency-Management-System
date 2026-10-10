@@ -68,6 +68,7 @@ import {
   BriefRecord,
   BriefRevisionRecord,
   TaskRecord,
+  TaskTypeRecord,
   TaskCommentRecord,
   TaskAttachmentRecord,
   CapacityLogRecord,
@@ -236,6 +237,10 @@ export default function App() {
   // id) the schema editor needs for update/delete.
   const [briefFieldSchemaRows, setBriefFieldSchemaRows] = useState<BriefFieldSchemaRow[]>([]);
   const briefFieldSchemas = useMemo(() => groupBriefFieldSchemas(briefFieldSchemaRows), [briefFieldSchemaRows]);
+  // Admin-editable task type list (task_types table) — includes inactive rows so an existing
+  // task's type can still be resolved/displayed after it's deactivated. See
+  // supabase/migrations/20261031900000_task_types.sql.
+  const [taskTypes, setTaskTypes] = useState<TaskTypeRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
@@ -1406,6 +1411,13 @@ export default function App() {
           showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
         } else {
           setTasks((taskData as TaskRecord[]) || []);
+        }
+
+        // Fetch task types (all rows, including inactive — an existing task may still reference a
+        // deactivated type and needs it resolvable for display/editing)
+        const { data: taskTypeData, error: taskTypeErr } = await supabase.from('task_types').select('*');
+        if (!taskTypeErr && taskTypeData) {
+          setTaskTypes(taskTypeData as TaskTypeRecord[]);
         }
 
         // Fetch task comments
@@ -3331,6 +3343,46 @@ export default function App() {
     showNotification('Question removed from the global schema.');
   };
 
+  // 3a-3. Task type CRUD (admin screen, executive/head_of_technical only — enforced by
+  // task_types_write_rls/task_types_update_rls). No delete handler: there is no DELETE policy on
+  // task_types, so retiring a type is always handleUpdateTaskType(id, { is_active: false }).
+  const handleCreateTaskType = async (
+    row: Omit<TaskTypeRecord, 'id' | 'created_at' | 'updated_at'>
+  ) => {
+    const newRow: TaskTypeRecord = { ...row, id: `tt-${Date.now().toString().slice(-6)}` };
+
+    if (supabaseActive) {
+      try {
+        const { data, error } = await supabase.from('task_types').insert([newRow]).select();
+        if (error) throw error;
+        if (data && data[0]) Object.assign(newRow, data[0]);
+      } catch (err: any) {
+        console.error('Supabase error adding task type:', err);
+        showNotification('Unable to add this task type.', 'info');
+        throw err;
+      }
+    }
+
+    setTaskTypes((prev) => [...prev, newRow]);
+    showNotification('Task type added.');
+  };
+
+  const handleUpdateTaskType = async (id: string, updates: Partial<TaskTypeRecord>) => {
+    if (supabaseActive) {
+      try {
+        const { error } = await supabase.from('task_types').update(updates).eq('id', id);
+        if (error) throw error;
+      } catch (err: any) {
+        console.error('Supabase error updating task type:', err);
+        showNotification('Unable to save this task type.', 'info');
+        throw err;
+      }
+    }
+
+    setTaskTypes((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+    showNotification('Task type updated.');
+  };
+
   // 3b. Mark a brief as viewed by the relevant service Team Lead (clears its "New" indicator).
   // Routed through the mark_brief_viewed() RPC rather than a direct table update — RLS is
   // row-level, not column-level, so a plain UPDATE policy scoped to "clear this timestamp" can't
@@ -3671,6 +3723,8 @@ export default function App() {
     estimated_hours?: number | null;
     actual_hours?: number | null;
     parent_task_id?: string | null;
+    task_type?: string | null;
+    task_type_other?: string | null;
   }) => {
     const newTaskPayload: TaskRecord = {
       id: `tsk-${Date.now().toString().slice(-4)}`,
@@ -3687,6 +3741,8 @@ export default function App() {
       actual_hours: taskData.actual_hours ?? 0,
       created_at: new Date().toISOString(),
       parent_task_id: taskData.parent_task_id || null,
+      task_type: taskData.task_type || null,
+      task_type_other: taskData.task_type_other || null,
     };
 
     if (!supabaseActive) {
@@ -5601,6 +5657,9 @@ export default function App() {
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onCreateTask={handleCreateTask}
                   onUpdateTask={handleUpdateTask}
+                  taskTypes={taskTypes}
+                  onCreateTaskType={handleCreateTaskType}
+                  onUpdateTaskType={handleUpdateTaskType}
                   initialAssigneeFilter={taskBoardAssigneePrefill}
                   taskComments={taskComments}
                   onAddTaskComment={handleAddTaskComment}
