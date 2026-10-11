@@ -15,13 +15,32 @@ import {
   AlertTriangle,
   X,
   Save,
+  Shield,
 } from 'lucide-react';
 import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/database';
-import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
-import { getAllActiveCustomRoleIds } from '../data/customRoles';
+import { AGENCY_ROLES, getRoleInfo, isBuiltInRole } from '../data/roles';
+import { getAllActiveCustomRoleIds, getCustomRoleDepartmentId, getActiveTeamValuesForDepartment } from '../data/customRoles';
 import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients, canManageEmployee, assignableRolesFor } from '../lib/permissions';
 import { getOperationalTeams } from '../lib/departmentStaffing';
 import { isTaskDone } from '../lib/taskLifecycle';
+import { RolesAndDepartmentsAdmin } from './RolesAndDepartmentsAdmin';
+
+// Sentinel option values for the Add Employee form's Role/Team selects — never a real role id or
+// team value (both are validated against the DB's own id-shape/uniqueness constraints, which
+// this double-underscore shape can never satisfy), so there is no collision risk with a genuine
+// custom role id or team value an admin might create.
+const NEW_ROLE_OPTION = '__new_role__';
+const NEW_DEPARTMENT_OPTION = '__new_department__';
+
+// The Team select's options once a custom role with a known department is selected — scoped to
+// that department's own team values only (PR 6 decision 9), unlike teamOptionsFor() above which
+// offers every operational team. Falls back to [currentTeam] if the department has no team
+// values at all, so the select is never left with zero options.
+const departmentScopedTeamOptionsFor = (departmentId: string, currentTeam: string): string[] => {
+  const deptTeams = getActiveTeamValuesForDepartment(departmentId);
+  if (deptTeams.length === 0) return [currentTeam];
+  return deptTeams.includes(currentTeam) ? deptTeams : [...deptTeams, currentTeam];
+};
 
 // The Team dropdown must always include whatever team a role auto-fills (handleRoleChange below),
 // even for roles outside the 7 operational departments (Executive, Technical, Sales, AI
@@ -67,6 +86,10 @@ interface EmployeeAdminHubProps {
   onDeactivateEmployee: (userId: string) => Promise<void>;
   onSendInvitation: (employeeId: string) => Promise<SendInvitationResult>;
   onConfirmPortalEntry: (employeeId: string) => Promise<void>;
+  // Refetches departments/custom_roles/etc. and re-registers the in-memory cache
+  // (App.tsx's loadCustomRolesAndDepartments) — passed straight through to
+  // RolesAndDepartmentsAdmin so it can refresh the cache after a save without a page reload.
+  onCustomRolesDataChanged: () => Promise<void>;
 }
 
 const BUILT_IN_ROLES = Object.keys(AGENCY_ROLES) as UserRole[];
@@ -126,6 +149,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onDeactivateEmployee,
   onSendInvitation,
   onConfirmPortalEntry,
+  onCustomRolesDataChanged,
 }) => {
   // Add Employee (single + bulk) stays executive/head_of_technical/ai_engineer only — matches
   // users_insert_admin_rls's with_check, which allows the same three roles (both were aligned by
@@ -133,6 +157,16 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   // below is the newly-broadened section: exec/HoT + all 5 team leads.
   const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const canManageEmployees = canManageEmployeesOrClients(currentUser.role);
+
+  // Roles/Departments admin: executive and head_of_technical ONLY (not ai_engineer, unlike
+  // canAddEmployees above) — a hardcoded literal check, same pattern as CrossTeamTaskBoard's
+  // canManageTaskTypes, deliberately NOT routed through can() or isBuiltInRole (PR 6 decision 1).
+  // The real enforcement is server-side (departments_insert_rls/update_rls,
+  // custom_roles_insert_rls/update_rls, etc., all already executive/head_of_technical-only); this
+  // is the same two-layer pattern every other admin screen in this app already uses.
+  const canManageRolesAndDepartments = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  const [isRolesAdminOpen, setIsRolesAdminOpen] = useState(false);
+  const [rolesAdminInitialView, setRolesAdminInitialView] = useState<'departments' | 'roles'>('departments');
 
   // Built-in roles + every active custom role id, recomputed each render (not memoized with a
   // frozen dependency list) so a custom role created/activated after this component already
@@ -272,6 +306,14 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
     setRole(newRole);
     setTeam(getRoleInfo(newRole).team);
   };
+
+  // When the selected Role is a custom role with a known department, the Team select narrows to
+  // just that department's own team values (PR 6 decision 9) instead of every operational team —
+  // handleRoleChange above already auto-fills `team` to the role's canonical team value
+  // (getRoleInfo(customRole).team, which is that department's primary team), so this only
+  // affects what the OPTIONS are, not the auto-fill itself.
+  const roleDepartmentId = !isBuiltInRole(role) ? getCustomRoleDepartmentId(role) : null;
+  const roleTeamOptions = roleDepartmentId ? departmentScopedTeamOptionsFor(roleDepartmentId, team) : teamOptionsFor(team);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -542,17 +584,31 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
       {canAddEmployees && (
       <>
       <div className="p-4 rounded-2xl border border-purple-900/30 bg-[#161224]/80">
-        <div className="flex items-center gap-3 mb-1">
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0"
-            style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
-          >
-            <UserPlus className="employee-add-icon w-4.5 h-4.5 text-white" />
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0"
+              style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+            >
+              <UserPlus className="employee-add-icon w-4.5 h-4.5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-white">Add Employee</h2>
+              <p className="text-[11px] text-stone-400">Executive / Head of Technical only</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm font-bold text-white">Add Employee</h2>
-            <p className="text-[11px] text-stone-400">Executive / Head of Technical only</p>
-          </div>
+          {canManageRolesAndDepartments && (
+            <button
+              onClick={() => {
+                setRolesAdminInitialView('departments');
+                setIsRolesAdminOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-purple-300 hover:text-white bg-purple-900/20 hover:bg-purple-800/40 border border-purple-700/30 transition-all shrink-0"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              Manage Roles &amp; Departments
+            </button>
+          )}
         </div>
       </div>
 
@@ -606,27 +662,56 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Role *</label>
-              <select value={role} onChange={(e) => handleRoleChange(e.target.value as UserRole)} disabled={isSubmitting} className={`${inputClass} cursor-pointer`}>
+              <select
+                value={role}
+                onChange={(e) => {
+                  if (e.target.value === NEW_ROLE_OPTION) {
+                    setRolesAdminInitialView('roles');
+                    setIsRolesAdminOpen(true);
+                    return;
+                  }
+                  handleRoleChange(e.target.value as UserRole);
+                }}
+                disabled={isSubmitting}
+                className={`${inputClass} cursor-pointer`}
+              >
                 {VALID_ROLES.map((r) => (
                   <option key={r} value={r} className="bg-stone-900">
                     {getRoleInfo(r).englishTitle}
                   </option>
                 ))}
+                {canManageRolesAndDepartments && (
+                  <option value={NEW_ROLE_OPTION} className="bg-stone-900 text-purple-300">
+                    + New role…
+                  </option>
+                )}
               </select>
             </div>
             <div>
               <label className={labelClass}>Team</label>
               <select
                 value={team}
-                onChange={(e) => setTeam(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === NEW_DEPARTMENT_OPTION) {
+                    setRolesAdminInitialView('departments');
+                    setIsRolesAdminOpen(true);
+                    return;
+                  }
+                  setTeam(e.target.value);
+                }}
                 disabled={isSubmitting}
                 className={`${inputClass} cursor-pointer`}
               >
-                {teamOptionsFor(team).map((t) => (
+                {roleTeamOptions.map((t) => (
                   <option key={t} value={t} className="bg-stone-900">
                     {t}
                   </option>
                 ))}
+                {canManageRolesAndDepartments && (
+                  <option value={NEW_DEPARTMENT_OPTION} className="bg-stone-900 text-purple-300">
+                    + New department…
+                  </option>
+                )}
               </select>
             </div>
           </div>
@@ -1103,6 +1188,17 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             ))}
           </div>
         </div>
+      )}
+
+      {canManageRolesAndDepartments && isRolesAdminOpen && (
+        <RolesAndDepartmentsAdmin
+          users={users}
+          initialView={rolesAdminInitialView}
+          onClose={() => setIsRolesAdminOpen(false)}
+          onDataChanged={onCustomRolesDataChanged}
+          onRoleCreated={(roleId) => handleRoleChange(roleId)}
+          onDepartmentCreated={(primaryTeamValue) => setTeam(primaryTeamValue)}
+        />
       )}
     </div>
   );

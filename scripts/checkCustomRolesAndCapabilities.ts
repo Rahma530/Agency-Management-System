@@ -26,6 +26,15 @@
  *     built-in-role target; a viewer's own row (self); and a regression sample of 4 built-in
  *     roles (graphic_designer, seo_team_lead, sales, am_agent) against both functions, to confirm
  *     this PR left their results unchanged.
+ *   - PR 6 (lib/rolesAndDepartmentsAdmin.ts, the roles/departments admin UI's write paths):
+ *     slugifyToId()/generateUniqueId()/slugifyPortalSlug()/generateUniquePortalSlug() (shape
+ *     regex compliance, collision suffixes, an overlong label truncated to a still-valid id);
+ *     getNextDepartmentSortOrder() (missing sort_order tolerated, an inactive department's
+ *     sort_order still counted); checkCanDeactivateDepartment()/countActiveEmployeesHoldingRole()
+ *     (a seeded department always blocked, a non-seeded one blocked only while it has active
+ *     roles/employees and allowed once it has none); and the rollback-on-failure path of
+ *     createDepartment()/createCustomRole(), exercised against an injected fake DB client (no
+ *     real network call) that fails one specific insert/update step at a time.
  *
  * Run via `npm run lint` (chained after tsc --noEmit) or directly: `npx tsx
  * scripts/checkCustomRolesAndCapabilities.ts`.
@@ -34,12 +43,25 @@ import {
   registerCustomRoleData,
   resetCustomRoleDataForTesting,
   getCombinedTeamValuesFromCache,
+  getNextDepartmentSortOrder,
 } from '../src/data/customRoles';
 import { getRoleInfo, isBuiltInRole } from '../src/data/roles';
 import { can, CapabilityKey } from '../src/lib/capabilities';
 import { resolveClientsForSubject, serviceFilterForRole } from '../src/lib/reportingEngine';
 import { isEmployeeAccessibleUnderRLS, getAllowedEmployeeRolesUnderRLS } from '../src/lib/supabase';
 import { getCombinedDepartmentTeams, getEmployeesByDepartment, getOperationalTeams } from '../src/lib/departmentStaffing';
+import {
+  SEEDED_DEPARTMENT_IDS,
+  slugifyToId,
+  generateUniqueId,
+  slugifyPortalSlug,
+  generateUniquePortalSlug,
+  isValidGeneratedId,
+  checkCanDeactivateDepartment,
+  countActiveEmployeesHoldingRole,
+  createDepartment,
+  createCustomRole,
+} from '../src/lib/rolesAndDepartmentsAdmin';
 import { AssignmentRecord, ClientRecord, DepartmentMemberTeamRecord, DepartmentRecord, UserRecord } from '../src/types/database';
 
 const failures: string[] = [];
@@ -532,6 +554,258 @@ function testOperationalTeams(): void {
   );
 }
 
+// --- PR 6 (roles/departments admin UI): id/slug generators --------------------------------------
+
+function testIdAndSlugGenerators(): void {
+  // slugifyToId: lowercase, non-letters collapsed to '_', letter-first guaranteed, 3-41 chars.
+  assertEqual(slugifyToId('UI Designer'), 'ui_designer', 'slugifyToId("UI Designer")');
+  assertEqual(slugifyToId('  Social Media (Backup)  '), 'social_media_backup', 'slugifyToId trims punctuation/whitespace to single underscores');
+  assertTrue(isValidGeneratedId(slugifyToId('UI Designer')), 'slugifyToId output always satisfies the id shape regex');
+  assertTrue(/^[a-z]/.test(slugifyToId('123 Numbers First')), 'slugifyToId prefixes a letter when the label starts with a digit');
+  assertTrue(isValidGeneratedId(slugifyToId('123 Numbers First')), 'slugifyToId("123 Numbers First") still satisfies the id shape regex');
+  assertTrue(slugifyToId('ab').length >= 3, 'slugifyToId pads a too-short result up to the 3-character minimum');
+  assertTrue(isValidGeneratedId(slugifyToId('ab')), 'slugifyToId("ab") (padded) satisfies the id shape regex');
+  const veryLongLabel = 'a'.repeat(80);
+  assertTrue(isValidGeneratedId(slugifyToId(veryLongLabel)), 'slugifyToId truncates an overlong label to a still-valid id');
+
+  // generateUniqueId: collision handling.
+  const existingIds = new Set(['ui_designer']);
+  const generated = generateUniqueId('UI Designer', existingIds);
+  assertEqual(generated, 'ui_designer_2', 'generateUniqueId appends _2 on a first collision');
+  assertTrue(isValidGeneratedId(generated), 'generateUniqueId\'s collision-suffixed id still satisfies the id shape regex');
+  const existingIdsWithBothSuffixes = new Set(['ui_designer', 'ui_designer_2']);
+  assertEqual(generateUniqueId('UI Designer', existingIdsWithBothSuffixes), 'ui_designer_3', 'generateUniqueId tries _3 when _2 is also taken');
+  // A base id that is already at the 41-char limit must still produce a valid, non-colliding id
+  // once a numeric suffix is appended (truncating the base to make room, not exceeding 41 chars).
+  const maxLengthBase = slugifyToId('a'.repeat(80));
+  const collidedMaxLength = generateUniqueId('a'.repeat(80), new Set([maxLengthBase]));
+  assertTrue(isValidGeneratedId(collidedMaxLength), 'generateUniqueId keeps a max-length id valid after appending a collision suffix');
+  assertTrue(collidedMaxLength !== maxLengthBase, 'generateUniqueId\'s collision-suffixed max-length id differs from the original');
+
+  // slugifyPortalSlug / generateUniquePortalSlug: hyphenated, collision handling via -2, -3, ...
+  assertEqual(slugifyPortalSlug('UI Designer'), 'ui-designer', 'slugifyPortalSlug("UI Designer")');
+  const existingSlugs = new Set(['ui-designer']);
+  assertEqual(generateUniquePortalSlug('UI Designer', existingSlugs), 'ui-designer-2', 'generateUniquePortalSlug appends -2 on a first collision');
+  const existingSlugsBoth = new Set(['ui-designer', 'ui-designer-2']);
+  assertEqual(generateUniquePortalSlug('UI Designer', existingSlugsBoth), 'ui-designer-3', 'generateUniquePortalSlug tries -3 when -2 is also taken');
+}
+
+// --- PR 6: sort_order calculation ----------------------------------------------------------------
+
+function testSortOrderCalculation(): void {
+  resetCustomRoleDataForTesting();
+  registerCustomRoleData(SEEDED_DEPARTMENTS, [], [], [], [], SEEDED_DEPARTMENT_MEMBER_TEAMS);
+  assertEqual(getNextDepartmentSortOrder(), 7, 'getNextDepartmentSortOrder() after the 7 seeded departments (sort_order 0-6) is 7');
+
+  // Tolerates a department with a missing/non-finite sort_order (same transitional concern as
+  // compareDepartments' own sort stability) — it must not corrupt the max (e.g. become NaN).
+  const withOneMissing = [...SEEDED_DEPARTMENTS, { id: 'bad_dept', label: 'Bad', is_shared_resource: false, is_active: true, sort_order: undefined as unknown as number }];
+  registerCustomRoleData(withOneMissing, [], [], [], [], SEEDED_DEPARTMENT_MEMBER_TEAMS);
+  assertEqual(getNextDepartmentSortOrder(), 7, 'getNextDepartmentSortOrder() ignores a department with a missing sort_order rather than corrupting the max');
+
+  // An inactive department's sort_order still counts toward the max (deactivating a department
+  // should never free up its sort_order for reuse by a brand new one).
+  const withInactiveHighest = [...SEEDED_DEPARTMENTS, { id: 'retired_dept', label: 'Retired', is_shared_resource: false, is_active: false, sort_order: 50 }];
+  registerCustomRoleData(withInactiveHighest, [], [], [], [], SEEDED_DEPARTMENT_MEMBER_TEAMS);
+  assertEqual(getNextDepartmentSortOrder(), 51, 'getNextDepartmentSortOrder() counts an inactive department\'s sort_order toward the max too');
+}
+
+// --- PR 6: deactivation guards -------------------------------------------------------------------
+
+function testDeactivationGuards(): void {
+  resetCustomRoleDataForTesting();
+  setUpFixtures();
+
+  // A seeded department can never be deactivated, regardless of whether it has any active
+  // roles/employees — checked first, before the member-count guard.
+  const seededGuard = checkCanDeactivateDepartment('seo', []);
+  assertFalse(seededGuard.allowed, 'checkCanDeactivateDepartment("seo") (a seeded department) is never allowed');
+
+  // A non-seeded department (CREATIVE_ROLE/ACTIVE_CUSTOM_ROLE etc. all live under seo/
+  // creative_design from setUpFixtures()) with no active roles or employees IS allowed.
+  const emptyNonSeededDeptId = 'customer_support_dept';
+  registerCustomRoleData(
+    [...SEEDED_DEPARTMENTS, { id: emptyNonSeededDeptId, label: 'Customer Support', is_shared_resource: false, is_active: true, sort_order: 7 }],
+    [],
+    [],
+    [],
+    [],
+    [...SEEDED_DEPARTMENT_MEMBER_TEAMS, { department_id: emptyNonSeededDeptId, team_value: 'Customer Support', sort_order: 0 }]
+  );
+  const emptyGuard = checkCanDeactivateDepartment(emptyNonSeededDeptId, []);
+  assertTrue(emptyGuard.allowed, 'checkCanDeactivateDepartment() on a non-seeded department with zero active roles/employees is allowed');
+
+  // The same department, but now with an active custom role assigned to it, is blocked — and the
+  // guard reports the count. setUpFixtures() itself registers an empty department_member_teams
+  // array (it's designed for the role/capability tests above, which don't need team data) — this
+  // re-registers the same custom-role fixtures directly, ADDING a department_member_teams row for
+  // DEPT_SEO, so the employee-count check right after this also has real team data to match against.
+  registerCustomRoleData(
+    [DEPT_SEO, DEPT_CREATIVE],
+    [ACTIVE_CUSTOM_ROLE, SEO_PEER_ROLE, CREATIVE_ROLE, INACTIVE_CUSTOM_ROLE],
+    [{ role_id: ACTIVE_CUSTOM_ROLE.id, module_id: 'my_work' }],
+    [{ role_id: ACTIVE_CUSTOM_ROLE.id, permission_key: 'employees.view_department_peers', granted: true }],
+    [{ department_id: DEPT_SEO.id, permission_key: 'tasks.view_cross_team' }],
+    [{ department_id: DEPT_SEO.id, team_value: 'SEO', sort_order: 0 }]
+  );
+  const deptWithActiveRoleGuard = checkCanDeactivateDepartment(DEPT_SEO.id, []);
+  assertFalse(deptWithActiveRoleGuard.allowed, 'checkCanDeactivateDepartment() is blocked when the department has an active custom role');
+  assertTrue(deptWithActiveRoleGuard.activeCustomRoleCount > 0, 'checkCanDeactivateDepartment() reports a nonzero active-role count when blocked by one');
+
+  // A department with an active EMPLOYEE (not a role) is also blocked, with the employee counted.
+  // DEPT_SEO's own team value ('SEO') was just registered above.
+  const employeeOnSeoTeam = { id: 'emp1', role: 'am_agent', team: 'SEO', auth_id: 'auth-emp1', deactivated_at: null } as unknown as UserRecord;
+  const deptWithEmployeeGuard = checkCanDeactivateDepartment(DEPT_SEO.id, [employeeOnSeoTeam]);
+  assertFalse(deptWithEmployeeGuard.allowed, 'checkCanDeactivateDepartment() is blocked when the department has an active employee');
+  assertTrue(deptWithEmployeeGuard.activeEmployeeCount > 0, 'checkCanDeactivateDepartment() reports a nonzero active-employee count when blocked by one');
+
+  // countActiveEmployeesHoldingRole: the count the role-deactivation confirmation shows.
+  const roleHolder = { id: 'emp2', role: ACTIVE_CUSTOM_ROLE.id, auth_id: 'auth-emp2', deactivated_at: null } as unknown as UserRecord;
+  const nonHolder = { id: 'emp3', role: 'sales', auth_id: 'auth-emp3', deactivated_at: null } as unknown as UserRecord;
+  assertEqual(
+    countActiveEmployeesHoldingRole(ACTIVE_CUSTOM_ROLE.id, [roleHolder, nonHolder]),
+    1,
+    'countActiveEmployeesHoldingRole() counts only active employees actually holding that role'
+  );
+}
+
+// --- PR 6: rollback-on-failure (via an injected fake DB client — no real network call) -----------
+
+// A minimal fake standing in for the one chain shape lib/rolesAndDepartmentsAdmin.ts's write
+// functions actually use: .from(table).insert(rows).select() / .update(patch).eq(col,val).select()
+// / .delete().eq(col,val). `failOn` names the exact "op:table" steps that should come back as a
+// Supabase-shaped error (data: null, error: {message}) — every other step succeeds and echoes
+// back what was written, so each test can target exactly one failure point.
+function makeFakeDbClient(failOn: ReadonlySet<string>) {
+  const calls: { op: 'insert' | 'update' | 'delete'; table: string }[] = [];
+  return {
+    calls,
+    from(table: string) {
+      return {
+        insert(rows: any[]) {
+          calls.push({ op: 'insert', table });
+          return {
+            async select() {
+              if (failOn.has(`insert:${table}`)) return { data: null, error: { message: `simulated insert failure on ${table}` } };
+              return { data: rows, error: null };
+            },
+          };
+        },
+        update(patch: any) {
+          calls.push({ op: 'update', table });
+          return {
+            eq(_col: string, _val: string) {
+              return {
+                async select() {
+                  if (failOn.has(`update:${table}`)) return { data: null, error: { message: `simulated update failure on ${table}` } };
+                  return { data: [{ ...patch }], error: null };
+                },
+              };
+            },
+          };
+        },
+        delete() {
+          return {
+            async eq(_col: string, _val: string) {
+              calls.push({ op: 'delete', table });
+              return { data: [], error: null };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+async function testRollbackOnFailure(): Promise<void> {
+  resetCustomRoleDataForTesting();
+  registerCustomRoleData(SEEDED_DEPARTMENTS, [], [], [], [], SEEDED_DEPARTMENT_MEMBER_TEAMS);
+
+  // createDepartment: failure inserting department_member_teams must delete BOTH the just-created
+  // department_member_teams rows (a no-op here since none were created, but still called — see
+  // below) AND the parent departments row, never leaving an is_active=false orphan.
+  {
+    const fake = makeFakeDbClient(new Set(['insert:department_member_teams']));
+    const result = await createDepartment({ label: 'Rollback Dept', teamValues: ['Rollback Team'], isSharedResource: false }, fake);
+    assertFalse(result.success, 'createDepartment() reports failure when the department_member_teams insert fails');
+    assertTrue(!!result.error, 'createDepartment() returns an error message on failure');
+    const deleteCalls = fake.calls.filter((c) => c.op === 'delete').map((c) => c.table);
+    assertSameMembers(deleteCalls, ['department_member_teams', 'departments'], 'createDepartment() rolls back both tables when the team-values insert fails');
+  }
+
+  // createDepartment: failure on the final activate (update is_active=true) step must ALSO roll
+  // back both tables — it's not just the insert steps that need cleanup.
+  {
+    const fake = makeFakeDbClient(new Set(['update:departments']));
+    const result = await createDepartment({ label: 'Rollback Dept 2', teamValues: ['Rollback Team 2'], isSharedResource: false }, fake);
+    assertFalse(result.success, 'createDepartment() reports failure when the final activate step fails');
+    const deleteCalls = fake.calls.filter((c) => c.op === 'delete').map((c) => c.table);
+    assertSameMembers(deleteCalls, ['department_member_teams', 'departments'], 'createDepartment() rolls back both tables when the activate step fails');
+  }
+
+  // createDepartment: no failure at all must mean no rollback deletes whatsoever.
+  {
+    const fake = makeFakeDbClient(new Set());
+    const result = await createDepartment({ label: 'Clean Dept', teamValues: ['Clean Team'], isSharedResource: false }, fake);
+    assertTrue(result.success, 'createDepartment() succeeds when every step succeeds');
+    assertEqual(fake.calls.filter((c) => c.op === 'delete').length, 0, 'createDepartment() issues zero rollback deletes on a clean success');
+  }
+
+  // createCustomRole: failure inserting custom_role_permissions (the last child table, inserted
+  // only when there's at least one real override) must roll back all 3 tables, in a single
+  // failure path that reaches every one of them.
+  {
+    const fake = makeFakeDbClient(new Set(['insert:custom_role_permissions']));
+    const result = await createCustomRole(
+      {
+        englishTitle: 'Rollback Role',
+        departmentId: 'seo',
+        defaultModule: 'my_work',
+        allowedModules: ['my_work'],
+        permissionOverrides: { 'employees.view_department_peers': 'grant' },
+        isActive: true,
+      },
+      fake
+    );
+    assertFalse(result.success, 'createCustomRole() reports failure when the custom_role_permissions insert fails');
+    const deleteCalls = fake.calls.filter((c) => c.op === 'delete').map((c) => c.table);
+    assertSameMembers(
+      deleteCalls,
+      ['custom_role_permissions', 'custom_role_modules', 'custom_roles'],
+      'createCustomRole() rolls back all 3 tables when the permission-overrides insert fails'
+    );
+  }
+
+  // createCustomRole: failure on the final activate step, with NO permission overrides supplied
+  // (so custom_role_permissions is never inserted at all) — the activate-failure cleanup
+  // unconditionally attempts a delete on all 3 child/parent tables regardless of which ones
+  // actually got an insert; a DELETE matching zero rows is a harmless no-op, so this is simpler
+  // than tracking exactly which inserts happened and still always correct.
+  {
+    const fake = makeFakeDbClient(new Set(['update:custom_roles']));
+    const result = await createCustomRole(
+      {
+        englishTitle: 'Rollback Role 2',
+        departmentId: 'seo',
+        defaultModule: 'my_work',
+        allowedModules: ['my_work'],
+        permissionOverrides: {},
+        isActive: true,
+      },
+      fake
+    );
+    assertFalse(result.success, 'createCustomRole() reports failure when the final activate step fails');
+    const deleteCalls = fake.calls.filter((c) => c.op === 'delete').map((c) => c.table);
+    assertSameMembers(
+      deleteCalls,
+      ['custom_role_permissions', 'custom_role_modules', 'custom_roles'],
+      'createCustomRole() rolls back all 3 tables (even ones with nothing to delete) when the activate step fails, no overrides given'
+    );
+  }
+
+  resetCustomRoleDataForTesting();
+}
+
 // --- Fail-closed-before-load sanity check ------------------------------------------------------
 
 function testFailClosedBeforeLoad(): void {
@@ -541,12 +815,16 @@ function testFailClosedBeforeLoad(): void {
   assertFalse(can({ role: ACTIVE_CUSTOM_ROLE.id }, 'tasks.view_cross_team'), 'can() before any registerCustomRoleData() call fails closed');
 }
 
-function main(): void {
+async function main(): Promise<void> {
   testGetRoleInfo();
   testCan();
   testReportingEngine();
   testEmployeeVisibility();
   testOperationalTeams();
+  testIdAndSlugGenerators();
+  testSortOrderCalculation();
+  testDeactivationGuards();
+  await testRollbackOnFailure();
   testFailClosedBeforeLoad();
   resetCustomRoleDataForTesting();
 
@@ -561,4 +839,7 @@ function main(): void {
   console.log('OK: getRoleInfo()/can()/resolveClientsForSubject()/serviceFilterForRole()/isEmployeeAccessibleUnderRLS()/getAllowedEmployeeRolesUnderRLS() behave correctly.');
 }
 
-main();
+main().catch((err) => {
+  console.error('Unexpected error while running checks:', err);
+  process.exit(1);
+});
