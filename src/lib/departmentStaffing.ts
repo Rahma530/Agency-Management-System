@@ -63,14 +63,21 @@ export function getOperationalTeams(): string[] {
   return live.length > 0 ? live : [...FALLBACK_OPERATIONAL_TEAMS];
 }
 
-// Same function-not-constant reasoning as getOperationalTeams() above.
+// Same function-not-constant reasoning as getOperationalTeams() above. Only ever contains an
+// entry for a department's PRIMARY team (lowest sort_order, ties broken by team_value) when that
+// department has 2+ teams — getCombinedTeamValuesFromCache(team) returns a single-element array
+// for every other team (a single-team department, or a non-primary team of a multi-team one),
+// which this filters out, matching today's hardcoded shape exactly: only
+// {'Creative & Design': ['Creative & Design', 'Video Production']}, never a 'Video Production'
+// entry and never a single-entry entry for every other department.
 export function getCombinedDepartmentTeams(): Partial<Record<string, string[]>> {
   if (!isCustomRoleCacheLoaded()) return FALLBACK_COMBINED_DEPARTMENT_TEAMS;
   const live = getOperationalTeamValuesFromCache();
   if (live.length === 0) return FALLBACK_COMBINED_DEPARTMENT_TEAMS;
   const combined: Partial<Record<string, string[]>> = {};
   for (const team of live) {
-    combined[team] = getCombinedTeamValuesFromCache(team);
+    const expanded = getCombinedTeamValuesFromCache(team);
+    if (expanded.length > 1) combined[team] = expanded;
   }
   return combined;
 }

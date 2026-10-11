@@ -236,12 +236,19 @@ export function getOperationalTeamValuesFromCache(): string[] {
   return [...cache.operationalTeamValues];
 }
 
-// Every team_value sharing `team`'s own department, in sort_order — the table-driven data source
-// behind departmentStaffing.ts's getCombinedDepartmentTeams(). A team_value whose department has
-// only one team (or isn't found in the cache at all) naturally comes back as just [team] here,
-// matching COMBINED_DEPARTMENT_TEAMS's old fallback-to-itself behavior exactly.
+// The table-driven data source behind departmentStaffing.ts's getCombinedDepartmentTeams().
+// Expansion to every team_value sharing `team`'s department applies ONLY when `team` is that
+// department's PRIMARY team (the member team with the lowest sort_order, ties broken by
+// team_value — i.e. teamValuesByDeptId's own first entry, since it's already sorted that way).
+// This mirrors today's actual hardcoded behavior exactly: selecting 'Creative & Design' expands
+// to both Creative & Design and Video Production employees, but selecting 'Video Production'
+// itself returns ONLY Video Production — it is never the one that expands. Every other team
+// (a team_value whose department has only one team, isn't the primary team of a multi-team
+// department, or isn't found in the cache at all) comes back as just [team].
 export function getCombinedTeamValuesFromCache(team: string): string[] {
   const deptId = cache.deptIdByTeamValue.get(team);
   if (!deptId) return [team];
-  return cache.teamValuesByDeptId.get(deptId) ?? [team];
+  const teamsInDept = cache.teamValuesByDeptId.get(deptId);
+  if (!teamsInDept || teamsInDept.length === 0) return [team];
+  return team === teamsInDept[0] ? teamsInDept : [team];
 }

@@ -33,12 +33,13 @@
 import {
   registerCustomRoleData,
   resetCustomRoleDataForTesting,
+  getCombinedTeamValuesFromCache,
 } from '../src/data/customRoles';
 import { getRoleInfo, isBuiltInRole } from '../src/data/roles';
 import { can, CapabilityKey } from '../src/lib/capabilities';
 import { resolveClientsForSubject, serviceFilterForRole } from '../src/lib/reportingEngine';
 import { isEmployeeAccessibleUnderRLS, getAllowedEmployeeRolesUnderRLS } from '../src/lib/supabase';
-import { getCombinedDepartmentTeams, getOperationalTeams } from '../src/lib/departmentStaffing';
+import { getCombinedDepartmentTeams, getEmployeesByDepartment, getOperationalTeams } from '../src/lib/departmentStaffing';
 import { AssignmentRecord, ClientRecord, DepartmentMemberTeamRecord, DepartmentRecord, UserRecord } from '../src/types/database';
 
 const failures: string[] = [];
@@ -427,17 +428,45 @@ function testOperationalTeams(): void {
   );
   assertEqual(
     JSON.stringify(getCombinedDepartmentTeams()),
-    JSON.stringify({
-      SEO: ['SEO'],
-      'Social Media': ['Social Media'],
-      'Media Buying': ['Media Buying'],
-      'Creative & Design': ['Creative & Design', 'Video Production'],
-      'Video Production': ['Creative & Design', 'Video Production'],
-      Programming: ['Programming'],
-      'Account Management': ['Account Management'],
-      'AI Engineering': ['AI Engineering'],
-    }),
-    'getCombinedDepartmentTeams() with the 7 seeded departments groups Creative & Design/Video Production and leaves every other department as a single-entry group'
+    JSON.stringify({ 'Creative & Design': ['Creative & Design', 'Video Production'] }),
+    'getCombinedDepartmentTeams() with the 7 seeded departments contains exactly the one Creative & Design entry (keyed by the primary team) — no entry for Video Production, and no single-entry entries for any single-team department'
+  );
+
+  // 2b. Expansion is asymmetric: only the PRIMARY team ('Creative & Design', lower sort_order)
+  // expands to both; selecting the non-primary team ('Video Production') on its own returns only
+  // itself — exactly today's hardcoded behavior, not a new "every team in a multi-team department
+  // expands" rule.
+  assertSameMembers(
+    getCombinedTeamValuesFromCache('Creative & Design'),
+    ['Creative & Design', 'Video Production'],
+    'getCombinedTeamValuesFromCache("Creative & Design") (the primary team) expands to both'
+  );
+  assertSameMembers(
+    getCombinedTeamValuesFromCache('Video Production'),
+    ['Video Production'],
+    'getCombinedTeamValuesFromCache("Video Production") (not the primary team) returns only itself'
+  );
+
+  // 2c. Frontend-level regression: getEmployeesByDepartment() (departmentStaffing.ts — used by
+  // AMQueue/task-assignment-style department pickers) must show the same asymmetry: selecting
+  // 'Video Production' returns only Video Production employees; only 'Creative & Design' pulls
+  // in both.
+  const graphicDesigner = {
+    id: 'gd1', name: 'GD', role: 'graphic_designer', team: 'Creative & Design', auth_id: 'auth-gd1', deactivated_at: null,
+  } as unknown as UserRecord;
+  const videoEditor = {
+    id: 've1', name: 'VE', role: 'video_editor', team: 'Video Production', auth_id: 'auth-ve1', deactivated_at: null,
+  } as unknown as UserRecord;
+  const creativeEmployees = [graphicDesigner, videoEditor];
+  assertSameMembers(
+    getEmployeesByDepartment(creativeEmployees, 'Video Production').map((u) => u.id),
+    [videoEditor.id],
+    'getEmployeesByDepartment("Video Production") returns only Video Production employees'
+  );
+  assertSameMembers(
+    getEmployeesByDepartment(creativeEmployees, 'Creative & Design').map((u) => u.id),
+    [graphicDesigner.id, videoEditor.id],
+    'getEmployeesByDepartment("Creative & Design") returns both Creative & Design and Video Production employees'
   );
 
   // 3. A fabricated 8th department round-trips correctly: appears at the end (sort_order=7),

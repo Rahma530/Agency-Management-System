@@ -21,6 +21,12 @@
 --      built) admin UI works here without a further migration. Every other line — signature,
 --      language, STABLE, SECURITY DEFINER, search_path, and every filter in the WHERE clause — is
 --      unchanged from the live function body. `create or replace` preserves existing grants.
+--      Expansion only applies when p_department is its department's PRIMARY team (the member
+--      team with the lowest sort_order) — exactly today's behavior, where 'Creative & Design'
+--      expands to both Creative & Design and Video Production, but 'Video Production' itself
+--      returns only Video Production. A naive "any team in the department" lookup would be a
+--      real regression here (selecting 'Video Production' would start also returning graphic
+--      designers), caught in review before this migration was finalized.
 begin;
 
 -- ----------------------------------------------------------------------------
@@ -99,6 +105,11 @@ AS $function$
             select m2.department_id
             from public.department_member_teams m2
             where m2.team_value = p_department
+              and m2.sort_order = (
+                select min(m3.sort_order)
+                from public.department_member_teams m3
+                where m3.department_id = m2.department_id
+              )
             limit 1
           )
         ),
