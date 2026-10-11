@@ -42,18 +42,26 @@ export type BuiltInRole =
 export type UserRole = BuiltInRole | string;
 
 // 17. departments (20261101400000_custom_roles_departments_foundation.sql)
+// sort_order: added by the PR 5 migration (not yet applied as of this frontend change — see its
+// own commit) to preserve departmentStaffing.ts's current OPERATIONAL_TEAMS ordering once that
+// list is derived from this table instead of hardcoded. Required (not optional) because every
+// reader (data/customRoles.ts) only ever runs against a cache populated from a live fetch after
+// that migration ships — this type describes the post-migration shape.
 export interface DepartmentRecord {
   id: string;
   label: string;
   is_shared_resource: boolean;
   is_active: boolean;
+  sort_order: number;
   created_at?: string;
 }
 
-// 18. department_member_teams
+// 18. department_member_teams — sort_order: see DepartmentRecord.sort_order above, same reasoning,
+// orders the team values within one department (e.g. 'Creative & Design' before 'Video Production').
 export interface DepartmentMemberTeamRecord {
   department_id: string;
   team_value: string;
+  sort_order: number;
 }
 
 // 19. custom_roles — id is the literal value stored in users.role for an admin-created role.

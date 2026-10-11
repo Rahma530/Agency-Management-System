@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Plus, Save, ArrowUp, ArrowDown, EyeOff, Eye } from 'lucide-react';
 import { TaskTypeRecord } from '../types/database';
-import { OPERATIONAL_TEAMS, OperationalTeam } from '../lib/departmentStaffing';
+import { getOperationalTeams, OperationalTeam } from '../lib/departmentStaffing';
 import { AGENCY_ROLES } from '../data/roles';
 import { UserRole } from '../types/database';
 
@@ -32,7 +32,7 @@ const groupKey = (row: TaskTypeRecord) => `${row.scope_type}::${row.scope_value}
  */
 export const TaskTypeManager: React.FC<TaskTypeManagerProps> = ({ taskTypes, onCreate, onUpdate, onClose }) => {
   const [newScopeType, setNewScopeType] = useState<ScopeType>('team');
-  const [newScopeValue, setNewScopeValue] = useState<string>(OPERATIONAL_TEAMS[0]);
+  const [newScopeValue, setNewScopeValue] = useState<string>(getOperationalTeams()[0]);
   const [newLabel, setNewLabel] = useState('');
   const [newIsOther, setNewIsOther] = useState(false);
   const [isAddingNew, setIsAddingNew] = useState(false);
@@ -260,7 +260,7 @@ export const TaskTypeManager: React.FC<TaskTypeManagerProps> = ({ taskTypes, onC
                 onChange={(e) => {
                   const scopeType = e.target.value as ScopeType;
                   setNewScopeType(scopeType);
-                  setNewScopeValue(scopeType === 'team' ? OPERATIONAL_TEAMS[0] : ROLE_OPTIONS[0].role);
+                  setNewScopeValue(scopeType === 'team' ? getOperationalTeams()[0] : ROLE_OPTIONS[0].role);
                 }}
                 className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
               >
@@ -273,7 +273,7 @@ export const TaskTypeManager: React.FC<TaskTypeManagerProps> = ({ taskTypes, onC
                 className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
               >
                 {newScopeType === 'team'
-                  ? OPERATIONAL_TEAMS.map((team: OperationalTeam) => (
+                  ? getOperationalTeams().map((team: OperationalTeam) => (
                       <option key={team} value={team}>{team}</option>
                     ))
                   : ROLE_OPTIONS.map((r) => (

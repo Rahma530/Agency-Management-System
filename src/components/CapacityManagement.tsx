@@ -35,7 +35,8 @@ import {
   ExtraNoteRecord,
   UserRole,
 } from '../types/database';
-import { getRoleInfo, AppModuleId } from '../data/roles';
+import { getRoleInfo, isBuiltInRole, AppModuleId } from '../data/roles';
+import { getActiveCustomRole } from '../data/customRoles';
 import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity, canManageEmployee } from '../lib/permissions';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { getEmployeesByDepartment } from '../lib/departmentStaffing';
@@ -179,8 +180,17 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       // gets an edit affordance regardless.
       result = users.filter((u) => u.role === 'graphic_designer' || u.role === 'video_editor');
     } else {
+      // A custom role is never in operationalRoles (that list is built-in-role literals only).
+      // For a built-in role this reduces to exactly the original expression
+      // (operationalRoles.includes(u.role) || capacity_limit > 0) — pixel-identical behavior.
+      // For a non-built-in role, included unconditionally only when it's an ACTIVE custom role
+      // (getActiveCustomRole(u.role) truthy) — an inactive custom role or a genuinely unknown
+      // role string falls back to the same capacity_limit > 0 gate every non-built-in role was
+      // already subject to before this change, rather than being admitted unconditionally.
       result = users.filter(
-        (u) => operationalRoles.includes(u.role) || (u.capacity_limit && u.capacity_limit > 0)
+        (u) =>
+          (isBuiltInRole(u.role) ? operationalRoles.includes(u.role) : !!getActiveCustomRole(u.role)) ||
+          (u.capacity_limit && u.capacity_limit > 0)
       );
     }
     // Executive and Head of Technical never receive task assignments, so they
@@ -275,9 +285,22 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       { id: 'graphic_designer', label: 'Graphic Designer (shared resource)' },
       { id: 'video_editor', label: 'Video Editor (shared resource)' },
     ];
+    // Active custom roles present among operationalUsers have no entry in allDefs above (it's a
+    // fixed, built-in-role-only list) — without this, they'd be counted in "All Available Roles"
+    // but never get their own filter option. englishTitle comes from getRoleInfo(), the same
+    // source every custom-role display label already uses elsewhere in the app. Gated on
+    // getActiveCustomRole (not just !isBuiltInRole): an inactive custom role (or a genuinely
+    // unknown role string) can still reach operationalUsers via the capacity_limit > 0 fallback
+    // above, and getRoleInfo() for one of those resolves to the generic "Unconfigured Role"
+    // fallback — a real filter option, but a meaningless label; better to simply omit it here
+    // the same way allDefs already has no entry for an unrecognized id.
+    const customDefs = [...availableRoles]
+      .filter((r): r is UserRole => !isBuiltInRole(r) && !!getActiveCustomRole(r))
+      .map((r) => ({ id: r, label: getRoleInfo(r).englishTitle }));
     return [
       { id: 'all', label: `All Available Roles (${operationalUsers.length} employees)` },
       ...allDefs.filter((d) => availableRoles.has(d.id)),
+      ...customDefs,
     ];
   }, [operationalUsers, availableRoles]);
 
