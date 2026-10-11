@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/database';
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
-import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients, assignableRolesFor } from '../lib/permissions';
+import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients, canManageEmployee, assignableRolesFor } from '../lib/permissions';
 import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
 import { isTaskDone } from '../lib/taskLifecycle';
 
@@ -218,6 +218,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const [roleChangeWarning, setRoleChangeWarning] = useState<string | null>(null);
   const [deactivatingId, setDeactivatingId] = useState<string | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [deactivateError, setDeactivateError] = useState<string | null>(null);
 
   // Executive/head_of_technical are always eligible managers (org-wide leadership); a team lead
   // is only eligible for a new hire going into their own department — not every team lead
@@ -512,10 +513,13 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   };
 
   const handleDeactivate = async (userId: string) => {
+    setDeactivateError(null);
     setIsDeactivating(true);
     try {
       await onDeactivateEmployee(userId);
       setDeactivatingId(null);
+    } catch (err: any) {
+      setDeactivateError(err?.message || 'Unable to deactivate this employee.');
     } finally {
       setIsDeactivating(false);
     }
@@ -1005,6 +1009,9 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                     </div>
                   ) : deactivatingId === u.id ? (
                     <div className="space-y-2">
+                      {deactivateError && (
+                        <div className="p-2 rounded-lg text-[11px] bg-red-950/30 text-red-300 border border-red-800/40">{deactivateError}</div>
+                      )}
                       <p className="text-[11px] text-amber-300 flex items-start gap-1.5">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                         Deactivate {u.name}? Their open tasks become unassigned, they're removed from every
@@ -1013,7 +1020,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                       </p>
                       <div className="flex justify-end gap-2">
                         <button
-                          onClick={() => setDeactivatingId(null)}
+                          onClick={() => { setDeactivatingId(null); setDeactivateError(null); }}
                           className="px-2.5 py-1.5 rounded-lg text-[11px] text-stone-400 hover:text-white"
                         >
                           Cancel
@@ -1035,16 +1042,21 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                         <span className="text-stone-400 ml-2">{getRoleInfo(u.role).englishTitle}</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => startEdit(u)}
-                          className="p-1.5 rounded-lg text-purple-300 hover:text-white hover:bg-purple-900/40"
-                          title="Edit"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        {u.id !== currentUser.id && (
+                        {/* Mirrors employee_manageable() (20261101700000_users_edit_scope_hardening.sql) —
+                            a team lead only edits/deactivates within their own department's set; exec/HoT
+                            unaffected (canManageEmployee returns true for them unconditionally). */}
+                        {canManageEmployee(currentUser, u) && (
                           <button
-                            onClick={() => setDeactivatingId(u.id)}
+                            onClick={() => startEdit(u)}
+                            className="p-1.5 rounded-lg text-purple-300 hover:text-white hover:bg-purple-900/40"
+                            title="Edit"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {u.id !== currentUser.id && canManageEmployee(currentUser, u) && (
+                          <button
+                            onClick={() => { setDeactivatingId(u.id); setDeactivateError(null); }}
                             className="p-1.5 rounded-lg text-stone-500 hover:text-red-400 hover:bg-red-950/30"
                             title="Deactivate"
                           >

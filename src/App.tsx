@@ -3433,13 +3433,21 @@ export default function App() {
   // 4. Update the employee's capacity limit
   const handleUpdateUserCapacity = async (userId: string, newLimit: number) => {
     if (supabaseActive) {
-      try {
-        await supabase
-          .from('users')
-          .update({ capacity_limit: newLimit })
-          .eq('id', userId);
-      } catch (err) {
-        console.error('Supabase error updating capacity_limit:', err);
+      // supabaseRaw (not the legacy `supabase` proxy) + .select() — needed to actually detect an
+      // RLS-filtered update: employee_manageable() (20261101700000_users_edit_scope_hardening.sql)
+      // scopes a team lead's capacity-edit rights to their own department, and a row outside it
+      // affects zero rows with no error at all.
+      const { data, error } = await supabaseRaw
+        .from('users')
+        .update({ capacity_limit: newLimit })
+        .eq('id', userId)
+        .select();
+      if (error) {
+        console.error('Supabase error updating capacity_limit:', error);
+        throw error;
+      }
+      if (!data || data.length === 0) {
+        throw new Error('This employee is outside your department — you do not have permission to change their capacity limit.');
       }
     }
 
@@ -3465,8 +3473,14 @@ export default function App() {
         // supabaseRaw bypasses the legacy client-side users proxy — that proxy's update
         // branch unconditionally mutates the in-memory demo array (or no-ops for a real
         // employee) and always returns error: null, never touching real Postgres.
-        const { error } = await supabaseRaw.from('users').update(updates).eq('id', userId);
+        const { data, error } = await supabaseRaw.from('users').update(updates).eq('id', userId).select();
         if (error) throw error;
+        // RLS silently filters out a row the caller isn't allowed to touch — employee_manageable()
+        // (20261101700000_users_edit_scope_hardening.sql) scopes a team lead's edit rights to their
+        // own department, and a row outside it affects zero rows with no error at all.
+        if (!data || data.length === 0) {
+          throw new Error('This employee is outside your department — you do not have permission to edit them.');
+        }
       } catch (err: any) {
         // Re-thrown rather than swallowed into a generic notification — EmployeeAdminHub's own
         // edit-form catch block (handleSaveEdit) surfaces err.message directly in its error box,
@@ -3496,18 +3510,34 @@ export default function App() {
     const deactivatedAt = new Date().toISOString();
 
     if (supabaseActive) {
-      try {
-        // supabaseRaw bypasses the legacy client-side tasks/users proxies — their update
-        // branches unconditionally mutate in-memory demo data (or no-op for real rows) and
-        // always return error: null, never touching real Postgres.
-        const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
-        if (error) throw error;
-        const { error: userErr } = await supabaseRaw.from('users').update({ deactivated_at: deactivatedAt }).eq('id', userId);
-        if (userErr) throw userErr;
-      } catch (err: any) {
-        console.error('Supabase error deactivating employee:', err);
-        showNotification('Unable to deactivate this employee.', 'info');
-        return;
+      // Deactivate the users row FIRST — if RLS rejects it (employee_manageable(),
+      // 20261101700000_users_edit_scope_hardening.sql, scopes a team lead's deactivate rights to
+      // their own department) this throws before the tasks unassign below ever runs, so an
+      // out-of-department attempt never silently unassigns someone's open tasks while leaving
+      // them active. supabaseRaw bypasses the legacy client-side tasks/users proxies — their
+      // update branches unconditionally mutate in-memory demo data (or no-op for real rows) and
+      // always return error: null, never touching real Postgres.
+      const { data, error: userErr } = await supabaseRaw
+        .from('users')
+        .update({ deactivated_at: deactivatedAt })
+        .eq('id', userId)
+        .select();
+      if (userErr) {
+        console.error('Supabase error deactivating employee:', userErr);
+        throw userErr;
+      }
+      // RLS silently filters out a row the caller isn't allowed to touch — a row outside the
+      // caller's department affects zero rows with no error at all. Thrown (not swallowed into a
+      // generic notification) so EmployeeAdminHub's handleDeactivate can surface the real reason
+      // inline, same as handleUpdateEmployee/handleUpdateDailyLog.
+      if (!data || data.length === 0) {
+        throw new Error('This employee is outside your department — you do not have permission to deactivate them.');
+      }
+
+      const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
+      if (error) {
+        console.error('Supabase error unassigning tasks after deactivation:', error);
+        throw error;
       }
     }
 
