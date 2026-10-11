@@ -335,10 +335,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [taskTypes, editTeam, editAssigneeRole, editTaskType]);
   const editSelectedTaskType = editTaskTypeOptions.find((t) => t.id === editTaskType);
 
-  // Operational task assignees: strictly exclude Executive Management, Head of
-  // Technical, and Sales — sales has no task-based work (task_visible()/
-  // isTaskAccessibleUnderRLS block them from tasks entirely), so they must
-  // never appear as a selectable assignee here either.
+  // Operational task assignees: strictly exclude Executive Management and Head of Technical —
+  // neither receives personally-assigned task work (both see every task org-wide instead, via
+  // task_visible()/isTaskAccessibleUnderRLS's unconditional leadership branch, so there's nothing
+  // for them to be "assigned" into). AI Engineer is deliberately NOT excluded here — unlike
+  // head_of_technical it does hands-on, personally-assigned work (data/roles.ts's own comment on
+  // the ai_engineer entry, and its `my_work` module access), and tasks_insert_rls's assignee guard
+  // (20261101100000_task_cross_team_visibility.sql) never blocks assigning a task to ai_engineer —
+  // only to executive/head_of_technical. Excluding it here was a pre-existing mismatch with both.
+  // Sales has no task-based work either, but is excluded upstream (the employee list this
+  // function is ever called against doesn't include sales to begin with), not here.
   //
   // marketing_manager is additionally narrowed to ONLY graphic_designer/video_editor — they can
   // create/assign tasks to the shared Creative pool and nothing else (not a team lead of any
@@ -347,7 +353,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // whose task marketing_manager wouldn't be able to see afterward.
   const isOperationalAssignee = (u: UserRecord) => {
     if (!u) return false;
-    if (u.role === 'executive' || u.role === 'head_of_technical' || u.role === 'ai_engineer') return false;
+    if (u.role === 'executive' || u.role === 'head_of_technical') return false;
     return true;
   };
 

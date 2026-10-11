@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/database';
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
+import { getAllActiveCustomRoleIds } from '../data/customRoles';
 import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients, canManageEmployee, assignableRolesFor } from '../lib/permissions';
 import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
 import { isTaskDone } from '../lib/taskLifecycle';
@@ -66,8 +67,7 @@ interface EmployeeAdminHubProps {
   onConfirmPortalEntry: (employeeId: string) => Promise<void>;
 }
 
-const VALID_ROLES = Object.keys(AGENCY_ROLES) as UserRole[];
-const isValidRole = (val: string): val is UserRole => (VALID_ROLES as string[]).includes(val);
+const BUILT_IN_ROLES = Object.keys(AGENCY_ROLES) as UserRole[];
 const isValidEmail = (val: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
 const CSV_TEMPLATE_HEADERS = ['name', 'email', 'role', 'team', 'manager_id', 'capacity_limit'];
@@ -131,6 +131,16 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   // below is the newly-broadened section: exec/HoT + all 5 team leads.
   const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
   const canManageEmployees = canManageEmployeesOrClients(currentUser.role);
+
+  // Built-in roles + every active custom role id, recomputed each render (not memoized with a
+  // frozen dependency list) so a custom role created/activated after this component already
+  // mounted shows up without needing an unrelated prop change to force it. Widening this list is
+  // enough on its own to let custom roles appear in the role selects below: assignableRolesFor
+  // only ever hands a team lead their own department's fixed agent-role list regardless of what
+  // this contains, and canAddEmployees above already restricts the "Add Employee" role select to
+  // executive/head_of_technical/ai_engineer — so custom roles never reach a team lead's picker.
+  const VALID_ROLES = [...BUILT_IN_ROLES, ...getAllActiveCustomRoleIds()] as UserRole[];
+  const isValidRole = (val: string): val is UserRole => (VALID_ROLES as string[]).includes(val);
 
   const [mode, setMode] = useState<'single' | 'bulk'>('single');
 

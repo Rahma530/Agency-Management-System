@@ -56,7 +56,7 @@ import { fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
-import { getRoleInfo } from '../data/roles';
+import { getRoleInfo, isBuiltInRole } from '../data/roles';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
@@ -476,6 +476,12 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
     }
     if (currentUser.role === 'sales') {
       return clients.filter((c) => c.sales_owner_id === currentUser.id);
+    }
+    // A custom role is never one of the branches above (none of their literal checks can match
+    // it) — explicit check so it fails closed here rather than falling into the line below, which
+    // exists only to preserve today's result for the 19 built-in roles unchanged.
+    if (!isBuiltInRole(currentUser.role)) {
+      return [];
     }
     return clients;
   }, [clients, currentUser, assignments]);

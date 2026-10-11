@@ -17,6 +17,20 @@ import {
 import { getCampaignStartDate, getCampaignEndDate } from '../components/CampaignManagementModule';
 import { getClientServices } from './clientServices';
 import { isTaskDone } from './taskLifecycle';
+import { isBuiltInRole } from '../data/roles';
+import { getCustomRoleDepartmentId } from '../data/customRoles';
+
+// Departments whose id happens to equal a real ServiceType (20261101400000_custom_roles_
+// departments_foundation.sql's seed data: 'seo'/'media_buying'/'social_media') — the only
+// departments a custom role's report/client scope can resolve to today. A custom role in any
+// other department (e.g. the shared Creative & Design pool, or a purely internal department like
+// Programming or Account Management) has no service to report on, by design: resolveClientsForSubject/serviceFilterForRole below both resolve it to "nothing" rather than guessing.
+function getDepartmentMappedServiceType(departmentId: string): ServiceType | null {
+  if (departmentId === 'seo' || departmentId === 'media_buying' || departmentId === 'social_media') {
+    return departmentId;
+  }
+  return null;
+}
 
 // ----------------------------------------------------------------------------
 // Period boundaries
@@ -229,8 +243,20 @@ export function resolveClientsForSubject(
       return resolveDepartmentClients('social_media', clients);
     case 'social_media_agent':
       return resolveDepartmentClients('social_media', clients).filter((c) => isAssigned(c, 'social_media'));
-    default:
-      return [];
+    default: {
+      // Every built-in role is explicitly cased above — this branch, for a built-in role, is
+      // unreachable today and returns [] exactly as it always has if that ever changes.
+      if (isBuiltInRole(subject.role)) return [];
+      // Custom role: resolve via its department's mapped ServiceType (see
+      // getDepartmentMappedServiceType above), then narrow to clients actually ASSIGNED to this
+      // user — the same agent-level filter every built-in agent role above applies (a custom
+      // role has no team-lead equivalent here; it is always agent-level). No mapped service —
+      // e.g. a shared-resource or purely internal department — means no report-able client
+      // pool, not a guess.
+      const deptId = getCustomRoleDepartmentId(subject.role);
+      const mappedService = deptId ? getDepartmentMappedServiceType(deptId) : null;
+      return mappedService ? resolveDepartmentClients(mappedService, clients).filter((c) => isAssigned(c, mappedService)) : [];
+    }
   }
 }
 
@@ -253,8 +279,20 @@ export function serviceFilterForRole(role: UserRole): ServiceType[] | undefined 
     case 'social_media_team_lead':
     case 'social_media_agent':
       return ['social_media'];
-    default:
-      return undefined;
+    default: {
+      // Every built-in role is explicitly cased above — this branch, for a built-in role, is
+      // unreachable today and returns undefined (no filter) exactly as it always has if that
+      // ever changes.
+      if (isBuiltInRole(role)) return undefined;
+      // Custom role: must change together with resolveClientsForSubject above, using the same
+      // department->ServiceType mapping. No mapped service means a filter that matches NOTHING
+      // (an empty array, not undefined — undefined means "no filter", which would be an
+      // unfiltered, cross-department leak the moment resolveClientsForSubject ever returns a
+      // non-empty pool for this role by some other path).
+      const deptId = getCustomRoleDepartmentId(role);
+      const mappedService = deptId ? getDepartmentMappedServiceType(deptId) : null;
+      return mappedService ? [mappedService] : [];
+    }
   }
 }
 
