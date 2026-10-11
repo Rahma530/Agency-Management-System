@@ -20,17 +20,19 @@ import { ClientRecord, TaskRecord, UserRecord, UserRole } from '../types/databas
 import { AGENCY_ROLES, getRoleInfo } from '../data/roles';
 import { getAllActiveCustomRoleIds } from '../data/customRoles';
 import { isPendingEmployee, isActiveEmployee, isDeactivatedEmployee, canManageEmployeesOrClients, canManageEmployee, assignableRolesFor } from '../lib/permissions';
-import { OPERATIONAL_TEAMS } from '../lib/departmentStaffing';
+import { getOperationalTeams } from '../lib/departmentStaffing';
 import { isTaskDone } from '../lib/taskLifecycle';
 
 // The Team dropdown must always include whatever team a role auto-fills (handleRoleChange below),
 // even for roles outside the 7 operational departments (Executive, Technical, Sales, AI
 // Engineering, Marketing) — otherwise picking one of those roles would silently produce a Team
-// value with no matching, visibly-selected option in a closed dropdown.
-const teamOptionsFor = (team: string): string[] =>
-  !team || OPERATIONAL_TEAMS.includes(team as (typeof OPERATIONAL_TEAMS)[number])
-    ? [...OPERATIONAL_TEAMS]
-    : [...OPERATIONAL_TEAMS, team];
+// value with no matching, visibly-selected option in a closed dropdown. Calls getOperationalTeams()
+// fresh on every invocation (not a module-level capture) so this always reflects whatever the
+// custom-roles cache currently holds, falling back to today's hardcoded teams before it loads.
+const teamOptionsFor = (team: string): string[] => {
+  const operationalTeams = getOperationalTeams();
+  return !team || operationalTeams.includes(team) ? operationalTeams : [...operationalTeams, team];
+};
 
 export interface NewEmployeeInput {
   name: string;

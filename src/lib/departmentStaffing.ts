@@ -2,20 +2,31 @@ import { useMemo } from 'react';
 import { UserRecord, UserRole } from '../types/database';
 import { isActiveEmployee } from './permissions';
 import { supabaseRaw } from './supabase';
+import {
+  getCombinedTeamValuesFromCache,
+  getOperationalTeamValuesFromCache,
+  isCustomRoleCacheLoaded,
+} from '../data/customRoles';
 
-// The operational departments assignable via a Team/Department dropdown that's paired with an
-// employee/assignee picker (task assignment, campaign ownership, new-hire team, Task Board's Team
-// filter). AI Engineering was deliberately excluded when this list was first built, on the
-// reasoning that it wasn't a department a staffing picker would ever target — that's since been
-// reversed: ai_engineer is a real, task-assigned operational role (Rahma Ehab et al.) and needs to
-// be selectable the same way every other department is. Executive, Technical, Sales, and Marketing
+// Was `(typeof OPERATIONAL_TEAMS)[number]`, a closed literal union, back when OPERATIONAL_TEAMS
+// was a static tuple. Now that getOperationalTeams() returns a plain (database-sourced) string[],
+// there is no fixed set of literals left to union — this alias exists only so TaskTypeManager.tsx's
+// existing `(team: OperationalTeam) =>` annotation keeps compiling unchanged.
+export type OperationalTeam = string;
+
+// FALLBACK ONLY — the real source of truth, once the custom-roles cache has loaded (PR 5), is the
+// department_member_teams table via getOperationalTeams() below. This literal array exists solely
+// as what getOperationalTeams() returns before that cache has loaded (first paint, or a fetch
+// failure) and is never read directly by anything else — it is NOT exported. Keep it as the exact
+// list the old module-level OPERATIONAL_TEAMS constant held, so built-in behavior is byte-for-byte
+// identical during that window. AI Engineering was deliberately excluded when this list was first
+// built, on the reasoning that it wasn't a department a staffing picker would ever target — that's
+// since been reversed: ai_engineer is a real, task-assigned operational role and needs to be
+// selectable the same way every other department is. Executive, Technical, Sales, and Marketing
 // remain excluded — those still aren't staffing-picker targets, the same reason
 // CrossTeamTaskBoard's isOperationalAssignee excludes executive/head_of_technical from task
-// assignment. This is the single shared list — every department dropdown that pairs with an
-// employee picker (including an "All Teams"/"all" catch-all where relevant, added separately by
-// the caller — this array is real departments only) should render its options from this array
-// rather than hardcoding its own copy.
-export const OPERATIONAL_TEAMS = [
+// assignment.
+const FALLBACK_OPERATIONAL_TEAMS = [
   'SEO',
   'Social Media',
   'Media Buying',
@@ -26,18 +37,46 @@ export const OPERATIONAL_TEAMS = [
   'AI Engineering',
 ] as const;
 
-export type OperationalTeam = (typeof OPERATIONAL_TEAMS)[number];
-
-// Creative & Design (graphic_designer) and Video Production (video_editor) are two distinct
-// UserRecord.team values, but CapacityManagement.tsx already treats them as one combined staffing
-// bucket when a department filter is set to "Creative & Design" — mirrored here rather than
-// re-deriving the pairing a second time in every consumer.
-const COMBINED_DEPARTMENT_TEAMS: Partial<Record<string, string[]>> = {
+// FALLBACK ONLY, same reasoning as FALLBACK_OPERATIONAL_TEAMS above — Creative & Design
+// (graphic_designer) and Video Production (video_editor) are two distinct UserRecord.team values
+// that CapacityManagement.tsx already treats as one combined staffing bucket; this mirrors that
+// pairing for the pre-cache-load window.
+const FALLBACK_COMBINED_DEPARTMENT_TEAMS: Partial<Record<string, string[]>> = {
   'Creative & Design': ['Creative & Design', 'Video Production'],
 };
 
+// The operational departments assignable via a Team/Department dropdown that's paired with an
+// employee/assignee picker (task assignment, campaign ownership, new-hire team, Task Board's Team
+// filter). This is the single shared list — every department dropdown that pairs with an employee
+// picker (including an "All Teams"/"all" catch-all where relevant, added separately by the caller
+// — this array is real departments only) should call this function rather than hardcoding its own
+// copy. Deliberately a FUNCTION, not a module-level constant: the underlying data
+// (department_member_teams, via data/customRoles.ts) only loads asynchronously after app bootstrap,
+// so a module-level `const` evaluated at import time would freeze in whatever was true (nothing)
+// before that fetch ever ran. Call this at render time instead, every time the list is needed.
+// Before the cache has loaded (or if the fetch never succeeds), or if a successful load
+// unexpectedly yields zero departments, returns the exact hardcoded fallback above — built-in
+// behavior never changes because of this.
+export function getOperationalTeams(): string[] {
+  if (!isCustomRoleCacheLoaded()) return [...FALLBACK_OPERATIONAL_TEAMS];
+  const live = getOperationalTeamValuesFromCache();
+  return live.length > 0 ? live : [...FALLBACK_OPERATIONAL_TEAMS];
+}
+
+// Same function-not-constant reasoning as getOperationalTeams() above.
+export function getCombinedDepartmentTeams(): Partial<Record<string, string[]>> {
+  if (!isCustomRoleCacheLoaded()) return FALLBACK_COMBINED_DEPARTMENT_TEAMS;
+  const live = getOperationalTeamValuesFromCache();
+  if (live.length === 0) return FALLBACK_COMBINED_DEPARTMENT_TEAMS;
+  const combined: Partial<Record<string, string[]>> = {};
+  for (const team of live) {
+    combined[team] = getCombinedTeamValuesFromCache(team);
+  }
+  return combined;
+}
+
 const teamsForDepartment = (department: string): string[] =>
-  COMBINED_DEPARTMENT_TEAMS[department] || [department];
+  getCombinedDepartmentTeams()[department] || [department];
 
 // The single shared filter every department-scoped employee dropdown in the app should call: given
 // the currently-selected department/team value, return only the active employees who actually

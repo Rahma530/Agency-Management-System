@@ -57,7 +57,7 @@ import { isActiveEmployee } from '../lib/permissions';
 import { isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
-import { OPERATIONAL_TEAMS, fetchAssignableEmployees } from '../lib/departmentStaffing';
+import { getOperationalTeams, fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
@@ -381,11 +381,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // assignee-ROLE-scoped (see filteredTasks below), not the literal task.team column — that
   // column already splits across "Creative & Design"/"Video Production" for these two roles.
   //
-  // Everyone else's list is derived from the shared OPERATIONAL_TEAMS constant (departmentStaffing.ts)
-  // rather than a second hardcoded copy — this used to duplicate that list by hand, which is
-  // exactly how it silently drifted out of sync (AI Engineering was added to OPERATIONAL_TEAMS but
-  // missed here until this fix). "All Teams" is prepended explicitly since OPERATIONAL_TEAMS is a
-  // real-departments-only list, deliberately without a catch-all value baked in.
+  // Everyone else's list is derived from getOperationalTeams() (departmentStaffing.ts, backed by
+  // the custom-roles cache once loaded — PR 5) rather than a second hardcoded copy — this used to
+  // duplicate that list by hand, which is exactly how it silently drifted out of sync (AI
+  // Engineering was added to the shared list but missed here until that fix). "All Teams" is
+  // prepended explicitly since the operational-teams list is real-departments-only, deliberately
+  // without a catch-all value baked in. Recomputed every render (plain const, not memoized) so it
+  // always reflects the cache's current state rather than freezing in whatever was true the first
+  // time this component rendered.
   const teams =
     currentUser?.role === 'marketing_manager'
       ? [
@@ -394,18 +397,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         ]
       : [
           { id: 'all', label: 'All Teams' },
-          ...OPERATIONAL_TEAMS.map((t) => ({ id: t, label: t })),
+          ...getOperationalTeams().map((t) => ({ id: t, label: t })),
         ];
 
   // Team options for the Create/Edit Task forms' own Team select — distinct from `teams` above
-  // (the board's filter dropdown) and from OPERATIONAL_TEAMS itself, which EmployeeAdminHub.tsx
+  // (the board's filter dropdown) and from getOperationalTeams() itself, which EmployeeAdminHub.tsx
   // and TaskTypeManager.tsx also depend on and must not be changed. 'Marketing' is offered to
   // everyone; 'Technical' only to executive. 'Executive' and 'Sales' are never offered — neither
-  // does task-based work.
-  const taskFormTeams = useMemo(() => {
-    const extra = currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing'];
-    return [...OPERATIONAL_TEAMS, ...extra];
-  }, [currentUser?.role]);
+  // does task-based work. Deliberately NOT a useMemo: getOperationalTeams() can change value (once
+  // the cache finishes loading) independently of currentUser?.role, and a useMemo keyed only on the
+  // latter would freeze a stale list until something else happened to change that one dependency.
+  const taskFormTeams = [
+    ...getOperationalTeams(),
+    ...(currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing']),
+  ];
 
   // Employee-name filter options when the Team filter is at "All Teams" (or, for
   // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so
