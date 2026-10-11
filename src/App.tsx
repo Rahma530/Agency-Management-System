@@ -6005,6 +6005,7 @@ export default function App() {
                   onDeactivateEmployee={handleDeactivateEmployee}
                   onSendInvitation={handleSendInvitation}
                   onConfirmPortalEntry={handleConfirmEmployeePortalEntry}
+                  onCustomRolesDataChanged={loadCustomRolesAndDepartments}
                 />
               </div>
             )}

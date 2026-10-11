@@ -39,6 +39,11 @@ interface CustomRoleCache {
   operationalTeamValues: string[];
   deptIdByTeamValue: Map<string, string>;
   teamValuesByDeptId: Map<string, string[]>;
+  // Unlike teamValuesByDeptId above, NOT filtered to active departments — the roles/departments
+  // admin UI (PR 6) needs a deactivated department's own team rows too (to display them, to
+  // compute its next team sort_order if it's ever reactivated, etc.), which the active-only map
+  // above deliberately drops.
+  allDepartmentMemberTeamsByDeptId: Map<string, DepartmentMemberTeamRecord[]>;
 }
 
 const emptyCache = (): CustomRoleCache => ({
@@ -51,6 +56,7 @@ const emptyCache = (): CustomRoleCache => ({
   operationalTeamValues: [],
   deptIdByTeamValue: new Map(),
   teamValuesByDeptId: new Map(),
+  allDepartmentMemberTeamsByDeptId: new Map(),
 });
 
 let cache: CustomRoleCache = emptyCache();
@@ -124,6 +130,16 @@ export function registerCustomRoleData(
     teamsByDept.get(t.department_id)!.push(t);
   }
 
+  // Unfiltered by active — see allDepartmentMemberTeamsByDeptId's own comment above.
+  const allTeamsByDept = new Map<string, DepartmentMemberTeamRecord[]>();
+  for (const t of departmentMemberTeams) {
+    if (!allTeamsByDept.has(t.department_id)) allTeamsByDept.set(t.department_id, []);
+    allTeamsByDept.get(t.department_id)!.push(t);
+  }
+  for (const [deptId, teams] of allTeamsByDept) {
+    allTeamsByDept.set(deptId, teams.slice().sort(compareDepartmentMemberTeams));
+  }
+
   const deptIdByTeamValue = new Map<string, string>();
   const teamValuesByDeptId = new Map<string, string[]>();
   const operationalTeamValues: string[] = [];
@@ -147,6 +163,7 @@ export function registerCustomRoleData(
     operationalTeamValues,
     deptIdByTeamValue,
     teamValuesByDeptId,
+    allDepartmentMemberTeamsByDeptId: allTeamsByDept,
   };
 }
 
@@ -251,4 +268,78 @@ export function getCombinedTeamValuesFromCache(team: string): string[] {
   const teamsInDept = cache.teamValuesByDeptId.get(deptId);
   if (!teamsInDept || teamsInDept.length === 0) return [team];
   return team === teamsInDept[0] ? teamsInDept : [team];
+}
+
+// --- PR 6 (roles/departments admin UI) read accessors -----------------------------------------
+// Everything below is additive — none of it is read by getRoleInfo()/can()/the employee-
+// visibility mirrors/getOperationalTeams() above, which stay exactly as PR 4/5 left them.
+
+// Every department, active or not, ordered the same way getOperationalTeams() orders active
+// ones — the admin UI's own department list needs to show a deactivated department too (so it
+// can be inspected, even though it can no longer be assigned), unlike every reader above this
+// line, which only ever cares about active departments.
+export function getAllDepartments(): DepartmentRecord[] {
+  return Array.from(cache.departmentsById.values()).sort(compareDepartments);
+}
+
+export function getDepartmentById(departmentId: string): DepartmentRecord | null {
+  return cache.departmentsById.get(departmentId) ?? null;
+}
+
+// Every custom role, active or not — the admin UI's role list needs to show a deactivated role
+// too, unlike getAllActiveCustomRoleIds() above (EmployeeAdminHub's role picker), which must not.
+export function getAllCustomRoles(): CustomRoleRecord[] {
+  return Array.from(cache.customRolesById.values());
+}
+
+// A department's own team_value rows regardless of whether the department is currently active —
+// see allDepartmentMemberTeamsByDeptId's own comment above for why this differs from
+// getActiveTeamValuesForDepartment below.
+export function getDepartmentMemberTeamsForDepartment(departmentId: string): DepartmentMemberTeamRecord[] {
+  return (cache.allDepartmentMemberTeamsByDeptId.get(departmentId) ?? []).slice();
+}
+
+// An ACTIVE department's team_value strings only, in sort_order — what the Add Employee form's
+// Team select should offer once a custom role in this department is selected (EmployeeAdminHub).
+export function getActiveTeamValuesForDepartment(departmentId: string): string[] {
+  return [...(cache.teamValuesByDeptId.get(departmentId) ?? [])];
+}
+
+export function countActiveCustomRolesInDepartment(departmentId: string): number {
+  let count = 0;
+  for (const role of cache.customRolesById.values()) {
+    if (role.is_active && role.department_id === departmentId) count++;
+  }
+  return count;
+}
+
+function maxFiniteSortOrder(values: number[]): number {
+  let max = -1;
+  for (const v of values) {
+    if (typeof v === 'number' && Number.isFinite(v) && v > max) max = v;
+  }
+  return max;
+}
+
+// (current max sort_order across every department, active or not) + 1 — so a newly created
+// department always sorts after every existing one, per PR 6's decision 3. (A new department's
+// own team-value rows don't need an equivalent "next team sort_order" helper — they're always a
+// brand new list, enumerated 0, 1, 2, ... from scratch by createDepartment() in
+// lib/rolesAndDepartmentsAdmin.ts, not appended to an existing department's team list.)
+export function getNextDepartmentSortOrder(): number {
+  return maxFiniteSortOrder(Array.from(cache.departmentsById.values()).map((d) => d.sort_order)) + 1;
+}
+
+// The department-default grantable permission keys — what the admin UI shows as "(inherited by
+// department default)" for a role that has no override of its own for a given key.
+export function getDepartmentPermissionDefaults(departmentId: string): string[] {
+  return Array.from(cache.departmentPermissionsByDeptId.get(departmentId) ?? []);
+}
+
+// A role's own per-key overrides (true = force grant, false = force revoke) — absence of a key
+// here means "inherit the department default", mirrored exactly by customRoleHasPermission()
+// above. Used by the admin UI to pre-fill a role's permission toggles when editing/reviewing it.
+export function getCustomRolePermissionOverrides(roleId: string): Record<string, boolean> {
+  const map = cache.permissionOverridesByRoleId.get(roleId);
+  return map ? Object.fromEntries(map.entries()) : {};
 }
