@@ -131,18 +131,31 @@ begin
     raise exception 'TEST_SETUP_FAILED: need one active graphic_designer or video_editor with auth_id.';
   end if;
 
+  -- Restricted to ordinary employees. Without this, "order by id limit 1" over all remaining
+  -- active users could pick the executive, head_of_technical, ai_engineer, sales, or
+  -- marketing_manager persona (or a team lead) already captured above — mutating THAT same
+  -- person's role to zz_test_role for the rest of this transaction, so a later scenario
+  -- impersonating them (e.g. scenario 6's "executive should see every task") finds
+  -- app_user_role() = 'zz_test_role', not the role it was selected for. This is exactly what
+  -- happened on the live run: the preflight diff independently proved task_visible_v2 returns
+  -- 74/74 for the real executive, so the failure was this selection picking the executive as a
+  -- custom-role persona, not a bug in task_visible_v2 itself.
   select id, auth_id, role, team into v_custom_a_id, v_custom_a_auth, v_custom_a_old_role, v_custom_a_old_team
     from public.users
     where auth_id is not null and deactivated_at is null
+      and role not in ('executive', 'head_of_technical', 'ai_engineer', 'sales', 'marketing_manager')
+      and role not like '%team_lead'
       and id not in (v_seo_lead_id, v_seo_agent_a_id, v_seo_agent_b_id, v_other_agent_id, v_programming_id, v_am_agent_id, v_creative_id)
     order by id limit 1;
   select id, auth_id, role, team into v_custom_b_id, v_custom_b_auth, v_custom_b_old_role, v_custom_b_old_team
     from public.users
     where auth_id is not null and deactivated_at is null
+      and role not in ('executive', 'head_of_technical', 'ai_engineer', 'sales', 'marketing_manager')
+      and role not like '%team_lead'
       and id not in (v_seo_lead_id, v_seo_agent_a_id, v_seo_agent_b_id, v_other_agent_id, v_programming_id, v_am_agent_id, v_creative_id, v_custom_a_id)
     order by id limit 1;
   if v_custom_a_id is null or v_custom_b_id is null then
-    raise exception 'TEST_SETUP_FAILED: need 2 more distinct active users with auth_id, beyond the personas already selected, to temporarily hold a test custom role.';
+    raise exception 'TEST_SETUP_FAILED: need 2 more distinct active ORDINARY-EMPLOYEE users with auth_id (not executive/head_of_technical/ai_engineer/sales/marketing_manager/any team lead, and beyond the personas already selected) to temporarily hold a test custom role.';
   end if;
 
   -- ======================================================================
