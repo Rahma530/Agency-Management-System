@@ -419,9 +419,38 @@ export interface TaskRecord {
   // TaskTypeRecord below.
   task_type?: string | null;
   task_type_other?: string | null;
+  // "Task assignees" project, PR 1 (supabase/migrations/20261103000000_task_assignees_foundation.sql):
+  // display-only grouping for the independent per-client task copies a later PR's "create for
+  // multiple clients" flow will produce. Nothing reads this yet — it has no effect on capacity,
+  // KPI, or any report aggregation.
+  batch_id?: string | null;
 }
 
-// 6a. task_types — admin-managed reference list of selectable task types, each scoped to either
+// 6a. task_assignees — "task assignees" project, PR 1 foundation (database only, not yet read by
+// any frontend code). Currently kept in sync FROM tasks.assigned_to by a DB trigger — at most one
+// row per task today, exactly mirroring assigned_to, until a later PR adds a write path that
+// actually assigns more than one person. See the migration's own header for full context.
+export interface TaskAssigneeRecord {
+  task_id: string;
+  user_id: string;
+  added_by?: string | null;
+  viewed_at?: string | null;
+  created_at?: string;
+}
+
+// 6b. task_assignee_log — append-only audit trail of every task_assignees add/remove, written by
+// the same sync trigger as TaskAssigneeRecord above. task_id is a plain string, not a real FK (see
+// the migration), so a row here can outlive its task.
+export interface TaskAssigneeLogRecord {
+  id: string;
+  task_id: string;
+  user_id: string;
+  action: 'added' | 'removed';
+  actor_id?: string | null;
+  created_at: string;
+}
+
+// 6c. task_types — admin-managed reference list of selectable task types, each scoped to either
 // a team (scope_value is an OPERATIONAL_TEAMS value) or a role (scope_value is a UserRole). See
 // supabase/migrations/20261031900000_task_types.sql.
 export interface TaskTypeRecord {
