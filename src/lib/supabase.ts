@@ -444,27 +444,31 @@ export function isCampaignAccessibleUnderRLS(
 }
 
 /**
- * RLS Authorization Policy for Tasks:
- * - Sales: Strictly FORBIDDEN (returns false)
- * - Executive, Head of Technical, and AI Engineer: All tasks (cross-team monitoring)
- * - Team Leads: Full team tasks
- * - marketing_manager: NOT a team lead — narrow, cross-cutting visibility into ONLY
- *   graphic_designer/video_editor's tasks (by assignee role). No broader access.
- * - graphic_designer / video_editor: Directly assigned ONLY — these are shared
- *   creative resources pooled across every requesting team, not a single
- *   department's own board, so the usual "same team as the assignee"
- *   fallback would leak every other designer/editor's tasks to them too.
- * - Every other agent role: Assigned tasks, or any task assigned to a
- *   teammate on the same team.
- * - Subtasks (task.parent_task_id set): visible via EITHER the rules above
- *   applied to the subtask's own assignee, OR by being able to see its
- *   parent task (recursing up to 2 more hops — task nesting is capped at 3
- *   levels by a DB trigger, mirrored client-side by the `depth` guard below,
- *   so this always terminates). Without this OR, a subtask could be visible
- *   to its own assignee while its parent (different assignee, different
- *   team) stays invisible to them — an orphaned, context-less row. And
- *   without it the other direction, a team lead who can see a parent
- *   task couldn't see subtasks assigned to someone outside their own team.
+ * RLS Authorization Policy for Tasks — mirrors task_visible_v2() in
+ * supabase/migrations/20261104000000_task_visibility_functions.sql (PR 2, task visibility
+ * cutover). This demo/offline path has no in-memory equivalent of task_assignees, so "assignee"
+ * here is still read off task.assigned_to — the single legacy column, which stays a 1:1 mirror of
+ * task_assignees until a later PR ships real multi-assignee UI. That's consistent with current
+ * reality, not a simplification that will drift from the real RLS:
+ * - Sales: Strictly FORBIDDEN (returns false), no exceptions.
+ * - Executive, Head of Technical, and AI Engineer (admin): All tasks.
+ * - Creator (task.created_by === viewer.id): visible.
+ * - Assignee (task.assigned_to === viewer.id): visible.
+ * - The 4 built-in *_team_lead roles: visible if the task's creator OR assignee is on the
+ *   caller's own team, PLUS a seo_team_lead carve-out also matching team 'Programming'
+ *   (mirrors the existing seo_team_lead/programming_agent direct-report relationship).
+ * - am_agent: visible on any task whose client is one they manage, independent of
+ *   assignee/creator (AM oversight of the whole client, not just their own tasks on it).
+ * - marketing_manager: visible if the task's creator OR assignee holds role graphic_designer
+ *   or video_editor. No broader access.
+ * - Subtasks (task.parent_task_id set): visible via EITHER the rules above applied to the
+ *   subtask itself, OR by being able to see its parent task (recursing up to 2 more hops —
+ *   task nesting is capped at 3 levels by a DB trigger, mirrored client-side by the `depth`
+ *   guard below, so this always terminates).
+ * A task with no assignee simply falls out of this with no special-casing: it's visible to its
+ * creator, admins, and a team lead whose team matches the creator's team — never to an ordinary
+ * agent who is neither (the am_agent/marketing_manager doors are independent of assignee status
+ * by design, so they still apply the same way).
  */
 export function isTaskAccessibleUnderRLS(
   viewer: UserRecord | null,
@@ -473,49 +477,65 @@ export function isTaskAccessibleUnderRLS(
 ): boolean {
   if (!viewer) return true;
 
-  // 1. Sales Team: Strictly NO access to internal tasks
+  // 1. Sales Team: Strictly NO access to internal tasks, no exceptions.
   if (viewer.role === 'sales') {
     return false;
   }
 
-  // 2. Executive, Head of Technical, and AI Engineer: Full cross-team visibility
+  // 2. Executive, Head of Technical, and AI Engineer: Full cross-team visibility.
   if (viewer.role === 'executive' || viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') {
     return true;
   }
 
-  // 3. Team Leads: Full team tasks
-  if (viewer.role.includes('lead')) {
+  // 3. Creator.
+  if (task.created_by === viewer.id) {
     return true;
   }
 
-  // 3.5. marketing_manager: NOT a team lead of graphic_designer/video_editor — narrow,
-  // cross-cutting visibility into ONLY those two roles' tasks (by assignee role, not team,
-  // since they have different team values). No broader access anywhere else in this function.
+  // 4. Assignee.
+  if (task.assigned_to === viewer.id) {
+    return true;
+  }
+
+  // 5. Team leads: own team only (creator OR assignee on the caller's team), plus the
+  // seo_team_lead/Programming carve-out mirroring employee_visible()/direct_report_visible().
+  if (
+    viewer.role === 'am_team_lead' ||
+    viewer.role === 'media_buying_team_lead' ||
+    viewer.role === 'seo_team_lead' ||
+    viewer.role === 'social_media_team_lead'
+  ) {
+    const creator = inMemoryUsers.find((u) => u.id === task.created_by);
+    const assignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
+    if (creator?.team === viewer.team || assignee?.team === viewer.team) {
+      return true;
+    }
+    if (viewer.role === 'seo_team_lead' && (creator?.team === 'Programming' || assignee?.team === 'Programming')) {
+      return true;
+    }
+  }
+
+  // 6. am_agent: any task on a client they manage, independent of assignee/creator.
+  if (viewer.role === 'am_agent' && task.client_id) {
+    const client = inMemoryClients.find((c) => c.id === task.client_id);
+    if (client && client.am_agent_id === viewer.id) {
+      return true;
+    }
+  }
+
+  // 7. marketing_manager: NOT a team lead of graphic_designer/video_editor — narrow,
+  // cross-cutting visibility into ONLY those two roles' tasks (by creator OR assignee role, not
+  // team, since they have different team values). No broader access.
   if (viewer.role === 'marketing_manager') {
+    const creator = inMemoryUsers.find((u) => u.id === task.created_by);
     const assignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
-    if (assignee && (assignee.role === 'graphic_designer' || assignee.role === 'video_editor')) {
+    const isCreative = (u: UserRecord | undefined) => u && (u.role === 'graphic_designer' || u.role === 'video_editor');
+    if (isCreative(creator) || isCreative(assignee)) {
       return true;
     }
   }
 
-  // 4. Shared creative resources: assigned-to-them only, no team fallback
-  if (viewer.role === 'graphic_designer' || viewer.role === 'video_editor') {
-    if (task.assigned_to === viewer.id) {
-      return true;
-    }
-  } else {
-    // 5. Directly assigned
-    if (task.assigned_to === viewer.id) {
-      return true;
-    }
-
-    const assignee = inMemoryUsers.find((u) => u.id === task.assigned_to);
-    if (assignee && assignee.team === viewer.team) {
-      return true;
-    }
-  }
-
-  // 6. Subtask visibility inherited from an ancestor task (bounded by the
+  // 8. Subtask visibility inherited from an ancestor task (bounded by the
   // same 3-level nesting cap the DB trigger enforces).
   if (task.parent_task_id && depth < 3) {
     const parent = inMemoryTasks.find((t) => t.id === task.parent_task_id);
