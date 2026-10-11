@@ -36,7 +36,7 @@ import {
   UserRole,
 } from '../types/database';
 import { getRoleInfo, AppModuleId } from '../data/roles';
-import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity } from '../lib/permissions';
+import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity, canManageEmployee } from '../lib/permissions';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { getEmployeesByDepartment } from '../lib/departmentStaffing';
 import { getTodayStr } from '../lib/employeeWork';
@@ -357,10 +357,14 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     selectedLogEmployeeData?.status === 'over_capacity' || willExceedCapacityWithNewReading;
 
   // Handlers
+  // Mirrors employee_manageable() (20261101700000_users_edit_scope_hardening.sql): canModifyCapacity
+  // is the role-level "are you an editor-class role at all" gate; a team lead additionally needs
+  // this target to be in their own department's set (exec/head_of_technical unaffected — no
+  // currentUser falls back to the same unrestricted behavior canModifyCapacity's own memo uses).
   const handleStartEdit = (user: UserRecord) => {
-    if (!canModifyCapacity) {
+    if (!canModifyCapacity || (currentUser && !canManageEmployee(currentUser, user))) {
       setStatusMessage({
-        text: 'RLS permissions: capacity limit changes are restricted to executive management and team leads.',
+        text: 'RLS permissions: capacity limit changes are restricted to executive management and team leads within their own department.',
         type: 'error',
       });
       setTimeout(() => setStatusMessage(null), 4000);
@@ -382,7 +386,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       setTimeout(() => setStatusMessage(null), 3500);
     } catch (err: any) {
       console.error(err);
-      setStatusMessage({ text: 'An error occurred while saving the capacity limit.', type: 'error' });
+      setStatusMessage({ text: err?.message || 'An error occurred while saving the capacity limit.', type: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -895,7 +899,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                             <span className="text-sm font-bold text-purple-300">
                               {item.capacityLimit}
                             </span>
-                            {canModifyCapacity && !isEditing && (
+                            {canModifyCapacity && !isEditing && (!currentUser || canManageEmployee(currentUser, item.user)) && (
                               <button
                                 onClick={() => handleStartEdit(item.user)}
                                 className="text-stone-500 hover:text-purple-300 p-0.5 transition-colors"
@@ -1155,7 +1159,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                         </span>
                       </td>
                       <td className="p-3.5 text-center">
-                        {canModifyCapacity ? (
+                        {canModifyCapacity && (!currentUser || canManageEmployee(currentUser, item.user)) ? (
                           <button
                             onClick={() => handleStartEdit(item.user)}
                             className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-stone-800 text-stone-200 hover:text-white hover:bg-purple-900/40 transition-colors"

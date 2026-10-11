@@ -104,6 +104,36 @@ export const DEPARTMENT_TEAM_LEAD_ROLES: UserRole[] = [
 export const canManageEmployeesOrClients = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
 
+// Each team lead's own department's manageable roles (its own team-lead role included, per the
+// server-side rule below) — mirrors public.employee_manageable(target_id, target_role)
+// (20261101700000_users_edit_scope_hardening.sql) exactly. Deliberately narrower than
+// employee_visible()'s reach (which also covers the shared graphic_designer/video_editor pool and
+// cross-department AM visibility): a team lead may SEE more than this, but may only EDIT/
+// deactivate/change capacity within their own department. ai_engineer is intentionally absent —
+// users_update_profile_rls/users_update_capacity_rls/users_deactivate_rls don't grant it a
+// row-edit path at all (only executive/head_of_technical/the 4 team leads do).
+const TEAM_LEAD_MANAGEABLE_ROLES: Partial<Record<UserRole, UserRole[]>> = {
+  am_team_lead: ['am_team_lead', 'am_agent'],
+  media_buying_team_lead: ['media_buying_team_lead', 'media_buying_agent'],
+  seo_team_lead: ['seo_team_lead', 'seo_agent', 'programming_agent', 'seo_content_agent', 'seo_backlink_agent', 'store_manager'],
+  social_media_team_lead: ['social_media_team_lead', 'social_media_agent'],
+};
+
+// Whether `viewer` may edit/deactivate/change the capacity of `target`'s row — the client-side
+// mirror of employee_manageable(). Executive/head_of_technical may manage anyone; anyone may
+// manage their own row; a team lead only within their own department's set above. A target whose
+// role isn't in UserRole yet (a future custom role) simply matches no team lead's set here,
+// exactly like the server-side function — manageable only by executive/head_of_technical or self.
+export const canManageEmployee = (
+  viewer: Pick<UserRecord, 'id' | 'role'>,
+  target: Pick<UserRecord, 'id' | 'role'>
+): boolean => {
+  if (viewer.role === 'executive' || viewer.role === 'head_of_technical') return true;
+  if (viewer.id === target.id) return true;
+  const manageable = TEAM_LEAD_MANAGEABLE_ROLES[viewer.role];
+  return !!manageable && manageable.includes(target.role);
+};
+
 // Each team lead's own department agent-level roles — mirrors users_update_guard_trigger's rule 4
 // exactly (20261030000000_users_update_guard_trigger.sql): the only role values that trigger lets
 // that team lead move someone between (never a team lead role, never another department). Kept
