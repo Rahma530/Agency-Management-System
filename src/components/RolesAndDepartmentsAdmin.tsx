@@ -17,6 +17,7 @@ import {
   createCustomRole,
   countActiveEmployeesHoldingRole,
   deactivateCustomRole,
+  normalizeAllowedModules,
   PermissionOverrideState,
 } from '../lib/rolesAndDepartmentsAdmin';
 
@@ -39,6 +40,7 @@ const ALL_MODULE_IDS: { id: AppModuleId; label: string }[] = [
 ];
 
 interface RolesAndDepartmentsAdminProps {
+  currentUserId: string;
   users: UserRecord[];
   initialView?: 'departments' | 'roles';
   onClose: () => void;
@@ -63,11 +65,15 @@ const labelClass = 'block text-[11px] font-semibold mb-1 text-lilac';
  *
  * Two tabs: Departments and Custom Roles. Each has a list (including inactive rows, so they can
  * still be reviewed) and an inline "+ New..." create form, same interaction shape as
- * TaskTypeManager.tsx. Deactivating is the only lifecycle action from this screen — there is no
- * delete, matching every other admin-managed table in this app (a referenced row must stay valid
- * for whatever already points at it).
+ * TaskTypeManager.tsx. Deactivating is the only user-facing lifecycle action from this screen —
+ * matching every other admin-managed table in this app, a referenced row must stay valid for
+ * whatever already points at it, so there is no delete BUTTON. (lib/rolesAndDepartmentsAdmin.ts's
+ * create functions do issue real deletes under the hood, but only to roll back a create that
+ * failed partway through — never as a user-reachable action, and never on a row that ever made
+ * it to is_active=true.)
  */
 export const RolesAndDepartmentsAdmin: React.FC<RolesAndDepartmentsAdminProps> = ({
+  currentUserId,
   users,
   initialView = 'departments',
   onClose,
@@ -87,9 +93,8 @@ export const RolesAndDepartmentsAdmin: React.FC<RolesAndDepartmentsAdminProps> =
           <div>
             <h3 className="text-sm font-bold text-white">Manage Roles &amp; Departments</h3>
             <p className="text-[11px] text-stone-400 mt-0.5">
-              Create admin-managed custom roles and departments. There is no delete here —
-              retiring a row sets it inactive instead, so anything already referencing it stays
-              valid.
+              Create admin-managed custom roles and departments. Retiring one sets it inactive
+              instead of removing it, so anything already referencing it stays valid.
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-white/5">
@@ -123,7 +128,7 @@ export const RolesAndDepartmentsAdmin: React.FC<RolesAndDepartmentsAdminProps> =
         {view === 'departments' ? (
           <DepartmentsTab users={users} onDataChanged={onDataChanged} onDepartmentCreated={onDepartmentCreated} />
         ) : (
-          <RolesTab users={users} onDataChanged={onDataChanged} onRoleCreated={onRoleCreated} />
+          <RolesTab currentUserId={currentUserId} users={users} onDataChanged={onDataChanged} onRoleCreated={onRoleCreated} />
         )}
       </div>
     </div>
@@ -362,10 +367,11 @@ const DepartmentsTab: React.FC<{
 // --- Custom Roles tab --------------------------------------------------------------------------
 
 const RolesTab: React.FC<{
+  currentUserId: string;
   users: UserRecord[];
   onDataChanged: () => Promise<void>;
   onRoleCreated?: (roleId: string) => void;
-}> = ({ users, onDataChanged, onRoleCreated }) => {
+}> = ({ currentUserId, users, onDataChanged, onRoleCreated }) => {
   const roles = getAllCustomRoles();
   const activeDepartments = getAllDepartments().filter((d) => d.is_active);
 
@@ -418,6 +424,7 @@ const RolesTab: React.FC<{
         allowedModules,
         permissionOverrides,
         isActive,
+        createdBy: currentUserId,
       });
       if (!result.success || !result.data) {
         setErrorMsg(result.error || 'Unable to create this role.');
@@ -565,7 +572,15 @@ const RolesTab: React.FC<{
             <label className={labelClass}>Default Module</label>
             <select
               value={defaultModule}
-              onChange={(e) => setDefaultModule(e.target.value as AppModuleId)}
+              onChange={(e) => {
+                const newDefault = e.target.value as AppModuleId;
+                setDefaultModule(newDefault);
+                // Keeps the Allowed Modules checkboxes honest about what will actually be saved
+                // — createCustomRole() enforces this same rule regardless (default_module is
+                // always one of allowedModules), this just avoids a surprising mismatch between
+                // what's shown checked here and what gets written.
+                setAllowedModules((prev) => normalizeAllowedModules(prev, newDefault));
+              }}
               className={`${inputClass} cursor-pointer`}
               disabled={isSaving}
             >

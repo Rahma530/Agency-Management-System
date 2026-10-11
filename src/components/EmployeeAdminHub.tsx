@@ -1192,6 +1192,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
 
       {canManageRolesAndDepartments && isRolesAdminOpen && (
         <RolesAndDepartmentsAdmin
+          currentUserId={currentUser.id}
           users={users}
           initialView={rolesAdminInitialView}
           onClose={() => setIsRolesAdminOpen(false)}

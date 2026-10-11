@@ -114,10 +114,73 @@ function friendlyUniqueViolation(error: { code?: string; message?: string } | nu
   return null;
 }
 
+// A new department's team value can never collide (case-insensitively, trimmed) with one of
+// these frontend-only "team" concepts that are NOT real departments — Marketing/Technical (used
+// by CrossTeamTaskBoard.tsx's taskFormTeams as extra, non-operational Team options) and
+// Executive/Sales/Creative (roles.ts's own team labels for roles that were deliberately excluded
+// from OPERATIONAL_TEAMS). A real department_member_teams row with one of these values would
+// make an already-meaningful team label ambiguous between "a real department" and "that special
+// case" everywhere it's consumed.
+const RESERVED_TEAM_VALUES: ReadonlySet<string> = new Set(['marketing', 'technical', 'executive', 'sales', 'creative']);
+
+export function findReservedTeamValue(teamValues: string[]): string | null {
+  for (const value of teamValues) {
+    if (RESERVED_TEAM_VALUES.has(value.trim().toLowerCase())) return value;
+  }
+  return null;
+}
+
 export interface AdminWriteResult<T> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+// One rollback delete step: table/column/value identify the row(s) to remove. `expectRows: true`
+// means we know for certain a row was already successfully inserted there earlier in this same
+// request, so a delete that removes zero rows (not just one that errors outright) is ITSELF a
+// failure worth reporting — this is only ever true for the one parent row each create function
+// inserts first (departments.id / custom_roles.id). Every child-table cleanup step is best-effort
+// (expectRows: false): if the insert that would have populated it never actually ran or itself
+// failed, there is nothing there to delete, and zero rows is the CORRECT, expected outcome, not a
+// sign anything is wrong.
+interface RollbackStep {
+  table: string;
+  column: string;
+  value: string;
+  expectRows: boolean;
+}
+
+// Issues every rollback delete, checking each one's own result rather than firing-and-forgetting
+// — departments and custom_roles have no DELETE RLS policy for an is_active=true row (both are
+// normally soft-delete-only tables), so a delete issued here, while the row is still
+// is_active=false, needs its own DELETE policy to actually succeed; without one, this previously
+// silently removed nothing, left an inactive orphan behind, and made a same-name retry fail on
+// the table's own UNIQUE constraint. Returns null if every step genuinely removed what it should
+// have (or correctly found nothing to remove); otherwise names exactly which rows are left behind
+// so the admin isn't left guessing why a retry with the same name fails.
+async function rollbackDeletes(dbClient: AdminDbClient, steps: RollbackStep[]): Promise<string | null> {
+  const leftBehind: string[] = [];
+  for (const step of steps) {
+    const { data, error } = await dbClient.from(step.table).delete().eq(step.column, step.value).select();
+    if (error || (step.expectRows && (!data || data.length === 0))) {
+      leftBehind.push(`${step.table} (${step.column}=${step.value})`);
+    }
+  }
+  if (leftBehind.length === 0) return null;
+  return `The rollback could not remove: ${leftBehind.join(', ')}. ${leftBehind.length === 1 ? 'That row' : 'These rows'} still exist (inactive) — an administrator will need to remove ${leftBehind.length === 1 ? 'it' : 'them'} manually before the same name can be reused.`;
+}
+
+function composeFailureMessage(originalError: string, rollbackError: string | null): string {
+  return rollbackError ? `${originalError} ${rollbackError}` : originalError;
+}
+
+// A custom role's default_module must always be one of its own allowedModules — rather than
+// reject an admin who picked a default and forgot to also check it, this just adds it, which
+// also structurally guarantees allowedModules is never empty (defaultModule is always a real
+// AppModuleId, selected from a <select>, never blank).
+export function normalizeAllowedModules(allowedModules: AppModuleId[], defaultModule: AppModuleId): AppModuleId[] {
+  return allowedModules.includes(defaultModule) ? allowedModules : [...allowedModules, defaultModule];
 }
 
 // Every write function below takes the Supabase client as its last parameter, defaulting to the
@@ -144,6 +207,11 @@ export async function createDepartment(
   input: CreateDepartmentInput,
   dbClient: AdminDbClient = supabase
 ): Promise<AdminWriteResult<DepartmentRecord>> {
+  const reservedTeamValue = findReservedTeamValue(input.teamValues);
+  if (reservedTeamValue) {
+    return { success: false, error: `"${reservedTeamValue}" is a reserved team value and cannot be used for a new department. Please choose a different team value.` };
+  }
+
   const existingIds = new Set(getAllDepartments().map((d) => d.id));
   const id = generateUniqueId(input.label, existingIds);
   const sortOrder = getNextDepartmentSortOrder();
@@ -159,9 +227,12 @@ export async function createDepartment(
   const teamRows = input.teamValues.map((teamValue, i) => ({ department_id: id, team_value: teamValue, sort_order: i }));
   const { data: teamData, error: teamErr } = await dbClient.from('department_member_teams').insert(teamRows).select();
   if (teamErr || !teamData || teamData.length !== teamRows.length) {
-    await dbClient.from('department_member_teams').delete().eq('department_id', id);
-    await dbClient.from('departments').delete().eq('id', id);
-    return { success: false, error: friendlyUniqueViolation(teamErr, 'team value') || teamErr?.message || 'Failed to save the department\'s team values.' };
+    const rollbackError = await rollbackDeletes(dbClient, [
+      { table: 'department_member_teams', column: 'department_id', value: id, expectRows: false },
+      { table: 'departments', column: 'id', value: id, expectRows: true },
+    ]);
+    const originalError = friendlyUniqueViolation(teamErr, 'team value') || teamErr?.message || 'Failed to save the department\'s team values.';
+    return { success: false, error: composeFailureMessage(originalError, rollbackError) };
   }
 
   const { data: activated, error: activateErr } = await dbClient
@@ -170,9 +241,12 @@ export async function createDepartment(
     .eq('id', id)
     .select();
   if (activateErr || !activated || activated.length === 0) {
-    await dbClient.from('department_member_teams').delete().eq('department_id', id);
-    await dbClient.from('departments').delete().eq('id', id);
-    return { success: false, error: 'Could not activate the new department after creating it. It has been rolled back — please try again.' };
+    const rollbackError = await rollbackDeletes(dbClient, [
+      { table: 'department_member_teams', column: 'department_id', value: id, expectRows: false },
+      { table: 'departments', column: 'id', value: id, expectRows: true },
+    ]);
+    const originalError = 'Could not activate the new department after creating it.';
+    return { success: false, error: composeFailureMessage(originalError, rollbackError) };
   }
 
   return { success: true, data: activated[0] as DepartmentRecord };
@@ -240,6 +314,8 @@ export async function createCustomRole(
   input: CreateCustomRoleInput,
   dbClient: AdminDbClient = supabase
 ): Promise<AdminWriteResult<CustomRoleRecord>> {
+  const allowedModules = normalizeAllowedModules(input.allowedModules, input.defaultModule);
+
   const existingIds = new Set(getAllCustomRoles().map((r) => r.id));
   const id = generateUniqueId(input.englishTitle, existingIds);
   const existingSlugs = new Set(getAllCustomRoles().map((r) => r.portal_slug));
@@ -274,13 +350,16 @@ export async function createCustomRole(
     return { success: false, error: friendlyUniqueViolation(roleErr, 'role id or portal slug') || roleErr?.message || 'Failed to create the custom role.' };
   }
 
-  const moduleRows = input.allowedModules.map((m) => ({ role_id: id, module_id: m }));
+  const moduleRows = allowedModules.map((m) => ({ role_id: id, module_id: m }));
   if (moduleRows.length > 0) {
     const { data: moduleData, error: moduleErr } = await dbClient.from('custom_role_modules').insert(moduleRows).select();
     if (moduleErr || !moduleData || moduleData.length !== moduleRows.length) {
-      await dbClient.from('custom_role_modules').delete().eq('role_id', id);
-      await dbClient.from('custom_roles').delete().eq('id', id);
-      return { success: false, error: moduleErr?.message || 'Failed to save the role\'s allowed modules.' };
+      const rollbackError = await rollbackDeletes(dbClient, [
+        { table: 'custom_role_modules', column: 'role_id', value: id, expectRows: false },
+        { table: 'custom_roles', column: 'id', value: id, expectRows: true },
+      ]);
+      const originalError = moduleErr?.message || 'Failed to save the role\'s allowed modules.';
+      return { success: false, error: composeFailureMessage(originalError, rollbackError) };
     }
   }
 
@@ -290,10 +369,13 @@ export async function createCustomRole(
   if (overrideRows.length > 0) {
     const { data: overrideData, error: overrideErr } = await dbClient.from('custom_role_permissions').insert(overrideRows).select();
     if (overrideErr || !overrideData || overrideData.length !== overrideRows.length) {
-      await dbClient.from('custom_role_permissions').delete().eq('role_id', id);
-      await dbClient.from('custom_role_modules').delete().eq('role_id', id);
-      await dbClient.from('custom_roles').delete().eq('id', id);
-      return { success: false, error: overrideErr?.message || 'Failed to save the role\'s permission overrides.' };
+      const rollbackError = await rollbackDeletes(dbClient, [
+        { table: 'custom_role_permissions', column: 'role_id', value: id, expectRows: false },
+        { table: 'custom_role_modules', column: 'role_id', value: id, expectRows: moduleRows.length > 0 },
+        { table: 'custom_roles', column: 'id', value: id, expectRows: true },
+      ]);
+      const originalError = overrideErr?.message || 'Failed to save the role\'s permission overrides.';
+      return { success: false, error: composeFailureMessage(originalError, rollbackError) };
     }
   }
 
@@ -303,10 +385,13 @@ export async function createCustomRole(
     .eq('id', id)
     .select();
   if (activateErr || !activated || activated.length === 0) {
-    await dbClient.from('custom_role_permissions').delete().eq('role_id', id);
-    await dbClient.from('custom_role_modules').delete().eq('role_id', id);
-    await dbClient.from('custom_roles').delete().eq('id', id);
-    return { success: false, error: 'Could not activate the new role after creating it. It has been rolled back — please try again.' };
+    const rollbackError = await rollbackDeletes(dbClient, [
+      { table: 'custom_role_permissions', column: 'role_id', value: id, expectRows: overrideRows.length > 0 },
+      { table: 'custom_role_modules', column: 'role_id', value: id, expectRows: moduleRows.length > 0 },
+      { table: 'custom_roles', column: 'id', value: id, expectRows: true },
+    ]);
+    const originalError = 'Could not activate the new role after creating it.';
+    return { success: false, error: composeFailureMessage(originalError, rollbackError) };
   }
 
   return { success: true, data: activated[0] as CustomRoleRecord };

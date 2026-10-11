@@ -61,6 +61,8 @@ import {
   countActiveEmployeesHoldingRole,
   createDepartment,
   createCustomRole,
+  normalizeAllowedModules,
+  findReservedTeamValue,
 } from '../src/lib/rolesAndDepartmentsAdmin';
 import { AssignmentRecord, ClientRecord, DepartmentMemberTeamRecord, DepartmentRecord, UserRecord } from '../src/types/database';
 
@@ -673,10 +675,13 @@ function testDeactivationGuards(): void {
 
 // A minimal fake standing in for the one chain shape lib/rolesAndDepartmentsAdmin.ts's write
 // functions actually use: .from(table).insert(rows).select() / .update(patch).eq(col,val).select()
-// / .delete().eq(col,val). `failOn` names the exact "op:table" steps that should come back as a
-// Supabase-shaped error (data: null, error: {message}) — every other step succeeds and echoes
-// back what was written, so each test can target exactly one failure point.
-function makeFakeDbClient(failOn: ReadonlySet<string>) {
+// / .delete().eq(col,val).select(). `failOn` names the exact "op:table" steps that should come
+// back as a Supabase-shaped error (data: null, error: {message}) — every other step succeeds and
+// echoes back what was written, so each test can target exactly one failure point. `zeroRowsOn`
+// names "delete:table" steps that should come back as a SUCCESSFUL delete that nonetheless
+// removed no rows (data: [], error: null) — the exact shape an RLS policy silently blocking a
+// delete produces, distinct from an outright error.
+function makeFakeDbClient(failOn: ReadonlySet<string>, zeroRowsOn: ReadonlySet<string> = new Set()) {
   const calls: { op: 'insert' | 'update' | 'delete'; table: string }[] = [];
   return {
     calls,
@@ -706,9 +711,15 @@ function makeFakeDbClient(failOn: ReadonlySet<string>) {
         },
         delete() {
           return {
-            async eq(_col: string, _val: string) {
+            eq(_col: string, val: string) {
               calls.push({ op: 'delete', table });
-              return { data: [], error: null };
+              return {
+                async select() {
+                  if (failOn.has(`delete:${table}`)) return { data: null, error: { message: `simulated delete failure on ${table}` } };
+                  if (zeroRowsOn.has(`delete:${table}`)) return { data: [], error: null };
+                  return { data: [{ id: val }], error: null };
+                },
+              };
             },
           };
         },
@@ -803,6 +814,128 @@ async function testRollbackOnFailure(): Promise<void> {
     );
   }
 
+  // --- Rollback-itself-failed reporting: the parent row's own delete either errors outright or
+  // succeeds but removes zero rows (the shape a missing/too-narrow DELETE RLS policy on
+  // departments/custom_roles actually produces) — the returned error must name the table left
+  // behind, not just repeat the original failure as if cleanup had quietly succeeded.
+
+  // createDepartment: team-values insert fails, AND the departments rollback delete itself
+  // errors outright.
+  {
+    const fake = makeFakeDbClient(new Set(['insert:department_member_teams', 'delete:departments']));
+    const result = await createDepartment({ label: 'Rollback Dept 3', teamValues: ['Rollback Team 3'], isSharedResource: false }, fake);
+    assertFalse(result.success, 'createDepartment() reports failure when both the insert and the departments rollback delete fail');
+    assertTrue(!!result.error && result.error.includes('departments'), 'createDepartment() names "departments" as left behind when its rollback delete errors outright');
+  }
+
+  // createDepartment: team-values insert fails, AND the departments rollback delete "succeeds"
+  // but removes zero rows (silently blocked by RLS, no error at all).
+  {
+    const fake = makeFakeDbClient(new Set(['insert:department_member_teams']), new Set(['delete:departments']));
+    const result = await createDepartment({ label: 'Rollback Dept 4', teamValues: ['Rollback Team 4'], isSharedResource: false }, fake);
+    assertFalse(result.success, 'createDepartment() reports failure when its rollback delete removes zero rows');
+    assertTrue(
+      !!result.error && result.error.includes('departments'),
+      'createDepartment() names "departments" as left behind when its rollback delete silently removes zero rows'
+    );
+  }
+
+  // createCustomRole: the final activate step fails, AND the custom_roles rollback delete itself
+  // errors outright.
+  {
+    const fake = makeFakeDbClient(new Set(['update:custom_roles', 'delete:custom_roles']));
+    const result = await createCustomRole(
+      {
+        englishTitle: 'Rollback Role 3',
+        departmentId: 'seo',
+        defaultModule: 'my_work',
+        allowedModules: ['my_work'],
+        permissionOverrides: {},
+        isActive: true,
+      },
+      fake
+    );
+    assertFalse(result.success, 'createCustomRole() reports failure when both activation and the custom_roles rollback delete fail');
+    assertTrue(!!result.error && result.error.includes('custom_roles'), 'createCustomRole() names "custom_roles" as left behind when its rollback delete errors outright');
+  }
+
+  // createCustomRole: the final activate step fails, AND the custom_roles rollback delete
+  // removes zero rows.
+  {
+    const fake = makeFakeDbClient(new Set(['update:custom_roles']), new Set(['delete:custom_roles']));
+    const result = await createCustomRole(
+      {
+        englishTitle: 'Rollback Role 4',
+        departmentId: 'seo',
+        defaultModule: 'my_work',
+        allowedModules: ['my_work'],
+        permissionOverrides: {},
+        isActive: true,
+      },
+      fake
+    );
+    assertFalse(result.success, 'createCustomRole() reports failure when its rollback delete removes zero rows');
+    assertTrue(
+      !!result.error && result.error.includes('custom_roles'),
+      'createCustomRole() names "custom_roles" as left behind when its rollback delete silently removes zero rows'
+    );
+  }
+
+  // A clean rollback (both steps actually remove their rows) must NOT mention anything being
+  // left behind — only the original failure reason.
+  {
+    const fake = makeFakeDbClient(new Set(['insert:department_member_teams']));
+    const result = await createDepartment({ label: 'Rollback Dept 5', teamValues: ['Rollback Team 5'], isSharedResource: false }, fake);
+    assertFalse(result.success, 'createDepartment() still reports the original failure on a clean rollback');
+    assertTrue(!!result.error && !result.error.includes('rollback could not remove'), 'createDepartment() does not mention a failed rollback when the rollback itself succeeded');
+  }
+
+  resetCustomRoleDataForTesting();
+}
+
+// --- PR 6 review fixes: form validation ----------------------------------------------------------
+
+function testFormValidation(): void {
+  // normalizeAllowedModules: defaultModule is always added if missing, guaranteeing the result
+  // is never empty; already-present defaultModule leaves the list untouched (same array contents).
+  assertSameMembers(
+    normalizeAllowedModules([], 'my_work'),
+    ['my_work'],
+    'normalizeAllowedModules([]) adds the default module, never leaving an empty list'
+  );
+  assertSameMembers(
+    normalizeAllowedModules(['dashboard'], 'my_work'),
+    ['dashboard', 'my_work'],
+    'normalizeAllowedModules() adds a missing default module alongside whatever was already checked'
+  );
+  assertSameMembers(
+    normalizeAllowedModules(['dashboard', 'my_work'], 'my_work'),
+    ['dashboard', 'my_work'],
+    'normalizeAllowedModules() is a no-op when the default module is already included'
+  );
+
+  // findReservedTeamValue: case-insensitive, trimmed match against the 5 reserved values; a
+  // real, non-reserved team value is never flagged.
+  for (const reserved of ['Marketing', 'technical', '  Executive  ', 'SALES', 'Creative']) {
+    assertEqual(
+      findReservedTeamValue(['Some Real Team', reserved]),
+      reserved,
+      `findReservedTeamValue() flags "${reserved}" as reserved (case-insensitive, trimmed)`
+    );
+  }
+  assertEqual(findReservedTeamValue(['Customer Support', 'Billing']), null, 'findReservedTeamValue() does not flag ordinary team values');
+}
+
+async function testReservedTeamValueRejection(): Promise<void> {
+  resetCustomRoleDataForTesting();
+  registerCustomRoleData(SEEDED_DEPARTMENTS, [], [], [], [], SEEDED_DEPARTMENT_MEMBER_TEAMS);
+
+  const fake = makeFakeDbClient(new Set());
+  const result = await createDepartment({ label: 'New Dept', teamValues: ['Real Team', 'Marketing'], isSharedResource: false }, fake);
+  assertFalse(result.success, 'createDepartment() rejects a department whose team values include a reserved one');
+  assertTrue(!!result.error && /reserved/i.test(result.error), 'createDepartment()\'s rejection error mentions "reserved"');
+  assertEqual(fake.calls.length, 0, 'createDepartment() rejects a reserved team value before making any DB call at all');
+
   resetCustomRoleDataForTesting();
 }
 
@@ -825,6 +958,8 @@ async function main(): Promise<void> {
   testSortOrderCalculation();
   testDeactivationGuards();
   await testRollbackOnFailure();
+  testFormValidation();
+  await testReservedTeamValueRejection();
   testFailClosedBeforeLoad();
   resetCustomRoleDataForTesting();
 
