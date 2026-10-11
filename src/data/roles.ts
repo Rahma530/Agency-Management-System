@@ -367,21 +367,43 @@ export const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRole, UserRole[]>> = {
   social_media_team_lead: ['social_media_agent'],
 };
 
+// Fail-closed fallback for a role string that isn't a key in AGENCY_ROLES (unrecognized, or
+// missing entirely). allowedModules is deliberately empty — isModuleAllowed() then rejects every
+// module, so the app's existing AccessDenied screen (App.tsx's hash router falls back to it
+// whenever isModuleAllowed() is false) is what the user sees, with no special-casing needed here
+// or at any call site. Never falls back to executive or any other privileged role.
+const UNCONFIGURED_ROLE_FALLBACK: RoleMetadata = {
+  role: 'executive', // placeholder only — nothing reads RoleMetadata.role; access is gated entirely by allowedModules below
+  englishTitle: 'Unconfigured Role',
+  portalTitleEn: 'Account Setup Required — Contact Your Administrator',
+  portalSlug: 'unconfigured',
+  team: '',
+  department: '',
+  badgeBg: 'var(--role-executive-tint)',
+  badgeText: 'var(--role-executive-ink)',
+  defaultModule: 'dashboard', // unreachable: allowedModules is empty, so no module is ever "allowed"
+  allowedModules: [],
+  canCreateCampaign: false,
+  canManageCapacity: false,
+  canAssignAM: false,
+  description: 'Your role is not configured. Contact an administrator.',
+};
+
 export const getRoleInfo = (role?: UserRole): RoleMetadata => {
   // Employee role values are compared against AGENCY_ROLES' exact keys below.
   // Normalize whitespace/casing first so drift in the stored value (e.g. a
   // trailing space or different case from how it was entered) doesn't get
-  // silently misrouted to the Executive portal.
+  // silently misrouted to the fail-closed fallback.
   const normalizedRole = typeof role === 'string' ? (role.trim().toLowerCase() as UserRole) : role;
 
   if (!normalizedRole || !AGENCY_ROLES[normalizedRole]) {
     if (normalizedRole) {
       console.warn(
-        `getRoleInfo: unrecognized role "${role}" — falling back to the Executive portal. ` +
+        `getRoleInfo: unrecognized role "${role}" — denying module access (fail closed). ` +
           `This is not an intentional mapping; check the role value on the employee record.`
       );
     }
-    return AGENCY_ROLES.executive;
+    return UNCONFIGURED_ROLE_FALLBACK;
   }
   return AGENCY_ROLES[normalizedRole];
 };
