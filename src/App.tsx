@@ -3510,14 +3510,13 @@ export default function App() {
     const deactivatedAt = new Date().toISOString();
 
     if (supabaseActive) {
-      // supabaseRaw bypasses the legacy client-side tasks/users proxies — their update
-      // branches unconditionally mutate in-memory demo data (or no-op for real rows) and
+      // Deactivate the users row FIRST — if RLS rejects it (employee_manageable(),
+      // 20261101700000_users_edit_scope_hardening.sql, scopes a team lead's deactivate rights to
+      // their own department) this throws before the tasks unassign below ever runs, so an
+      // out-of-department attempt never silently unassigns someone's open tasks while leaving
+      // them active. supabaseRaw bypasses the legacy client-side tasks/users proxies — their
+      // update branches unconditionally mutate in-memory demo data (or no-op for real rows) and
       // always return error: null, never touching real Postgres.
-      const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
-      if (error) {
-        console.error('Supabase error unassigning tasks before deactivation:', error);
-        throw error;
-      }
       const { data, error: userErr } = await supabaseRaw
         .from('users')
         .update({ deactivated_at: deactivatedAt })
@@ -3527,13 +3526,18 @@ export default function App() {
         console.error('Supabase error deactivating employee:', userErr);
         throw userErr;
       }
-      // RLS silently filters out a row the caller isn't allowed to touch — employee_manageable()
-      // (20261101700000_users_edit_scope_hardening.sql) scopes a team lead's deactivate rights to
-      // their own department, and a row outside it affects zero rows with no error at all. Thrown
-      // (not swallowed into a generic notification) so EmployeeAdminHub's handleDeactivate can
-      // surface the real reason inline, same as handleUpdateEmployee/handleUpdateDailyLog.
+      // RLS silently filters out a row the caller isn't allowed to touch — a row outside the
+      // caller's department affects zero rows with no error at all. Thrown (not swallowed into a
+      // generic notification) so EmployeeAdminHub's handleDeactivate can surface the real reason
+      // inline, same as handleUpdateEmployee/handleUpdateDailyLog.
       if (!data || data.length === 0) {
         throw new Error('This employee is outside your department — you do not have permission to deactivate them.');
+      }
+
+      const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
+      if (error) {
+        console.error('Supabase error unassigning tasks after deactivation:', error);
+        throw error;
       }
     }
 
