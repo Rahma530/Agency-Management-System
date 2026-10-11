@@ -1366,6 +1366,11 @@ export default function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     setUsersLoadedFromSupabase(false);
+    // Reset on every loadData() run (one per login, logout, or impersonation session swap — see
+    // the authenticatedUser?.id dependency below) so a stale "loaded" from a previous session
+    // never survives into a new one; the gate in the render below only re-resolves once this
+    // run's own fetch attempt finishes.
+    setCustomRolesLoaded(false);
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
 
@@ -1373,11 +1378,24 @@ export default function App() {
     // synchronous in-memory cache (data/customRoles.ts) that getRoleInfo()/can()/the
     // employee-visibility mirrors all read. Kept as its own independent try/catch/finally, run
     // before any other fetch below, so a later fetch throwing never leaves customRolesLoaded
-    // stuck at false (which would spin a custom-role user's loading gate forever). On any
-    // failure, registerCustomRoleData() is simply never called — the cache stays in its
+    // stuck at false (which would spin a custom-role user's loading gate forever).
+    //
+    // Gated on `authenticatedUser`, not just `configured`: this function also runs once on
+    // mount, before supabase.auth's session restoration (restoreSession()/onAuthStateChange, a
+    // separate effect) has necessarily resolved. A fetch sent before the client has an attached
+    // session hits RLS as anon, which for these tables returns an EMPTY ARRAY WITH NO ERROR, not
+    // a rejection — registerCustomRoleData() would then "successfully" register an empty cache,
+    // wrongly marking every custom role as nonexistent. authenticatedUser is only ever set after
+    // a real session is confirmed (restoreSession/onAuthStateChange/handleLoginSuccess all
+    // resolve a session or a verified dbUser row first), and loadData's own dependency on
+    // authenticatedUser?.id guarantees this runs again — with a real session already attached —
+    // the moment that happens, including after an impersonation session swap (a genuine auth
+    // session change, not just a local state overlay).
+    //
+    // On any failure, registerCustomRoleData() is simply never called — the cache stays in its
     // pre-load fail-closed state (every custom-role lookup resolves to "not found") — while
     // customRolesLoaded still flips to true so the loading gate below resolves.
-    if (configured) {
+    if (configured && authenticatedUser) {
       try {
         const [deptRes, roleRes, moduleRes, permRes, deptPermRes] = await Promise.all([
           supabase.from('departments').select('*'),
@@ -1403,11 +1421,15 @@ export default function App() {
       } finally {
         setCustomRolesLoaded(true);
       }
-    } else {
+    } else if (!configured) {
       // No Supabase configured (offline/demo mode) — there is no cache to load, so the gate
       // resolves immediately; custom roles simply stay unresolvable, same as the pre-load state.
       setCustomRolesLoaded(true);
     }
+    // else: configured but not yet authenticated — leave customRolesLoaded false. Nothing reads
+    // it while authenticatedUser is null (App.tsx returns the EmployeeLogin screen first), and
+    // the next loadData() run (fired by authenticatedUser?.id changing once login completes)
+    // performs the real, authenticated fetch above.
 
     // 1. Fetch employees directly from Postgres (bypassing the legacy client-side
     // users proxy in lib/supabase.ts — real RLS on public.users is the actual

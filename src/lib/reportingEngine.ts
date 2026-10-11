@@ -248,11 +248,14 @@ export function resolveClientsForSubject(
       // unreachable today and returns [] exactly as it always has if that ever changes.
       if (isBuiltInRole(subject.role)) return [];
       // Custom role: resolve via its department's mapped ServiceType (see
-      // getDepartmentMappedServiceType above). No mapped service — e.g. a shared-resource or
-      // purely internal department — means no report-able client pool, not a guess.
+      // getDepartmentMappedServiceType above), then narrow to clients actually ASSIGNED to this
+      // user — the same agent-level filter every built-in agent role above applies (a custom
+      // role has no team-lead equivalent here; it is always agent-level). No mapped service —
+      // e.g. a shared-resource or purely internal department — means no report-able client
+      // pool, not a guess.
       const deptId = getCustomRoleDepartmentId(subject.role);
       const mappedService = deptId ? getDepartmentMappedServiceType(deptId) : null;
-      return mappedService ? resolveDepartmentClients(mappedService, clients) : [];
+      return mappedService ? resolveDepartmentClients(mappedService, clients).filter((c) => isAssigned(c, mappedService)) : [];
     }
   }
 }

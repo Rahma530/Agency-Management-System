@@ -394,8 +394,16 @@ const UNCONFIGURED_ROLE_FALLBACK: RoleMetadata = {
 // "everything else" (a custom role, or truly unknown) — every other consumer should call this
 // rather than re-deriving the same check, so a future built-in role addition only has to update
 // AGENCY_ROLES itself.
+//
+// Normalizes the same way getRoleInfo() below does before comparing. Not load-bearing against
+// the database today — custom_roles_id_shape_check forces every custom_roles.id to already be
+// lowercase, and users_role_valid_guard_trigger requires an exact match against either that id
+// or one of these 19 literals, so a stored role value can't actually drift in case. It's here so
+// every OTHER caller of this function (App.tsx's custom-role loading gate,
+// CampaignManagementModule.tsx, reportingEngine.ts) gets the same fail-safe behavior getRoleInfo
+// already has, rather than each one needing to remember to normalize first.
 export const isBuiltInRole = (role: UserRole): role is BuiltInRole =>
-  Object.prototype.hasOwnProperty.call(AGENCY_ROLES, role);
+  Object.prototype.hasOwnProperty.call(AGENCY_ROLES, typeof role === 'string' ? role.trim().toLowerCase() : role);
 
 export const getRoleInfo = (role?: UserRole): RoleMetadata => {
   // Employee role values are compared against AGENCY_ROLES' exact keys below.
@@ -426,8 +434,11 @@ export const getRoleInfo = (role?: UserRole): RoleMetadata => {
       portalSlug: customRole.portal_slug,
       team: customRole.team ?? '',
       department: customRole.department_id ?? '',
-      badgeBg: customRole.badge_bg || 'var(--role-executive-tint)',
-      badgeText: customRole.badge_text || 'var(--role-executive-ink)',
+      // Neutral, generic UI tokens — not one of the role-specific --role-*-tint/-ink pairs above,
+      // so an admin-created role with no badge color set of its own never looks like it was
+      // assigned the Executive badge by default.
+      badgeBg: customRole.badge_bg || 'var(--control-surface)',
+      badgeText: customRole.badge_text || 'var(--text-mid)',
       defaultModule: customRole.default_module as AppModuleId,
       allowedModules: getCustomRoleModules(customRole.id) as AppModuleId[],
       canCreateCampaign: false,

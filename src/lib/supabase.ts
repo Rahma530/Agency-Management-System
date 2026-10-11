@@ -28,6 +28,15 @@ import { can } from './capabilities';
 const DEFAULT_URL = 'https://placeholder-project.supabase.co';
 const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder_anon_key';
 
+// import.meta is always defined in an ES module, but import.meta.env — populated by Vite's own
+// plugin — is not: a plain Node/tsx run (e.g. scripts/checkCustomRolesAndCapabilities.ts
+// importing isEmployeeAccessibleUnderRLS/getAllowedEmployeeRolesUnderRLS below) has no Vite
+// involved at all, so `import.meta.env` is undefined there and every read off it would throw at
+// module load time. Falling back to {} makes every VITE_*/DEV read below resolve to undefined —
+// exactly the "not configured" state this module already handles via isSupabaseConfigured() and
+// the DEFAULT_URL/DEFAULT_KEY placeholders, so this changes nothing for the real Vite app build.
+const viteEnv: Record<string, string | boolean | undefined> = (import.meta as any).env || {};
+
 export function sanitizeSupabaseUrl(url?: string): string {
   if (!url || typeof url !== 'string') return DEFAULT_URL;
   let trimmed = url.trim();
@@ -58,8 +67,8 @@ export function sanitizeSupabaseKey(key?: string): string {
 }
 
 export const isSupabaseConfigured = (): boolean => {
-  const rawUrl = import.meta.env.VITE_SUPABASE_URL;
-  const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const rawUrl = viteEnv.VITE_SUPABASE_URL as string | undefined;
+  const rawKey = viteEnv.VITE_SUPABASE_ANON_KEY as string | undefined;
   if (!rawUrl || !rawKey) return false;
 
   const cleanUrl = sanitizeSupabaseUrl(rawUrl);
@@ -601,8 +610,8 @@ function createSanitizedFetch(apiKey: string): typeof fetch {
 
 function getRawSupabase(): SupabaseClient {
   if (!rawClientInstance) {
-    const rawUrl = import.meta.env.VITE_SUPABASE_URL;
-    const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const rawUrl = viteEnv.VITE_SUPABASE_URL as string | undefined;
+    const rawKey = viteEnv.VITE_SUPABASE_ANON_KEY as string | undefined;
 
     const targetUrl = isSupabaseConfigured() ? sanitizeSupabaseUrl(rawUrl) : DEFAULT_URL;
     const targetKey = isSupabaseConfigured() ? sanitizeSupabaseKey(rawKey) : DEFAULT_KEY;
@@ -1242,7 +1251,7 @@ export const supabase = getSupabase();
 export const supabaseRaw: SupabaseClient = getRawSupabase();
 
 // Dev-only: expose supabase globally for browser verification and direct security testing
-if (import.meta.env.DEV && typeof window !== 'undefined') {
+if (viteEnv.DEV && typeof window !== 'undefined') {
   (window as any).supabase = supabase;
 }
 
