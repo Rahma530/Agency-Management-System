@@ -3,7 +3,7 @@
  * Matched strictly to existing Supabase tables (16 tables) and Row Level Security (RLS)
  */
 
-export type UserRole =
+export type BuiltInRole =
   | 'executive'                 // Executive Management (C-level)
   | 'head_of_technical'         // Head of Technical
   | 'sales'                     // Sales Team (Sales)
@@ -32,6 +32,66 @@ export type UserRole =
   // read-only capacity visibility for the same two roles. No employee-management rights
   // (edit/deactivate/role-change) anywhere.
   | 'marketing_manager';         // Marketing Manager
+
+// users.role may also hold an admin-created custom role (public.custom_roles.id) — validated at
+// the DB layer by users_role_valid_guard (20261101500000_users_role_validation_trigger.sql), not
+// by TypeScript. Widened to `| string` so a custom role's id type-checks everywhere a UserRole is
+// expected, without losing BuiltInRole's own exhaustiveness guarantee — code that must stay
+// exhaustive over the 19 known roles (e.g. Record<BuiltInRole, X>) should use BuiltInRole instead
+// of UserRole.
+export type UserRole = BuiltInRole | string;
+
+// 17. departments (20261101400000_custom_roles_departments_foundation.sql)
+export interface DepartmentRecord {
+  id: string;
+  label: string;
+  is_shared_resource: boolean;
+  is_active: boolean;
+  created_at?: string;
+}
+
+// 18. department_member_teams
+export interface DepartmentMemberTeamRecord {
+  department_id: string;
+  team_value: string;
+}
+
+// 19. custom_roles — id is the literal value stored in users.role for an admin-created role.
+export interface CustomRoleRecord {
+  id: string;
+  english_title: string;
+  arabic_title?: string | null;
+  portal_title_en: string;
+  portal_slug: string;
+  team?: string | null;
+  department_id?: string | null;
+  badge_bg?: string | null;
+  badge_text?: string | null;
+  default_module: string;
+  is_active: boolean;
+  created_by?: string | null;
+  created_at?: string;
+}
+
+// 20. custom_role_modules — which AppModuleId values (src/data/roles.ts) a custom role may route to.
+export interface CustomRoleModuleRecord {
+  role_id: string;
+  module_id: string;
+}
+
+// 21. custom_role_permissions — per-role override on top of a department's default permissions
+// (public.department_permissions, not separately typed here — read via the same two columns).
+export interface CustomRolePermissionRecord {
+  role_id: string;
+  permission_key: string;
+  granted: boolean;
+}
+
+// 22. department_permissions — a department's default grantable permissions (presence = granted).
+export interface DepartmentPermissionRecord {
+  department_id: string;
+  permission_key: string;
+}
 
 export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface' | 'creation' | 'branding';
 export type ClientSector = 'E-Commerce' | 'Service';

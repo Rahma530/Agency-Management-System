@@ -1,4 +1,5 @@
-import { UserRole } from '../types/database';
+import { BuiltInRole, UserRole } from '../types/database';
+import { getActiveCustomRole, getCustomRoleModules, isCustomRoleCacheLoaded } from './customRoles';
 
 export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates';
 
@@ -20,7 +21,7 @@ export interface RoleMetadata {
   canAssignAM?: boolean;
 }
 
-export const AGENCY_ROLES: Record<UserRole, RoleMetadata> = {
+export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
   executive: {
     role: 'executive',
     englishTitle: 'Executive Management (C-Level)',
@@ -389,23 +390,62 @@ const UNCONFIGURED_ROLE_FALLBACK: RoleMetadata = {
   description: 'Your role is not configured. Contact an administrator.',
 };
 
+// True for one of the 19 keys in AGENCY_ROLES. The one place that distinguishes "built-in" from
+// "everything else" (a custom role, or truly unknown) — every other consumer should call this
+// rather than re-deriving the same check, so a future built-in role addition only has to update
+// AGENCY_ROLES itself.
+export const isBuiltInRole = (role: UserRole): role is BuiltInRole =>
+  Object.prototype.hasOwnProperty.call(AGENCY_ROLES, role);
+
 export const getRoleInfo = (role?: UserRole): RoleMetadata => {
   // Employee role values are compared against AGENCY_ROLES' exact keys below.
   // Normalize whitespace/casing first so drift in the stored value (e.g. a
   // trailing space or different case from how it was entered) doesn't get
   // silently misrouted to the fail-closed fallback.
-  const normalizedRole = typeof role === 'string' ? (role.trim().toLowerCase() as UserRole) : role;
+  const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : role;
 
-  if (!normalizedRole || !AGENCY_ROLES[normalizedRole]) {
-    if (normalizedRole) {
-      console.warn(
-        `getRoleInfo: unrecognized role "${role}" — denying module access (fail closed). ` +
-          `This is not an intentional mapping; check the role value on the employee record.`
-      );
-    }
+  if (!normalizedRole) {
     return UNCONFIGURED_ROLE_FALLBACK;
   }
-  return AGENCY_ROLES[normalizedRole];
+
+  if (isBuiltInRole(normalizedRole)) {
+    return AGENCY_ROLES[normalizedRole];
+  }
+
+  // Not a built-in role — check the custom-roles cache (populated once at app bootstrap by
+  // App.tsx; see src/data/customRoles.ts) before falling back. An inactive custom role, or one
+  // that simply isn't in the cache yet (e.g. this is called before the bootstrap fetch finishes),
+  // resolves exactly like an unknown role — fail closed, never a guess.
+  const customRole = getActiveCustomRole(normalizedRole);
+  if (customRole) {
+    return {
+      role: customRole.id,
+      englishTitle: customRole.english_title,
+      arabicTitle: customRole.arabic_title ?? undefined,
+      portalTitleEn: customRole.portal_title_en,
+      portalSlug: customRole.portal_slug,
+      team: customRole.team ?? '',
+      department: customRole.department_id ?? '',
+      badgeBg: customRole.badge_bg || 'var(--role-executive-tint)',
+      badgeText: customRole.badge_text || 'var(--role-executive-ink)',
+      defaultModule: customRole.default_module as AppModuleId,
+      allowedModules: getCustomRoleModules(customRole.id) as AppModuleId[],
+      canCreateCampaign: false,
+      canManageCapacity: false,
+      canAssignAM: false,
+      description: '',
+    };
+  }
+
+  // Only warn once the cache has actually finished loading — before that, "not found yet" is
+  // expected for a legitimate custom role and not worth logging as a configuration problem.
+  if (isCustomRoleCacheLoaded()) {
+    console.warn(
+      `getRoleInfo: unrecognized role "${role}" — denying module access (fail closed). ` +
+        `This is not an intentional mapping; check the role value on the employee record.`
+    );
+  }
+  return UNCONFIGURED_ROLE_FALLBACK;
 };
 
 export const isModuleAllowed = (role?: UserRole, moduleId?: AppModuleId): boolean => {

@@ -16,6 +16,14 @@ import {
   INITIAL_ASSIGNMENTS,
 } from '../data/initialData';
 import { getRoleInfo } from '../data/roles';
+import {
+  getActiveCustomRole,
+  getCustomRoleDepartmentId,
+  getCustomRoleDepartmentPeerIds,
+  getSharedResourceCustomRoleIds,
+  isSharedResourceCustomRole,
+} from '../data/customRoles';
+import { can } from './capabilities';
 
 const DEFAULT_URL = 'https://placeholder-project.supabase.co';
 const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder_anon_key';
@@ -124,6 +132,16 @@ export function isEmployeeAccessibleUnderRLS(
     return viewer.role !== 'sales';
   }
 
+  // 4b. Shared-resource custom roles (e.g. a custom role in the Creative & Design department) are
+  // visible to every non-sales caller, exactly like graphic_designer/video_editor above — mirrors
+  // employee_visible()'s additive arm (20261101600000_custom_roles_employee_visibility.sql).
+  // Placed here, before any built-in role's own early-return branch below, so it applies no
+  // matter what the VIEWER's role is (built-in or custom) — this is purely a property of the
+  // TARGET's role, same reasoning as the check immediately above.
+  if (isSharedResourceCustomRole(targetEmployee.role)) {
+    return viewer.role !== 'sales';
+  }
+
   // 3. Team Leaders: see ONLY employees belonging to their own team (+ shared resources handled above)
   if (viewer.role === 'am_team_lead') {
     return targetEmployee.role === 'am_agent' || targetEmployee.role === 'am_team_lead';
@@ -183,6 +201,20 @@ export function isEmployeeAccessibleUnderRLS(
 
   if (viewer.role === 'social_media_agent') {
     return targetEmployee.role === 'social_media_agent' || targetEmployee.role === 'social_media_team_lead';
+  }
+
+  // Department peers for a custom-role VIEWER — only with employees.view_department_peers
+  // granted (department default or per-role override), mirroring employee_visible()'s other
+  // additive arm exactly. can() always returns false for a built-in viewer by construction, so
+  // this can never change behavior for any of the 19 built-in roles — every built-in role either
+  // already returned above via its own branch, or falls through to `return false` below exactly
+  // as it did before this check existed.
+  if (
+    can(viewer, 'employees.view_department_peers') &&
+    getActiveCustomRole(targetEmployee.role) &&
+    getCustomRoleDepartmentId(viewer.role) === getCustomRoleDepartmentId(targetEmployee.role)
+  ) {
+    return true;
   }
 
   return false;
@@ -259,7 +291,19 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
     return ['sales'];
   }
 
-  return ['graphic_designer', 'video_editor'];
+  // Unmatched (custom) role. This function is only ever used as a PRE-FILTER — the real
+  // authorization decision for each row returned is isEmployeeAccessibleUnderRLS(), applied
+  // afterward on the actual rows (see createUsersRLSQueryBuilder below) — so this list only needs
+  // to be wide enough to never exclude a row that function would otherwise allow, mirroring
+  // employee_visible()'s additive arms: self (the viewer's own role, previously missing here —
+  // a custom-role employee could not even see their own row through this path before), the
+  // shared creative pool, every shared-resource custom role, and (only if granted) this role's
+  // own department peers.
+  const sharedResourceCustomRoles = getSharedResourceCustomRoleIds();
+  const peerRoles = can({ role: viewerRole }, 'employees.view_department_peers')
+    ? getCustomRoleDepartmentPeerIds(viewerRole)
+    : [];
+  return [viewerRole, 'graphic_designer', 'video_editor', ...sharedResourceCustomRoles, ...peerRoles];
 }
 
 /**

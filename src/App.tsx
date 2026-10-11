@@ -101,6 +101,11 @@ import {
   ClientAccessFields,
   ClientLifecyclePeriodRecord,
   NON_SENSITIVE_CLIENT_COLUMNS,
+  DepartmentRecord,
+  CustomRoleRecord,
+  CustomRoleModuleRecord,
+  CustomRolePermissionRecord,
+  DepartmentPermissionRecord,
 } from './types/database';
 import {
   INITIAL_USERS,
@@ -115,8 +120,10 @@ import {
   getRoleInfo,
   isModuleAllowed,
   getPortalSlug,
+  isBuiltInRole,
   AppModuleId,
 } from './data/roles';
+import { registerCustomRoleData } from './data/customRoles';
 import { EmployeeLogin } from './components/EmployeeLogin';
 import { EmployeeTestingMode, type GeneratedTestPassword, type TestAccountStatus } from './components/EmployeeTestingMode';
 import { EmployeeImpersonation } from './components/EmployeeImpersonation';
@@ -185,6 +192,13 @@ function readImpersonationHandoff(): ImpersonationHandoff | null {
 export default function App() {
   const [supabaseActive, setSupabaseActive] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Tracks whether the custom-roles/departments bootstrap (registerCustomRoleData()) has
+  // finished — successfully or not. Only gates rendering for a user whose role is NOT one of
+  // the 19 built-in roles: their getRoleInfo()/can() resolution never depends on this cache, so
+  // they see zero change. A custom-role user sees a brief loading state instead of a flash of
+  // "no access" while the cache is still in its fail-closed pre-load state.
+  const [customRolesLoaded, setCustomRolesLoaded] = useState(false);
 
   // Active module tab
   const [activeTab, setActiveTab] = useState<AppModule>('onboarding');
@@ -1354,6 +1368,46 @@ export default function App() {
     setUsersLoadedFromSupabase(false);
     const configured = isSupabaseConfigured();
     setSupabaseActive(configured);
+
+    // 0. Fetch the custom-roles/departments foundation tables and register them in the
+    // synchronous in-memory cache (data/customRoles.ts) that getRoleInfo()/can()/the
+    // employee-visibility mirrors all read. Kept as its own independent try/catch/finally, run
+    // before any other fetch below, so a later fetch throwing never leaves customRolesLoaded
+    // stuck at false (which would spin a custom-role user's loading gate forever). On any
+    // failure, registerCustomRoleData() is simply never called — the cache stays in its
+    // pre-load fail-closed state (every custom-role lookup resolves to "not found") — while
+    // customRolesLoaded still flips to true so the loading gate below resolves.
+    if (configured) {
+      try {
+        const [deptRes, roleRes, moduleRes, permRes, deptPermRes] = await Promise.all([
+          supabase.from('departments').select('*'),
+          supabase.from('custom_roles').select('*'),
+          supabase.from('custom_role_modules').select('*'),
+          supabase.from('custom_role_permissions').select('*'),
+          supabase.from('department_permissions').select('*'),
+        ]);
+        const firstError = deptRes.error || roleRes.error || moduleRes.error || permRes.error || deptPermRes.error;
+        if (firstError) {
+          console.error('Failed to load custom roles/departments from Supabase:', firstError);
+        } else {
+          registerCustomRoleData(
+            (deptRes.data as DepartmentRecord[]) || [],
+            (roleRes.data as CustomRoleRecord[]) || [],
+            (moduleRes.data as CustomRoleModuleRecord[]) || [],
+            (permRes.data as CustomRolePermissionRecord[]) || [],
+            (deptPermRes.data as DepartmentPermissionRecord[]) || []
+          );
+        }
+      } catch (err) {
+        console.error('Error fetching custom roles/departments from Supabase:', err);
+      } finally {
+        setCustomRolesLoaded(true);
+      }
+    } else {
+      // No Supabase configured (offline/demo mode) — there is no cache to load, so the gate
+      // resolves immediately; custom roles simply stay unresolvable, same as the pre-load state.
+      setCustomRolesLoaded(true);
+    }
 
     // 1. Fetch employees directly from Postgres (bypassing the legacy client-side
     // users proxy in lib/supabase.ts — real RLS on public.users is the actual
@@ -5027,6 +5081,21 @@ export default function App() {
           realTestEmail={testHandoff?.email}
         />
       </>
+    );
+  }
+
+  // A custom-role user's getRoleInfo()/allowedModules resolution depends on the custom-roles
+  // cache (data/customRoles.ts) having finished loading — until then it fail-closes to "no
+  // modules", which would otherwise flash the AccessDenied screen below on every login. Built-in
+  // roles never depend on that cache, so this never changes what they see or when they see it.
+  if (!isBuiltInRole(currentUser.role) && !customRolesLoaded) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: 'var(--gradient-page)', color: 'var(--lilac)' }}
+      >
+        <div className="text-sm text-[#a89bb8]">Loading your access permissions…</div>
+      </div>
     );
   }
 
