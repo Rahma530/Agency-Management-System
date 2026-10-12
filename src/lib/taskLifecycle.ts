@@ -1,4 +1,4 @@
-import { TaskRecord, TaskStatus, UserRecord } from '../types/database';
+import { ClientRecord, TaskAssigneeRecord, TaskRecord, TaskStatus, UserRecord } from '../types/database';
 
 // Single source of truth for the task lifecycle's linear "Advance Status" progression — shared by
 // MyWorkHub.tsx and DailyOperationsModule.tsx, which previously each hardcoded their own copy of
@@ -35,3 +35,64 @@ export const canCloseTask = (
 // level. Combine with canCloseTask() for the full gate on rendering/enabling that control.
 export const canSubmitTaskForClosing = (task: Pick<TaskRecord, 'status' | 'done_link'>): boolean =>
   task.status === 'completed' && !!task.done_link?.trim();
+
+// The real, multi-assignee membership for a task — task_assignees rows when any exist, falling
+// back to the legacy single `assigned_to` column only for an older task that predates the
+// task_assignees table (set_task_assignees always keeps both in sync going forward, via the
+// reverse trigger, so a task with any real assignee history always has task_assignees rows).
+// Every "is this task mine / does this cover me" check below the Create/Edit form must go
+// through this — reading tasks.assigned_to alone silently drops every co-assignee added after
+// the first.
+export const resolveTaskAssigneeIds = (
+  taskId: string,
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id'>[],
+  legacyAssignedTo?: string | null
+): string[] => {
+  const ids = taskAssignees.filter((row) => row.task_id === taskId).map((row) => row.user_id);
+  return ids.length > 0 ? ids : (legacyAssignedTo ? [legacyAssignedTo] : []);
+};
+
+// Client-side UI mirror of set_task_assignees' permission gate
+// (supabase/migrations/20261105000000_task_assignees_rpcs.sql, PR 4a — not yet merged/applied,
+// read there for the authoritative SQL). Deliberately only decides whether to SHOW the "Add
+// assignee"/remove controls in the Details modal; the RPC itself is the only real enforcement,
+// and a wrong `true` here just means a visible RPC error on submit, never a silent bypass. Can
+// under-show for a team-lead door when `users`/`taskDirectoryUsers` doesn't happen to include
+// every relevant team/role (both are RLS- or caller-scoped rosters, not guaranteed complete) —
+// in that case the control stays hidden rather than erroring, a safe direction to be wrong in.
+export const canEditTaskAssignees = (
+  task: Pick<TaskRecord, 'id' | 'created_by' | 'client_id' | 'assigned_to'>,
+  currentUser: Pick<UserRecord, 'id' | 'role' | 'team'>,
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id'>[],
+  users: Pick<UserRecord, 'id' | 'team'>[],
+  clients: Pick<ClientRecord, 'id' | 'am_agent_id'>[]
+): boolean => {
+  if (currentUser.role === 'sales') return false;
+
+  const assigneeIds = resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to);
+  const isAdmin = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
+  const isCreator = task.created_by === currentUser.id;
+  const isCurrentAssignee = assigneeIds.includes(currentUser.id);
+  if (isAdmin || isCreator || isCurrentAssignee) return true;
+
+  const client = task.client_id ? clients.find((c) => c.id === task.client_id) : undefined;
+  if (currentUser.role === 'am_agent' && !!client && client.am_agent_id === currentUser.id) return true;
+
+  const teamOf = (userId: string | null | undefined) => userId ? users.find((u) => u.id === userId)?.team : undefined;
+
+  if (currentUser.role === 'am_team_lead' && !!client?.am_agent_id) {
+    if (teamOf(client.am_agent_id) === currentUser.team) return true;
+  }
+
+  const TEAM_LEAD_ROLES = ['am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'];
+  if (TEAM_LEAD_ROLES.includes(currentUser.role)) {
+    const creatorTeam = teamOf(task.created_by);
+    const assigneeTeams = assigneeIds.map(teamOf);
+    if (creatorTeam === currentUser.team || assigneeTeams.includes(currentUser.team)) return true;
+    if (currentUser.role === 'seo_team_lead' && (creatorTeam === 'Programming' || assigneeTeams.includes('Programming'))) {
+      return true;
+    }
+  }
+
+  return false;
+};

@@ -5776,6 +5776,7 @@ export default function App() {
                   clients={clients}
                   assignments={assignments}
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
                   dailyLogs={dailyLogs}
                   extraNotes={extraNotes}
                   capacityLogs={capacityLogs}
@@ -5980,6 +5981,7 @@ export default function App() {
               <div className="space-y-6">
                 <DailyOperationsModule
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
                   users={users}
                   taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}

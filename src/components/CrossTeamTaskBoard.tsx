@@ -55,7 +55,7 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
-import { isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
+import { isTaskDone, canCloseTask, canSubmitTaskForClosing, canEditTaskAssignees, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { getOperationalTeams, fetchAssignableEmployees } from '../lib/departmentStaffing';
@@ -64,6 +64,7 @@ import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
 import { TaskAttachmentPicker } from './TaskAttachmentPicker';
+import { SearchableMultiSelect } from './SearchableMultiSelect';
 import type { CreateTaskFormInput, StagedTaskAttachment } from '../lib/taskOperations';
 import {
   TaskCreateRecoveryRecord,
@@ -224,6 +225,47 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   useEffect(() => {
     setDoneLinkDraft(selectedTaskDetails?.done_link || '');
   }, [selectedTaskDetails?.id]);
+  // Details-modal "Assignees" section (re-assign chain, section B): the org-wide roster for "Add
+  // assignee" — deliberately NOT fetchAssignableEmployees(task.team) like the Create/Edit forms,
+  // since this control must offer someone from ANY department (e.g. an AM adding a graphic
+  // designer to a social_media task). assignable_employees() only accepts one department at a
+  // time, so this merges one call per operational team; fetched lazily, once, the first time any
+  // Details modal with edit rights actually opens the add-picker — not on every board render.
+  const [orgWideAssignableEmployees, setOrgWideAssignableEmployees] = useState<AssignableEmployee[] | null>(null);
+  const [isLoadingOrgWideEmployees, setIsLoadingOrgWideEmployees] = useState(false);
+  const loadOrgWideAssignableEmployees = () => {
+    if (orgWideAssignableEmployees || isLoadingOrgWideEmployees) return;
+    setIsLoadingOrgWideEmployees(true);
+    Promise.all(getOperationalTeams().map((team) => fetchAssignableEmployees(team)))
+      .then((rosters) => {
+        const byId = new Map<string, AssignableEmployee>();
+        rosters.flat().forEach((employee) => byId.set(employee.id, employee));
+        setOrgWideAssignableEmployees([...byId.values()]);
+      })
+      .finally(() => setIsLoadingOrgWideEmployees(false));
+  };
+  const [isAddAssigneeOpen, setIsAddAssigneeOpen] = useState(false);
+  const [assigneeActionError, setAssigneeActionError] = useState<string | null>(null);
+  const [isSavingAssignees, setIsSavingAssignees] = useState(false);
+  useEffect(() => {
+    setIsAddAssigneeOpen(false);
+    setAssigneeActionError(null);
+  }, [selectedTaskDetails?.id]);
+  const [addAssigneeCapacitySnapshot, setAddAssigneeCapacitySnapshot] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!isAddAssigneeOpen || !orgWideAssignableEmployees) return;
+    let cancelled = false;
+    onGetCapacitySnapshot(orgWideAssignableEmployees.map((employee) => employee.id))
+      .then((snapshot) => {
+        if (!cancelled) setAddAssigneeCapacitySnapshot(snapshot);
+      })
+      .catch(() => {
+        if (!cancelled) setAddAssigneeCapacitySnapshot({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAddAssigneeOpen, orgWideAssignableEmployees, onGetCapacitySnapshot]);
   const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
   // Set when the Create Task modal was opened via "+ Add Subtask" — locks
   // the client to the parent's and attaches parent_task_id on submit.
@@ -595,18 +637,32 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // derives from this, so filtering here keeps them all in sync.
   const topLevelTasks = useMemo(() => tasks.filter((t) => !t.parent_task_id), [tasks]);
 
-  // 1. Check user visibility based on RLS rules
+  // 1. Check user visibility based on RLS rules. `tasks` (and so `topLevelTasks`) is already
+  // exactly what tasks_select_rls/task_visible_v2 returned for this viewer — 'all' below shows
+  // that set as-is, on purpose. 'my_tasks'/'my_team' are convenience NARROWINGS of that same set,
+  // not a separate access decision, so they must never show MORE than 'all' and must never drop
+  // a row 'all' already includes for a reason other than the toggle's own stated meaning.
+  //
+  // Audit finding (visibility audit, frontend): both previously read only the legacy single
+  // `assigned_to` column — a co-assignee added via set_task_assignees after the first one is
+  // invisible to both toggles even though 'all' (and the real RLS) already shows them the task.
+  // Fixed via resolveTaskAssigneeIds (task_assignees membership, falling back to legacy
+  // assigned_to only for a task with no task_assignees rows at all).
   const userVisibleTasks = useMemo(() => {
-    // Under Supabase RLS, users see tasks they have permission to access.
-    // If visibilityScope is toggled by user in UI:
     if (visibilityScope === 'my_tasks') {
-      return topLevelTasks.filter((t) => t.assigned_to === currentUserId);
+      return topLevelTasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUserId));
     }
     if (visibilityScope === 'my_team' && currentUser?.team) {
-      return topLevelTasks.filter((t) => t.team === currentUser.team || t.assigned_to === currentUserId);
+      return topLevelTasks.filter((t) => {
+        if (t.team === currentUser.team) return true;
+        const creatorTeam = taskDirectoryUsers.find((u) => u.id === t.created_by)?.team;
+        if (creatorTeam === currentUser.team) return true;
+        return resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to)
+          .some((id) => taskDirectoryUsers.find((u) => u.id === id)?.team === currentUser.team);
+      });
     }
     return topLevelTasks;
-  }, [topLevelTasks, visibilityScope, currentUserId, currentUser]);
+  }, [topLevelTasks, visibilityScope, currentUserId, currentUser, taskAssignees, taskDirectoryUsers]);
 
   // 2. DASHBOARD KPI METRICS (Exact 7 requested indicators):
   // - Total Tasks
@@ -823,6 +879,40 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setIsCreateModalOpen(false);
     setNewAttachments([]);
     setNewBatchId(crypto.randomUUID());
+  };
+
+  // Details-modal "Add assignee"/remove (re-assign chain, section B). Both go through
+  // onUpdateTask(taskId, {}, fullNewAssigneeList) — an empty `updates` object means
+  // handleUpdateTask (App.tsx) skips the tasks-row update entirely and only calls
+  // set_task_assignees, keeping this fully separate from ordinary task-field edits. The RPC
+  // itself re-derives add/remove from the full list it's given and refuses to drop the creator;
+  // this only needs to pass the right full list and surface whatever error comes back.
+  const handleAddAssignee = async (userId: string) => {
+    if (!selectedTaskDetails || !onUpdateTask) return;
+    setAssigneeActionError(null);
+    setIsSavingAssignees(true);
+    try {
+      const currentIds = resolveTaskAssigneeIds(selectedTaskDetails.id, taskAssignees, selectedTaskDetails.assigned_to);
+      await onUpdateTask(selectedTaskDetails.id, {}, [...currentIds, userId]);
+    } catch (err) {
+      setAssigneeActionError(err instanceof Error ? err.message : 'Unable to add this assignee.');
+    } finally {
+      setIsSavingAssignees(false);
+    }
+  };
+
+  const handleRemoveAssignee = async (userId: string) => {
+    if (!selectedTaskDetails || !onUpdateTask) return;
+    setAssigneeActionError(null);
+    setIsSavingAssignees(true);
+    try {
+      const currentIds = resolveTaskAssigneeIds(selectedTaskDetails.id, taskAssignees, selectedTaskDetails.assigned_to);
+      await onUpdateTask(selectedTaskDetails.id, {}, currentIds.filter((id) => id !== userId));
+    } catch (err) {
+      setAssigneeActionError(err instanceof Error ? err.message : 'Unable to remove this assignee.');
+    } finally {
+      setIsSavingAssignees(false);
+    }
   };
 
   const openEditModal = (task: TaskRecord) => {
@@ -1806,36 +1896,99 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Client & Assignee */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
-                  <label className="text-[10px] text-stone-400 block mb-1">Client:</label>
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-purple-400" />
-                    <span className="text-xs font-bold text-white">
-                      {clients.find((c) => c.id === selectedTaskDetails.client_id)?.name || 'Unassigned'}
-                    </span>
-                  </div>
+              {/* Client */}
+              <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
+                <label className="text-[10px] text-stone-400 block mb-1">Client:</label>
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-purple-400" />
+                  <span className="text-xs font-bold text-white">
+                    {clients.find((c) => c.id === selectedTaskDetails.client_id)?.name || 'Unassigned'}
+                  </span>
                 </div>
+              </div>
 
-                <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
-                  <label className="text-[10px] text-stone-400 block mb-1">Assignees:</label>
-                  <div className="flex items-start gap-2">
-                    <User className="w-4 h-4 text-purple-400" />
-                    <div className="flex flex-wrap gap-1">
-                      {(() => {
-                        const ids = taskAssignees.filter((row) => row.task_id === selectedTaskDetails.id).map((row) => row.user_id);
-                        const resolvedIds = ids.length > 0 ? ids : (selectedTaskDetails.assigned_to ? [selectedTaskDetails.assigned_to] : []);
-                        if (resolvedIds.length === 0) return <span className="text-xs font-semibold text-amber-400">Unassigned</span>;
-                        return resolvedIds.map((id) => (
-                          <span key={id} className="rounded-full bg-purple-900/40 px-2 py-0.5 text-[10px] font-semibold text-purple-200">
-                            {taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee'}
-                          </span>
-                        ));
-                      })()}
-                    </div>
-                  </div>
-                </div>
+              {/* Assignees (re-assign chain, section B): the creator's chip is never removable
+                  (the RPC enforces this too; this just avoids showing a control that would only
+                  ever fail). Only a viewer canEditTaskAssignees() mirrors as eligible gets the
+                  remove "x"/Add control — everyone else sees the exact same chips read-only. */}
+              <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
+                <label className="text-[10px] text-stone-400 block mb-1">Assignees:</label>
+                {(() => {
+                  const resolvedIds = resolveTaskAssigneeIds(selectedTaskDetails.id, taskAssignees, selectedTaskDetails.assigned_to);
+                  const canEdit = !!currentUser && !!onUpdateTask &&
+                    canEditTaskAssignees(selectedTaskDetails, currentUser, taskAssignees, users, clients);
+                  const addAssigneeOptions = (orgWideAssignableEmployees || [])
+                    .filter((employee) => !resolvedIds.includes(employee.id))
+                    .map((employee) => {
+                      const used = addAssigneeCapacitySnapshot[employee.id];
+                      const limit = resolveCapacityLimit(employee as UserRecord);
+                      const badge = used === undefined || limit === 0 ? CAPACITY_UNKNOWN_INDICATOR : `${used}/${limit}`;
+                      return { id: employee.id, label: employee.name, sublabel: employee.team || employee.role, badge };
+                    });
+                  return (
+                    <>
+                      <div className="flex items-start gap-2">
+                        <User className="w-4 h-4 mt-0.5 text-purple-400 shrink-0" />
+                        <div className="flex flex-wrap gap-1">
+                          {resolvedIds.length === 0 && <span className="text-xs font-semibold text-amber-400">Unassigned</span>}
+                          {resolvedIds.map((id) => {
+                            const isCreatorChip = id === selectedTaskDetails.created_by;
+                            const removable = canEdit && !isCreatorChip;
+                            return (
+                              <span
+                                key={id}
+                                className="flex items-center gap-1 rounded-full bg-purple-900/40 px-2 py-0.5 text-[10px] font-semibold text-purple-200"
+                              >
+                                {taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee'}
+                                {isCreatorChip && <span className="text-purple-400">(creator)</span>}
+                                {removable && (
+                                  <button
+                                    type="button"
+                                    disabled={isSavingAssignees}
+                                    onClick={() => handleRemoveAssignee(id)}
+                                    className="rounded-full p-0.5 hover:bg-white/10 disabled:opacity-50"
+                                    title="Remove assignee"
+                                  >
+                                    <X className="h-2.5 w-2.5" />
+                                  </button>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      {canEdit && (
+                        <div className="mt-2">
+                          {isAddAssigneeOpen ? (
+                            <SearchableMultiSelect
+                              options={addAssigneeOptions}
+                              selectedIds={[]}
+                              onChange={(ids) => ids[0] && handleAddAssignee(ids[0])}
+                              disabled={isSavingAssignees}
+                              placeholder={isLoadingOrgWideEmployees ? 'Loading employees…' : 'Pick someone to add…'}
+                              searchPlaceholder="Search by name, any department…"
+                              emptyMessage={isLoadingOrgWideEmployees ? 'Loading employees…' : 'No one else available to add.'}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                loadOrgWideAssignableEmployees();
+                                setIsAddAssigneeOpen(true);
+                              }}
+                              className="flex items-center gap-1 rounded-lg border border-purple-700/40 bg-purple-900/20 px-2 py-1 text-[11px] font-semibold text-purple-300 hover:bg-purple-800/40 hover:text-white"
+                            >
+                              <PlusCircle className="h-3 w-3" /> Add assignee
+                            </button>
+                          )}
+                          {assigneeActionError && (
+                            <p className="mt-1 text-[10px] font-semibold text-red-400">{assigneeActionError}</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Hours Tracking, Created & Due Date */}
@@ -2165,21 +2318,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     {clients.find((client) => client.id === addSubtaskParent.client_id)?.name || addSubtaskParent.client_id}
                   </div>
                 ) : (
-                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-stone-800 bg-stone-900 p-2">
-                    {clients.map((client) => (
-                      <label key={client.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5">
-                        <input
-                          type="checkbox"
-                          disabled={!!activeRecovery}
-                          checked={newClientIds.includes(client.id)}
-                          onChange={() => setNewClientIds((current) => current.includes(client.id)
-                            ? current.filter((id) => id !== client.id)
-                            : [...current, client.id])}
-                        />
-                        <span>{client.name} ({client.industry || 'Client'})</span>
-                      </label>
-                    ))}
-                  </div>
+                  <SearchableMultiSelect
+                    options={clients.map((client) => ({ id: client.id, label: client.name, sublabel: client.industry || 'Client' }))}
+                    selectedIds={newClientIds}
+                    onChange={setNewClientIds}
+                    disabled={!!activeRecovery}
+                    placeholder="Select clients…"
+                    searchPlaceholder="Search clients…"
+                    emptyMessage="No clients available."
+                  />
                 )}
               </div>
 
@@ -2237,23 +2384,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Assignees (Operational Only):
                   </label>
-                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-stone-800 bg-stone-900 p-2">
-                    {newAssigneeOptions.length === 0 && <p className="px-2 py-1 text-xs text-stone-500">No assignable employees.</p>}
-                    {newAssigneeOptions.map((user) => (
-                      <label key={user.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5">
-                        <input
-                          type="checkbox"
-                          disabled={!!activeRecovery}
-                          checked={newAssigneeIds.includes(user.id)}
-                          onChange={() => setNewAssigneeIds((current) => current.includes(user.id)
-                            ? current.filter((id) => id !== user.id)
-                            : [...current, user.id])}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{user.name} ({user.team || user.role})</span>
-                        <span className="shrink-0 text-[10px] text-stone-400">{capacityIndicator(user)}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <SearchableMultiSelect
+                    options={newAssigneeOptions.map((user) => ({
+                      id: user.id,
+                      label: user.name,
+                      sublabel: user.team || user.role,
+                      badge: capacityIndicator(user),
+                    }))}
+                    selectedIds={newAssigneeIds}
+                    onChange={setNewAssigneeIds}
+                    disabled={!!activeRecovery}
+                    placeholder="Select assignees…"
+                    searchPlaceholder="Search by name…"
+                    emptyMessage="No assignable employees."
+                  />
                   {(isCapacityLoading || capacityError) && (
                     <p className={`mt-1 text-[10px] ${capacityError ? 'text-amber-400' : 'text-stone-500'}`}>
                       {capacityError || 'Loading verified capacity…'}
@@ -2531,21 +2675,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Assignees (Operational Only):
                   </label>
-                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-stone-800 bg-stone-900 p-2">
-                    {editAssigneeOptions.map((user) => (
-                      <label key={user.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5">
-                        <input
-                          type="checkbox"
-                          checked={editAssigneeIds.includes(user.id)}
-                          onChange={() => setEditAssigneeIds((current) => current.includes(user.id)
-                            ? current.filter((id) => id !== user.id)
-                            : [...current, user.id])}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{user.name} ({user.team || user.role})</span>
-                        <span className="shrink-0 text-[10px] text-stone-400">{capacityIndicator(user)}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <SearchableMultiSelect
+                    options={editAssigneeOptions.map((user) => ({
+                      id: user.id,
+                      label: user.name,
+                      sublabel: user.team || user.role,
+                      badge: capacityIndicator(user),
+                    }))}
+                    selectedIds={editAssigneeIds}
+                    onChange={setEditAssigneeIds}
+                    placeholder="Select assignees…"
+                    searchPlaceholder="Search by name…"
+                    emptyMessage="No assignable employees."
+                  />
                   {(isCapacityLoading || capacityError) && (
                     <p className={`mt-1 text-[10px] ${capacityError ? 'text-amber-400' : 'text-stone-500'}`}>
                       {capacityError || 'Loading verified capacity…'}

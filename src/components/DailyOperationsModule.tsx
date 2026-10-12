@@ -44,18 +44,23 @@ import {
   ExtraNoteRecord,
   TaskStatus,
   TaskPriority,
+  TaskAssigneeRecord,
   UserRole,
 } from '../types/database';
 import { getTodayStr, isTaskOverdue, isTaskDueToday, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
 import { isActiveEmployee } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveCapacityLimit } from '../lib/capacity';
-import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
+import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
+  // Real multi-assignee membership — see resolveTaskAssigneeIds. Every "is this task this
+  // employee's" filter below must go through it, never tasks.assigned_to alone (visibility
+  // audit finding: a co-assignee added after the first was invisible to every filter here).
+  taskAssignees?: TaskAssigneeRecord[];
   users: UserRecord[];
   taskDirectoryUsers: UserRecord[];
   clients: ClientRecord[];
@@ -89,6 +94,7 @@ export type OperationSubTab = 'daily_view' | 'my_tasks' | 'blockers' | 'daily_ac
 
 export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   tasks,
+  taskAssignees = [],
   users,
   taskDirectoryUsers,
   clients,
@@ -193,10 +199,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const isOverdue = (task: TaskRecord) => isTaskOverdue(task, todayStr);
   const isDueToday = (task: TaskRecord) => isTaskDueToday(task, todayStr);
 
-  // 1. All tasks assigned to the effective employee
+  // 1. All tasks assigned to the effective employee — real task_assignees membership, not just
+  // the legacy single assigned_to column (visibility audit: a co-assignee added after the first
+  // was previously invisible here).
   const employeeTasks = useMemo(() => {
-    return tasks.filter((t) => t.assigned_to === effectiveEmployee.id);
-  }, [tasks, effectiveEmployee.id]);
+    return tasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(effectiveEmployee.id));
+  }, [tasks, taskAssignees, effectiveEmployee.id]);
 
   // Sorted employee tasks: Priority (Urgent first), then Due Date (closest first)
   const sortedEmployeeTasks = useMemo(() => sortTasksByPriorityThenDueDate(employeeTasks), [employeeTasks]);
@@ -343,16 +351,21 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && u.role !== 'ai_engineer' && isActiveEmployee(u));
   }, [users, currentUser]);
 
-  // All blockers across visible tasks for Blockers Hub
+  // All blockers across visible tasks for Blockers Hub — a blocked task with ANY real assignee
+  // (task_assignees membership, not just the legacy column) on this team is included.
   const allVisibleBlockers = useMemo(() => {
     const visibleMemberIds = new Set(teamMembers.map((m) => m.id));
-    return tasks.filter((t) => t.status === 'blocked' && (t.assigned_to ? visibleMemberIds.has(t.assigned_to) : true));
-  }, [tasks, teamMembers]);
+    return tasks.filter((t) => {
+      if (t.status !== 'blocked') return false;
+      const assigneeIds = resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to);
+      return assigneeIds.length === 0 || assigneeIds.some((id) => visibleMemberIds.has(id));
+    });
+  }, [tasks, taskAssignees, teamMembers]);
 
   // Employee workload metrics for manager
   const teamWorkloadSummary = useMemo(() => {
     return teamMembers.map((member) => {
-      const memberTasks = tasks.filter((t) => t.assigned_to === member.id);
+      const memberTasks = tasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(member.id));
       const active = memberTasks.filter((t) => !isTaskDone(t.status));
       const completed = memberTasks.filter((t) => isTaskDone(t.status));
       const overdue = memberTasks.filter(isOverdue);
@@ -379,7 +392,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         rate,
       };
     });
-  }, [teamMembers, tasks, todayStr]);
+  }, [teamMembers, tasks, taskAssignees, todayStr]);
 
   // Daily Logs filtered for current employee or team — sorted by the log's own `date` (newest
   // first), then by `created_at` as a tiebreaker for logs sharing the same date, so a backdated
