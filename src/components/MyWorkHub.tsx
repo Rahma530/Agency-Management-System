@@ -23,6 +23,7 @@ import {
   ClientRecord,
   AssignmentRecord,
   TaskRecord,
+  TaskAssigneeRecord,
   DailyLogRecord,
   ExtraNoteRecord,
   CapacityLogRecord,
@@ -32,7 +33,7 @@ import {
 } from '../types/database';
 import { getRoleInfo, AppModuleId } from '../data/roles';
 import { getTodayStr, isTaskOverdue, isTaskDueToday, getSortedEmployeeTasks } from '../lib/employeeWork';
-import { TASK_STATUS_ORDER, isTaskDone } from '../lib/taskLifecycle';
+import { TASK_STATUS_ORDER, isTaskDone, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
 import { canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
@@ -47,6 +48,10 @@ interface MyWorkHubProps {
   clients: ClientRecord[];
   assignments: AssignmentRecord[];
   tasks: TaskRecord[];
+  // Real multi-assignee membership — see resolveTaskAssigneeIds. Visibility audit finding: the
+  // task-derived "my clients"/"unviewed" filters below previously read only the legacy single
+  // assigned_to column, missing a co-assignee added after the first.
+  taskAssignees?: TaskAssigneeRecord[];
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
   capacityLogs: CapacityLogRecord[];
@@ -130,6 +135,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   clients,
   assignments,
   tasks,
+  taskAssignees = [],
   dailyLogs,
   extraNotes,
   capacityLogs,
@@ -212,11 +218,13 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
     }
 
     if (TASK_DERIVED_CLIENT_ROLES.includes(role)) {
-      return clients.filter((c) => tasks.some((t) => t.client_id === c.id && t.assigned_to === currentUser.id));
+      return clients.filter((c) =>
+        tasks.some((t) => t.client_id === c.id && resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id))
+      );
     }
 
     return [];
-  }, [showClients, currentUser.role, currentUser.id, clients, assignments, tasks]);
+  }, [showClients, currentUser.role, currentUser.id, clients, assignments, tasks, taskAssignees]);
 
   // Module 14: search narrows only the rendered "My Clients" list — the gained/lost metrics
   // below stay scoped to the full myClients roster, not the search-narrowed view.
@@ -257,20 +265,27 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
 
   // Module 12 Phase 5: "New" notification badge for programming_agent's task-derived clients.
   // They have no assignments row (see TASK_DERIVED_CLIENT_ROLES above), so there's no
-  // assignments.viewed_at to hang the badge on — tasks.assignee_viewed_at is the equivalent
-  // signal, keyed here by client so a client shows "New" while it still has any unseen task.
+  // assignments.viewed_at to hang the badge on — a per-assignee task_assignees.viewed_at (or,
+  // for an older task with no task_assignees row at all, the legacy tasks.assignee_viewed_at
+  // mirror) is the equivalent signal, keyed here by client so a client shows "New" while it
+  // still has any unseen task. Membership itself also goes through real task_assignees rows now
+  // (visibility audit), not just the legacy assigned_to column.
   const newClientTaskIds = useMemo(() => {
     const map = new Map<string, string[]>();
     if (currentUser.role !== 'programming_agent') return map;
     tasks
-      .filter((t) => t.assigned_to === currentUser.id && !t.assignee_viewed_at)
+      .filter((t) => {
+        if (!resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id)) return false;
+        const assigneeRow = taskAssignees.find((row) => row.task_id === t.id && row.user_id === currentUser.id);
+        return assigneeRow ? !assigneeRow.viewed_at : !t.assignee_viewed_at;
+      })
       .forEach((t) => {
         const list = map.get(t.client_id) || [];
         list.push(t.id);
         map.set(t.client_id, list);
       });
     return map;
-  }, [currentUser.role, currentUser.id, tasks]);
+  }, [currentUser.role, currentUser.id, tasks, taskAssignees]);
 
   // My Work is the only client-facing surface this role gets, so opening it IS "seeing" the
   // new assignment — mirrors the mount-effect pattern ClientDashboard uses for other roles.
