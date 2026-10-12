@@ -2048,9 +2048,13 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     <button
                       key={st}
                       onClick={async () => {
-                        await onUpdateTaskStatus(selectedTaskDetails.id, st);
-                        setSelectedTaskDetails({ ...selectedTaskDetails, status: st });
-                        showNotification(`Status changed to "${getStatusLabel(st)}".`);
+                        try {
+                          await onUpdateTaskStatus(selectedTaskDetails.id, st);
+                          setSelectedTaskDetails({ ...selectedTaskDetails, status: st });
+                          showNotification(`Status changed to "${getStatusLabel(st)}".`);
+                        } catch (err) {
+                          showNotification('Unable to update task status.', 'error');
+                        }
                       }}
                       className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                         selectedTaskDetails.status === st

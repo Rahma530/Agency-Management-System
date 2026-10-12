@@ -774,6 +774,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       }
     } catch (err) {
       console.error(err);
+      // onUpdateTaskStatus now throws (and makes no local-state change) on a real write
+      // failure, instead of silently reporting success — surface that here so a failed drag/
+      // Stage-arrow/Details-modal move doesn't look like it worked when it didn't.
+      setNotification({ text: 'Unable to update task status. Please try again.', type: 'error' });
+      setTimeout(() => setNotification(null), 3500);
     }
   };
 
@@ -1753,7 +1758,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                         color: selectedTaskDetails.status === col.id ? col.color : undefined,
                       }}
                     >
-                      {col.label.split(' ')[0]}
+                      {col.label}
                     </button>
                   ))}
                 </div>
