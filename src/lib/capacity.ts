@@ -78,12 +78,45 @@ export function getUserCapacityData(
   };
 }
 
+// Shared with canTrustCapacityFor's callers below — the same neutral glyph already used for a
+// team lead's own untracked (capacity_limit = 0) status, reused for "this count can't be trusted
+// for this viewer" so there's one unknown-capacity glyph, not two.
+export const CAPACITY_UNKNOWN_INDICATOR = '⚪ N/A';
+
 // Compact glyph + label shared by every <select> option and status chip that
 // shows live workload next to a name — Task Board, AM Queue, Service Briefs
 // routing all render this same string.
 export function getCapacityIndicator(data: UserCapacityData): string {
-  if (data.isUntracked) return '⚪ N/A';
+  if (data.isUntracked) return CAPACITY_UNKNOWN_INDICATOR;
   if (data.status === 'over_capacity') return '🔴 Over Capacity';
   if (data.status === 'near_capacity') return '🟡 Near Capacity';
   return '🟢 Available';
 }
+
+// Whether `viewer`'s own already-loaded `tasks` array is complete enough for a capacity count
+// computed over it (via getUserCapacityData) to be trusted for `candidate`. After the task
+// visibility cutover (PR 2 of the task-assignees project), an ordinary viewer's `tasks` array
+// only contains tasks they created or are assigned to — it is no longer a department-wide or
+// org-wide set, so filtering it for an arbitrary OTHER person's tasks silently undercounts
+// (near-always reads as "Available") rather than erroring. This mirrors task_visible_v2's own
+// team-lead door exactly (own-team match, plus the seo_team_lead/Programming carve-out) so a
+// badge is only ever shown when the viewer's task data for that specific candidate is actually
+// as complete as task_visible_v2 would make it — never guessed.
+export const canTrustCapacityFor = (
+  viewer: UserRecord | null | undefined,
+  candidate: UserRecord
+): boolean => {
+  if (!viewer) return false;
+  if (viewer.id === candidate.id) return true;
+  if (viewer.role === 'executive' || viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') {
+    return true;
+  }
+  if (isTeamLeadRole(viewer.role)) {
+    if (viewer.team && candidate.team === viewer.team) return true;
+    if (viewer.role === 'seo_team_lead' && candidate.team === 'Programming') return true;
+  }
+  if (viewer.role === 'marketing_manager' && (candidate.role === 'graphic_designer' || candidate.role === 'video_editor')) {
+    return true;
+  }
+  return false;
+};
