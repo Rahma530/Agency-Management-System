@@ -41,6 +41,7 @@ declare
   v_am_agent_old_team text;
   v_scratch_old_team text;
   v_creative_old_team text;
+  v_sanity_count integer;
   v_result boolean;
   v_capacity_before integer;
   v_capacity_after integer;
@@ -159,16 +160,24 @@ begin
 
   -- A client with no task_assignees-based relationship to v_agent_a — invisible to them under
   -- clients_select_rls's "else" branch (programming_agent has no other door onto clients at all).
+  -- Must differ from v_client_id: at this point in setup v_agent_a has zero tasks at all, so
+  -- EVERY client satisfies the "not exists" below, and an unordered `limit 1` could otherwise
+  -- return the exact same row v_client_id's own unordered `limit 1` already picked — exactly what
+  -- happened live (scenario 12c then failed, because later scenarios make v_agent_a an assignee on
+  -- v_client_id, which is clients_select_rls's actual, correct behavior for a client that is NOT
+  -- the "invisible" one). `order by c.id` makes the pick deterministic across runs.
   select c.id into v_invisible_client_id
   from public.clients c
-  where not exists (
-    select 1 from public.tasks t
-    join public.task_assignees ta on ta.task_id = t.id
-    where t.client_id = c.id and ta.user_id = v_agent_a_id
-  )
+  where c.id <> v_client_id
+    and not exists (
+      select 1 from public.tasks t
+      join public.task_assignees ta on ta.task_id = t.id
+      where t.client_id = c.id and ta.user_id = v_agent_a_id
+    )
+  order by c.id
   limit 1;
   if v_invisible_client_id is null then
-    raise exception 'TEST_SETUP_FAILED: need at least 1 client with no task_assignees-based link to the chosen programming_agent.';
+    raise exception 'TEST_SETUP_FAILED: need at least 1 client, distinct from v_client_id, with no task_assignees-based link to the chosen programming_agent.';
   end if;
 
   -- ======================================================================
@@ -436,6 +445,20 @@ begin
 
   -- Scenario 12c: a real client the caller cannot see under clients_select_rls is rejected, not
   -- silently inserted via the FK's existence-only check.
+  --
+  -- Sanity check first: confirm v_invisible_client_id is STILL actually invisible to v_agent_a at
+  -- this exact point in the run (not just at setup time) — earlier scenarios mutate
+  -- clients.am_agent_id and users.team on shared fixtures, and this is exactly the class of bug
+  -- that broke this scenario before (v_invisible_client_id turned out to equal v_client_id, which
+  -- later scenarios legitimately make visible to v_agent_a by adding them as an assignee).
+  perform set_config('request.jwt.claims', json_build_object('sub', v_agent_a_auth)::text, true);
+  set local role authenticated;
+  select count(*) into v_sanity_count from public.clients where id = v_invisible_client_id;
+  reset role; perform set_config('request.jwt.claims', '', true);
+  if v_sanity_count <> 0 then
+    raise exception 'TEST_SETUP_FAILED: invisible client is actually visible.';
+  end if;
+
   perform set_config('request.jwt.claims', json_build_object('sub', v_agent_a_auth)::text, true);
   set local role authenticated;
   begin
