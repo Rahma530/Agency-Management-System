@@ -633,11 +633,17 @@ begin
   -- bucket-specific policy below, so while they exist, a negative (must-NOT) assertion against
   -- the real bucket-specific policy can never actually observe a denial: the blanket policy grants
   -- it regardless. Computed once and reused by scenario 16 and scenario 17f's negative checks.
-  select exists (
-    select 1 from pg_policies
-    where schemaname = 'storage' and tablename = 'objects'
-      and policyname like 'Allow authenticated users to %files'
-  ) into v_blanket_storage_policies_exist;
+  select count(*) = 4 into v_blanket_storage_policies_exist
+  from pg_policies
+  where schemaname = 'storage' and tablename = 'objects'
+    and permissive = 'PERMISSIVE'
+    and 'authenticated' = any (roles)
+    and (
+      (policyname = 'Allow authenticated users to select files' and cmd = 'SELECT' and qual = 'true')
+      or (policyname = 'Allow authenticated users to insert files' and cmd = 'INSERT' and with_check = 'true')
+      or (policyname = 'Allow authenticated users to update files' and cmd = 'UPDATE' and qual = 'true' and with_check = 'true')
+      or (policyname = 'Allow authenticated users to delete files' and cmd = 'DELETE' and qual = 'true')
+    );
 
   -- ======================================================================
   -- Scenario 16: storage SELECT policy — OR of the old folder-name rule and the new
@@ -749,26 +755,50 @@ begin
     raise exception 'TEST_FAILED: scenario 17e — delete_task_attachment must STILL never touch storage.objects itself, even on the last reference.';
   end if;
 
-  -- Scenario 17f (section 9c): the new owner-based storage DELETE policy. The real uploader
-  -- (owner = v_agent_a_auth) can now remove the object directly, simulating the client's
-  -- follow-up Storage API call after the non-null return above; an unrelated party cannot.
+  -- Scenario 17f (section 9c): the new owner-based storage DELETE policy. Direct deletes from
+  -- storage.objects are always stopped by storage.protect_delete(), so reaching its 42501 proves
+  -- an applicable DELETE policy let the row reach the trigger; an RLS denial is a silent no-op.
   perform set_config('request.jwt.claims', json_build_object('sub', v_agent_c_auth)::text, true);
   set local role authenticated;
-  delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
+  begin
+    delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
+    reset role; perform set_config('request.jwt.claims', '', true);
+    if v_blanket_storage_policies_exist then
+      raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE did not reach protect_delete despite the known permissive blanket DELETE policy.';
+    elsif not exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
+      raise exception 'TEST_FAILED: scenario 17f — the non-owner DELETE unexpectedly removed the storage object.';
+    end if;
+  exception when sqlstate '42501' then
+    if sqlerrm <> 'Direct deletion from storage tables is not allowed' then
+      raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE raised unexpected 42501: %.', sqlerrm;
+    elsif v_blanket_storage_policies_exist then
+      raise notice 'SKIPPED: scenario 17f non-owner DELETE negative check — the known blanket storage policies exist, so protect_delete was reached through an unconditional policy.';
+    else
+      raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE reached protect_delete, so a DELETE policy unexpectedly allowed access.';
+    end if;
+  end;
   reset role; perform set_config('request.jwt.claims', '', true);
-  if v_blanket_storage_policies_exist then
-    raise notice 'SKIPPED: blanket storage policies present';
-  elsif not exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
-    raise exception 'TEST_FAILED: scenario 17f — a non-owner must NOT be able to delete the storage object.';
-  end if;
 
-  perform set_config('request.jwt.claims', json_build_object('sub', v_agent_a_auth)::text, true);
-  set local role authenticated;
-  delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
-  reset role; perform set_config('request.jwt.claims', '', true);
-  if exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
-    raise exception 'TEST_FAILED: scenario 17f — the real owner should be able to delete their own object directly, with no task_attachments row referencing it anymore.';
-  end if;
+  if v_blanket_storage_policies_exist then
+    raise notice 'SKIPPED: scenario 17f owner DELETE positive check — the known blanket storage policies exist, so the owner-specific policy cannot be isolated.';
+  else
+    perform set_config('request.jwt.claims', json_build_object('sub', v_agent_a_auth)::text, true);
+    set local role authenticated;
+    begin
+      delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
+      reset role; perform set_config('request.jwt.claims', '', true);
+      if exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
+        raise exception 'TEST_FAILED: scenario 17f — owner DELETE did not reach protect_delete; the owner-based DELETE policy should allow the owner.';
+      else
+        raise exception 'TEST_FAILED: scenario 17f — owner DELETE unexpectedly removed the storage object instead of being stopped by protect_delete.';
+      end if;
+    exception when sqlstate '42501' then
+      if sqlerrm <> 'Direct deletion from storage tables is not allowed' then
+        raise exception 'TEST_FAILED: scenario 17f — owner DELETE raised unexpected 42501: %.', sqlerrm;
+      end if;
+    end;
+    reset role; perform set_config('request.jwt.claims', '', true);
+  end;
 
   -- ======================================================================
   -- Scenario 18: legacy single-assignee reassign — a plain `update tasks set assigned_to = ...`
