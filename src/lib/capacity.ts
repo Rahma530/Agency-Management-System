@@ -115,5 +115,8 @@ export const canTrustCapacityFor = (
     if (viewer.team && candidate.team === viewer.team) return true;
     if (viewer.role === 'seo_team_lead' && candidate.team === 'Programming') return true;
   }
+  if (viewer.role === 'marketing_manager' && (candidate.role === 'graphic_designer' || candidate.role === 'video_editor')) {
+    return true;
+  }
   return false;
 };
