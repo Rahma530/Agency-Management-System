@@ -887,6 +887,7 @@ export interface Database {
       brief_revisions: { Row: BriefRevisionRecord; Insert: Partial<BriefRevisionRecord>; Update: Partial<BriefRevisionRecord>; Relationships: any[] };
       assignments: { Row: AssignmentRecord; Insert: Partial<AssignmentRecord>; Update: Partial<AssignmentRecord>; Relationships: any[] };
       tasks: { Row: TaskRecord; Insert: Partial<TaskRecord>; Update: Partial<TaskRecord>; Relationships: any[] };
+      task_assignees: { Row: TaskAssigneeRecord; Insert: Partial<TaskAssigneeRecord>; Update: Partial<TaskAssigneeRecord>; Relationships: any[] };
       task_comments: { Row: TaskCommentRecord; Insert: Partial<TaskCommentRecord>; Update: Partial<TaskCommentRecord>; Relationships: any[] };
       task_attachments: { Row: TaskAttachmentRecord; Insert: Partial<TaskAttachmentRecord>; Update: Partial<TaskAttachmentRecord>; Relationships: any[] };
       campaigns: { Row: CampaignRecord; Insert: Partial<CampaignRecord>; Update: Partial<CampaignRecord>; Relationships: any[] };

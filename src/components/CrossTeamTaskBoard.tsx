@@ -42,6 +42,7 @@ import {
   TaskPriority,
   TaskCommentRecord,
   TaskAttachmentRecord,
+  TaskAssigneeRecord,
 } from '../types/database';
 import {
   DndContext,
@@ -52,7 +53,7 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { getUserCapacityData, getCapacityIndicator, canTrustCapacityFor, CAPACITY_UNKNOWN_INDICATOR } from '../lib/capacity';
+import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
 import { isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
@@ -62,6 +63,16 @@ import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
+import { TaskAttachmentPicker } from './TaskAttachmentPicker';
+import type { CreateTaskFormInput, StagedTaskAttachment } from '../lib/taskOperations';
+import {
+  TaskCreateRecoveryRecord,
+  clearTaskCreateRecovery,
+  createTaskRecovery,
+  matchRecoveryAttachments,
+  readTaskCreateRecovery,
+  saveTaskCreateRecovery,
+} from '../lib/taskCreateRecovery';
 import { TaskCalendarView } from './TaskCalendarView';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanTaskCardContent } from './KanbanTaskCard';
@@ -70,6 +81,7 @@ import { TaskTypeInlineManager } from './TaskTypeInlineManager';
 
 interface CrossTeamTaskBoardProps {
   tasks: TaskRecord[];
+  taskAssignees: TaskAssigneeRecord[];
   users: UserRecord[];
   // Merged users + task_directory() entries — see App.tsx's fetchTaskDirectory. Used only where a
   // task's assigned_to id is resolved to a display name, so cross-team assignees always show a
@@ -80,22 +92,13 @@ interface CrossTeamTaskBoardProps {
   currentUser?: UserRecord;
   currentUserId?: string;
   onUpdateTaskStatus: (taskId: string, newStatus: TaskStatus) => Promise<void>;
-  onCreateTask: (taskData: {
-    client_id: string;
-    title: string;
-    description: string;
-    assigned_to?: string | null;
-    team: string;
-    status: TaskStatus;
-    due_date: string;
-    priority: TaskPriority;
-    estimated_hours?: number | null;
-    actual_hours?: number | null;
-    parent_task_id?: string | null;
-    task_type?: string | null;
-    task_type_other?: string | null;
-  }) => Promise<void>;
-  onUpdateTask?: (taskId: string, updates: Partial<TaskRecord>) => Promise<void>;
+  onCreateTask: (taskData: CreateTaskFormInput) => Promise<void>;
+  onUpdateTask?: (
+    taskId: string,
+    updates: Partial<TaskRecord>,
+    assigneeIds?: string[],
+    attachments?: StagedTaskAttachment[]
+  ) => Promise<void>;
   // Admin-managed Task Type reference list (task_types table) — includes inactive rows so an
   // existing task's type can still be resolved/shown after it's deactivated. The admin screen
   // (TaskTypeManager) that creates/renames/reorders/deactivates these is gated to
@@ -116,6 +119,8 @@ interface CrossTeamTaskBoardProps {
   taskAttachments?: TaskAttachmentRecord[];
   onUploadTaskAttachment?: (taskId: string, file: File) => Promise<void>;
   onDeleteTaskAttachment?: (attachmentId: string) => Promise<void>;
+  onGetCapacitySnapshot: (userIds: string[]) => Promise<Record<string, number>>;
+  onMarkTaskViewed?: (taskId: string) => Promise<void>;
 }
 
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
@@ -123,6 +128,7 @@ export type TaskViewMode = 'kanban' | 'table' | 'timeline';
 
 export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   tasks,
+  taskAssignees = [],
   users,
   taskDirectoryUsers,
   clients,
@@ -142,6 +148,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   taskAttachments = [],
   onUploadTaskAttachment,
   onDeleteTaskAttachment,
+  onGetCapacitySnapshot,
+  onMarkTaskViewed,
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
@@ -196,6 +204,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isTaskTypeManagerOpen, setIsTaskTypeManagerOpen] = useState(false);
   const canManageTaskTypes = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
+  useEffect(() => {
+    if (selectedTaskDetails?.id && onMarkTaskViewed) {
+      void onMarkTaskViewed(selectedTaskDetails.id);
+    }
+    // Mark once when a different task is opened; callback identity must not retrigger the write.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTaskDetails?.id]);
   // Module 12 Phase 9: Drive Link draft, synced whenever a different task's details open.
   const [driveLinkDraft, setDriveLinkDraft] = useState('');
   const [isSavingDriveLink, setIsSavingDriveLink] = useState(false);
@@ -217,14 +232,27 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // New task form state
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [newClientId, setNewClientId] = useState(clients[0]?.id || '');
+  const [newClientIds, setNewClientIds] = useState<string[]>(clients[0]?.id ? [clients[0].id] : []);
   useEffect(() => {
-    if (!addSubtaskParent && !clients.some((client) => client.id === newClientId)) {
-      setNewClientId(clients[0]?.id || '');
+    if (!addSubtaskParent) {
+      setNewClientIds((current) => {
+        const valid = current.filter((id) => clients.some((client) => client.id === id));
+        return valid.length > 0 ? valid : (clients[0]?.id ? [clients[0].id] : []);
+      });
     }
-  }, [clients, newClientId, addSubtaskParent]);
+  }, [clients, addSubtaskParent]);
   const [newTeam, setNewTeam] = useState('SEO');
-  const [newAssignedTo, setNewAssignedTo] = useState<string>('');
+  const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>([]);
+  const [newAttachments, setNewAttachments] = useState<StagedTaskAttachment[]>([]);
+  const [newBatchId, setNewBatchId] = useState(() => crypto.randomUUID());
+  const [pendingRecovery, setPendingRecovery] = useState<TaskCreateRecoveryRecord | null>(null);
+  const [activeRecovery, setActiveRecovery] = useState<TaskCreateRecoveryRecord | null>(null);
+  useEffect(() => {
+    setIsCreateModalOpen(false);
+    setActiveRecovery(null);
+    setNewAttachments([]);
+    setPendingRecovery(currentUserId ? readTaskCreateRecovery(currentUserId) : null);
+  }, [currentUserId]);
   // Fetched via assignable_employees() RPC rather than filtering the local `users` prop — that
   // array is scoped by users_select_rls to the CURRENT viewer's own visibility, which for most
   // roles doesn't extend into every other department. See lib/departmentStaffing.ts.
@@ -234,9 +262,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     fetchAssignableEmployees(newTeam).then((rows) => {
       if (cancelled) return;
       setNewTeamAssignees(rows);
-      // Department changed out from under the current selection — never leave a stale
-      // cross-department pick in place once the new department's real roster is in.
-      setNewAssignedTo((current) => (current && !rows.some((u) => u.id === current) ? '' : current));
     });
     return () => {
       cancelled = true;
@@ -247,7 +272,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   );
   const [newPriority, setNewPriority] = useState<TaskPriority>('medium');
   const [newEstimatedHours, setNewEstimatedHours] = useState<number>(8);
-  const [newActualHours, setNewActualHours] = useState<number>(0);
   // Task Type (optional) — newTaskType holds a task_types.id, or '' for "no type selected".
   // newTaskTypeOther only applies when the selected row's is_other flag is set.
   const [newTaskType, setNewTaskType] = useState<string>('');
@@ -271,14 +295,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [editDescription, setEditDescription] = useState('');
   const [editClientId, setEditClientId] = useState('');
   const [editTeam, setEditTeam] = useState('');
-  const [editAssignedTo, setEditAssignedTo] = useState<string>('');
+  const [editAssigneeIds, setEditAssigneeIds] = useState<string[]>([]);
+  const [editAttachments, setEditAttachments] = useState<StagedTaskAttachment[]>([]);
   const [editTeamAssignees, setEditTeamAssignees] = useState<AssignableEmployee[]>([]);
   useEffect(() => {
     let cancelled = false;
     fetchAssignableEmployees(editTeam).then((rows) => {
       if (cancelled) return;
       setEditTeamAssignees(rows);
-      setEditAssignedTo((current) => (current && !rows.some((u) => u.id === current) ? '' : current));
     });
     return () => {
       cancelled = true;
@@ -299,40 +323,109 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     if (editError) editErrorBottomRef.current?.scrollIntoView({ block: 'nearest' });
   }, [editError]);
 
+  const [capacitySnapshot, setCapacitySnapshot] = useState<Record<string, number>>({});
+  const [capacityError, setCapacityError] = useState<string | null>(null);
+  const [isCapacityLoading, setIsCapacityLoading] = useState(false);
+  const capacityCandidateIds = useMemo(() => {
+    if (isCreateModalOpen) return [...new Set([...newTeamAssignees.map((user) => user.id), ...newAssigneeIds])].sort();
+    if (editingTask) return [...new Set([...editTeamAssignees.map((user) => user.id), ...editAssigneeIds])].sort();
+    return [];
+  }, [isCreateModalOpen, editingTask?.id, newTeamAssignees, newAssigneeIds, editTeamAssignees, editAssigneeIds]);
+  const capacityCandidateKey = capacityCandidateIds.join('|');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!capacityCandidateKey) {
+      setCapacitySnapshot({});
+      setCapacityError(null);
+      return;
+    }
+    setIsCapacityLoading(true);
+    setCapacityError(null);
+    onGetCapacitySnapshot(capacityCandidateIds)
+      .then((snapshot) => {
+        if (!cancelled) setCapacitySnapshot(snapshot);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCapacitySnapshot({});
+          setCapacityError(error instanceof Error ? error.message : 'Capacity data is unavailable.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsCapacityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [capacityCandidateKey, onGetCapacitySnapshot]);
+
+  const capacityIndicator = (employee: AssignableEmployee) => {
+    const used = capacitySnapshot[employee.id];
+    if (used === undefined) return CAPACITY_UNKNOWN_INDICATOR;
+    const limit = resolveCapacityLimit(employee as UserRecord);
+    if (limit === 0) return CAPACITY_UNKNOWN_INDICATOR;
+    if (used >= limit) return `🔴 ${used}/${limit}`;
+    if (used / limit >= 0.75) return `🟡 ${used}/${limit}`;
+    return `🟢 ${used}/${limit}`;
+  };
+
   // Task Type options visible on the create form: active types scoped to either the selected
   // Team or the selected assignee's role — role is read from newTeamAssignees (the
   // assignable_employees() roster), never from the `users` prop, since that's scoped to the
   // current viewer's own RLS-limited visibility and may not include the chosen assignee at all.
-  const newAssigneeRole = newTeamAssignees.find((u) => u.id === newAssignedTo)?.role;
+  const newAssigneeOptions = useMemo(() => {
+    const options = new Map(newTeamAssignees.map((user) => [user.id, user]));
+    newAssigneeIds.forEach((id) => {
+      const existing = taskDirectoryUsers.find((user) => user.id === id);
+      if (existing && !options.has(id)) options.set(id, existing);
+    });
+    return [...options.values()];
+  }, [newTeamAssignees, newAssigneeIds, taskDirectoryUsers]);
+  const newAssigneeRoles = newAssigneeOptions
+    .filter((u) => newAssigneeIds.includes(u.id))
+    .map((u) => u.role);
+  const newAssigneeRole = newAssigneeRoles[0];
   const newTaskTypeOptions = useMemo(
     () =>
       taskTypes.filter(
         (t) =>
           t.is_active &&
           ((t.scope_type === 'team' && t.scope_value === newTeam) ||
-            (t.scope_type === 'role' && newAssigneeRole && t.scope_value === newAssigneeRole))
+            (t.scope_type === 'role' && newAssigneeRoles.includes(t.scope_value as UserRecord['role'])))
       ),
-    [taskTypes, newTeam, newAssigneeRole]
+    [taskTypes, newTeam, newAssigneeRoles.join('|')]
   );
   const newSelectedTaskType = newTaskTypeOptions.find((t) => t.id === newTaskType);
 
   // Same as above for the edit form, with one addition: the task's CURRENT task_type is always
   // included even if it's since been deactivated or no longer matches the (possibly since-changed)
   // team/assignee — otherwise the select would have no option for it and silently drop it.
-  const editAssigneeRole = editTeamAssignees.find((u) => u.id === editAssignedTo)?.role;
+  const editAssigneeOptions = useMemo(() => {
+    const options = new Map(editTeamAssignees.map((user) => [user.id, user]));
+    editAssigneeIds.forEach((id) => {
+      const existing = taskDirectoryUsers.find((user) => user.id === id);
+      if (existing && !options.has(id)) options.set(id, existing);
+    });
+    return [...options.values()];
+  }, [editTeamAssignees, editAssigneeIds, taskDirectoryUsers]);
+  const editAssigneeRoles = editAssigneeOptions
+    .filter((u) => editAssigneeIds.includes(u.id))
+    .map((u) => u.role);
+  const editAssigneeRole = editAssigneeRoles[0];
   const editTaskTypeOptions = useMemo(() => {
     const active = taskTypes.filter(
       (t) =>
         t.is_active &&
         ((t.scope_type === 'team' && t.scope_value === editTeam) ||
-          (t.scope_type === 'role' && editAssigneeRole && t.scope_value === editAssigneeRole))
+          (t.scope_type === 'role' && editAssigneeRoles.includes(t.scope_value as UserRecord['role'])))
     );
     if (editTaskType && !active.some((t) => t.id === editTaskType)) {
       const current = taskTypes.find((t) => t.id === editTaskType);
       if (current) return [...active, current];
     }
     return active;
-  }, [taskTypes, editTeam, editAssigneeRole, editTaskType]);
+  }, [taskTypes, editTeam, editAssigneeRoles.join('|'), editTaskType]);
   const editSelectedTaskType = editTaskTypeOptions.find((t) => t.id === editTaskType);
 
   // Operational task assignees: strictly exclude Executive Management and Head of Technical —
@@ -606,48 +699,130 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError(null);
-    if (!newTitle.trim() || !newClientId || !newDescription.trim() || !newDueDate) {
-      setCreateError('Title, client, description, and due date are all required to create a task.');
+    if (!newTitle.trim() || newClientIds.length === 0 || !newDescription.trim() || !newDueDate) {
+      setCreateError('Title, at least one client, description, and due date are required to create a task.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      await onCreateTask({
-        client_id: newClientId,
+      const currentInput: CreateTaskFormInput = {
+        clientIds: addSubtaskParent ? [addSubtaskParent.client_id] : newClientIds,
+        assigneeIds: newAssigneeIds,
         title: newTitle.trim(),
         description: newDescription.trim(),
-        assigned_to: newAssignedTo ? newAssignedTo : null,
         team: newTeam,
-        status: 'todo',
-        due_date: newDueDate,
+        dueDate: newDueDate,
         priority: newPriority,
-        estimated_hours: newEstimatedHours,
-        actual_hours: newActualHours,
-        parent_task_id: addSubtaskParent?.id || null,
-        task_type: newSelectedTaskType ? newTaskType : null,
-        task_type_other: newSelectedTaskType?.is_other ? newTaskTypeOther.trim() || null : null,
-      });
+        estimatedHours: newEstimatedHours,
+        parentTaskId: addSubtaskParent?.id || null,
+        batchId: newBatchId,
+        taskType: newSelectedTaskType ? newTaskType : null,
+        taskTypeOther: newSelectedTaskType?.is_other ? newTaskTypeOther.trim() || null : null,
+        attachments: newAttachments,
+      };
+
+      let submission = currentInput;
+      if (activeRecovery) {
+        const expectedAttachments = activeRecovery.attachments.filter((attachment) => attachment.status !== 'confirmed');
+        const filesToMatch = newAttachments.filter((entry) => !activeRecovery.attachments.some(
+          (descriptor) => descriptor.id === entry.id && descriptor.status === 'confirmed'
+        ));
+        const attachmentMatch = await matchRecoveryAttachments(filesToMatch, expectedAttachments);
+        if (attachmentMatch.missing.length > 0 || attachmentMatch.unexpected.length > 0) {
+          const missing = attachmentMatch.missing.map((attachment) => attachment.name).join(', ');
+          const unexpected = attachmentMatch.unexpected.join(', ');
+          throw new Error([
+            missing ? `Re-select the original attachment files: ${missing}.` : '',
+            unexpected ? `These files do not match the recovery record: ${unexpected}.` : '',
+          ].filter(Boolean).join(' '));
+        }
+        submission = { ...activeRecovery.input, batchId: activeRecovery.batchId, attachments: attachmentMatch.matched };
+      } else {
+        const existingRecovery = readTaskCreateRecovery(currentUserId);
+        if (existingRecovery) {
+          setPendingRecovery(existingRecovery);
+          setIsCreateModalOpen(false);
+          throw new Error('An incomplete Create batch already exists. Resume or explicitly discard it before starting another task.');
+        }
+        const recovery = await createTaskRecovery(currentUserId, currentInput);
+        saveTaskCreateRecovery(recovery);
+        setActiveRecovery(recovery);
+        submission = {
+          ...recovery.input,
+          batchId: recovery.batchId,
+          attachments: currentInput.attachments.map((attachment) => ({
+            ...attachment,
+            sha256: recovery.attachments.find((descriptor) => descriptor.id === attachment.id)?.sha256,
+          })),
+        };
+      }
+
+      await onCreateTask(submission);
 
       setIsCreateModalOpen(false);
+      setActiveRecovery(null);
+      setPendingRecovery(null);
       setAddSubtaskParent(null);
       setNewTitle('');
       setNewDescription('');
       setNewEstimatedHours(8);
-      setNewActualHours(0);
+      setNewAssigneeIds([]);
+      setNewAttachments([]);
+      setNewBatchId(crypto.randomUUID());
       setNewTaskType('');
       setNewTaskTypeOther('');
       setNotification({
-        text: addSubtaskParent ? 'Subtask created successfully.' : 'Task created and assigned successfully.',
+        text: addSubtaskParent
+          ? 'Subtask created successfully.'
+          : `${newClientIds.length} task ${newClientIds.length === 1 ? 'copy was' : 'copies were'} created successfully.`,
         type: 'success',
       });
       setTimeout(() => setNotification(null), 3500);
     } catch (err: any) {
       console.error(err);
+      const recovery = currentUserId ? readTaskCreateRecovery(currentUserId) : null;
+      setActiveRecovery(recovery);
       setCreateError(`Failed to create task: ${err?.message || 'Unknown Supabase error.'}`);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const resumeRecovery = (recovery: TaskCreateRecoveryRecord) => {
+    setCreateError(null);
+    setPendingRecovery(null);
+    setActiveRecovery(recovery);
+    setNewBatchId(recovery.batchId);
+    setNewClientIds(recovery.input.clientIds);
+    setNewAssigneeIds(recovery.input.assigneeIds);
+    setNewTitle(recovery.input.title);
+    setNewDescription(recovery.input.description);
+    setNewTeam(recovery.input.team);
+    setNewDueDate(recovery.input.dueDate);
+    setNewPriority(recovery.input.priority);
+    setNewEstimatedHours(recovery.input.estimatedHours ?? 0);
+    setNewTaskType(recovery.input.taskType || '');
+    setNewTaskTypeOther(recovery.input.taskTypeOther || '');
+    setAddSubtaskParent(recovery.input.parentTaskId
+      ? tasks.find((task) => task.id === recovery.input.parentTaskId) || null
+      : null);
+    setNewAttachments((current) => current.filter((attachment) =>
+      recovery.attachments.some((descriptor) => descriptor.id === attachment.id && descriptor.status !== 'confirmed')
+    ));
+    setIsCreateModalOpen(true);
+  };
+
+  const discardRecovery = () => {
+    if (!pendingRecovery && !activeRecovery) return;
+    const recovery = pendingRecovery || activeRecovery;
+    if (!recovery || !window.confirm('Discard this recovery record? Any task copies already saved in Supabase will remain and will not be deleted.')) return;
+    clearTaskCreateRecovery(currentUserId, recovery.batchId);
+    setPendingRecovery(null);
+    setActiveRecovery(null);
+    setIsCreateModalOpen(false);
+    setNewAttachments([]);
+    setNewBatchId(crypto.randomUUID());
   };
 
   const openEditModal = (task: TaskRecord) => {
@@ -657,7 +832,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setEditDescription(task.description || '');
     setEditClientId(task.client_id);
     setEditTeam(task.team || 'SEO');
-    setEditAssignedTo(task.assigned_to || '');
+    const currentAssigneeIds = taskAssignees
+      .filter((row) => row.task_id === task.id)
+      .map((row) => row.user_id);
+    setEditAssigneeIds(currentAssigneeIds.length > 0 ? currentAssigneeIds : (task.assigned_to ? [task.assigned_to] : []));
+    setEditAttachments([]);
     setEditDueDate(task.due_date || '');
     setEditPriority(task.priority);
     setEditStatus(task.status);
@@ -672,17 +851,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // subtask (adding a level-3 sub-subtask) — SubtaskList only ever calls
   // this at levels 1-2, since nesting is capped at 3.
   const openAddSubtaskModal = (parentTask: TaskRecord) => {
+    const recovery = readTaskCreateRecovery(currentUserId);
+    if (recovery) {
+      setPendingRecovery(recovery);
+      return;
+    }
     setCreateError(null);
     setAddSubtaskParent(parentTask);
     setNewTitle('');
     setNewDescription('');
-    setNewClientId(parentTask.client_id);
+    setNewClientIds([parentTask.client_id]);
     setNewTeam(parentTask.team || 'SEO');
-    setNewAssignedTo('');
+    setNewAssigneeIds([]);
+    setNewAttachments([]);
+    setNewBatchId(crypto.randomUUID());
     setNewDueDate(new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0]);
     setNewPriority('medium');
     setNewEstimatedHours(8);
-    setNewActualHours(0);
     setNewTaskType('');
     setNewTaskTypeOther('');
     setIsCreateModalOpen(true);
@@ -706,7 +891,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         description: editDescription.trim(),
         client_id: editClientId,
         team: editTeam,
-        assigned_to: editAssignedTo ? editAssignedTo : null,
         due_date: editDueDate,
         priority: editPriority,
         status: editStatus,
@@ -714,7 +898,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         actual_hours: editActualHours,
         task_type: finalTaskType,
         task_type_other: finalTaskTypeOther,
-      });
+      }, editAssigneeIds, editAttachments);
 
       // Update selected details if open
       if (selectedTaskDetails && selectedTaskDetails.id === editingTask.id) {
@@ -724,7 +908,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           description: editDescription.trim(),
           client_id: editClientId,
           team: editTeam,
-          assigned_to: editAssignedTo ? editAssignedTo : null,
+          assigned_to: editAssigneeIds[0] || null,
           due_date: editDueDate,
           priority: editPriority,
           status: editStatus,
@@ -736,6 +920,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       }
 
       setEditingTask(null);
+      setEditAttachments([]);
       setNotification({ text: 'Task details updated successfully.', type: 'success' });
       setTimeout(() => setNotification(null), 3500);
     } catch (err: any) {
@@ -872,6 +1057,30 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
   return (
     <div className="space-y-6">
+      {pendingRecovery && !isCreateModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-amber-500/40 bg-stone-950 p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+              <div>
+                <h3 className="font-bold text-white">Incomplete task batch found</h3>
+                <p className="mt-1 text-xs text-stone-300">
+                  {pendingRecovery.confirmedClientIds.length} of {pendingRecovery.input.clientIds.length} client copies are confirmed complete.
+                  Resume with the original locked inputs, or explicitly discard this recovery record.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={discardRecovery} className="rounded-lg px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-950/40">
+                Discard recovery
+              </button>
+              <button type="button" onClick={() => resumeRecovery(pendingRecovery)} className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-500">
+                Resume batch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Toast Notification */}
       {notification && (
         <div
@@ -1105,8 +1314,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           {/* Create Task Button */}
           <button
             onClick={() => {
+              const recovery = readTaskCreateRecovery(currentUserId);
+              if (recovery) {
+                setPendingRecovery(recovery);
+                return;
+              }
               setCreateError(null);
+              setActiveRecovery(null);
               setAddSubtaskParent(null);
+              setNewBatchId(crypto.randomUUID());
+              setNewAttachments([]);
               setIsCreateModalOpen(true);
             }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white transition-all shadow-md hover:opacity-90 active:scale-98 shrink-0"
@@ -1602,16 +1819,21 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
 
                 <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
-                  <label className="text-[10px] text-stone-400 block mb-1">Assignee:</label>
-                  <div className="flex items-center gap-2">
+                  <label className="text-[10px] text-stone-400 block mb-1">Assignees:</label>
+                  <div className="flex items-start gap-2">
                     <User className="w-4 h-4 text-purple-400" />
-                    <span className="text-xs font-bold text-white">
-                      {taskDirectoryUsers.find((u) => u.id === selectedTaskDetails.assigned_to)?.name || (
-                        <span className="text-amber-400 font-semibold">
-                          {selectedTaskDetails.assigned_to ? 'Unknown employee' : 'Unassigned'}
-                        </span>
-                      )}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {(() => {
+                        const ids = taskAssignees.filter((row) => row.task_id === selectedTaskDetails.id).map((row) => row.user_id);
+                        const resolvedIds = ids.length > 0 ? ids : (selectedTaskDetails.assigned_to ? [selectedTaskDetails.assigned_to] : []);
+                        if (resolvedIds.length === 0) return <span className="text-xs font-semibold text-amber-400">Unassigned</span>;
+                        return resolvedIds.map((id) => (
+                          <span key={id} className="rounded-full bg-purple-900/40 px-2 py-0.5 text-[10px] font-semibold text-purple-200">
+                            {taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee'}
+                          </span>
+                        ));
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1874,7 +2096,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div
-            className="w-full max-w-lg rounded-[22px] p-6 space-y-4 shadow-2xl relative"
+            className="relative max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-[22px] p-6 shadow-2xl"
             style={{
               background: 'var(--gradient-hero)',
               border: '1px solid var(--border-medium)',
@@ -1896,6 +2118,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 onClick={() => {
                   setIsCreateModalOpen(false);
                   setAddSubtaskParent(null);
+                  if (activeRecovery) {
+                    setPendingRecovery(readTaskCreateRecovery(currentUserId));
+                    setActiveRecovery(null);
+                  } else {
+                    setNewBatchId(crypto.randomUUID());
+                    setNewAttachments([]);
+                  }
                 }}
                 className="p-1 rounded-lg text-stone-400 hover:text-white"
               >
@@ -1919,25 +2148,39 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
             )}
 
+            {activeRecovery && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-3 text-xs text-amber-200">
+                Recovery mode: task details, clients, and assignees are locked to the original batch. Attachments marked incomplete must be re-selected with identical contents.
+              </div>
+            )}
+
             <form onSubmit={handleCreateSubmit} className="space-y-3.5">
               {/* Client Selection — locked to the parent's client when adding a subtask */}
               <div>
                 <label className="text-xs font-semibold text-stone-300 block mb-1">
-                  Client:
+                  {addSubtaskParent ? 'Client:' : 'Clients:'}
                 </label>
-                <select
-                  value={newClientId}
-                  onChange={(e) => setNewClientId(e.target.value)}
-                  disabled={!!addSubtaskParent}
-                  className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500 disabled:opacity-60"
-                  required
-                >
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-stone-900 text-white">
-                      {c.name} ({c.industry || 'Client'})
-                    </option>
-                  ))}
-                </select>
+                {addSubtaskParent ? (
+                  <div className="w-full rounded-xl border border-stone-800 bg-stone-900 px-3 py-2 text-xs text-white opacity-70">
+                    {clients.find((client) => client.id === addSubtaskParent.client_id)?.name || addSubtaskParent.client_id}
+                  </div>
+                ) : (
+                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-stone-800 bg-stone-900 p-2">
+                    {clients.map((client) => (
+                      <label key={client.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          disabled={!!activeRecovery}
+                          checked={newClientIds.includes(client.id)}
+                          onChange={() => setNewClientIds((current) => current.includes(client.id)
+                            ? current.filter((id) => id !== client.id)
+                            : [...current, client.id])}
+                        />
+                        <span>{client.name} ({client.industry || 'Client'})</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Task Title */}
@@ -1947,6 +2190,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </label>
                 <input
                   type="text"
+                  disabled={!!activeRecovery}
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="e.g., SEO Technical Audit or Campaign Launch"
@@ -1962,6 +2206,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  disabled={!!activeRecovery}
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   placeholder="Provide technical specifications and deliverables..."
@@ -1971,12 +2216,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
 
               {/* Team and Assignee with Live Capacity Check */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Team:
                   </label>
                   <select
+                    disabled={!!activeRecovery}
                     value={newTeam}
                     onChange={(e) => setNewTeam(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
@@ -1989,33 +2235,30 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Assignee (Operational Only):
+                    Assignees (Operational Only):
                   </label>
-                  <select
-                    value={newAssignedTo}
-                    onChange={(e) => setNewAssignedTo(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  >
-                    <option value="" className="bg-stone-900 text-amber-400">
-                      -- Unassigned --
-                    </option>
-                    {newTeamAssignees
-                      .map((u) => {
-                        // Only show a real badge when the viewer's own loaded `tasks` is actually
-                        // complete enough to trust for this candidate (see canTrustCapacityFor) —
-                        // otherwise show the neutral "unknown" glyph rather than a near-certainly
-                        // wrong "Available". Either way, nothing here disables or excludes the
-                        // option — N/A never blocks selecting this candidate.
-                        const indicator = canTrustCapacityFor(currentUser, u)
-                          ? getCapacityIndicator(getUserCapacityData({ ...u, auth_id: null }, clients, tasks))
-                          : CAPACITY_UNKNOWN_INDICATOR;
-                        return (
-                          <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                            {u.name} ({u.team || u.role}) {indicator}
-                          </option>
-                        );
-                      })}
-                  </select>
+                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-stone-800 bg-stone-900 p-2">
+                    {newAssigneeOptions.length === 0 && <p className="px-2 py-1 text-xs text-stone-500">No assignable employees.</p>}
+                    {newAssigneeOptions.map((user) => (
+                      <label key={user.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          disabled={!!activeRecovery}
+                          checked={newAssigneeIds.includes(user.id)}
+                          onChange={() => setNewAssigneeIds((current) => current.includes(user.id)
+                            ? current.filter((id) => id !== user.id)
+                            : [...current, user.id])}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{user.name} ({user.team || user.role})</span>
+                        <span className="shrink-0 text-[10px] text-stone-400">{capacityIndicator(user)}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {(isCapacityLoading || capacityError) && (
+                    <p className={`mt-1 text-[10px] ${capacityError ? 'text-amber-400' : 'text-stone-500'}`}>
+                      {capacityError || 'Loading verified capacity…'}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2027,7 +2270,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 <label className="text-xs font-semibold text-stone-300 block mb-1">
                   Task Type (optional):
                 </label>
-                {canManageTaskTypes && (
+                {canManageTaskTypes && !activeRecovery && (
                   <div className="mb-1.5">
                     <TaskTypeInlineManager
                       taskTypes={taskTypes}
@@ -2040,6 +2283,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </div>
                 )}
                 <select
+                  disabled={!!activeRecovery}
                   value={newTaskType}
                   onChange={(e) => setNewTaskType(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
@@ -2052,6 +2296,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 {newSelectedTaskType?.is_other && (
                   <input
                     type="text"
+                    disabled={!!activeRecovery}
                     dir="auto"
                     value={newTaskTypeOther}
                     onChange={(e) => setNewTaskTypeOther(e.target.value)}
@@ -2068,6 +2313,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     Priority:
                   </label>
                   <select
+                    disabled={!!activeRecovery}
                     value={newPriority}
                     onChange={(e) => setNewPriority(e.target.value as TaskPriority)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
@@ -2085,6 +2331,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </label>
                   <input
                     type="date"
+                    disabled={!!activeRecovery}
                     value={newDueDate}
                     onChange={(e) => setNewDueDate(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
@@ -2093,35 +2340,31 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Estimated & Actual Hours */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Estimated Hours:
-                  </label>
-                  <input
-                    type="number"
-                    min="0.5"
-                    step="0.5"
-                    value={newEstimatedHours}
-                    onChange={(e) => setNewEstimatedHours(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  />
-                </div>
+              <div>
+                <label className="text-xs font-semibold text-stone-300 block mb-1">Estimated Hours:</label>
+                <input
+                  type="number"
+                  disabled={!!activeRecovery}
+                  min="0.5"
+                  step="0.5"
+                  value={newEstimatedHours}
+                  onChange={(e) => setNewEstimatedHours(parseFloat(e.target.value) || 0)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Actual Hours (if any):
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={newActualHours}
-                    onChange={(e) => setNewActualHours(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  />
-                </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-stone-300">Attachments:</label>
+                {activeRecovery?.attachments.some((attachment) => attachment.status !== 'confirmed') && (
+                  <div className="mb-2 space-y-1 rounded-lg border border-amber-700/40 bg-amber-950/20 p-2">
+                    {activeRecovery.attachments.filter((attachment) => attachment.status !== 'confirmed').map((attachment) => (
+                      <p key={attachment.id} className="text-[10px] text-amber-200">
+                        Re-select exactly: {attachment.name} ({attachment.status === 'manual_review' ? 'manual review required if metadata is still not visible' : 'safe metadata retry pending'})
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <TaskAttachmentPicker files={newAttachments} onChange={setNewAttachments} disabled={isSubmitting} />
               </div>
 
               {createError && (
@@ -2150,6 +2393,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   onClick={() => {
                     setIsCreateModalOpen(false);
                     setAddSubtaskParent(null);
+                    if (activeRecovery) {
+                      setPendingRecovery(readTaskCreateRecovery(currentUserId));
+                      setActiveRecovery(null);
+                    } else {
+                      setNewBatchId(crypto.randomUUID());
+                      setNewAttachments([]);
+                    }
                   }}
                   className="px-4 py-2 rounded-xl text-xs text-stone-400 hover:text-white"
                 >
@@ -2173,7 +2423,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {editingTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div
-            className="w-full max-w-lg rounded-[22px] p-6 space-y-4 shadow-2xl relative"
+            className="relative max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-[22px] p-6 shadow-2xl"
             style={{
               background: 'var(--gradient-hero)',
               border: '1px solid var(--border-medium)',
@@ -2185,7 +2435,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 <span>Edit Task</span>
               </h3>
               <button
-                onClick={() => setEditingTask(null)}
+                onClick={() => {
+                  setEditingTask(null);
+                  setEditAttachments([]);
+                }}
                 className="p-1 rounded-lg text-stone-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -2272,34 +2525,32 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Assignee & Status */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Assignees & Status */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Assignee (Operational Only):
+                    Assignees (Operational Only):
                   </label>
-                  <select
-                    value={editAssignedTo}
-                    onChange={(e) => setEditAssignedTo(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  >
-                    <option value="" className="bg-stone-900 text-amber-400">
-                      -- Unassigned --
-                    </option>
-                    {editTeamAssignees
-                      .map((u) => {
-                        // Same trust check as the Create Task assignee select above — see
-                        // canTrustCapacityFor. N/A never disables or excludes the option.
-                        const indicator = canTrustCapacityFor(currentUser, u)
-                          ? getCapacityIndicator(getUserCapacityData({ ...u, auth_id: null }, clients, tasks))
-                          : CAPACITY_UNKNOWN_INDICATOR;
-                        return (
-                          <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                            {u.name} ({u.team || u.role}) {indicator}
-                          </option>
-                        );
-                      })}
-                  </select>
+                  <div className="max-h-32 space-y-1 overflow-y-auto rounded-xl border border-stone-800 bg-stone-900 p-2">
+                    {editAssigneeOptions.map((user) => (
+                      <label key={user.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          checked={editAssigneeIds.includes(user.id)}
+                          onChange={() => setEditAssigneeIds((current) => current.includes(user.id)
+                            ? current.filter((id) => id !== user.id)
+                            : [...current, user.id])}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{user.name} ({user.team || user.role})</span>
+                        <span className="shrink-0 text-[10px] text-stone-400">{capacityIndicator(user)}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {(isCapacityLoading || capacityError) && (
+                    <p className={`mt-1 text-[10px] ${capacityError ? 'text-amber-400' : 'text-stone-500'}`}>
+                      {capacityError || 'Loading verified capacity…'}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -2427,6 +2678,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-stone-300">Add attachments:</label>
+                <TaskAttachmentPicker files={editAttachments} onChange={setEditAttachments} disabled={isUpdating} />
+              </div>
+
               {editError && (
                 <div
                   ref={editErrorBottomRef}
@@ -2450,7 +2706,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <div className="pt-3 border-t border-stone-800 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditingTask(null)}
+                  onClick={() => {
+                    setEditingTask(null);
+                    setEditAttachments([]);
+                  }}
                   className="px-4 py-2 rounded-xl text-xs text-stone-400 hover:text-white"
                 >
                   Cancel

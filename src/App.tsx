@@ -32,7 +32,6 @@ import {
   supabaseRaw,
   isSupabaseConfigured,
   setSupabaseSessionUser,
-  buildAttachmentStoragePath,
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
 } from './lib/supabase';
@@ -71,6 +70,7 @@ import {
   TaskTypeRecord,
   TaskCommentRecord,
   TaskAttachmentRecord,
+  TaskAssigneeRecord,
   CapacityLogRecord,
   DailyLogRecord,
   ExtraNoteRecord,
@@ -108,6 +108,24 @@ import {
   DepartmentPermissionRecord,
   DepartmentMemberTeamRecord,
 } from './types/database';
+import {
+  CreateTaskFormInput,
+  StagedTaskAttachment,
+  TaskAttachmentMetadataError,
+  addTaskAttachmentForCopies,
+  createTaskCopies,
+  deleteTaskAttachmentReference,
+  fetchTaskAssignees,
+  getCapacitySnapshot,
+  markTaskViewed,
+  removeTaskAttachmentObject,
+  setTaskAssignees as persistTaskAssignees,
+} from './lib/taskOperations';
+import {
+  clearTaskCreateRecovery,
+  readTaskCreateRecovery,
+  updateTaskCreateRecovery,
+} from './lib/taskCreateRecovery';
 import {
   INITIAL_USERS,
   INITIAL_BRIEFS,
@@ -258,6 +276,7 @@ export default function App() {
   // supabase/migrations/20261031900000_task_types.sql.
   const [taskTypes, setTaskTypes] = useState<TaskTypeRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [taskAssignees, setTaskAssignees] = useState<TaskAssigneeRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
   const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>(INITIAL_CAPACITY_LOGS);
@@ -1516,6 +1535,15 @@ export default function App() {
           showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
         } else {
           setTasks((taskData as TaskRecord[]) || []);
+        }
+
+        // Multi-assignee membership is independent from tasks.assigned_to. The latter remains a
+        // compatibility mirror only; Create/Edit Task reads this table as the source of truth.
+        try {
+          setTaskAssignees(await fetchTaskAssignees());
+        } catch (taskAssigneeError) {
+          console.error('Failed to load task assignees from Supabase:', taskAssigneeError);
+          setTaskAssignees([]);
         }
 
         // Fetch task types (all rows, including inactive — an existing task may still reference a
@@ -3118,26 +3146,22 @@ export default function App() {
   // handleMarkAssignmentViewed, for programming_agent, which has no assignments row to hang it on)
   const handleMarkTaskViewed = async (taskId: string) => {
     const viewedAt = new Date().toISOString();
-
-    // Was previously `supabase` (the client-side RLS-emulation proxy), whose update branch for
-    // the 'tasks' table never reaches the real database — see handleUpdateTaskStatus's comment
-    // above for the full explanation. `error` was always null under that proxy, so the `if
-    // (error) throw` below never actually fired; local state updated regardless of whether
-    // anything persisted. Local state is now skipped entirely on a real failure.
-    if (supabaseActive) {
-      const { error } = await supabaseRaw
-        .from('tasks')
-        .update({ assignee_viewed_at: viewedAt })
-        .eq('id', taskId);
-      if (error) {
-        console.error('Supabase mark task viewed error:', error);
-        return;
-      }
+    if (!supabaseActive) return;
+    try {
+      await markTaskViewed(taskId);
+      setTaskAssignees((previous) => previous.map((row) =>
+        row.task_id === taskId && row.user_id === currentUser.id && !row.viewed_at
+          ? { ...row, viewed_at: viewedAt }
+          : row
+      ));
+      setTasks((prev) => prev.map((task) =>
+        task.id === taskId && task.assigned_to === currentUser.id
+          ? { ...task, assignee_viewed_at: task.assignee_viewed_at || viewedAt }
+          : task
+      ));
+    } catch (error) {
+      console.error('Supabase mark task viewed error:', error);
     }
-
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, assignee_viewed_at: viewedAt } : t))
-    );
   };
 
   // Assign a service specialist (SEO / Social Media / Media Buying) to a client, by that team's lead
@@ -3789,7 +3813,12 @@ export default function App() {
   };
 
   // Update task details and hours
-  const handleUpdateTask = async (taskId: string, updates: Partial<TaskRecord>) => {
+  const handleUpdateTask = async (
+    taskId: string,
+    updates: Partial<TaskRecord>,
+    assigneeIds?: string[],
+    stagedAttachments: StagedTaskAttachment[] = []
+  ) => {
     const existingTask = tasks.find((t) => t.id === taskId);
     // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
     // actually touches status — editing title/description/done_link alone shouldn't disturb it.
@@ -3799,33 +3828,72 @@ export default function App() {
         ? existingTask?.completed_at || new Date().toISOString()
         : null;
     }
-    // Reassigning a task to a different person is a fresh "new task" for them (Module 12
-    // Phase 5's programming_agent notification badge, since that role has no assignments row).
-    if ('assigned_to' in updates) {
-      if (existingTask && existingTask.assigned_to !== updates.assigned_to) {
-        finalUpdates.assignee_viewed_at = null;
-      }
-    }
+    // Assignee membership is persisted only through set_task_assignees. Keep compatibility with
+    // any older caller that still passes assigned_to, but never write that mirror column directly.
+    const requestedAssigneeIds = assigneeIds ?? (
+      'assigned_to' in updates ? (updates.assigned_to ? [updates.assigned_to] : []) : undefined
+    );
+    delete finalUpdates.assigned_to;
+    delete finalUpdates.assignee_viewed_at;
 
     if (!supabaseActive) throw new Error('Supabase is not configured; the task was not updated.');
     if ('client_id' in finalUpdates) await assertRealTaskClient(finalUpdates.client_id || '');
     let persistedTask: TaskRecord;
+    let persistedAnyChange = false;
     try {
-      const { data, error } = await supabaseRaw
-        .from('tasks')
-        .update(finalUpdates)
-        .eq('id', taskId)
-        .select('*')
-        .single();
-      if (error) throw error;
-      if (!data) throw new Error('Task update returned no persisted row.');
-      persistedTask = data as TaskRecord;
+      if (Object.keys(finalUpdates).length > 0) {
+        const { data, error } = await supabaseRaw
+          .from('tasks')
+          .update(finalUpdates)
+          .eq('id', taskId)
+          .select('*')
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('Task update returned no persisted row.');
+        persistedTask = data as TaskRecord;
+        persistedAnyChange = true;
+      } else if (existingTask) {
+        persistedTask = existingTask;
+      } else {
+        throw new Error('Task not found.');
+      }
+
+      if (requestedAssigneeIds) {
+        await persistTaskAssignees(taskId, requestedAssigneeIds);
+        persistedAnyChange = true;
+        setTaskAssignees(await fetchTaskAssignees());
+        const { data: refreshedTask, error: refreshError } = await supabaseRaw
+          .from('tasks')
+          .select('*')
+          .eq('id', taskId)
+          .single();
+        if (refreshError) throw refreshError;
+        persistedTask = refreshedTask as TaskRecord;
+      }
+
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
+
+      const addedAttachments: TaskAttachmentRecord[] = [];
+      for (const staged of stagedAttachments) {
+        const rows = await addTaskAttachmentForCopies([taskId], staged);
+        addedAttachments.push(...rows);
+        if (rows.length > 0) persistedAnyChange = true;
+      }
+      if (addedAttachments.length > 0) {
+        setTaskAttachments((previous) => {
+          const byId = new Map(previous.map((row) => [row.id, row]));
+          addedAttachments.forEach((row) => byId.set(row.id, row));
+          return [...byId.values()];
+        });
+      }
     } catch (err) {
       console.error('Supabase task update error:', err);
+      if (persistedAnyChange) {
+        const detail = err instanceof Error ? err.message : 'Unknown Supabase error.';
+        throw new Error(`Some task changes were saved, but the full update did not finish: ${detail} You can retry safely.`);
+      }
       throw err;
     }
-
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
 
     // Notify the task's creator once the assignee submits a Done Link while the task is at
     // 'completed' — the review-before-closing trigger. Fires only on the empty/null -> real
@@ -3869,89 +3937,119 @@ export default function App() {
     showNotification('Task data updated successfully.');
   };
 
-  // 6. Add a new shared task (or a subtask, when parent_task_id is set)
-  const handleCreateTask = async (taskData: {
-    client_id: string;
-    title: string;
-    description: string;
-    assigned_to?: string | null;
-    team: string;
-    status: TaskStatus;
-    due_date: string;
-    priority: TaskPriority;
-    estimated_hours?: number | null;
-    actual_hours?: number | null;
-    parent_task_id?: string | null;
-    task_type?: string | null;
-    task_type_other?: string | null;
-  }) => {
-    const newTaskPayload: TaskRecord = {
-      id: `tsk-${Date.now().toString().slice(-4)}`,
-      client_id: taskData.client_id,
-      title: taskData.title,
-      description: taskData.description,
-      assigned_to: taskData.assigned_to || null,
-      created_by: currentUser.id,
-      team: taskData.team,
-      status: taskData.status,
-      due_date: taskData.due_date,
-      priority: taskData.priority,
-      estimated_hours: taskData.estimated_hours ?? 8,
-      actual_hours: taskData.actual_hours ?? 0,
-      created_at: new Date().toISOString(),
-      parent_task_id: taskData.parent_task_id || null,
-      task_type: taskData.task_type || null,
-      task_type_other: taskData.task_type_other || null,
-    };
-
+  // 6. Create one task copy per selected client. create_task_copy owns assignee notifications and
+  // idempotency; the UI must not duplicate either behavior.
+  const handleCreateTask = async (taskData: CreateTaskFormInput) => {
     if (!supabaseActive) {
       throw new Error('Supabase is not configured; the task was not created.');
     }
-    await assertRealTaskClient(newTaskPayload.client_id);
+    for (const clientId of taskData.clientIds) await assertRealTaskClient(clientId);
 
-    let persistedTask: TaskRecord;
+    const batchId = taskData.batchId || '';
+    const recovery = readTaskCreateRecovery(currentUser.id);
+    if (!batchId || !recovery || recovery.batchId !== batchId) {
+      throw new Error('The recoverable task batch could not be verified locally. Start a new Create operation instead of risking duplicate copies.');
+    }
+    const submittedInput = { ...taskData, attachments: undefined };
+    if (JSON.stringify(submittedInput) !== JSON.stringify(recovery.input)) {
+      throw new Error('This batch payload differs from the locked recovery record. Resume the original operation or explicitly discard it before starting a different task.');
+    }
+
+    const batchResult = await createTaskCopies(taskData);
+    const persistedTasks = batchResult.tasks;
+    if (persistedTasks.length > 0) {
+      setTasks((previous) => [
+        ...persistedTasks,
+        ...previous.filter((task) => !persistedTasks.some((row) => row.id === task.id)),
+      ]);
+    }
+    updateTaskCreateRecovery(currentUser.id, batchId, (current) => ({
+      ...current,
+      confirmedClientIds: [...new Set([...current.confirmedClientIds, ...batchResult.successfulClientIds])],
+      failedClients: batchResult.failures.map((failure) => ({ clientId: failure.clientId, message: failure.message })),
+    }));
+
+    let assigneeRefreshError: string | null = null;
     try {
-      const { data, error } = await supabaseRaw.from('tasks').insert([newTaskPayload]).select();
-      if (error) throw error;
-      if (!data?.[0]) throw new Error('Task creation returned no persisted row.');
-      persistedTask = data[0] as TaskRecord;
-    } catch (err) {
-      console.error('Supabase task insert error:', err);
-      throw err;
+      setTaskAssignees(await fetchTaskAssignees());
+    } catch (refreshError) {
+      assigneeRefreshError = refreshError instanceof Error ? refreshError.message : 'Unknown Supabase error.';
     }
 
-    setTasks((prev) => [persistedTask, ...prev]);
-    await logActivity('create', 'task', persistedTask.id, persistedTask.title, `Created task for team: ${persistedTask.team}`);
+    if (batchResult.failures.length > 0) {
+      const clientLabel = (clientId: string) => clients.find((client) => client.id === clientId)?.name || clientId;
+      const completedLabels = batchResult.successfulClientIds.map(clientLabel);
+      const incompleteDetails = batchResult.failures
+        .filter((failure) => failure.task)
+        .map((failure) => `${clientLabel(failure.clientId)}: ${failure.message}`);
+      const failedDetails = batchResult.failures
+        .filter((failure) => !failure.task)
+        .map((failure) => `${clientLabel(failure.clientId)}: ${failure.message}`);
+      throw new Error([
+        `Completed copies: ${completedLabels.length > 0 ? completedLabels.join(', ') : 'none'}.`,
+        incompleteDetails.length > 0 ? `Saved copies needing attention: ${incompleteDetails.join(' | ')}.` : '',
+        failedDetails.length > 0 ? `Copies not confirmed saved: ${failedDetails.join(' | ')}.` : '',
+        assigneeRefreshError ? `Assignee display refresh also failed: ${assigneeRefreshError}.` : '',
+        'Retry this open form without changing its task details to reuse the same batch ID without duplicating task copies.',
+      ].filter(Boolean).join(' '));
+    }
 
-    if (persistedTask.assigned_to) {
-      try {
-        const { data: recipient, error: recipientError } = await supabaseRaw
-          .from('users')
-          .select('id, auth_id, deactivated_at')
-          .eq('id', persistedTask.assigned_to)
-          .maybeSingle();
-        if (recipientError) throw recipientError;
-        if (recipient && isActiveEmployee(recipient)) {
-          const notificationId = `notif-task-created-${persistedTask.id}-${recipient.id}`;
-          const { error: notificationError } = await supabaseRaw.from('notifications').insert({
-            id: notificationId,
-            user_id: recipient.id,
-            sender_id: currentUser.id,
-            title: 'New Task Assigned',
-            message: `You have been assigned a new task: ${persistedTask.title}.`,
-            type: 'task_assigned',
-            is_read: false,
-            link_url: 'module:tasks',
-            created_at: persistedTask.created_at || new Date().toISOString(),
-          });
-          if (notificationError && notificationError.code !== '23505') throw notificationError;
+    if (assigneeRefreshError) {
+      throw new Error(`${persistedTasks.length} task ${persistedTasks.length === 1 ? 'copy was' : 'copies were'} saved, but assignees could not be refreshed: ${assigneeRefreshError} Keep this form open and refresh before retrying.`);
+    }
+
+    try {
+      const addedAttachments: TaskAttachmentRecord[] = [];
+      for (const staged of taskData.attachments) {
+        const currentRecovery = readTaskCreateRecovery(currentUser.id);
+        const descriptor = currentRecovery?.attachments.find((attachment) => attachment.id === staged.id);
+        if (descriptor?.status === 'confirmed') continue;
+        try {
+          const rows = await addTaskAttachmentForCopies(persistedTasks.map((task) => task.id), staged);
+          addedAttachments.push(...rows);
+          updateTaskCreateRecovery(currentUser.id, batchId, (current) => ({
+            ...current,
+            attachments: current.attachments.map((attachment) => attachment.id === staged.id
+              ? { ...attachment, status: 'confirmed', message: undefined }
+              : attachment),
+          }));
+        } catch (attachmentError) {
+          updateTaskCreateRecovery(currentUser.id, batchId, (current) => ({
+            ...current,
+            attachments: current.attachments.map((attachment) => attachment.id === staged.id
+              ? {
+                  ...attachment,
+                  status: attachmentError instanceof TaskAttachmentMetadataError && attachmentError.metadataRetryAuthorized
+                    ? 'metadata_retry'
+                    : 'manual_review',
+                  message: attachmentError instanceof Error ? attachmentError.message : 'Unknown attachment error.',
+                }
+              : attachment),
+          }));
+          throw attachmentError;
         }
-      } catch (err) {
-        console.error('Failed to create task notification:', err);
       }
+      setTaskAttachments((previous) => {
+        const byId = new Map(previous.map((row) => [row.id, row]));
+        addedAttachments.forEach((row) => byId.set(row.id, row));
+        return [...byId.values()];
+      });
+    } catch (attachmentError) {
+      const detail = attachmentError instanceof Error ? attachmentError.message : 'Unknown Supabase error.';
+      throw new Error(`${persistedTasks.length} task ${persistedTasks.length === 1 ? 'copy was' : 'copies were'} saved, but attachment processing did not finish: ${detail}`);
     }
 
-    showNotification(`Task "${taskData.title}" added to the shared task board successfully!`);
+    const completedRecovery = readTaskCreateRecovery(currentUser.id);
+    const clientsComplete = taskData.clientIds.every((clientId) => completedRecovery?.confirmedClientIds.includes(clientId));
+    const attachmentsComplete = completedRecovery?.attachments.every((attachment) => attachment.status === 'confirmed') ?? false;
+    if (!clientsComplete || !attachmentsComplete) {
+      throw new Error('The task copies were saved, but the local recovery record is not fully confirmed. Refresh and resume this batch.');
+    }
+    clearTaskCreateRecovery(currentUser.id, batchId);
+
+    await Promise.all(persistedTasks.map((task) =>
+      logActivity('create', 'task', task.id, task.title, `Created task for team: ${task.team}`)
+    ));
   };
 
   // 6b. Post a task comment or reply (parent_comment_id set for a reply,
@@ -4043,41 +4141,11 @@ export default function App() {
       return;
     }
 
-    const attachmentId = `att-${Date.now().toString().slice(-4)}`;
-    const storagePath = buildAttachmentStoragePath(taskId, attachmentId, file.name);
-
-    const { error: uploadError } = await supabase.storage
-      .from('task-attachments')
-      .upload(storagePath, file, { contentType: file.type });
-    if (uploadError) {
-      console.error('Supabase attachment upload error:', uploadError);
-      throw uploadError;
-    }
-
-    const newAttachmentPayload: TaskAttachmentRecord = {
-      id: attachmentId,
-      task_id: taskId,
-      storage_path: storagePath,
-      filename: file.name,
-      file_size: file.size,
-      mime_type: file.type,
-      uploaded_by: currentUser.id,
-      uploaded_at: new Date().toISOString(),
-    };
-
-    const { data, error: insertError } = await supabase
-      .from('task_attachments')
-      .insert([newAttachmentPayload])
-      .select();
-    if (insertError) {
-      console.error('Supabase attachment metadata insert error:', insertError);
-      // The file itself uploaded successfully — clean it up rather than
-      // leaving an orphaned Storage object with no matching metadata row.
-      await supabase.storage.from('task-attachments').remove([storagePath]);
-      throw insertError;
-    }
-
-    setTaskAttachments((prev) => [...prev, (data?.[0] as TaskAttachmentRecord) || newAttachmentPayload]);
+    const rows = await addTaskAttachmentForCopies(
+      [taskId],
+      { id: crypto.randomUUID(), file }
+    );
+    setTaskAttachments((previous) => [...previous, ...rows]);
     showNotification(`"${file.name}" attached successfully.`);
   };
 
@@ -4092,22 +4160,15 @@ export default function App() {
     const attachment = taskAttachments.find((a) => a.id === attachmentId);
     if (!attachment) return;
 
-    if (supabaseActive) {
-      const { error: storageError } = await supabase.storage.from('task-attachments').remove([attachment.storage_path]);
-      if (storageError) {
-        console.error('Supabase attachment storage delete error:', storageError);
-        showNotification('Unable to delete this attachment.', 'info');
-        return;
-      }
-      const { error } = await supabase.from('task_attachments').delete().eq('id', attachmentId);
-      if (error) {
-        console.error('Supabase attachment delete error:', error);
-        showNotification('Unable to delete this attachment.', 'info');
-        return;
-      }
+    if (!supabaseActive) return;
+    try {
+      const finalStoragePath = await deleteTaskAttachmentReference(attachmentId);
+      setTaskAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+      if (finalStoragePath) await removeTaskAttachmentObject(finalStoragePath);
+    } catch (error) {
+      console.error('Supabase attachment delete error:', error);
+      showNotification(error instanceof Error ? error.message : 'Unable to delete this attachment.', 'info');
     }
-
-    setTaskAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
   };
 
   // 7. Document a daily activity report (Daily Log)
@@ -5697,6 +5758,7 @@ export default function App() {
                   clients={clients}
                   campaigns={campaigns}
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
                   socialInsights={socialInsights}
                   seoInsights={seoInsights}
                   assignments={assignments}
@@ -5887,6 +5949,7 @@ export default function App() {
               <div className="space-y-6">
                 <CrossTeamTaskBoard
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
                   users={users}
                   taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}
@@ -5906,6 +5969,8 @@ export default function App() {
                   taskAttachments={taskAttachments}
                   onUploadTaskAttachment={handleUploadTaskAttachment}
                   onDeleteTaskAttachment={handleDeleteTaskAttachment}
+                  onGetCapacitySnapshot={getCapacitySnapshot}
+                  onMarkTaskViewed={handleMarkTaskViewed}
                 />
               </div>
             )}
