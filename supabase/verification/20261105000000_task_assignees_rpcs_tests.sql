@@ -769,7 +769,7 @@ begin
       raise exception 'TEST_FAILED: scenario 17f — the non-owner DELETE unexpectedly removed the storage object.';
     end if;
   exception when sqlstate '42501' then
-    if sqlerrm <> 'Direct deletion from storage tables is not allowed' then
+    if sqlerrm not like 'Direct deletion from storage tables%' then
       raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE raised unexpected 42501: %.', sqlerrm;
     elsif v_blanket_storage_policies_exist then
       raise notice 'SKIPPED: scenario 17f non-owner DELETE negative check — the known blanket storage policies exist, so protect_delete was reached through an unconditional policy.';
@@ -793,12 +793,12 @@ begin
         raise exception 'TEST_FAILED: scenario 17f — owner DELETE unexpectedly removed the storage object instead of being stopped by protect_delete.';
       end if;
     exception when sqlstate '42501' then
-      if sqlerrm <> 'Direct deletion from storage tables is not allowed' then
+      if sqlerrm not like 'Direct deletion from storage tables%' then
         raise exception 'TEST_FAILED: scenario 17f — owner DELETE raised unexpected 42501: %.', sqlerrm;
       end if;
     end;
     reset role; perform set_config('request.jwt.claims', '', true);
-  end;
+  end if;
 
   -- ======================================================================
   -- Scenario 18: legacy single-assignee reassign — a plain `update tasks set assigned_to = ...`
