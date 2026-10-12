@@ -2,31 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Paperclip, Download, Trash2, FileText, Image as ImageIcon, Film, Loader2 } from 'lucide-react';
 import { TaskAttachmentRecord, UserRecord } from '../types/database';
 import { supabase } from '../lib/supabase';
+import {
+  formatTaskAttachmentSize,
+  validateTaskAttachmentFile,
+} from '../lib/taskAttachmentValidation';
 
 // Mirrors the bucket's own allowed_mime_types / file_size_limit (see the
 // task_attachments migration) — enforced there too, server-side; this is
 // just for immediate client-side feedback before a doomed upload is even
 // attempted.
-const ALLOWED_MIME_TYPES = [
-  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'text/csv', 'text/plain',
-  'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v',
-];
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const SIGNED_URL_TTL_SECONDS = 300;
-
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
 
 const fileIcon = (mimeType: string) => {
   if (mimeType.startsWith('image/')) return ImageIcon;
@@ -89,14 +74,9 @@ export const TaskAttachmentList: React.FC<TaskAttachmentListProps> = ({
     if (!file) return;
     setError(null);
 
-    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-      setError(
-        `File type not allowed (${file.type || 'unknown'}). Allowed: images, PDF/Office documents, and MP4/MOV/WebM video.`
-      );
-      return;
-    }
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setError(`File too large (${formatFileSize(file.size)}) — the limit is 50MB.`);
+    const validationError = validateTaskAttachmentFile(file);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -146,7 +126,7 @@ export const TaskAttachmentList: React.FC<TaskAttachmentListProps> = ({
                   <p className="text-xs font-semibold text-white truncate">{att.filename}</p>
                   <p className="text-[10px] text-stone-400">
                     {uploader ? uploader.name : att.uploaded_by ? 'Unknown employee' : 'Unknown'} •{' '}
-                    {formatFileSize(att.file_size)}
+                    {formatTaskAttachmentSize(att.file_size)}
                   </p>
                 </div>
 

@@ -2,7 +2,8 @@
  * Fails if any JSX render site of a Task Types-related component, or of a component requiring
  * the taskDirectoryUsers merged-name list or the daily_logs edit/delete handlers, is missing one
  * of its required props:
- *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType, taskDirectoryUsers
+ *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType, taskDirectoryUsers,
+ *     taskAssignees
  *   - <TaskTypeInlineManager>: taskTypes, scopeTeam, onSelectType, onCreateTaskType,
  *     onUpdateTaskType (scopeRole is intentionally optional — a form with no assignee selected
  *     yet has nothing to pass there)
@@ -31,7 +32,7 @@ const SRC_DIR = join(ROOT, 'src');
 const CHECKS: { tag: string; requiredProps: string[] }[] = [
   {
     tag: '<CrossTeamTaskBoard',
-    requiredProps: ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType', 'taskDirectoryUsers'],
+    requiredProps: ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType', 'taskDirectoryUsers', 'taskAssignees'],
   },
   {
     tag: '<TaskTypeInlineManager',
