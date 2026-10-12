@@ -3119,15 +3119,19 @@ export default function App() {
   const handleMarkTaskViewed = async (taskId: string) => {
     const viewedAt = new Date().toISOString();
 
+    // Was previously `supabase` (the client-side RLS-emulation proxy), whose update branch for
+    // the 'tasks' table never reaches the real database — see handleUpdateTaskStatus's comment
+    // above for the full explanation. `error` was always null under that proxy, so the `if
+    // (error) throw` below never actually fired; local state updated regardless of whether
+    // anything persisted. Local state is now skipped entirely on a real failure.
     if (supabaseActive) {
-      try {
-        const { error } = await supabase
-          .from('tasks')
-          .update({ assignee_viewed_at: viewedAt })
-          .eq('id', taskId);
-        if (error) throw error;
-      } catch (err: any) {
-        console.error('Supabase mark task viewed error:', err);
+      const { error } = await supabaseRaw
+        .from('tasks')
+        .update({ assignee_viewed_at: viewedAt })
+        .eq('id', taskId);
+      if (error) {
+        console.error('Supabase mark task viewed error:', error);
+        return;
       }
     }
 
@@ -3747,14 +3751,19 @@ export default function App() {
     const completedAt = isTaskDone(newStatus) ? existingTask?.completed_at || new Date().toISOString() : null;
     const updates = { status: newStatus, completed_at: completedAt };
 
+    // Was previously `supabase` (the client-side RLS-emulation proxy) — for the 'tasks' table
+    // that proxy's update branch never forwards to the real database at all; it just mutates a
+    // disconnected in-memory demo array and reports fabricated success. `supabaseRaw` is the
+    // real, RLS-enforced client every other task mutation (handleCreateTask/handleUpdateTask)
+    // already uses. On a real failure, this throws BEFORE any local state changes below, so the
+    // card is never moved into the new column in the first place — callers (CrossTeamTaskBoard's
+    // handleMoveStatus, DailyOperationsModule's/MyWorkHub's status handlers) already catch this
+    // and show their own error toast.
     if (supabaseActive) {
-      try {
-        await supabase
-          .from('tasks')
-          .update(updates)
-          .eq('id', taskId);
-      } catch (err) {
-        console.error('Supabase task update error:', err);
+      const { error } = await supabaseRaw.from('tasks').update(updates).eq('id', taskId);
+      if (error) {
+        console.error('Supabase task update error:', error);
+        throw error;
       }
     }
 
