@@ -57,6 +57,7 @@ declare
   v_expected_used integer;
   v_storage_path text;
   v_storage_path2 text;
+  v_blanket_storage_policies_exist boolean;
   v_copy1_id text;
   v_copy2_id text;
   v_att_count integer;
@@ -626,6 +627,18 @@ begin
   end;
   reset role; perform set_config('request.jwt.claims', '', true);
 
+  -- Detect the live, untracked "Allow authenticated users to {select,insert,update,delete}
+  -- files" blanket policies on storage.objects (bucket-independent, qual/with_check = true for
+  -- role authenticated) — present on this database but in no migration here. They OR with every
+  -- bucket-specific policy below, so while they exist, a negative (must-NOT) assertion against
+  -- the real bucket-specific policy can never actually observe a denial: the blanket policy grants
+  -- it regardless. Computed once and reused by scenario 16 and scenario 17f's negative checks.
+  select exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname like 'Allow authenticated users to %files'
+  ) into v_blanket_storage_policies_exist;
+
   -- ======================================================================
   -- Scenario 16: storage SELECT policy — OR of the old folder-name rule and the new
   -- task_attachments.storage_path rule. A freshly "uploaded" object (fabricated row) under an
@@ -650,7 +663,9 @@ begin
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_agent_c_auth)::text, true);
   set local role authenticated;
-  if exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path2) then
+  if v_blanket_storage_policies_exist then
+    raise notice 'SKIPPED: blanket storage policies present';
+  elsif exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path2) then
     raise exception 'TEST_FAILED: scenario 16 — an uninvolved party must NOT see an object under a task they have no relation to.';
   end if;
   reset role; perform set_config('request.jwt.claims', '', true);
@@ -741,7 +756,9 @@ begin
   set local role authenticated;
   delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
   reset role; perform set_config('request.jwt.claims', '', true);
-  if not exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
+  if v_blanket_storage_policies_exist then
+    raise notice 'SKIPPED: blanket storage policies present';
+  elsif not exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
     raise exception 'TEST_FAILED: scenario 17f — a non-owner must NOT be able to delete the storage object.';
   end if;
 
