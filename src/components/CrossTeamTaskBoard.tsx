@@ -52,7 +52,7 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
+import { getUserCapacityData, getCapacityIndicator, canTrustCapacityFor, CAPACITY_UNKNOWN_INDICATOR } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
 import { isTaskDone, canCloseTask, canSubmitTaskForClosing } from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
@@ -1996,10 +1996,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     </option>
                     {newTeamAssignees
                       .map((u) => {
-                        const capacityData = getUserCapacityData({ ...u, auth_id: null }, clients, tasks);
+                        // Only show a real badge when the viewer's own loaded `tasks` is actually
+                        // complete enough to trust for this candidate (see canTrustCapacityFor) —
+                        // otherwise show the neutral "unknown" glyph rather than a near-certainly
+                        // wrong "Available". Either way, nothing here disables or excludes the
+                        // option — N/A never blocks selecting this candidate.
+                        const indicator = canTrustCapacityFor(currentUser, u)
+                          ? getCapacityIndicator(getUserCapacityData({ ...u, auth_id: null }, clients, tasks))
+                          : CAPACITY_UNKNOWN_INDICATOR;
                         return (
                           <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                            {u.name} ({u.team || u.role}) {getCapacityIndicator(capacityData)}
+                            {u.name} ({u.team || u.role}) {indicator}
                           </option>
                         );
                       })}
@@ -2276,10 +2283,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     </option>
                     {editTeamAssignees
                       .map((u) => {
-                        const capacityData = getUserCapacityData({ ...u, auth_id: null }, clients, tasks);
+                        // Same trust check as the Create Task assignee select above — see
+                        // canTrustCapacityFor. N/A never disables or excludes the option.
+                        const indicator = canTrustCapacityFor(currentUser, u)
+                          ? getCapacityIndicator(getUserCapacityData({ ...u, auth_id: null }, clients, tasks))
+                          : CAPACITY_UNKNOWN_INDICATOR;
                         return (
                           <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                            {u.name} ({u.team || u.role}) {getCapacityIndicator(capacityData)}
+                            {u.name} ({u.team || u.role}) {indicator}
                           </option>
                         );
                       })}
