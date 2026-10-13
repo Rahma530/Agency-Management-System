@@ -141,10 +141,23 @@ begin
     raise exception 'TEST_SETUP_FAILED: need one active marketing_manager with auth_id.';
   end if;
 
+  -- Must be distinct from v_agent_b/c/d: those pickers' role filter (not in admin/sales/am_agent
+  -- roles, not any team_lead role) does NOT exclude graphic_designer/video_editor, so without
+  -- this exclusion v_creative_id could coincidentally equal one of them. Scenarios 23/24 use
+  -- v_creative_id as a task's EXISTING assignee and swap in v_agent_b_id/v_agent_c_id as the NEW
+  -- one — if the two ids coincide, set_task_assignees is asked to replace a user with themselves,
+  -- its diff against the current list comes back empty (v_to_add/v_to_remove both null), and it
+  -- returns as a documented no-op — which is exactly what made scenario 24's "old assignee
+  -- removed" assertion fail live (scenario 23 was latently exposed to the same risk, just not
+  -- triggering it that run). v_agent_a_id is excluded too, for symmetry/self-documentation, even
+  -- though a's role (programming_agent) can never literally equal a creative role.
   select id, auth_id into v_creative_id, v_creative_auth
-    from public.users where role in ('graphic_designer', 'video_editor') and auth_id is not null and deactivated_at is null limit 1;
+    from public.users
+    where role in ('graphic_designer', 'video_editor') and auth_id is not null and deactivated_at is null
+      and id not in (v_agent_a_id, v_agent_b_id, v_agent_c_id, v_agent_d_id)
+    order by id limit 1;
   if v_creative_id is null then
-    raise exception 'TEST_SETUP_FAILED: need one active graphic_designer or video_editor with auth_id.';
+    raise exception 'TEST_SETUP_FAILED: need one active graphic_designer or video_editor with auth_id, distinct from agents a/b/c/d.';
   end if;
 
   select team into v_agent_a_original_team from public.users where id = v_agent_a_id;
@@ -973,16 +986,27 @@ begin
   values (v_task_id, v_client_id, 'ZZ scenario 23', 'am_agent swaps designer', null, v_agent_a_id, v_agent_a_original_team, 'todo', current_date, 'low');
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_id, v_creative_id, v_agent_a_id);
 
+  -- Belt-and-suspenders on top of the distinctness the creative-selection query guarantees now:
+  -- if these two ever did coincide, the swap below would be a no-op (replacing a user with
+  -- themselves) — the same latent risk that made scenario 24 fail live before that fix, just not
+  -- triggering here this run. Fail with a clear setup error instead of a confusing assertion
+  -- failure below.
+  if v_creative_id = v_agent_b_id then
+    raise exception 'TEST_SETUP_FAILED: scenario 23 — v_creative_id must differ from v_agent_b_id (the new assignee); the swap would otherwise be a no-op.';
+  end if;
+
   perform set_config('request.jwt.claims', json_build_object('sub', v_am_agent_auth)::text, true);
   set local role authenticated;
   perform public.set_task_assignees(v_task_id, array[v_agent_b_id]);
   reset role; perform set_config('request.jwt.claims', '', true);
 
   if exists (select 1 from public.task_assignees where task_id = v_task_id and user_id = v_creative_id) then
-    raise exception 'TEST_FAILED: scenario 23 — am_agent managing the client should be able to swap out the designer.';
+    raise exception 'TEST_FAILED: scenario 23 — am_agent managing the client should be able to swap out the designer. Current assignees: %.',
+      (select string_agg(user_id, ', ') from public.task_assignees where task_id = v_task_id);
   end if;
   if not exists (select 1 from public.task_assignees where task_id = v_task_id and user_id = v_agent_b_id) then
-    raise exception 'TEST_FAILED: scenario 23 — am_agent managing the client should be able to swap in a new assignee.';
+    raise exception 'TEST_FAILED: scenario 23 — am_agent managing the client should be able to swap in a new assignee. Current assignees: %.',
+      (select string_agg(user_id, ', ') from public.task_assignees where task_id = v_task_id);
   end if;
 
   update public.clients set am_agent_id = v_client_scratch_am_agent_id where id = v_client_id;
@@ -1012,16 +1036,26 @@ begin
   values (v_task_id, v_client_id, 'ZZ scenario 24', 'am_team_lead swaps via client', null, v_agent_d_id, v_agent_a_original_team, 'todo', current_date, 'low');
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_id, v_creative_id, v_agent_d_id);
 
+  -- Belt-and-suspenders on top of the distinctness the creative-selection query above now
+  -- guarantees: if these two ever did coincide, the swap below would be a no-op (replacing a
+  -- user with themselves), which is exactly what made this scenario fail live before that fix —
+  -- fail with a clear setup error here instead of a confusing assertion failure below.
+  if v_creative_id = v_agent_c_id then
+    raise exception 'TEST_SETUP_FAILED: scenario 24 — v_creative_id must differ from v_agent_c_id (the new assignee); the swap would otherwise be a no-op.';
+  end if;
+
   perform set_config('request.jwt.claims', json_build_object('sub', v_am_lead_auth)::text, true);
   set local role authenticated;
   perform public.set_task_assignees(v_task_id, array[v_agent_c_id]);
   reset role; perform set_config('request.jwt.claims', '', true);
 
   if exists (select 1 from public.task_assignees where task_id = v_task_id and user_id = v_creative_id) then
-    raise exception 'TEST_FAILED: scenario 24 — am_team_lead whose team manages the client should be able to swap out the existing assignee.';
+    raise exception 'TEST_FAILED: scenario 24 — am_team_lead whose team manages the client should be able to swap out the existing assignee. Current assignees: %.',
+      (select string_agg(user_id, ', ') from public.task_assignees where task_id = v_task_id);
   end if;
   if not exists (select 1 from public.task_assignees where task_id = v_task_id and user_id = v_agent_c_id) then
-    raise exception 'TEST_FAILED: scenario 24 — am_team_lead whose team manages the client should be able to swap in a new assignee.';
+    raise exception 'TEST_FAILED: scenario 24 — am_team_lead whose team manages the client should be able to swap in a new assignee. Current assignees: %.',
+      (select string_agg(user_id, ', ') from public.task_assignees where task_id = v_task_id);
   end if;
 
   update public.users set team = v_scratch_old_team where id = v_agent_d_id;
