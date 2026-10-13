@@ -58,6 +58,7 @@ declare
   v_storage_path text;
   v_storage_path2 text;
   v_blanket_storage_policies_exist boolean;
+  v_row_count integer;
   v_copy1_id text;
   v_copy2_id text;
   v_att_count integer;
@@ -755,49 +756,45 @@ begin
     raise exception 'TEST_FAILED: scenario 17e — delete_task_attachment must STILL never touch storage.objects itself, even on the last reference.';
   end if;
 
-  -- Scenario 17f (section 9c): the new owner-based storage DELETE policy. Direct deletes from
-  -- storage.objects are always stopped by storage.protect_delete(), so reaching its 42501 proves
-  -- an applicable DELETE policy let the row reach the trigger; an RLS denial is a silent no-op.
+  -- Scenario 17f (section 9c): the new owner-based storage DELETE policy.
+  --
+  -- storage.objects carries a BEFORE DELETE FOR EACH STATEMENT trigger (protect_objects_delete ->
+  -- storage.protect_delete()) that raises 42501 on ANY direct DELETE statement against the table
+  -- — a statement-level trigger fires exactly once per DELETE statement regardless of how many
+  -- rows (zero included) that statement actually matched. So "did 42501 fire" proves nothing
+  -- about what RLS decided; the previous version of this scenario caught that exception and
+  -- treated its absence/presence as the RLS signal, which is simply wrong. The only reliable way
+  -- to observe RLS's own decision is to suppress protect_delete's blanket block for this
+  -- transaction via storage.allow_delete_query (a transaction-local GUC the trigger function
+  -- checks; set via set_config's third "is_local" argument, same idiom as every
+  -- request.jwt.claims call in this file), then read GET DIAGNOSTICS ... ROW_COUNT on the DELETE
+  -- itself: RLS denied iff ROW_COUNT = 0, allowed iff ROW_COUNT = 1 (there is only ever the one
+  -- matching row by name here). Left set for the rest of this transaction deliberately — nothing
+  -- after this scenario deletes from storage.objects, and the whole DO block rolls back anyway.
+  --
+  -- The 4 blanket storage policies are confirmed gone (PR 4a's storage-lockdown migration has
+  -- been applied live), so no v_blanket_storage_policies_exist branching is needed here
+  -- specifically — a nonzero ROW_COUNT for the non-owner would legitimately mean SOME policy
+  -- (blanket or not) is still wrongly granting this delete, which is exactly what the assertion
+  -- below is for. That shared variable is untouched and still used by scenario 16's own check.
+  perform set_config('storage.allow_delete_query', 'true', true);
+
   perform set_config('request.jwt.claims', json_build_object('sub', v_agent_c_auth)::text, true);
   set local role authenticated;
-  begin
-    delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
-    reset role; perform set_config('request.jwt.claims', '', true);
-    if v_blanket_storage_policies_exist then
-      raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE did not reach protect_delete despite the known permissive blanket DELETE policy.';
-    elsif not exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
-      raise exception 'TEST_FAILED: scenario 17f — the non-owner DELETE unexpectedly removed the storage object.';
-    end if;
-  exception when sqlstate '42501' then
-    if sqlerrm not like 'Direct deletion from storage tables%' then
-      raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE raised unexpected 42501: %.', sqlerrm;
-    elsif v_blanket_storage_policies_exist then
-      raise notice 'SKIPPED: scenario 17f non-owner DELETE negative check — the known blanket storage policies exist, so protect_delete was reached through an unconditional policy.';
-    else
-      raise exception 'TEST_FAILED: scenario 17f — non-owner DELETE reached protect_delete, so a DELETE policy unexpectedly allowed access.';
-    end if;
-  end;
+  delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
+  get diagnostics v_row_count = row_count;
   reset role; perform set_config('request.jwt.claims', '', true);
+  if v_row_count <> 0 then
+    raise exception 'TEST_FAILED: scenario 17f — a non-owner must NOT be able to delete the storage object (deleted % row(s)).', v_row_count;
+  end if;
 
-  if v_blanket_storage_policies_exist then
-    raise notice 'SKIPPED: scenario 17f owner DELETE positive check — the known blanket storage policies exist, so the owner-specific policy cannot be isolated.';
-  else
-    perform set_config('request.jwt.claims', json_build_object('sub', v_agent_a_auth)::text, true);
-    set local role authenticated;
-    begin
-      delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
-      reset role; perform set_config('request.jwt.claims', '', true);
-      if exists (select 1 from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path) then
-        raise exception 'TEST_FAILED: scenario 17f — owner DELETE did not reach protect_delete; the owner-based DELETE policy should allow the owner.';
-      else
-        raise exception 'TEST_FAILED: scenario 17f — owner DELETE unexpectedly removed the storage object instead of being stopped by protect_delete.';
-      end if;
-    exception when sqlstate '42501' then
-      if sqlerrm not like 'Direct deletion from storage tables%' then
-        raise exception 'TEST_FAILED: scenario 17f — owner DELETE raised unexpected 42501: %.', sqlerrm;
-      end if;
-    end;
-    reset role; perform set_config('request.jwt.claims', '', true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_agent_a_auth)::text, true);
+  set local role authenticated;
+  delete from storage.objects where bucket_id = 'task-attachments' and name = v_storage_path;
+  get diagnostics v_row_count = row_count;
+  reset role; perform set_config('request.jwt.claims', '', true);
+  if v_row_count <> 1 then
+    raise exception 'TEST_FAILED: scenario 17f — the real owner should be able to delete their own object directly (deleted % row(s), expected 1).', v_row_count;
   end if;
 
   -- ======================================================================
