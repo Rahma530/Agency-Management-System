@@ -82,6 +82,13 @@ export interface UnifiedClientReportResult {
   recommendations: string[];
 }
 
+export type AiGenerationResult<T> =
+  | { ok: true; result: T }
+  | { ok: false; message: string };
+
+export type CampaignSummaryGenerationResult = AiGenerationResult<CampaignSummaryDetailedResult>;
+export type UnifiedReportGenerationResult = AiGenerationResult<UnifiedClientReportResult>;
+
 // Matches ai-router's own widened PERIOD_LABEL_RE (taskRegistry.ts) — monthly ("2026-03"),
 // quarterly ("2026-Q1"), yearly ("2026"), and custom range ("2026-01-01_2026-03-31"). Kept as its
 // own client-side copy (not imported — taskRegistry.ts is Deno Edge Function code) so the button
@@ -250,9 +257,8 @@ export const ComparisonCard: React.FC<{
   // below — never replaces it, never shown on its own. Omitted (same convention as
   // canGenerateReport/onGenerateReport above) wherever the AI button shouldn't appear at all;
   // ClientPortalView.tsx never passes this, so clients never see it. The function itself never
-  // throws — it resolves to null and shows its own toast internally on any failure (see
-  // App.tsx's handleGenerateCampaignSummary) — so this component never needs its own error state.
-  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  // throws — it returns a structured result so failures can remain visible next to the action.
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   // Combined-scope item C: undefined = viewer sees every service (AM/leadership, or no filter
   // passed at all — e.g. ClientPortalView.tsx). An array = a department agent/team lead, narrowed
   // to only their own service(s) — applies to the ServiceMetricsCard grid below, the rule-based
@@ -271,12 +277,7 @@ export const ComparisonCard: React.FC<{
 
   const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
   const [aiSummaryResult, setAiSummaryResult] = useState<CampaignSummaryDetailedResult | null>(null);
-  // Distinct from a null result: onGenerateAiSummary (App.tsx's handleGenerateCampaignSummary)
-  // never throws — it resolves to null and only surfaces a transient toast on failure (see that
-  // prop's own doc comment below) — so without this, a real ai-router failure looked identical
-  // to the button simply never having been pressed, with no persistent in-component signal a
-  // user could still see after the toast disappeared.
-  const [aiSummaryFailed, setAiSummaryFailed] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState<string | null>(null);
 
   // Ephemeral by design (no persistence, no new column): reset whenever this card starts
   // representing a different comparison row, so a stale result never carries over if the parent
@@ -284,7 +285,7 @@ export const ComparisonCard: React.FC<{
   useEffect(() => {
     setAiSummaryResult(null);
     setIsGeneratingAiSummary(false);
-    setAiSummaryFailed(false);
+    setAiSummaryError(null);
   }, [comparison.id]);
 
   const canShowAiButton = !!onGenerateAiSummary && canBuildCampaignSummaryPayload(comparison, viewerServiceFilter);
@@ -292,13 +293,13 @@ export const ComparisonCard: React.FC<{
   const handleGenerateAiSummary = async () => {
     if (!onGenerateAiSummary) return;
     setIsGeneratingAiSummary(true);
-    setAiSummaryFailed(false);
+    setAiSummaryError(null);
     const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter));
     setIsGeneratingAiSummary(false);
-    if (result) {
-      setAiSummaryResult(result);
+    if (result.ok) {
+      setAiSummaryResult(result.result);
     } else {
-      setAiSummaryFailed(true);
+      setAiSummaryError(result.message);
     }
   };
 
@@ -462,7 +463,7 @@ export const ComparisonCard: React.FC<{
           offered for period_summary rows too, even though they have no narrative to sit inside. PDF
           export stays narrative-only (unchanged) — this request only asked to fix AI-summary
           gating, not PDF export's. */}
-      {(canShowAiButton || aiSummaryResult || aiSummaryFailed) && (
+      {(canShowAiButton || aiSummaryResult || aiSummaryError) && (
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
             {canShowAiButton && (
@@ -480,9 +481,7 @@ export const ComparisonCard: React.FC<{
             )}
           </div>
 
-          {aiSummaryFailed && (
-            <p className="text-xs text-red-300">Something went wrong generating the AI summary — try again.</p>
-          )}
+          {aiSummaryError && <p className="text-xs text-red-300">{aiSummaryError}</p>}
 
           {/* AI-generated content — Arabic per the request's language:'ar' (matches this task's
               prompt design: metric names like ROAS/CPA stay in English inside Arabic sentences).
@@ -530,7 +529,7 @@ export const ComparisonCard: React.FC<{
 // ----------------------------------------------------------------------------
 export const UnifiedReportPanel: React.FC<{
   latestComparison: ClientComparisonRecord | null;
-  onGenerateUnifiedReport: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onGenerateUnifiedReport: (payload: CampaignSummaryPayload) => Promise<UnifiedReportGenerationResult>;
   // When there's no comparison yet at all, generating still works in one click: this computes and
   // saves one for the CURRENTLY selected period first (reusing handleGenerateComparison's own
   // logic/write path in App.tsx, always in 'comparison' mode — the unified report has never had a
@@ -541,6 +540,7 @@ export const UnifiedReportPanel: React.FC<{
 }> = ({ latestComparison, onGenerateUnifiedReport, onEnsureComparison }) => {
   const [stage, setStage] = useState<'idle' | 'computing' | 'generating'>('idle');
   const [result, setResult] = useState<UnifiedClientReportResult | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   // Holds whichever comparison the last successful generation actually used — latestComparison
   // itself may still be null (or a stale, older row) for a render or two after an on-demand
   // ensure-then-generate click, since it only updates once the parent's client_comparisons state
@@ -551,6 +551,7 @@ export const UnifiedReportPanel: React.FC<{
   // this panel is built from changes (e.g. a fresh comparison was just generated).
   useEffect(() => {
     setResult(null);
+    setGenerationError(null);
     setStage('idle');
     setResolvedComparison(null);
   }, [latestComparison?.id]);
@@ -558,6 +559,7 @@ export const UnifiedReportPanel: React.FC<{
   const canBuild = latestComparison ? canBuildCampaignSummaryPayload(latestComparison) : !!onEnsureComparison;
 
   const handleGenerate = async () => {
+    setGenerationError(null);
     setStage('computing');
     try {
       const comparison = latestComparison || (onEnsureComparison ? await onEnsureComparison() : null);
@@ -565,7 +567,11 @@ export const UnifiedReportPanel: React.FC<{
       setResolvedComparison(comparison);
       setStage('generating');
       const fresh = await onGenerateUnifiedReport(buildCampaignSummaryPayload(comparison));
-      if (fresh) setResult(fresh);
+      if (fresh.ok) {
+        setResult(fresh.result);
+      } else {
+        setGenerationError(fresh.message);
+      }
     } finally {
       setStage('idle');
     }
@@ -643,6 +649,8 @@ export const UnifiedReportPanel: React.FC<{
         </p>
       )}
 
+      {generationError && <p className="text-xs text-red-300">{generationError}</p>}
+
       {result && (
         <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-900/30 space-y-1.5">
           <p className="text-xs text-stone-200 leading-relaxed" dir="rtl">
@@ -691,30 +699,26 @@ export const UnifiedReportPanel: React.FC<{
 export const DirectAiSummaryPanel: React.FC<{
   mode: 'comparison' | 'period_summary';
   onEnsureComparison: () => Promise<ClientComparisonRecord | null>;
-  onGenerateAiSummary: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateAiSummary: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   viewerServiceFilter?: ServiceType[];
 }> = ({ mode, onEnsureComparison, onGenerateAiSummary, viewerServiceFilter }) => {
   const [stage, setStage] = useState<'idle' | 'computing' | 'generating'>('idle');
   const [result, setResult] = useState<CampaignSummaryDetailedResult | null>(null);
   const [ineligible, setIneligible] = useState(false);
-  // Distinct from ineligible: onGenerateAiSummary never throws — it resolves to null and only
-  // surfaces a transient toast on a real ai-router failure (see ComparisonCard's own
-  // aiSummaryFailed for the identical reasoning) — without this, that failure looked identical
-  // to the button simply never having been pressed once the toast was gone.
-  const [failed, setFailed] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   // Cleared on a mode switch (Comparison Report <-> Period Report) — a result generated under one
   // mode has no bearing on the other.
   useEffect(() => {
     setResult(null);
     setIneligible(false);
-    setFailed(false);
+    setGenerationError(null);
     setStage('idle');
   }, [mode]);
 
   const handleClick = async () => {
     setIneligible(false);
-    setFailed(false);
+    setGenerationError(null);
     setStage('computing');
     try {
       const row = await onEnsureComparison();
@@ -725,10 +729,10 @@ export const DirectAiSummaryPanel: React.FC<{
       }
       setStage('generating');
       const fresh = await onGenerateAiSummary(buildCampaignSummaryPayload(row, viewerServiceFilter));
-      if (fresh) {
-        setResult(fresh);
+      if (fresh.ok) {
+        setResult(fresh.result);
       } else {
-        setFailed(true);
+        setGenerationError(fresh.message);
       }
     } finally {
       setStage('idle');
@@ -769,7 +773,7 @@ export const DirectAiSummaryPanel: React.FC<{
         </p>
       )}
 
-      {failed && <p className="text-xs text-red-300">Something went wrong generating the AI summary — try again.</p>}
+      {generationError && <p className="text-xs text-red-300">{generationError}</p>}
 
       {result && (
         <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-900/30 space-y-1.5">

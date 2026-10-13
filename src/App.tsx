@@ -54,7 +54,11 @@ import {
   resolveClientsForSubject,
   serviceFilterForRole,
 } from './lib/reportingEngine';
-import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './components/reporting/ComparisonDisplay';
+import {
+  CampaignSummaryPayload,
+  CampaignSummaryGenerationResult,
+  UnifiedReportGenerationResult,
+} from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
 import { BriefTemplatesModule } from './components/BriefTemplatesModule';
@@ -1048,15 +1052,23 @@ export default function App() {
     });
   }
 
+  const safeAiErrorMessage = (value: unknown, fallback: string): string => {
+    if (typeof value !== 'string') return fallback;
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    if (!normalized || /(?:authorization|bearer|api[_ -]?key|secret|token|stack trace)/i.test(normalized)) {
+      return fallback;
+    }
+    return normalized.slice(0, 300);
+  };
+
   // Optional, additive-only AI enhancement (Phase 4) for ComparisonCard's rule-based narrative —
   // never called unless the employee presses "Generate AI Summary". Unlike invokeImpersonation/
   // handleSendInvitation above, this never throws to its caller: any failure (timeout, ai-router
-  // ok:false, a malformed response) is caught here, surfaced via the existing showNotification
-  // toast, and resolves to null — so ComparisonCard (reused by three different surfaces) never
-  // needs its own error-handling branch, only "did I get a result back or not."
+  // ok:false, a malformed response) is caught here and returned as a safe structured failure so
+  // the relevant report panel can keep it visible after the toast disappears.
   const handleGenerateCampaignSummary = async (
     payload: CampaignSummaryPayload
-  ): Promise<CampaignSummaryDetailedResult | null> => {
+  ): Promise<CampaignSummaryGenerationResult> => {
     try {
       const { data, error } = await withTimeout(
         supabaseRaw.functions.invoke('ai-router', {
@@ -1080,13 +1092,13 @@ export default function App() {
         }
         console.error('AI summary request failed:', { status, detail, errorName: error.name, errorMessage: error.message });
         throw new Error(status
-          ? `AI summary request failed (HTTP ${status}): ${detail || error.message}`
-          : `AI summary request failed before an HTTP response: ${error.message}`);
+          ? `AI summary request failed (HTTP ${status}). Please try again.`
+          : 'Could not reach the AI summary service. Please try again.');
       }
       if (!data?.ok) {
         // A rate-limit or provider failure is an anticipated ai-router outcome, not a broken
         // request — ai-router's own message is already a plain, displayable string.
-        throw new Error(data?.message || 'AI summary is currently unavailable.');
+        throw new Error(safeAiErrorMessage(data?.message, 'AI summary is currently unavailable.'));
       }
       const result = data.result;
       if (
@@ -1097,11 +1109,15 @@ export default function App() {
       ) {
         throw new Error('Unexpected AI summary response.');
       }
-      return result as CampaignSummaryDetailedResult;
-    } catch (err: any) {
+      return { ok: true, result } as CampaignSummaryGenerationResult;
+    } catch (err: unknown) {
       console.error('CAMPAIGN_SUMMARY request failed:', err);
-      showNotification(err?.message || 'AI summary unavailable — try again later.', 'info');
-      return null;
+      const message = safeAiErrorMessage(
+        err instanceof Error ? err.message : undefined,
+        'AI summary unavailable — try again later.'
+      );
+      showNotification(message, 'info');
+      return { ok: false, message };
     }
   };
 
@@ -1112,7 +1128,7 @@ export default function App() {
   // shape it validates ({narrative, recommendations} instead of CAMPAIGN_SUMMARY's detailed shape).
   const handleGenerateUnifiedReport = async (
     payload: CampaignSummaryPayload
-  ): Promise<UnifiedClientReportResult | null> => {
+  ): Promise<UnifiedReportGenerationResult> => {
     try {
       const { data, error } = await withTimeout(
         supabaseRaw.functions.invoke('ai-router', {
@@ -1136,21 +1152,25 @@ export default function App() {
         }
         console.error('Unified report request failed:', { status, detail, errorName: error.name, errorMessage: error.message });
         throw new Error(status
-          ? `Unified report request failed (HTTP ${status}): ${detail || error.message}`
-          : `Unified report request failed before an HTTP response: ${error.message}`);
+          ? `Unified report request failed (HTTP ${status}). Please try again.`
+          : 'Could not reach the unified report service. Please try again.');
       }
       if (!data?.ok) {
-        throw new Error(data?.message || 'Unified report is currently unavailable.');
+        throw new Error(safeAiErrorMessage(data?.message, 'Unified report is currently unavailable.'));
       }
       const result = data.result;
       if (!result || typeof result !== 'object' || typeof result.narrative !== 'string' || !Array.isArray(result.recommendations)) {
         throw new Error('Unexpected unified report response.');
       }
-      return result as UnifiedClientReportResult;
-    } catch (err: any) {
+      return { ok: true, result } as UnifiedReportGenerationResult;
+    } catch (err: unknown) {
       console.error('UNIFIED_CLIENT_REPORT request failed:', err);
-      showNotification(err?.message || 'Unified report unavailable — try again later.', 'info');
-      return null;
+      const message = safeAiErrorMessage(
+        err instanceof Error ? err.message : undefined,
+        'Unified report unavailable — try again later.'
+      );
+      showNotification(message, 'info');
+      return { ok: false, message };
     }
   };
 
