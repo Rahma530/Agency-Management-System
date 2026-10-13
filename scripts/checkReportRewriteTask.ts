@@ -5,6 +5,7 @@ import {
 } from '../supabase/functions/ai-router/taskRegistry';
 
 const input = validateReportRewritePayload({
+  report_id: 'report-1',
   current_text: 'حقق الفريق 10 نتائج خلال الفترة.',
   creator_note: 'حافظ على الرقم 10.',
   facts: ['النتيجة الموثقة: 10'],
@@ -15,7 +16,7 @@ const input = validateReportRewritePayload({
 
 if (!TASK_REGISTRY.REPORT_REWRITE) throw new Error('REPORT_REWRITE is missing from the registry.');
 const providerInput = TASK_REGISTRY.REPORT_REWRITE.buildInitialInput(input) as Record<string, unknown>;
-if ('base_version_id' in providerInput || 'source_hash' in providerInput) {
+if ('report_id' in providerInput || 'base_version_id' in providerInput || 'source_hash' in providerInput) {
   throw new Error('Internal version identifiers would be sent to the AI provider.');
 }
 if (!validateReportRewriteOutput({ suggested_text: 'حقق الفريق 10 نتائج موثقة.' }, 'brief', input).ok) {

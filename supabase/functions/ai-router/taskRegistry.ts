@@ -489,6 +489,7 @@ function validateUnifiedReportOutput(parsed: unknown): StageValidationResult {
 }
 
 interface ReportRewritePayload {
+  report_id: string;
   current_text: string;
   creator_note: string;
   facts: string[];
@@ -504,21 +505,23 @@ export function validateReportRewritePayload(raw: unknown): ReportRewritePayload
   const byteLength = new TextEncoder().encode(JSON.stringify(raw)).length;
   if (byteLength > MAX_REWRITE_PAYLOAD_BYTES) throw new Error('REPORT_REWRITE payload is too large.');
   const value = raw as Record<string, unknown>;
-  const allowedKeys = new Set(['current_text', 'creator_note', 'facts', 'base_version_id', 'source_hash', 'audience']);
+  const allowedKeys = new Set(['report_id', 'current_text', 'creator_note', 'facts', 'base_version_id', 'source_hash', 'audience']);
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) throw new Error('REPORT_REWRITE payload contains an unsupported field.');
   if (!isNonEmptyString(value.current_text) || String(value.current_text).length > 12000) throw new Error('current_text is required and too long.');
   if (typeof value.creator_note !== 'string' || value.creator_note.length > 4000) throw new Error('creator_note is invalid.');
   if (!Array.isArray(value.facts) || value.facts.length > 200 || value.facts.some((fact) => typeof fact !== 'string' || fact.length > 1000)) {
     throw new Error('facts must be an array of bounded strings.');
   }
-  if (!isNonEmptyString(value.base_version_id) || !isNonEmptyString(value.source_hash)) throw new Error('Version identity is required.');
+  if (!isNonEmptyString(value.report_id) || !isNonEmptyString(value.base_version_id) || !isNonEmptyString(value.source_hash)) {
+    throw new Error('Report and version identity are required.');
+  }
   if (value.audience !== 'client' && value.audience !== 'internal') throw new Error('audience must be client or internal.');
   return value as unknown as ReportRewritePayload;
 }
 
 function buildReportRewriteInput(raw: unknown): Pick<ReportRewritePayload, 'current_text' | 'creator_note' | 'facts' | 'audience'> {
   const payload = validateReportRewritePayload(raw);
-  // Version/hash are validated at the router boundary and retained by the application for stale
+  // Report/version/hash are validated at the router boundary and retained by the application for stale
   // checks, but they are not content and must not be transmitted to an AI provider.
   return {
     current_text: payload.current_text,
