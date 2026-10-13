@@ -52,6 +52,28 @@ export const resolveTaskAssigneeIds = (
   return ids.length > 0 ? ids : (legacyAssignedTo ? [legacyAssignedTo] : []);
 };
 
+// Display order for a task's assignees. The newest task_assignees row is the primary assignee;
+// the legacy tasks.assigned_to value is only consulted when the task has no membership rows.
+// Missing created_at values sort behind timestamped rows. task_assignees has no sequence/id column,
+// so an exact timestamp tie cannot prove which row was inserted last; user_id provides a stable,
+// deterministic tie-breaker instead of relying on the database's unspecified result order.
+export const resolveOrderedTaskAssigneeIds = (
+  taskId: string,
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id' | 'created_at'>[],
+  legacyAssignedTo?: string | null
+): string[] => {
+  const rows = taskAssignees.filter((row) => row.task_id === taskId);
+  if (rows.length === 0) return legacyAssignedTo ? [legacyAssignedTo] : [];
+
+  return [...rows]
+    .sort((a, b) => {
+      const aCreatedAt = a.created_at || '';
+      const bCreatedAt = b.created_at || '';
+      return bCreatedAt.localeCompare(aCreatedAt) || a.user_id.localeCompare(b.user_id);
+    })
+    .map((row) => row.user_id);
+};
+
 // Client-side UI mirror of set_task_assignees' permission gate
 // (supabase/migrations/20261105000000_task_assignees_rpcs.sql, PR 4a — not yet merged/applied,
 // read there for the authoritative SQL). Deliberately only decides whether to SHOW the "Add

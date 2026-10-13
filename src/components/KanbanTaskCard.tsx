@@ -12,7 +12,7 @@ import {
   ChevronRight,
   Edit2,
 } from 'lucide-react';
-import { TaskRecord, TaskStatus, TaskPriority, ClientRecord, UserRecord } from '../types/database';
+import { TaskRecord, TaskStatus, TaskPriority, ClientRecord } from '../types/database';
 import { isTaskDone } from '../lib/taskLifecycle';
 
 export interface KanbanColumnMeta {
@@ -59,7 +59,7 @@ const getTeamColor = (teamName?: string | null) => {
 export interface KanbanTaskCardContentProps {
   task: TaskRecord;
   client?: ClientRecord;
-  assignee?: UserRecord;
+  assigneeNames: string[];
   subtaskDone: number;
   subtaskTotal: number;
   overdue: boolean;
@@ -82,7 +82,7 @@ export interface KanbanTaskCardContentProps {
 export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
   task,
   client,
-  assignee,
+  assigneeNames,
   subtaskDone,
   subtaskTotal,
   overdue,
@@ -95,6 +95,8 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
 }) => {
   const priority = getPriorityBadge(task.priority);
   const teamColor = getTeamColor(task.team);
+  const primaryAssigneeName = assigneeNames[0];
+  const assigneeTooltip = assigneeNames.join(', ');
 
   return (
     <div
@@ -182,22 +184,27 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
       {/* Assignee & Due Date Footer */}
       <div className="flex items-center justify-between pt-1 border-t border-stone-800/80 text-[11px]">
         {/* Assignee Badge */}
-        {assignee ? (
-          <div className="flex items-center gap-1.5" title={assignee.name}>
+        {primaryAssigneeName ? (
+          <div className="flex min-w-0 items-center gap-1.5" title={assigneeTooltip}>
             <div
               className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[9px]"
               style={{ background: 'var(--gradient-badge)', color: 'white' }}
             >
-              {assignee.name.charAt(0)}
+              {primaryAssigneeName.charAt(0)}
             </div>
             <span className="text-stone-300 text-[11px] truncate max-w-[80px]">
-              {assignee.name.split(' ')[0]}
+              {primaryAssigneeName.split(' ')[0]}
             </span>
+            {assigneeNames.length > 1 && (
+              <span className="shrink-0 rounded-full bg-purple-900/50 px-1.5 py-0.5 text-[9px] font-bold text-purple-200">
+                +{assigneeNames.length - 1}
+              </span>
+            )}
           </div>
         ) : (
           <span className="text-[10px] text-amber-400 flex items-center gap-1 font-semibold">
             <UserX className="w-3 h-3" />
-            <span>{task.assigned_to ? 'Unknown employee' : 'Unassigned'}</span>
+            <span>Unassigned</span>
           </span>
         )}
 
