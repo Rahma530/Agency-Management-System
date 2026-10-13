@@ -199,7 +199,7 @@ export async function runRegistryTask(
       // model can just as easily produce syntactically valid but wrongly-shaped JSON. Never passes
       // an unvalidated result on to the next stage or back to the caller.
       if (stage.validateOutput) {
-        const validation = stage.validateOutput(parsed, detail);
+        const validation = stage.validateOutput(parsed, detail, currentInput);
         if (!validation.ok) {
           return {
             ok: false,

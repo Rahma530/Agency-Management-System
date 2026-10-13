@@ -620,6 +620,63 @@ export interface ReportRecord {
   status?: 'draft' | 'final';
   approved_by?: string | null;
   approved_at?: string | null;
+  scope_type?: 'client' | 'employee' | null;
+  subject_user_id?: string | null;
+  responsible_user_id?: string | null;
+  period_start?: string | null;
+  period_end_exclusive?: string | null;
+  creator_note?: string;
+  current_version_id?: string | null;
+  source_hash?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  archive_reason?: string | null;
+  updated_at?: string;
+  created_at?: string;
+}
+
+export interface ReportContentVersionRecord {
+  id: string;
+  report_id: string;
+  version_no: number;
+  content_text: string;
+  source_hash: string;
+  origin: 'generated' | 'manual' | 'ai_applied' | 'regenerated';
+  created_by: string;
+  created_at?: string;
+}
+
+export interface ReportSourceItemRecord {
+  id: string;
+  report_id: string;
+  source_kind: 'daily_log' | 'extra_note';
+  source_id: string;
+  source_date: string;
+  user_id: string;
+  client_id?: string | null;
+  snapshot: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface ReportAiSuggestionRecord {
+  id: string;
+  report_id: string;
+  base_version_id: string;
+  source_hash: string;
+  suggested_text: string;
+  status: 'pending' | 'applied' | 'rejected';
+  requested_by: string;
+  created_at?: string;
+  applied_at?: string | null;
+  applied_by?: string | null;
+}
+
+export interface ReportAuditEventRecord {
+  id: string;
+  report_id: string;
+  actor_id: string;
+  action: 'created' | 'edited' | 'approved' | 'ai_requested' | 'ai_applied' | 'archived' | 'restored';
+  metadata: Record<string, unknown>;
   created_at?: string;
 }
 
@@ -894,6 +951,10 @@ export interface Database {
       social_insights: { Row: SocialInsightRecord; Insert: Partial<SocialInsightRecord>; Update: Partial<SocialInsightRecord>; Relationships: any[] };
       seo_insights: { Row: SeoInsightRecord; Insert: Partial<SeoInsightRecord>; Update: Partial<SeoInsightRecord>; Relationships: any[] };
       reports: { Row: ReportRecord; Insert: Partial<ReportRecord>; Update: Partial<ReportRecord>; Relationships: any[] };
+      report_content_versions: { Row: ReportContentVersionRecord; Insert: Partial<ReportContentVersionRecord>; Update: Partial<ReportContentVersionRecord>; Relationships: any[] };
+      report_source_items: { Row: ReportSourceItemRecord; Insert: Partial<ReportSourceItemRecord>; Update: Partial<ReportSourceItemRecord>; Relationships: any[] };
+      report_ai_suggestions: { Row: ReportAiSuggestionRecord; Insert: Partial<ReportAiSuggestionRecord>; Update: Partial<ReportAiSuggestionRecord>; Relationships: any[] };
+      report_audit_events: { Row: ReportAuditEventRecord; Insert: Partial<ReportAuditEventRecord>; Update: Partial<ReportAuditEventRecord>; Relationships: any[] };
       capacity_logs: { Row: CapacityLogRecord; Insert: Partial<CapacityLogRecord>; Update: Partial<CapacityLogRecord>; Relationships: any[] };
       daily_logs: { Row: DailyLogRecord; Insert: Partial<DailyLogRecord>; Update: Partial<DailyLogRecord>; Relationships: any[] };
       extra_notes: { Row: ExtraNoteRecord; Insert: Partial<ExtraNoteRecord>; Update: Partial<ExtraNoteRecord>; Relationships: any[] };

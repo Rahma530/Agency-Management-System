@@ -7,6 +7,7 @@ import {
   ReportRecord,
   ClientComparisonRecord,
   DailyLogRecord,
+  ExtraNoteRecord,
   ServiceType,
   TaskRecord,
 } from '../types/database';
@@ -35,6 +36,7 @@ import {
   CampaignSummaryGenerationResult,
 } from './reporting/ComparisonDisplay';
 import { DailyLogEditModal } from './DailyLogEditModal';
+import { ReportDraftWorkspace } from './reporting/ReportDraftWorkspace';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
 
@@ -46,6 +48,7 @@ interface ReportsHubProps {
   reports: ReportRecord[];
   clientComparisons: ClientComparisonRecord[];
   dailyLogs?: DailyLogRecord[];
+  extraNotes?: ExtraNoteRecord[];
   // Only needed for the Daily Activity Log feed's Edit modal (a log's own linked-tasks checklist)
   // — never used for scoping/filtering anything else in this hub.
   tasks?: TaskRecord[];
@@ -66,6 +69,7 @@ interface ReportsHubProps {
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
   ) => Promise<void>;
   onDeleteDailyLog: (logId: string) => Promise<void>;
+  onReportChanged: (report: ReportRecord) => void;
 }
 
 // Role-agnostic reporting entry point: unlike ClientDashboard's per-client "Reports &
@@ -83,12 +87,14 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   reports,
   clientComparisons,
   dailyLogs = [],
+  extraNotes = [],
   tasks = [],
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
   onUpdateDailyLog,
   onDeleteDailyLog,
+  onReportChanged,
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
@@ -356,6 +362,17 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           </div>
         </div>
       )}
+
+      <ReportDraftWorkspace
+        currentUser={currentUser}
+        users={users}
+        clients={myClients}
+        employees={selectableAgents}
+        reports={reports}
+        dailyLogs={dailyLogs}
+        extraNotes={extraNotes}
+        onReportChanged={onReportChanged}
+      />
 
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">

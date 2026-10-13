@@ -24,6 +24,10 @@
 // entry would just be dead weight, not a real building block.
 import { AiProvider } from './types.ts';
 
+// Keeps this pure registry file type-checkable in the Node-based repository checks as well as
+// Deno; the runtime value is supplied by the Edge Function environment.
+declare const Deno: { env: { get(name: string): string | undefined } };
+
 export type SupportedLanguage = 'ar' | 'en';
 export const LANGUAGE_NAMES: Record<SupportedLanguage, string> = { ar: 'Arabic', en: 'English' };
 export function isSupportedLanguage(value: unknown): value is SupportedLanguage {
@@ -63,7 +67,7 @@ export interface TaskStageDefinition {
   // Only meaningful when outputFormat is 'json'; undefined means "valid JSON is enough, no shape
   // check". Applied uniformly to whichever provider in the order actually answered — see
   // taskRunner.ts — so a wrongly-shaped result from ANY of them is caught the same way.
-  validateOutput?: (parsed: unknown, detail: DetailLevel) => StageValidationResult;
+  validateOutput?: (parsed: unknown, detail: DetailLevel, stageInput?: unknown) => StageValidationResult;
 }
 
 export interface TaskDefinition {
@@ -484,6 +488,77 @@ function validateUnifiedReportOutput(parsed: unknown): StageValidationResult {
   };
 }
 
+interface ReportRewritePayload {
+  current_text: string;
+  creator_note: string;
+  facts: string[];
+  base_version_id: string;
+  source_hash: string;
+  audience: 'client' | 'internal';
+}
+
+const MAX_REWRITE_PAYLOAD_BYTES = 24 * 1024;
+
+export function validateReportRewritePayload(raw: unknown): ReportRewritePayload {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('REPORT_REWRITE payload must be an object.');
+  const byteLength = new TextEncoder().encode(JSON.stringify(raw)).length;
+  if (byteLength > MAX_REWRITE_PAYLOAD_BYTES) throw new Error('REPORT_REWRITE payload is too large.');
+  const value = raw as Record<string, unknown>;
+  const allowedKeys = new Set(['current_text', 'creator_note', 'facts', 'base_version_id', 'source_hash', 'audience']);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) throw new Error('REPORT_REWRITE payload contains an unsupported field.');
+  if (!isNonEmptyString(value.current_text) || String(value.current_text).length > 12000) throw new Error('current_text is required and too long.');
+  if (typeof value.creator_note !== 'string' || value.creator_note.length > 4000) throw new Error('creator_note is invalid.');
+  if (!Array.isArray(value.facts) || value.facts.length > 200 || value.facts.some((fact) => typeof fact !== 'string' || fact.length > 1000)) {
+    throw new Error('facts must be an array of bounded strings.');
+  }
+  if (!isNonEmptyString(value.base_version_id) || !isNonEmptyString(value.source_hash)) throw new Error('Version identity is required.');
+  if (value.audience !== 'client' && value.audience !== 'internal') throw new Error('audience must be client or internal.');
+  return value as unknown as ReportRewritePayload;
+}
+
+function buildReportRewriteInput(raw: unknown): Pick<ReportRewritePayload, 'current_text' | 'creator_note' | 'facts' | 'audience'> {
+  const payload = validateReportRewritePayload(raw);
+  // Version/hash are validated at the router boundary and retained by the application for stale
+  // checks, but they are not content and must not be transmitted to an AI provider.
+  return {
+    current_text: payload.current_text,
+    creator_note: payload.creator_note,
+    facts: payload.facts,
+    audience: payload.audience,
+  };
+}
+
+function normalizeDigits(value: string): string {
+  const arabic = '٠١٢٣٤٥٦٧٨٩';
+  const persian = '۰۱۲۳۴۵۶۷۸۹';
+  return value.replace(/[٠-٩۰-۹]/g, (digit) => {
+    const arabicIndex = arabic.indexOf(digit);
+    return String(arabicIndex >= 0 ? arabicIndex : persian.indexOf(digit));
+  });
+}
+
+function numericTokens(value: string): Set<string> {
+  return new Set((normalizeDigits(value).match(/-?\d+(?:[.,]\d+)?/g) || []).map((token) => token.replace(',', '.')));
+}
+
+export function validateReportRewriteOutput(parsed: unknown, _detail: DetailLevel, stageInput?: unknown): StageValidationResult {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
+  const suggestedText = (parsed as Record<string, unknown>).suggested_text;
+  if (!isNonEmptyString(suggestedText) || suggestedText.length > 12000) return { ok: false };
+  const input = stageInput as ReportRewritePayload | undefined;
+  if (!input) return { ok: false };
+  const allowedNumbers = numericTokens([input.current_text, input.creator_note, ...input.facts].join('\n'));
+  for (const token of numericTokens(suggestedText)) {
+    if (!allowedNumbers.has(token)) return { ok: false };
+  }
+  return { ok: true, value: { suggested_text: cleanText(suggestedText) } };
+}
+
+function buildReportRewritePrompt(language: SupportedLanguage): string {
+  const languageName = LANGUAGE_NAMES[language];
+  return `You rewrite an existing agency report in ${languageName}. The input contains current_text, an internally preserved creator_note, and immutable source facts. Improve clarity and professional tone without adding, estimating, or changing any fact, event, date, or number. Every number in the output must already occur in the input. Preserve the creator_note's meaning naturally inside the report when relevant, but never label it Extra Note and never expose internal field names, ids, hashes, or technical messages. Return only JSON: {"suggested_text": string}.`;
+}
+
 // ----------------------------------------------------------------------------
 // The registry itself
 // ----------------------------------------------------------------------------
@@ -536,6 +611,20 @@ export const TASK_REGISTRY: Record<string, TaskDefinition> = {
         maxOutputTokens: () => 4000,
         outputFormat: 'json',
         validateOutput: (parsed) => validateUnifiedReportOutput(parsed),
+      },
+    ],
+  },
+  REPORT_REWRITE: {
+    name: 'REPORT_REWRITE',
+    buildInitialInput: buildReportRewriteInput,
+    stages: [
+      {
+        name: 'REWRITE',
+        providers: () => ['groq', 'gemini', 'openrouter'],
+        systemPrompt: (language) => buildReportRewritePrompt(language),
+        maxOutputTokens: () => 4000,
+        outputFormat: 'json',
+        validateOutput: validateReportRewriteOutput,
       },
     ],
   },
