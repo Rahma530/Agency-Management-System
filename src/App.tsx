@@ -4598,7 +4598,13 @@ export default function App() {
     if (supabaseActive) {
       try {
         const { data, error } = existingDraftReport
-          ? await supabase.from('reports').update(reportPayload).eq('id', existingDraftReport.id).select()
+          ? await supabase.from('reports').update({
+              client_id: reportPayload.client_id,
+              type: reportPayload.type,
+              period: reportPayload.period,
+              comparison_id: reportPayload.comparison_id,
+              status: reportPayload.status,
+            }).eq('id', existingDraftReport.id).select()
           : await supabase.from('reports').insert([reportPayload]).select();
         if (error) throw error;
         const saved = (data?.[0] as ReportRecord) || reportPayload;
@@ -4625,8 +4631,18 @@ export default function App() {
 
     if (supabaseActive) {
       try {
-        const { error } = await supabase.from('reports').update(updates).eq('id', reportId);
-        if (error) throw error;
+        const rpcResult = await supabaseRaw.rpc('approve_report', { p_report_id: reportId });
+        let saved = rpcResult.data as unknown as ReportRecord;
+        if (rpcResult.error?.code === 'PGRST202') {
+          // Deployment-order compatibility: the existing approval flow keeps working while the
+          // reviewed migration is awaiting its separate production approval.
+          const legacyResult = await supabase.from('reports').update(updates).eq('id', reportId).select();
+          if (legacyResult.error) throw legacyResult.error;
+          saved = (legacyResult.data?.[0] as ReportRecord) || { ...reports.find((r) => r.id === reportId)!, ...updates };
+        } else if (rpcResult.error) {
+          throw rpcResult.error;
+        }
+        setReports((prev) => prev.map((r) => (r.id === reportId ? saved : r)));
       } catch (err) {
         console.error('Supabase report approve error:', err);
         showNotification('Unable to approve the report.', 'info');
@@ -4634,7 +4650,9 @@ export default function App() {
       }
     }
 
-    setReports((prev) => prev.map((r) => (r.id === reportId ? { ...r, ...updates } : r)));
+    if (!supabaseActive) {
+      setReports((prev) => prev.map((r) => (r.id === reportId ? { ...r, ...updates } : r)));
+    }
     showNotification('Report approved and marked final.');
   };
 
@@ -6078,12 +6096,16 @@ export default function App() {
                   reports={reports}
                   clientComparisons={clientComparisons}
                   dailyLogs={dailyLogs}
+                  extraNotes={extraNotes}
                   tasks={tasks}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
+                  onReportChanged={(report) =>
+                    setReports((current) => [...current.filter((item) => item.id !== report.id), report])
+                  }
                 />
               </div>
             )}
