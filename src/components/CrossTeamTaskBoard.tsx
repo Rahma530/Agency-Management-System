@@ -55,7 +55,14 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee } from '../lib/permissions';
-import { isTaskDone, canCloseTask, canSubmitTaskForClosing, canEditTaskAssignees, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
+import {
+  isTaskDone,
+  canCloseTask,
+  canSubmitTaskForClosing,
+  canEditTaskAssignees,
+  resolveTaskAssigneeIds,
+  resolveOrderedTaskAssigneeIds,
+} from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { getOperationalTeams, fetchAssignableEmployees } from '../lib/departmentStaffing';
@@ -239,7 +246,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     Promise.all(getOperationalTeams().map((team) => fetchAssignableEmployees(team)))
       .then((rosters) => {
         const byId = new Map<string, AssignableEmployee>();
-        rosters.flat().forEach((employee) => byId.set(employee.id, employee));
+        rosters.flat()
+          .filter((employee) => employee.role !== 'executive' && employee.role !== 'head_of_technical')
+          .forEach((employee) => byId.set(employee.id, employee));
         setOrgWideAssignableEmployees([...byId.values()]);
       })
       .finally(() => setIsLoadingOrgWideEmployees(false));
@@ -417,12 +426,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // assignable_employees() roster), never from the `users` prop, since that's scoped to the
   // current viewer's own RLS-limited visibility and may not include the chosen assignee at all.
   const newAssigneeOptions = useMemo(() => {
-    const options = new Map(newTeamAssignees.map((user) => [user.id, user]));
+    const options = new Map<string, AssignableEmployee | UserRecord>(
+      newTeamAssignees.map((user) => [user.id, user])
+    );
     newAssigneeIds.forEach((id) => {
       const existing = taskDirectoryUsers.find((user) => user.id === id);
       if (existing && !options.has(id)) options.set(id, existing);
     });
-    return [...options.values()];
+    return [...options.values()].filter(
+      (user) => user.role !== 'executive' && user.role !== 'head_of_technical'
+    );
   }, [newTeamAssignees, newAssigneeIds, taskDirectoryUsers]);
   const newAssigneeRoles = newAssigneeOptions
     .filter((u) => newAssigneeIds.includes(u.id))
@@ -444,12 +457,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // included even if it's since been deactivated or no longer matches the (possibly since-changed)
   // team/assignee — otherwise the select would have no option for it and silently drop it.
   const editAssigneeOptions = useMemo(() => {
-    const options = new Map(editTeamAssignees.map((user) => [user.id, user]));
+    const options = new Map<string, AssignableEmployee | UserRecord>(
+      editTeamAssignees.map((user) => [user.id, user])
+    );
     editAssigneeIds.forEach((id) => {
       const existing = taskDirectoryUsers.find((user) => user.id === id);
       if (existing && !options.has(id)) options.set(id, existing);
     });
-    return [...options.values()];
+    return [...options.values()].filter(
+      (user) => user.role !== 'executive' && user.role !== 'head_of_technical'
+    );
   }, [editTeamAssignees, editAssigneeIds, taskDirectoryUsers]);
   const editAssigneeRoles = editAssigneeOptions
     .filter((u) => editAssigneeIds.includes(u.id))
@@ -574,7 +591,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const noTeamSelectedFallbackOptions = useMemo(() => {
     if (noTeamSelectedFallbackRoles.length === 0) return [];
     return users
-      .filter((u) => noTeamSelectedFallbackRoles.includes(u.role) && isActiveEmployee(u))
+      .filter((u) => isOperationalAssignee(u) && noTeamSelectedFallbackRoles.includes(u.role) && isActiveEmployee(u))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [users, noTeamSelectedFallbackRoles]);
 
@@ -588,7 +605,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // no-team-selected fallback for 'all'/'Creative'. UserRecord and AssignableEmployee both carry
   // id/name, which is all the <option> rendering below needs.
   const employeeFilterOptions: { id: string; name: string }[] = useMemo(() => {
-    if (selectedTeam !== 'all' && selectedTeam !== 'Creative') return teamFilterEmployees;
+    if (selectedTeam !== 'all' && selectedTeam !== 'Creative') {
+      return teamFilterEmployees.filter(
+        (employee) => employee.role !== 'executive' && employee.role !== 'head_of_technical'
+      );
+    }
     return noTeamSelectedFallbackOptions;
   }, [selectedTeam, teamFilterEmployees, noTeamSelectedFallbackOptions]);
 
@@ -636,6 +657,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // Details modal instead. Every board/table view and KPI count below
   // derives from this, so filtering here keeps them all in sync.
   const topLevelTasks = useMemo(() => tasks.filter((t) => !t.parent_task_id), [tasks]);
+  const taskAssigneeIdsByTask = useMemo(
+    () => new Map(tasks.map((task) => [
+      task.id,
+      resolveOrderedTaskAssigneeIds(task.id, taskAssignees, task.assigned_to),
+    ])),
+    [tasks, taskAssignees]
+  );
 
   // 1. Check user visibility based on RLS rules. `tasks` (and so `topLevelTasks`) is already
   // exactly what tasks_select_rls/task_visible_v2 returned for this viewer — 'all' below shows
@@ -650,19 +678,21 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // assigned_to only for a task with no task_assignees rows at all).
   const userVisibleTasks = useMemo(() => {
     if (visibilityScope === 'my_tasks') {
-      return topLevelTasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUserId));
+      return topLevelTasks.filter((t) =>
+        t.created_by === currentUserId || (taskAssigneeIdsByTask.get(t.id) || []).includes(currentUserId)
+      );
     }
     if (visibilityScope === 'my_team' && currentUser?.team) {
       return topLevelTasks.filter((t) => {
         if (t.team === currentUser.team) return true;
         const creatorTeam = taskDirectoryUsers.find((u) => u.id === t.created_by)?.team;
         if (creatorTeam === currentUser.team) return true;
-        return resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to)
+        return (taskAssigneeIdsByTask.get(t.id) || [])
           .some((id) => taskDirectoryUsers.find((u) => u.id === id)?.team === currentUser.team);
       });
     }
     return topLevelTasks;
-  }, [topLevelTasks, visibilityScope, currentUserId, currentUser, taskAssignees, taskDirectoryUsers]);
+  }, [topLevelTasks, visibilityScope, currentUserId, currentUser, taskAssigneeIdsByTask, taskDirectoryUsers]);
 
   // 2. DASHBOARD KPI METRICS (Exact 7 requested indicators):
   // - Total Tasks
@@ -677,33 +707,45 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const inProgressTasksCount = userVisibleTasks.filter((t) => t.status === 'in_progress').length;
   const pendingTasksCount = userVisibleTasks.filter((t) => t.status === 'todo').length;
   const overdueTasksCount = userVisibleTasks.filter(isOverdue).length;
-  const unassignedTasksCount = userVisibleTasks.filter((t) => !t.assigned_to).length;
+  const unassignedTasksCount = userVisibleTasks.filter((t) => (taskAssigneeIdsByTask.get(t.id) || []).length === 0).length;
 
   // Capacity utilization based on active operational users
   const capacityUtilization = useMemo(() => {
     const operational = users.filter((u) => u.capacity_limit && u.capacity_limit > 0);
     const totalLimits = operational.reduce((acc, u) => acc + (u.capacity_limit || 8), 0);
-    const activeTasksAssigned = tasks.filter((t) => !isTaskDone(t.status) && t.assigned_to).length;
-    return totalLimits > 0 ? Math.round((activeTasksAssigned / totalLimits) * 100) : 0;
-  }, [users, tasks]);
+    const operationalIds = new Set(operational.map((user) => user.id));
+    const activeAssignmentCount = tasks.reduce((count, task) => {
+      if (isTaskDone(task.status)) return count;
+      return count + (taskAssigneeIdsByTask.get(task.id) || []).filter((id) => operationalIds.has(id)).length;
+    }, 0);
+    return totalLimits > 0 ? Math.round((activeAssignmentCount / totalLimits) * 100) : 0;
+  }, [users, tasks, taskAssigneeIdsByTask]);
 
   // 3. Filtered Tasks for Kanban / Table display
   const filteredTasks = useMemo(() => {
     return userVisibleTasks.filter((t) => {
+      const assigneeIds = taskAssigneeIdsByTask.get(t.id) || [];
+      const assignees = assigneeIds
+        .map((id) => taskDirectoryUsers.find((user) => user.id === id))
+        .filter((user): user is UserRecord => !!user);
+
       // Quick filter
       if (quickFilter === 'overdue' && !isOverdue(t)) return false;
       if (quickFilter === 'due_soon' && !isDueSoon(t)) return false;
-      if (quickFilter === 'unassigned' && t.assigned_to) return false;
-      if (quickFilter === 'my_tasks' && t.assigned_to !== currentUserId) return false;
+      if (quickFilter === 'unassigned' && assigneeIds.length > 0) return false;
+      if (quickFilter === 'my_tasks' && t.created_by !== currentUserId && !assigneeIds.includes(currentUserId)) return false;
 
       // Team filter. 'Creative' is a synthetic, assignee-ROLE-scoped value (only ever offered to
       // marketing_manager, see `teams` above) — the literal task.team column splits across
       // "Creative & Design"/"Video Production" for graphic_designer/video_editor, so it can't be
       // matched directly.
       if (selectedTeam === 'Creative') {
-        const assignee = users.find((u) => u.id === t.assigned_to);
-        if (!assignee || (assignee.role !== 'graphic_designer' && assignee.role !== 'video_editor')) return false;
-      } else if (selectedTeam !== 'all' && t.team !== selectedTeam) {
+        if (!assignees.some((assignee) => assignee.role === 'graphic_designer' || assignee.role === 'video_editor')) return false;
+      } else if (
+        selectedTeam !== 'all' &&
+        t.team !== selectedTeam &&
+        !assignees.some((assignee) => assignee.team === selectedTeam)
+      ) {
         return false;
       }
 
@@ -717,17 +759,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (selectedStatus !== 'all' && t.status !== selectedStatus) return false;
 
       // Employee-name filter (role-scoped dropdown, distinct from the free-text search below)
-      if (selectedAssigneeId !== 'all' && t.assigned_to !== selectedAssigneeId) return false;
+      if (selectedAssigneeId !== 'all' && !assigneeIds.includes(selectedAssigneeId)) return false;
 
       // Search query
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const client = clients.find((c) => c.id === t.client_id);
-        const assignee = taskDirectoryUsers.find((u) => u.id === t.assigned_to);
         const matchTitle = t.title.toLowerCase().includes(query);
         const matchDesc = t.description ? t.description.toLowerCase().includes(query) : false;
         const matchClient = client ? client.name.toLowerCase().includes(query) : false;
-        const matchAssignee = assignee ? assignee.name.toLowerCase().includes(query) : false;
+        const matchAssignee = assignees.some((assignee) => assignee.name.toLowerCase().includes(query));
         if (!matchTitle && !matchDesc && !matchClient && !matchAssignee) {
           return false;
         }
@@ -745,8 +786,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     selectedAssigneeId,
     searchQuery,
     clients,
-    users,
     taskDirectoryUsers,
+    taskAssigneeIdsByTask,
     currentUserId,
     todayStr,
   ]);
@@ -1606,7 +1647,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {/* VIEW 1: KANBAN BOARD */}
       {viewMode === 'kanban' && (
         <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-start">
+          <div className="flex items-start gap-4 overflow-x-auto px-1 pb-4 pt-1 overscroll-x-contain">
             {columns.map((column) => {
               const columnTasks = filteredTasks.filter((t) => t.status === column.id);
               return (
@@ -1618,6 +1659,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   allTasks={tasks}
                   clients={clients}
                   users={taskDirectoryUsers}
+                  taskAssignees={taskAssignees}
                   isOverdue={isOverdue}
                   isDueSoon={isDueSoon}
                   onOpenDetails={setSelectedTaskDetails}
@@ -1632,11 +1674,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             {draggingTask &&
               (() => {
                 const subtasks = tasks.filter((t) => t.parent_task_id === draggingTask.id);
+                const assigneeNames = (taskAssigneeIdsByTask.get(draggingTask.id) || [])
+                  .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
                 return (
                   <KanbanTaskCardContent
                     task={draggingTask}
                     client={clients.find((c) => c.id === draggingTask.client_id)}
-                    assignee={taskDirectoryUsers.find((u) => u.id === draggingTask.assigned_to)}
+                    assigneeNames={assigneeNames}
                     subtaskDone={subtasks.filter((t) => isTaskDone(t.status)).length}
                     subtaskTotal={subtasks.length}
                     overdue={isOverdue(draggingTask)}
@@ -1687,7 +1731,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 ) : (
                   filteredTasks.map((task) => {
                     const client = clients.find((c) => c.id === task.client_id);
-                    const assignee = taskDirectoryUsers.find((u) => u.id === task.assigned_to);
+                    const assigneeNames = (taskAssigneeIdsByTask.get(task.id) || [])
+                      .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
+                    const primaryAssigneeName = assigneeNames[0];
                     const priority = getPriorityBadge(task.priority);
                     const teamColor = getTeamColor(task.team);
                     const colInfo = columns.find((c) => c.id === task.status);
@@ -1724,20 +1770,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           {client ? client.name : '—'}
                         </td>
                         <td className="p-3.5">
-                          {assignee ? (
-                            <div className="flex items-center gap-1.5">
+                          {primaryAssigneeName ? (
+                            <div className="flex items-center gap-1.5" title={assigneeNames.join(', ')}>
                               <div
                                 className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[9px]"
                                 style={{ background: 'var(--gradient-badge)', color: 'white' }}
                               >
-                                {assignee.name.charAt(0)}
+                                {primaryAssigneeName.charAt(0)}
                               </div>
-                              <span className="text-stone-200">{assignee.name}</span>
+                              <span className="text-stone-200">{primaryAssigneeName}</span>
+                              {assigneeNames.length > 1 && (
+                                <span className="rounded-full bg-purple-900/50 px-1.5 py-0.5 text-[9px] font-bold text-purple-200">
+                                  +{assigneeNames.length - 1}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <span className="text-amber-400 text-[11px] font-semibold flex items-center gap-1">
                               <UserX className="w-3 h-3" />
-                              <span>{task.assigned_to ? 'Unknown employee' : 'Unassigned'}</span>
+                              <span>Unassigned</span>
                             </span>
                           )}
                         </td>
