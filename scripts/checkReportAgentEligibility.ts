@@ -16,6 +16,14 @@ const department = {
   sort_order: 0,
 } as DepartmentRecord;
 
+const creativeDepartment = {
+  id: 'creative_design',
+  label: 'Creative & Design',
+  is_shared_resource: true,
+  is_active: true,
+  sort_order: 1,
+} as DepartmentRecord;
+
 const reportRole = {
   id: 'seo_report_specialist',
   english_title: 'SEO Report Specialist',
@@ -42,6 +50,15 @@ const inactiveReportRole = {
   is_active: false,
 } as CustomRoleRecord;
 
+const creativeCustomRole = {
+  ...reportRole,
+  id: 'ui_designer',
+  english_title: 'UI Designer',
+  portal_slug: 'ui-designer',
+  department_id: creativeDepartment.id,
+  default_module: 'my_work',
+} as CustomRoleRecord;
+
 const user = (overrides: Partial<UserRecord>): UserRecord =>
   ({
     id: 'target',
@@ -57,12 +74,13 @@ const user = (overrides: Partial<UserRecord>): UserRecord =>
 
 function main(): void {
   registerCustomRoleData(
-    [department],
-    [reportRole, nonReportRole, inactiveReportRole],
+    [department, creativeDepartment],
+    [reportRole, nonReportRole, inactiveReportRole, creativeCustomRole],
     [
       { role_id: reportRole.id, module_id: 'reports' },
       { role_id: nonReportRole.id, module_id: 'my_work' },
       { role_id: inactiveReportRole.id, module_id: 'reports' },
+      { role_id: creativeCustomRole.id, module_id: 'my_work' },
     ],
     [],
     [],
@@ -82,14 +100,19 @@ function main(): void {
   );
   assertEqual(isSelectableReportAgent(executive, user({ role: reportRole.id, auth_id: null })), false, 'pending employee');
   assertEqual(isSelectableReportAgent(executive, user({ role: 'am_agent' })), true, 'built-in report agent');
+  assertEqual(isSelectableReportAgent(executive, user({ role: 'graphic_designer' })), true, 'graphic designer subject');
+  assertEqual(isSelectableReportAgent(executive, user({ role: 'video_editor' })), true, 'video editor subject');
+  assertEqual(isSelectableReportAgent(executive, user({ role: creativeCustomRole.id })), true, 'shared Creative custom-role subject');
   assertEqual(isSelectableReportAgent(executive, user({ role: 'executive' })), false, 'Executive target');
   assertEqual(isSelectableReportAgent(executive, user({ role: 'head_of_technical' })), false, 'leadership target');
   assertEqual(isSelectableReportAgent(executive, user({ role: 'am_team_lead' })), false, 'team-lead target');
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'am_agent' })), true, 'team lead direct report');
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'seo_agent' })), false, 'team lead cross-team agent');
+  assertEqual(isSelectableReportAgent(amLead, user({ role: 'graphic_designer' })), false, 'team lead picker is not widened to Creative');
   assertEqual(isSelectableReportAgent(amLead, user({ role: reportRole.id })), false, 'team lead custom role not inferred as direct report');
   assertEqual(isEligibleReportSubject(user({ role: 'am_agent' })), true, 'ordinary agent subject');
   assertEqual(isEligibleReportSubject(user({ role: reportRole.id })), true, 'custom Reports subject');
+  assertEqual(isEligibleReportSubject(user({ role: creativeCustomRole.id })), true, 'custom Creative subject without Reports module');
   assertEqual(isEligibleReportSubject(user({ role: 'executive' })), false, 'Executive is not an employee-report subject');
 
   resetCustomRoleDataForTesting();

@@ -1,5 +1,6 @@
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { isModuleAllowed } from '../data/roles';
+import { isSharedResourceCustomRole } from '../data/customRoles';
 import { UserRecord, UserRole } from '../types/database';
 import { isActiveEmployee } from './permissions';
 import { isEmployeeAccessibleUnderRLS } from './supabase';
@@ -18,10 +19,20 @@ export function canSelectAnyReportAgent(role: UserRole): boolean {
   return GLOBAL_REPORT_AGENT_PICKER_ROLES.has(role);
 }
 
+export function isCreativeReportSubject(target: Pick<UserRecord, 'role'>): boolean {
+  return target.role === 'graphic_designer' ||
+    target.role === 'video_editor' ||
+    isSharedResourceCustomRole(target.role);
+}
+
 export function isEligibleReportSubject(target: UserRecord): boolean {
   if (!isActiveEmployee(target)) return false;
   if (GLOBAL_REPORT_AGENT_PICKER_ROLES.has(target.role)) return false;
   if (Object.prototype.hasOwnProperty.call(TEAM_LEAD_TO_AGENT_ROLE, target.role)) return false;
+  // Subject eligibility is not the same as module access. Creative employees are report subjects
+  // for an already-authorized global viewer even though their own portals deliberately do not
+  // expose Reports. This never grants the target access to Reports or widens the viewer's RLS.
+  if (isCreativeReportSubject(target)) return true;
   return isModuleAllowed(target.role, 'reports');
 }
 

@@ -1,18 +1,62 @@
-import { DailyLogRecord, ExtraNoteRecord } from '../types/database';
+import { DailyLogRecord, ExtraNoteRecord, TaskAssigneeRecord, TaskRecord } from '../types/database';
 import { dedupeReportSourceReferences } from './reportContracts';
 import { isDateInReportPeriod, ReportPeriod } from './reportPeriods';
+import { isTaskDone, resolveTaskAssigneeIds } from './taskLifecycle';
 
 export interface ClientReportSources {
   dailyLogs: DailyLogRecord[];
 }
 
+export type ReportTaskWorkKind = 'design' | 'video' | 'mixed' | 'unclassified';
+
+export interface EmployeeTaskReportSource {
+  task: TaskRecord;
+  evidenceLogs: DailyLogRecord[];
+  workKind: ReportTaskWorkKind;
+  classificationSignals: string[];
+  subjectIsCurrentAssignee: boolean;
+  completionInPeriod: boolean;
+}
+
 export interface EmployeeReportSources {
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
+  tasks: EmployeeTaskReportSource[];
 }
+
+const VIDEO_PATTERN = /\b(video|videos|reel|reels|motion|animation|montage|edit|editing)\b|فيديو|فيديوهات|ريل|ريلز|موشن|مونتاج|تحريك/iu;
+const DESIGN_PATTERN = /\b(design|designs|graphic|graphics|banner|poster|carousel|visual|thumbnail|creative)\b|تصميم|تصميمات|جرافيك|بنر|بوستر|كاروسيل|غلاف|كرياتيف/iu;
 
 function byDateThenId<T extends { date: string; id: string }>(a: T, b: T): number {
   return a.date.localeCompare(b.date) || a.id.localeCompare(b.id);
+}
+
+function taskClassificationFields(task: TaskRecord): Array<[string, string]> {
+  return [
+    ['task_type', task.task_type || ''],
+    ['task_type_other', task.task_type_other || ''],
+    ['team', task.team || ''],
+    ['title', task.title || ''],
+    ['description', task.description || ''],
+  ];
+}
+
+export function classifyReportTask(task: TaskRecord): {
+  workKind: ReportTaskWorkKind;
+  classificationSignals: string[];
+} {
+  const fields = taskClassificationFields(task);
+  const videoSignals = fields.filter(([, value]) => VIDEO_PATTERN.test(value)).map(([field]) => `${field}:video`);
+  const designSignals = fields.filter(([, value]) => DESIGN_PATTERN.test(value)).map(([field]) => `${field}:design`);
+  const classificationSignals = [...videoSignals, ...designSignals];
+  const workKind: ReportTaskWorkKind = videoSignals.length && designSignals.length
+    ? 'mixed'
+    : videoSignals.length
+      ? 'video'
+      : designSignals.length
+        ? 'design'
+        : 'unclassified';
+  return { workKind, classificationSignals };
 }
 
 export function collectClientReportSources(
@@ -31,6 +75,8 @@ export function collectClientReportSources(
 export function collectEmployeeReportSources(
   dailyLogs: DailyLogRecord[],
   extraNotes: ExtraNoteRecord[],
+  tasks: TaskRecord[],
+  taskAssignees: TaskAssigneeRecord[],
   userId: string,
   period: ReportPeriod
 ): EmployeeReportSources {
@@ -39,14 +85,54 @@ export function collectEmployeeReportSources(
       .filter((log) => log.user_id === userId && isDateInReportPeriod(log.date, period))
       .map((log) => ({ sourceKind: 'daily_log' as const, sourceId: log.id, row: log }))
   );
+  const eligibleLogs = work.map((item) => item.row).sort(byDateThenId);
   const notes = dedupeReportSourceReferences(
     extraNotes
       .filter((note) => note.user_id === userId && isDateInReportPeriod(note.date, period))
       .map((note) => ({ sourceKind: 'extra_note' as const, sourceId: note.id, row: note }))
   );
+
+  // Assignment alone is never evidence of work. A task enters an employee report only when that
+  // employee authored an eligible daily log that explicitly links the task. The task list itself
+  // is already RLS-filtered by Supabase before it reaches this client-side preview.
+  const evidenceByTaskId = new Map<string, DailyLogRecord[]>();
+  eligibleLogs.forEach((log) => {
+    [...new Set(log.linked_task_ids || [])].forEach((taskId) => {
+      const evidence = evidenceByTaskId.get(taskId) || [];
+      evidence.push(log);
+      evidenceByTaskId.set(taskId, evidence);
+    });
+  });
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const taskSources = [...evidenceByTaskId.entries()]
+    .map(([taskId, evidenceLogs]): EmployeeTaskReportSource | null => {
+      const task = tasksById.get(taskId);
+      if (!task) return null;
+      const classification = classifyReportTask(task);
+      const completionDate = task.completed_at?.slice(0, 10) || '';
+      let completionInPeriod = false;
+      if (isTaskDone(task.status) && completionDate) {
+        try {
+          completionInPeriod = isDateInReportPeriod(completionDate, period);
+        } catch {
+          completionInPeriod = false;
+        }
+      }
+      return {
+        task,
+        evidenceLogs: [...evidenceLogs].sort(byDateThenId),
+        ...classification,
+        subjectIsCurrentAssignee: resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to).includes(userId),
+        completionInPeriod,
+      };
+    })
+    .filter((source): source is EmployeeTaskReportSource => source !== null)
+    .sort((a, b) => a.evidenceLogs[0].date.localeCompare(b.evidenceLogs[0].date) || a.task.id.localeCompare(b.task.id));
+
   return {
-    dailyLogs: work.map((item) => item.row).sort(byDateThenId),
+    dailyLogs: eligibleLogs,
     extraNotes: notes.map((item) => item.row).sort(byDateThenId),
+    tasks: taskSources,
   };
 }
 
@@ -54,8 +140,10 @@ export function composeInitialReportContent(
   scope: 'client' | 'employee',
   dailyLogs: DailyLogRecord[],
   extraNotes: ExtraNoteRecord[],
+  taskSources: EmployeeTaskReportSource[],
   creatorNote: string,
-  employeeNames: Map<string, string>
+  employeeNames: Map<string, string>,
+  isCreativeSubject: boolean
 ): string {
   const workLines = dailyLogs.map(
     (log) => `${log.date} — ${employeeNames.get(log.user_id) || 'Employee'}: ${log.summary_text.trim()}`
@@ -64,8 +152,36 @@ export function composeInitialReportContent(
     ? extraNotes.map((note) => `${note.date} — ${note.note_text.trim()}`)
     : [];
   const sections: string[] = [];
-  if (workLines.length) sections.push(`Work completed\n${workLines.join('\n')}`);
-  if (noteLines.length) sections.push(`Additional context\n${noteLines.join('\n')}`);
+  if (workLines.length) sections.push(`Work logs (primary source)\n${workLines.join('\n')}`);
+
+  if (scope === 'employee' && taskSources.length) {
+    if (isCreativeSubject) {
+      const designs = taskSources.filter((source) => source.workKind === 'design').length;
+      const videos = taskSources.filter((source) => source.workKind === 'video').length;
+      const unresolved = taskSources.filter((source) => source.workKind === 'mixed' || source.workKind === 'unclassified').length;
+      const completedDesigns = taskSources.filter((source) => source.workKind === 'design' && source.completionInPeriod).length;
+      const completedVideos = taskSources.filter((source) => source.workKind === 'video' && source.completionInPeriod).length;
+      sections.push([
+        'Creative task evidence summary',
+        `Design tasks evidenced by linked work logs: ${designs} (confirmed completed in period: ${completedDesigns})`,
+        `Video tasks evidenced by linked work logs: ${videos} (confirmed completed in period: ${completedVideos})`,
+        `Mixed or unclassified tasks requiring review: ${unresolved}`,
+      ].join('\n'));
+    }
+    // These are traceability references for work already narrated by the linked logs, not extra
+    // work lines. Omitting the task description avoids counting the same work twice.
+    const taskLines = taskSources.map((source) => {
+      const evidenceDates = [...new Set(source.evidenceLogs.map((log) => log.date))].join(', ');
+      const classification = source.workKind === 'unclassified'
+        ? 'unclassified'
+        : `${source.workKind} (content-inferred)`;
+      const completion = source.completionInPeriod ? 'confirmed completed in period' : `status: ${source.task.status}`;
+      return `${source.task.title} — ${classification}; ${completion}; linked log dates: ${evidenceDates}`;
+    });
+    sections.push(`Task evidence ledger (not additional work items)\n${taskLines.join('\n')}`);
+  }
+
+  if (noteLines.length) sections.push(`Additional employee context\n${noteLines.join('\n')}`);
   // For client reports this note is deliberately folded into the narrative as client context;
   // it is never labelled "Extra Note". The original remains stored separately by the RPC.
   if (creatorNote.trim()) sections.push(`Context and observations\n${creatorNote.trim()}`);
