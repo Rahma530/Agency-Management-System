@@ -20,11 +20,11 @@ import {
   ClientAnomalyResult,
   ensureComparisonForSummary as resolveOrGenerateComparison,
 } from '../lib/reportingEngine';
-import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { getTodayStr } from '../lib/employeeWork';
-import { AGENCY_ROLES, TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
+import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
+import { canSelectAnyReportAgent, isSelectableReportAgent } from '../lib/reportAgentEligibility';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
   ComparisonCard,
@@ -37,18 +37,6 @@ import {
 import { DailyLogEditModal } from './DailyLogEditModal';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
-
-const GLOBAL_AGENT_PICKER_ROLES = new Set(['executive', 'head_of_technical', 'ai_engineer']);
-const REPORT_AGENT_ROLES = new Set(
-  Object.values(AGENCY_ROLES)
-    .filter(
-      (role) =>
-        role.allowedModules.includes('reports') &&
-        !GLOBAL_AGENT_PICKER_ROLES.has(role.role) &&
-        !Object.prototype.hasOwnProperty.call(TEAM_LEAD_TO_AGENT_ROLE, role.role)
-    )
-    .map((role) => role.role)
-);
 
 interface ReportsHubProps {
   currentUser: UserRecord;
@@ -104,7 +92,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
-  const canSelectAnyActiveAgent = GLOBAL_AGENT_PICKER_ROLES.has(currentUser.role);
+  const canSelectAnyActiveAgent = canSelectAnyReportAgent(currentUser.role);
   const canSelectSpecificAgent = isTeamLead || canSelectAnyActiveAgent;
 
   // Combined-scope item C (extended here to close the same gap ClientDashboard.tsx just closed):
@@ -189,15 +177,9 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const selectableAgents = useMemo(
     () =>
       users
-        .filter(
-          (user) =>
-            isActiveEmployee(user) &&
-            (canSelectAnyActiveAgent
-              ? REPORT_AGENT_ROLES.has(user.role)
-              : !!agentRoleForLead?.includes(user.role))
-        )
+        .filter((user) => isSelectableReportAgent(currentUser, user))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [users, agentRoleForLead, canSelectAnyActiveAgent]
+    [users, currentUser]
   );
 
   const [scope, setScope] = useState<ReportsHubScope>('own');
