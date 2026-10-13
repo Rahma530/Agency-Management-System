@@ -48,8 +48,21 @@ begin
     from public.users where role = 'sales' and auth_id is not null and deactivated_at is null
       and id <> v_sales_a_id
     order by id limit 1;
+  -- A second active sales user isn't guaranteed on every environment. Fall back to any other
+  -- active employee ineligible under client_contracts_objects_select_rls (not this client's
+  -- sales_owner/am_agent, not exec/head_of_technical/ai_engineer/am_team_lead) so the "another
+  -- sales cannot see it" check still runs — with a clear notice that the same-role (sales-vs-
+  -- sales, the specific case this persona was meant to isolate) scenario wasn't proven this run.
   if v_sales_b_id is null then
-    raise exception 'TEST_SETUP_FAILED: need 2 distinct active sales users with auth_id.';
+    raise notice 'NOTE: only 1 active sales user with auth_id found — falling back to a generic ineligible employee for the "another sales cannot see it" check; the same-role case is not isolated this run.';
+    select id, auth_id into v_sales_b_id, v_sales_b_auth
+      from public.users
+      where auth_id is not null and deactivated_at is null
+        and role not in ('executive', 'head_of_technical', 'ai_engineer', 'am_team_lead', 'sales', 'am_agent')
+      order by id limit 1;
+  end if;
+  if v_sales_b_id is null then
+    raise exception 'TEST_SETUP_FAILED: need a second active, ineligible employee (any role) with auth_id, distinct from the sales owner.';
   end if;
 
   select id, auth_id into v_am_agent_id, v_am_agent_auth
