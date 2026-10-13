@@ -59,7 +59,7 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { getRoleInfo, isBuiltInRole } from '../data/roles';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
-import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
+import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportGenerationResult } from './reporting/ComparisonDisplay';
 
 interface CampaignManagementModuleProps {
   campaigns: CampaignRecord[];
@@ -94,8 +94,8 @@ interface CampaignManagementModuleProps {
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
-  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
-  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedReportGenerationResult>;
   onLogSocialMetrics?: (
     clientId: string,
     platform: string,

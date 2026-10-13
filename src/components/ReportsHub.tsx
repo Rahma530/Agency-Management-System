@@ -24,7 +24,7 @@ import { isActiveEmployee } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { getTodayStr } from '../lib/employeeWork';
-import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
+import { AGENCY_ROLES, TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
   ComparisonCard,
@@ -32,11 +32,23 @@ import {
   DirectAiSummaryPanel,
   describeComparisonScope,
   CampaignSummaryPayload,
-  CampaignSummaryDetailedResult,
+  CampaignSummaryGenerationResult,
 } from './reporting/ComparisonDisplay';
 import { DailyLogEditModal } from './DailyLogEditModal';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
+
+const GLOBAL_AGENT_PICKER_ROLES = new Set(['executive', 'head_of_technical', 'ai_engineer']);
+const REPORT_AGENT_ROLES = new Set(
+  Object.values(AGENCY_ROLES)
+    .filter(
+      (role) =>
+        role.allowedModules.includes('reports') &&
+        !GLOBAL_AGENT_PICKER_ROLES.has(role.role) &&
+        !Object.prototype.hasOwnProperty.call(TEAM_LEAD_TO_AGENT_ROLE, role.role)
+    )
+    .map((role) => role.role)
+);
 
 interface ReportsHubProps {
   currentUser: UserRecord;
@@ -60,7 +72,7 @@ interface ReportsHubProps {
   // onGenerateAiSummary — reuses this hub's existing nav-level access gate exactly (whoever can
   // reach ReportsHub at all already sees canGenerateReport below unconditionally, so the AI button
   // gets no separate check either).
-  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   onUpdateDailyLog: (
     logId: string,
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
@@ -92,6 +104,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
+  const canSelectAnyActiveAgent = GLOBAL_AGENT_PICKER_ROLES.has(currentUser.role);
+  const canSelectSpecificAgent = isTeamLead || canSelectAnyActiveAgent;
 
   // Combined-scope item C (extended here to close the same gap ClientDashboard.tsx just closed):
   // which service(s) this viewer may see on a comparison row's ComparisonCard. Unlike
@@ -172,9 +186,18 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     [currentUser, clients, assignments]
   );
 
-  const directReports = useMemo(
-    () => (agentRoleForLead ? users.filter((u) => agentRoleForLead.includes(u.role) && isActiveEmployee(u)) : []),
-    [users, agentRoleForLead]
+  const selectableAgents = useMemo(
+    () =>
+      users
+        .filter(
+          (user) =>
+            isActiveEmployee(user) &&
+            (canSelectAnyActiveAgent
+              ? REPORT_AGENT_ROLES.has(user.role)
+              : !!agentRoleForLead?.includes(user.role))
+        )
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [users, agentRoleForLead, canSelectAnyActiveAgent]
   );
 
   const [scope, setScope] = useState<ReportsHubScope>('own');
@@ -240,11 +263,12 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   };
 
   // What's visible in this hub: my own client-scoped comparisons, my own aggregate, and — for
-  // team leads — any direct report's aggregate. Purely a display filter; the RLS policies behind
+  // team leads — any direct report's aggregate; leadership sees any selectable active agent's
+  // aggregate. Purely a display filter; the RLS policies behind
   // onGenerateComparison/the reports and client_comparisons fetches are the actual access
   // control, this just keeps the list relevant instead of showing every row the fetch returned.
   const myClientIds = useMemo(() => new Set(myClients.map((c) => c.id)), [myClients]);
-  const directReportIds = useMemo(() => new Set(directReports.map((u) => u.id)), [directReports]);
+  const selectableAgentIds = useMemo(() => new Set(selectableAgents.map((u) => u.id)), [selectableAgents]);
 
   const visibleComparisons = useMemo(
     () =>
@@ -252,10 +276,10 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         .filter(
           (c) =>
             (c.client_id && myClientIds.has(c.client_id)) ||
-            (c.agent_id && (c.agent_id === currentUser.id || directReportIds.has(c.agent_id)))
+            (c.agent_id && (c.agent_id === currentUser.id || selectableAgentIds.has(c.agent_id)))
         )
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')),
-    [clientComparisons, myClientIds, directReportIds, currentUser.id]
+    [clientComparisons, myClientIds, selectableAgentIds, currentUser.id]
   );
 
   // UX-flow change: lets "Generate AI Summary" work before any comparison row exists yet, same as
@@ -374,7 +398,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           >
             Specific Client
           </button>
-          {isTeamLead && (
+          {canSelectSpecificAgent && (
             <button
               onClick={() => setScope('agent')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -420,7 +444,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
           >
             <option value="">-- Select an agent --</option>
-            {directReports.map((u) => (
+            {selectableAgents.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name} ({u.email})
               </option>

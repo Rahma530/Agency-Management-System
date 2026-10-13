@@ -59,7 +59,7 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
-import { CampaignSummaryPayload, CampaignSummaryDetailedResult, UnifiedClientReportResult } from './reporting/ComparisonDisplay';
+import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportGenerationResult } from './reporting/ComparisonDisplay';
 
 interface AMQueueProps {
   clients: ClientRecord[];
@@ -122,8 +122,8 @@ interface AMQueueProps {
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
-  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
-  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedReportGenerationResult>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   onCreatePortalLogin?: (clientId: string, email: string) => Promise<void>;

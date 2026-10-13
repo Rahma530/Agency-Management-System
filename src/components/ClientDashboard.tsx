@@ -87,8 +87,8 @@ import {
   UnifiedReportPanel,
   DirectAiSummaryPanel,
   CampaignSummaryPayload,
-  CampaignSummaryDetailedResult,
-  UnifiedClientReportResult,
+  CampaignSummaryGenerationResult,
+  UnifiedReportGenerationResult,
 } from './reporting/ComparisonDisplay';
 import { CreateClientPortalLoginModal } from './clientPortal/CreateClientPortalLoginModal';
 import { LogSocialMetricsModal } from './LogSocialMetricsModal';
@@ -188,11 +188,11 @@ interface ClientDashboardProps {
   onGenerateReport?: (comparisonId: string, period: string) => Promise<void>;
   // Phase 4 (AI Orchestrator): threaded straight to ComparisonCard, same optional-prop convention
   // as onGenerateReport above — omitted by every caller that shouldn't offer it (see App.tsx).
-  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   // Combined-scope item D: threaded to the new UnifiedReportPanel. Never gated by hasComparisonAccess
   // — only ever shown when this client's own am_agent is viewing (checked locally below), so the
   // prop's mere presence isn't what controls visibility the way onGenerateAiSummary's is.
-  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedReportGenerationResult>;
   onGenerateMonthlyReportDraft?: (clientId: string) => Promise<void>;
   onApproveReport?: (reportId: string) => Promise<void>;
   clientPortalUser?: ClientPortalUserRecord | null;
@@ -3261,13 +3261,13 @@ interface ReportsAndComparisonsTabProps {
   canGenerateReport: boolean;
   generatingReportForComparisonId: string | null;
   onGenerateReport: (comparison: ClientComparisonRecord) => void;
-  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryDetailedResult | null>;
+  onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   // Combined-scope item C: undefined = viewer sees every service (AM/leadership); an array = a
   // department agent/team lead, narrowed to their own service(s) only.
   viewerServiceFilter?: ServiceType[];
   // Combined-scope item D: true only when the viewer is this exact client's own assigned AM Agent.
   canGenerateUnifiedReport: boolean;
-  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedClientReportResult | null>;
+  onGenerateUnifiedReport?: (payload: CampaignSummaryPayload) => Promise<UnifiedReportGenerationResult>;
   canGenerateMonthlyDraft: boolean;
   isGeneratingDraft: boolean;
   onGenerateMonthlyDraft: () => void;
