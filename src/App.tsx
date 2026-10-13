@@ -6120,6 +6120,7 @@ export default function App() {
                   dailyLogs={dailyLogs}
                   extraNotes={extraNotes}
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}

@@ -649,7 +649,7 @@ export interface ReportContentVersionRecord {
 export interface ReportSourceItemRecord {
   id: string;
   report_id: string;
-  source_kind: 'daily_log' | 'extra_note';
+  source_kind: 'daily_log' | 'extra_note' | 'task';
   source_id: string;
   source_date: string;
   user_id: string;

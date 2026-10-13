@@ -11,7 +11,7 @@ export interface ReportIdentityContract {
   period: ReportPeriod;
 }
 
-export type ReportSourceKind = 'daily_log' | 'extra_note';
+export type ReportSourceKind = 'daily_log' | 'extra_note' | 'task';
 
 export interface ReportSourceReference {
   sourceKind: ReportSourceKind;

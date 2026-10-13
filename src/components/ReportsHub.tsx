@@ -10,6 +10,7 @@ import {
   ExtraNoteRecord,
   ServiceType,
   TaskRecord,
+  TaskAssigneeRecord,
 } from '../types/database';
 import {
   ComparisonGranularity,
@@ -52,6 +53,7 @@ interface ReportsHubProps {
   // Only needed for the Daily Activity Log feed's Edit modal (a log's own linked-tasks checklist)
   // — never used for scoping/filtering anything else in this hub.
   tasks?: TaskRecord[];
+  taskAssignees?: TaskAssigneeRecord[];
   onGenerateComparison: (
     scope: ReportScope,
     mode: ReportMode,
@@ -89,6 +91,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   dailyLogs = [],
   extraNotes = [],
   tasks = [],
+  taskAssignees = [],
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
@@ -371,6 +374,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         reports={reports}
         dailyLogs={dailyLogs}
         extraNotes={extraNotes}
+        tasks={tasks}
+        taskAssignees={taskAssignees}
         onReportChanged={onReportChanged}
       />
 

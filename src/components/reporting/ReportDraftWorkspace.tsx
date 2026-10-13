@@ -8,6 +8,8 @@ import {
   ReportContentVersionRecord,
   ReportRecord,
   ReportSourceItemRecord,
+  TaskAssigneeRecord,
+  TaskRecord,
   UserRecord,
 } from '../../types/database';
 import { supabaseRaw } from '../../lib/supabase';
@@ -18,7 +20,7 @@ import {
   composeInitialReportContent,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
-import { isEligibleReportSubject } from '../../lib/reportAgentEligibility';
+import { isCreativeReportSubject, isEligibleReportSubject } from '../../lib/reportAgentEligibility';
 
 interface Props {
   currentUser: UserRecord;
@@ -28,6 +30,8 @@ interface Props {
   reports: ReportRecord[];
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
+  tasks: TaskRecord[];
+  taskAssignees: TaskAssigneeRecord[];
   onReportChanged: (report: ReportRecord) => void;
 }
 
@@ -42,6 +46,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   reports,
   dailyLogs,
   extraNotes,
+  tasks,
+  taskAssignees,
   onReportChanged,
 }) => {
   const [scopeType, setScopeType] = useState<'client' | 'employee'>('client');
@@ -65,6 +71,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     ? versions.find((version) => version.id === selectedReport.current_version_id) || versions[0] || null
     : null;
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.name])), [users]);
+  const selectedSubject = users.find((user) => user.id === subjectUserId);
   const employeeOptions = useMemo(() => {
     const map = new Map<string, UserRecord>();
     if (isEligibleReportSubject(currentUser)) map.set(currentUser.id, currentUser);
@@ -87,17 +94,25 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   }, [periodStart, periodEnd]);
 
   const preview = useMemo(() => {
-    if (!period) return { dailyLogs: [] as DailyLogRecord[], extraNotes: [] as ExtraNoteRecord[] };
+    if (!period) return { dailyLogs: [] as DailyLogRecord[], extraNotes: [] as ExtraNoteRecord[], tasks: [] };
     if (scopeType === 'client') {
       const result = collectClientReportSources(dailyLogs, clientId, period);
-      return { dailyLogs: result.dailyLogs, extraNotes: [] as ExtraNoteRecord[] };
+      return { dailyLogs: result.dailyLogs, extraNotes: [] as ExtraNoteRecord[], tasks: [] };
     }
-    return collectEmployeeReportSources(dailyLogs, extraNotes, subjectUserId, period);
-  }, [period, scopeType, clientId, subjectUserId, dailyLogs, extraNotes]);
+    return collectEmployeeReportSources(dailyLogs, extraNotes, tasks, taskAssignees, subjectUserId, period);
+  }, [period, scopeType, clientId, subjectUserId, dailyLogs, extraNotes, tasks, taskAssignees]);
 
   const buildPreview = () => {
-    setDraftText(composeInitialReportContent(scopeType, preview.dailyLogs, preview.extraNotes, creatorNote, names));
-    setMessage(`Preview built from ${preview.dailyLogs.length} work log(s) and ${preview.extraNotes.length} employee note(s).`);
+    setDraftText(composeInitialReportContent(
+      scopeType,
+      preview.dailyLogs,
+      preview.extraNotes,
+      preview.tasks,
+      creatorNote,
+      names,
+      !!selectedSubject && isCreativeReportSubject(selectedSubject)
+    ));
+    setMessage(`Preview built from ${preview.dailyLogs.length} work log(s), ${preview.tasks.length} evidenced task(s), and ${preview.extraNotes.length} employee note(s).`);
   };
 
   useEffect(() => {
@@ -189,6 +204,15 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       // Send only reportable facts to the provider — never database ids, client ids, user ids,
       // hashes, or the full internal snapshot object.
       const facts = sources.map((source) => {
+        if (source.source_kind === 'task') {
+          const title = typeof source.snapshot.title === 'string' ? source.snapshot.title : '';
+          const workKind = typeof source.snapshot.work_kind === 'string' ? source.snapshot.work_kind : 'unclassified';
+          const status = typeof source.snapshot.status === 'string' ? source.snapshot.status : '';
+          const evidenceDates = Array.isArray(source.snapshot.evidence_dates)
+            ? source.snapshot.evidence_dates.filter((value): value is string => typeof value === 'string').join(', ')
+            : source.source_date;
+          return `${source.source_date}: task evidence — ${title}; inferred kind: ${workKind}; status: ${status}; linked work-log dates: ${evidenceDates}`;
+        }
         const text = source.source_kind === 'daily_log'
           ? source.snapshot.summary_text
           : source.snapshot.note_text;
@@ -341,7 +365,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             <input type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
           </div>
           <textarea value={creatorNote} onChange={(event) => setCreatorNote(event.target.value)} placeholder="Creator context (stored internally and incorporated professionally in client content)" className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2"><button onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white">Build source preview</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} work logs · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2"><button onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white">Build source preview</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}
 
