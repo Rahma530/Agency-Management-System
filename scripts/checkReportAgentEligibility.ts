@@ -1,5 +1,5 @@
 import { registerCustomRoleData, resetCustomRoleDataForTesting } from '../src/data/customRoles';
-import { isSelectableReportAgent } from '../src/lib/reportAgentEligibility';
+import { isEligibleReportSubject, isSelectableReportAgent } from '../src/lib/reportAgentEligibility';
 import { DepartmentRecord, CustomRoleRecord, UserRecord } from '../src/types/database';
 
 const failures: string[] = [];
@@ -88,6 +88,9 @@ function main(): void {
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'am_agent' })), true, 'team lead direct report');
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'seo_agent' })), false, 'team lead cross-team agent');
   assertEqual(isSelectableReportAgent(amLead, user({ role: reportRole.id })), false, 'team lead custom role not inferred as direct report');
+  assertEqual(isEligibleReportSubject(user({ role: 'am_agent' })), true, 'ordinary agent subject');
+  assertEqual(isEligibleReportSubject(user({ role: reportRole.id })), true, 'custom Reports subject');
+  assertEqual(isEligibleReportSubject(user({ role: 'executive' })), false, 'Executive is not an employee-report subject');
 
   resetCustomRoleDataForTesting();
   if (failures.length) {

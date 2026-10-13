@@ -37,7 +37,7 @@ import { callProvider, resolveProviderModel } from './providers/dispatch.ts';
 import { recordCooldown } from './providers/cooldown.ts';
 import { recordUsage } from './providers/usageLog.ts';
 import { AiProvider, AiProviderError } from './types.ts';
-import { isDetailLevel, isSupportedLanguage, TASK_REGISTRY } from './taskRegistry.ts';
+import { isDetailLevel, isSupportedLanguage, TASK_REGISTRY, validateReportRewritePayload } from './taskRegistry.ts';
 import { runRegistryTask } from './taskRunner.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
@@ -85,7 +85,10 @@ Deno.serve(async (req) => {
 
   const bearer = req.headers.get('Authorization') || '';
   if (!bearer.startsWith('Bearer ')) return response({ error: 'Authentication required.' }, 401);
-  const callerClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
+  const callerClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: bearer } },
+  });
   const { data: { user: caller }, error: callerError } = await callerClient.auth.getUser(bearer.slice(7));
   if (callerError || !caller) return response({ error: 'Authentication required.' }, 401);
 
@@ -194,6 +197,36 @@ Deno.serve(async (req) => {
   // Path 2: a real, data-driven Task Registry task — structured payload only, never free text.
   const task = TASK_REGISTRY[input.task];
   if (!task) return response({ error: `Unknown task "${input.task}".` }, 400);
+
+  // REPORT_REWRITE is tied to one current, editable report version before any provider call. This
+  // prevents an active employee from bypassing the Reports module/scope rules and also avoids
+  // spending provider quota on a stale or fabricated report identity. Internal ids are removed by
+  // taskRegistry.ts before the provider receives the prompt.
+  if (input.task === 'REPORT_REWRITE') {
+    let rewritePayload: ReturnType<typeof validateReportRewritePayload>;
+    try {
+      rewritePayload = validateReportRewritePayload(input.payload);
+    } catch {
+      return response({ error: 'Invalid report rewrite request.' }, 400);
+    }
+    const { data: version, error: versionError } = await admin.from('report_content_versions')
+      .select('report_id').eq('id', rewritePayload.base_version_id).maybeSingle();
+    const { data: report, error: reportError } = await admin.from('reports')
+      .select('id,current_version_id,source_hash,archived_at').eq('id', rewritePayload.report_id).maybeSingle();
+    if (versionError || reportError) {
+      return response({ error: 'Report rewrite storage is not ready.' }, 503);
+    }
+    if (!version || !report || version.report_id !== report.id || report.archived_at
+      || report.current_version_id !== rewritePayload.base_version_id
+      || report.source_hash !== rewritePayload.source_hash) {
+      return response({ error: 'The report changed before the rewrite request.' }, 409);
+    }
+    const { data: canEdit, error: permissionError } = await callerClient.rpc('report_row_editable', {
+      p_report_id: rewritePayload.report_id,
+    });
+    if (permissionError) return response({ error: 'Report authorization is not ready.' }, 503);
+    if (canEdit !== true) return response({ error: 'Report access denied.' }, 403);
+  }
 
   // detail is a request-level option, not payload data — it's never added to a task's input
   // allowlist. Unset defaults to 'brief' (unchanged prior behavior); anything else is rejected

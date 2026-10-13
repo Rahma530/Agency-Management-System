@@ -4597,15 +4597,37 @@ export default function App() {
 
     if (supabaseActive) {
       try {
-        const { data, error } = existingDraftReport
-          ? await supabase.from('reports').update({
+        let data: unknown[] | null = null;
+        let error: { code?: string; message?: string } | null = null;
+        if (existingDraftReport) {
+          const rpcResult = await supabaseRaw.rpc('update_legacy_report_draft', {
+            p_report_id: existingDraftReport.id,
+            p_comparison_id: reportPayload.comparison_id,
+            p_period: reportPayload.period,
+            p_client_id: reportPayload.client_id,
+            p_type: reportPayload.type,
+          });
+          if (rpcResult.error?.code === 'PGRST202') {
+            // Deployment-order compatibility while the reviewed migration is still awaiting its
+            // separate production approval. Once deployed, direct report updates are revoked.
+            const legacyResult = await supabase.from('reports').update({
               client_id: reportPayload.client_id,
               type: reportPayload.type,
               period: reportPayload.period,
               comparison_id: reportPayload.comparison_id,
               status: reportPayload.status,
-            }).eq('id', existingDraftReport.id).select()
-          : await supabase.from('reports').insert([reportPayload]).select();
+            }).eq('id', existingDraftReport.id).select();
+            data = legacyResult.data;
+            error = legacyResult.error;
+          } else {
+            data = rpcResult.data ? [rpcResult.data] : null;
+            error = rpcResult.error;
+          }
+        } else {
+          const insertResult = await supabase.from('reports').insert([reportPayload]).select();
+          data = insertResult.data;
+          error = insertResult.error;
+        }
         if (error) throw error;
         const saved = (data?.[0] as ReportRecord) || reportPayload;
         setReports((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);

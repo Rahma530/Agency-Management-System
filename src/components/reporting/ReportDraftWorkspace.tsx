@@ -18,6 +18,7 @@ import {
   composeInitialReportContent,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
+import { isEligibleReportSubject } from '../../lib/reportAgentEligibility';
 
 interface Props {
   currentUser: UserRecord;
@@ -45,7 +46,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
 }) => {
   const [scopeType, setScopeType] = useState<'client' | 'employee'>('client');
   const [clientId, setClientId] = useState('');
-  const [subjectUserId, setSubjectUserId] = useState(currentUser.id);
+  const [subjectUserId, setSubjectUserId] = useState(
+    isEligibleReportSubject(currentUser) ? currentUser.id : employees[0]?.id || ''
+  );
   const [periodStart, setPeriodStart] = useState(monthStart());
   const [periodEnd, setPeriodEnd] = useState(today());
   const [creatorNote, setCreatorNote] = useState('');
@@ -63,10 +66,17 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     : null;
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.name])), [users]);
   const employeeOptions = useMemo(() => {
-    const map = new Map<string, UserRecord>([[currentUser.id, currentUser]]);
+    const map = new Map<string, UserRecord>();
+    if (isEligibleReportSubject(currentUser)) map.set(currentUser.id, currentUser);
     employees.forEach((employee) => map.set(employee.id, employee));
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [currentUser, employees]);
+
+  useEffect(() => {
+    if (!employeeOptions.some((employee) => employee.id === subjectUserId)) {
+      setSubjectUserId(employeeOptions[0]?.id || '');
+    }
+  }, [employeeOptions, subjectUserId]);
 
   const period = useMemo(() => {
     try {
@@ -189,6 +199,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           task: 'REPORT_REWRITE',
           language: 'ar',
           payload: {
+            report_id: selectedReport.id,
             current_text: draftText,
             creator_note: selectedReport.creator_note || '',
             facts,
