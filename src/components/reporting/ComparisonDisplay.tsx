@@ -834,12 +834,13 @@ export const FiledReportsList: React.FC<{
   // monthly draft) — omitted, rows stay static exactly as before.
   onSelectReport?: (report: ReportRecord) => void;
 }> = ({ reports, comparisons, clients, users, showScope, onSelectReport }) => {
-  if (reports.length === 0) {
+  const activeReports = reports.filter((report) => !report.archived_at);
+  if (activeReports.length === 0) {
     return <p className="text-xs text-stone-500 py-4 text-center">No reports filed yet.</p>;
   }
   return (
     <div className="space-y-2">
-      {reports.map((r) => {
+      {activeReports.map((r) => {
         const author = users.find((u) => u.id === r.generated_by);
         const comparison = comparisons.find((c) => c.id === r.comparison_id);
         const scopeLabel = showScope && comparison ? describeComparisonScope(comparison, clients, users) : null;

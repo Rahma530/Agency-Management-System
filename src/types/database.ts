@@ -628,6 +628,9 @@ export interface ReportRecord {
   creator_note?: string;
   current_version_id?: string | null;
   source_hash?: string | null;
+  employee_scope_mode?: 'all_clients' | 'selected_clients' | 'employee_overall' | null;
+  employee_scope_client_ids?: string[] | null;
+  creation_key?: string | null;
   archived_at?: string | null;
   archived_by?: string | null;
   archive_reason?: string | null;
@@ -678,6 +681,29 @@ export interface ReportAuditEventRecord {
   action: 'created' | 'edited' | 'approved' | 'ai_requested' | 'ai_applied' | 'archived' | 'restored';
   metadata: Record<string, unknown>;
   created_at?: string;
+}
+
+export interface ReportDeletionTombstoneRecord {
+  id: string;
+  report_id: string;
+  report_type: string;
+  scope_type?: string | null;
+  client_id?: string | null;
+  subject_user_id?: string | null;
+  generated_by: string;
+  deleted_by: string;
+  period: string;
+  period_start?: string | null;
+  period_end_exclusive?: string | null;
+  deletion_reason: string;
+  current_version_id?: string | null;
+  content_hash?: string | null;
+  source_hash?: string | null;
+  version_count: number;
+  source_count: number;
+  suggestion_count: number;
+  audit_snapshot: Array<Record<string, unknown>>;
+  deleted_at: string;
 }
 
 // 10. capacity_logs

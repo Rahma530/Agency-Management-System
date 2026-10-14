@@ -28,6 +28,22 @@ function formatIsoDateUtc(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
+// Formats the browser's local calendar date without converting it to UTC. This is deliberately
+// separate from the UTC-only report interval helpers below: form defaults represent what the user
+// sees on their calendar, and toISOString() can otherwise move a Cairo midnight to the prior day.
+export function formatLocalCalendarDate(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function localWeekMonday(value = new Date()): string {
+  const day = value.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  return formatLocalCalendarDate(new Date(value.getFullYear(), value.getMonth(), value.getDate() + diffToMonday));
+}
+
 export function addReportDays(date: string, days: number): string {
   if (!Number.isInteger(days)) throw new Error('Report-day offset must be an integer.');
   return formatIsoDateUtc(new Date(parseIsoDateUtc(date).getTime() + days * DAY_MS));

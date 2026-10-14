@@ -55,7 +55,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
         supabase.rpc('portal_am_agent_name'),
         supabase.from('briefs').select('*').eq('client_id', client.id),
         supabase.from('client_comparisons').select('*').eq('client_id', client.id).order('created_at', { ascending: false }),
-        supabase.from('reports').select('*').eq('client_id', client.id).eq('type', 'client'),
+        supabase.from('reports').select('*').eq('client_id', client.id).eq('type', 'client').eq('status', 'final').is('archived_at', null),
         supabase.from('brief_field_schemas').select('*'),
       ]);
 

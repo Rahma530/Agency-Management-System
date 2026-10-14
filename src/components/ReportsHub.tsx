@@ -72,6 +72,7 @@ interface ReportsHubProps {
   ) => Promise<void>;
   onDeleteDailyLog: (logId: string) => Promise<void>;
   onReportChanged: (report: ReportRecord) => void;
+  onReportDeleted: (reportId: string) => void;
 }
 
 // Role-agnostic reporting entry point: unlike ClientDashboard's per-client "Reports &
@@ -98,6 +99,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   onUpdateDailyLog,
   onDeleteDailyLog,
   onReportChanged,
+  onReportDeleted,
 }) => {
   const agentRoleForLead = TEAM_LEAD_TO_AGENT_ROLE[currentUser.role];
   const isTeamLead = !!agentRoleForLead;
@@ -377,6 +379,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         tasks={tasks}
         taskAssignees={taskAssignees}
         onReportChanged={onReportChanged}
+        onReportDeleted={onReportDeleted}
       />
 
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4">

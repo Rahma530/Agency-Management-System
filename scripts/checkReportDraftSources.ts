@@ -62,6 +62,23 @@ if (!employee.tasks[0].subjectIsCurrentAssignee || employee.tasks[1].subjectIsCu
   throw new Error('Task assignment context is wrong.');
 }
 
+const selectedClient = collectEmployeeReportSources(
+  dailyLogs, extraNotes, tasks, taskAssignees, 'u1', period,
+  { mode: 'selected_clients', clientIds: ['c1'] }
+);
+if (selectedClient.dailyLogs.map((row) => row.id).join(',') !== 'a' || selectedClient.extraNotes.length !== 0
+  || selectedClient.tasks.map((row) => row.task.id).join(',') !== 'design,video') {
+  throw new Error('Selected-client employee scope leaked another client or non-client notes.');
+}
+const allAuthorizedClients = collectEmployeeReportSources(
+  dailyLogs, extraNotes, tasks, taskAssignees, 'u1', period,
+  { mode: 'all_clients', clientIds: ['c2'] }
+);
+if (allAuthorizedClients.dailyLogs.map((row) => row.id).join(',') !== 'd' || allAuthorizedClients.extraNotes.length !== 0
+  || allAuthorizedClients.tasks.map((row) => row.task.id).join(',') !== 'video') {
+  throw new Error('All-clients employee scope did not honor the authorized client list.');
+}
+
 const clientContent = composeInitialReportContent('client', client.dailyLogs, [], [], 'Manual client note', new Map([['u1', 'One'], ['u2', 'Two']]), false);
 if (!clientContent.includes('Manual client note') || clientContent.includes('Extra Note') || clientContent.includes('Task evidence')) {
   throw new Error('Client source presentation failed.');

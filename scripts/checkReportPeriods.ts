@@ -1,6 +1,8 @@
 import {
+  formatLocalCalendarDate,
   isDateInReportPeriod,
   isReportWorkDate,
+  localWeekMonday,
   resolveReportPeriod,
   resolveReportWorkWeek,
 } from '../src/lib/reportPeriods';
@@ -24,6 +26,14 @@ function assertThrows(action: () => unknown, label: string): void {
 }
 
 function main(): void {
+  const originalTimezone = process.env.TZ;
+  process.env.TZ = 'Africa/Cairo';
+  assertEqual(formatLocalCalendarDate(new Date('2026-10-12T00:05:00+03:00')), '2026-10-12', 'Cairo midnight does not shift to UTC Sunday');
+  assertEqual(localWeekMonday(new Date('2026-10-14T00:05:00+03:00')), '2026-10-12', 'Cairo Wednesday resolves to Cairo Monday');
+  process.env.TZ = 'America/Los_Angeles';
+  assertEqual(localWeekMonday(new Date('2026-10-18T23:55:00-07:00')), '2026-10-12', 'negative-offset Sunday resolves to local Monday');
+  if (originalTimezone === undefined) delete process.env.TZ; else process.env.TZ = originalTimezone;
+
   const week = resolveReportWorkWeek('2026-10-13');
   assertEqual(week, { startInclusive: '2026-10-10', endExclusive: '2026-10-17' }, 'Tuesday resolves to Saturday week');
   assertEqual(resolveReportWorkWeek('2026-10-10'), week, 'Saturday is the first day of its week');

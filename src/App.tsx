@@ -52,8 +52,10 @@ import {
   generatePeriodSummary,
   generateComparisonNarrative,
   resolveClientsForSubject,
+  comparisonLabelToRange,
   serviceFilterForRole,
 } from './lib/reportingEngine';
+import { addReportDays } from './lib/reportPeriods';
 import {
   CampaignSummaryPayload,
   CampaignSummaryGenerationResult,
@@ -4500,39 +4502,56 @@ export default function App() {
     return saved;
   };
 
+  const createVersionedComparisonDraft = async (comparison: ClientComparisonRecord): Promise<ReportRecord> => {
+    const range = comparisonLabelToRange(comparison.period_current);
+    if (!range) throw new Error('The comparison period cannot be converted to a report interval.');
+    const scopeType = comparison.client_id ? 'client' : 'employee';
+    const subjectUserId = scopeType === 'employee' ? comparison.agent_id : null;
+    if (scopeType === 'employee' && !subjectUserId) throw new Error('The comparison has no employee subject.');
+    const client = comparison.client_id ? clients.find((item) => item.id === comparison.client_id) : null;
+    const rpcScope = {
+      p_scope_type: scopeType,
+      p_client_id: comparison.client_id || null,
+      p_subject_user_id: subjectUserId,
+      p_employee_scope_mode: scopeType === 'employee' ? 'employee_overall' : null,
+      p_employee_client_ids: [],
+      p_period_start: range.start,
+      p_period_end_exclusive: addReportDays(range.end, 1),
+    };
+    const previewResult = await supabaseRaw.rpc('preview_report_sources_v2', rpcScope);
+    if (previewResult.error) throw previewResult.error;
+    const manifest = previewResult.data as unknown as { source_hash: string; source_count: number };
+    const content = [
+      `Period: ${comparison.period_current}`,
+      `Authorized evidence sources: ${manifest.source_count}`,
+      'Open this draft in Report Workspace to review the saved evidence and complete the report.',
+    ].filter(Boolean).join('\n');
+    const result = await supabaseRaw.rpc('create_report_draft_v2', {
+      ...rpcScope,
+      p_responsible_user_id: scopeType === 'client' ? client?.am_agent_id || null : subjectUserId,
+      p_creator_note: '',
+      p_content_text: content,
+      p_expected_source_hash: manifest.source_hash,
+      p_creation_key: `comparison:${comparison.id}`,
+    });
+    if (result.error) throw result.error;
+    return result.data as unknown as ReportRecord;
+  };
+
   // 8c. File a monthly/period report against an existing comparison (Reporting Engine). The
   // report's scope always follows its comparison via comparison_id — client_id here is purely a
   // display convenience, denormalized from the comparison at filing time.
   const handleGenerateReport = async (comparisonId: string, period: string) => {
     const comparison = clientComparisons.find((c) => c.id === comparisonId);
-
-    const reportPayload: ReportRecord = {
-      id: `rpt-${Date.now().toString().slice(-4)}`,
-      client_id: comparison?.client_id ?? null,
-      type: 'internal',
-      period,
-      generated_by: currentUser.id,
-      comparison_id: comparisonId,
-      status: 'final',
-      created_at: new Date().toISOString(),
-    };
-
-    if (supabaseActive) {
-      try {
-        const { data, error } = await supabase.from('reports').insert([reportPayload]).select();
-        if (error) throw error;
-        const saved = (data?.[0] as ReportRecord) || reportPayload;
-        setReports((prev) => [...prev, saved]);
-      } catch (err) {
-        console.error('Supabase reports insert error:', err);
-        showNotification('Unable to file the report.', 'info');
-        return;
-      }
-    } else {
-      setReports((prev) => [...prev, reportPayload]);
+    if (!comparison || !supabaseActive) { showNotification('Versioned reports require the configured report workspace.', 'info'); return; }
+    try {
+      const saved = await createVersionedComparisonDraft(comparison);
+      setReports((prev) => [...prev.filter((report) => report.id !== saved.id), saved]);
+      showNotification(`Draft created for ${period}. Review it in Report Workspace before approval.`);
+    } catch (err) {
+      console.error('Versioned report creation error:', err);
+      showNotification('Unable to create the versioned report draft.', 'info');
     }
-
-    showNotification(`Report filed for ${period}.`);
   };
 
   // 8d. Generate (or regenerate) a client's monthly report draft (Module 9, point 4): a period
@@ -4580,64 +4599,14 @@ export default function App() {
       setClientComparisons((prev) => [...prev.filter((c) => c.id !== comparisonPayload.id), comparisonPayload]);
     }
 
-    // Reuse an existing draft report for this exact comparison if one already exists (so
-    // regenerating a draft updates it in place rather than accumulating duplicate report rows).
-    const existingDraftReport = reports.find((r) => r.comparison_id === savedComparison.id && r.status === 'draft');
-
-    const reportPayload: ReportRecord = {
-      id: existingDraftReport?.id || `rpt-${Date.now().toString().slice(-4)}`,
-      client_id: clientId,
-      type: 'client',
-      period: result.period_current,
-      generated_by: currentUser.id,
-      comparison_id: savedComparison.id,
-      status: 'draft',
-      created_at: existingDraftReport?.created_at || new Date().toISOString(),
-    };
-
-    if (supabaseActive) {
-      try {
-        let data: unknown[] | null = null;
-        let error: { code?: string; message?: string } | null = null;
-        if (existingDraftReport) {
-          const rpcResult = await supabaseRaw.rpc('update_legacy_report_draft', {
-            p_report_id: existingDraftReport.id,
-            p_comparison_id: reportPayload.comparison_id,
-            p_period: reportPayload.period,
-            p_client_id: reportPayload.client_id,
-            p_type: reportPayload.type,
-          });
-          if (rpcResult.error?.code === 'PGRST202') {
-            // Deployment-order compatibility while the reviewed migration is still awaiting its
-            // separate production approval. Once deployed, direct report updates are revoked.
-            const legacyResult = await supabase.from('reports').update({
-              client_id: reportPayload.client_id,
-              type: reportPayload.type,
-              period: reportPayload.period,
-              comparison_id: reportPayload.comparison_id,
-              status: reportPayload.status,
-            }).eq('id', existingDraftReport.id).select();
-            data = legacyResult.data;
-            error = legacyResult.error;
-          } else {
-            data = rpcResult.data ? [rpcResult.data] : null;
-            error = rpcResult.error;
-          }
-        } else {
-          const insertResult = await supabase.from('reports').insert([reportPayload]).select();
-          data = insertResult.data;
-          error = insertResult.error;
-        }
-        if (error) throw error;
-        const saved = (data?.[0] as ReportRecord) || reportPayload;
-        setReports((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
-      } catch (err) {
-        console.error('Supabase reports insert error:', err);
-        showNotification('Unable to save the monthly report draft.', 'info');
-        return;
-      }
-    } else {
-      setReports((prev) => [...prev.filter((r) => r.id !== reportPayload.id), reportPayload]);
+    if (!supabaseActive) { showNotification('Versioned reports require the configured report workspace.', 'info'); return; }
+    try {
+      const saved = await createVersionedComparisonDraft(savedComparison);
+      setReports((prev) => [...prev.filter((report) => report.id !== saved.id), saved]);
+    } catch (err) {
+      console.error('Versioned monthly report creation error:', err);
+      showNotification('Unable to save the versioned monthly report draft.', 'info');
+      return;
     }
 
     showNotification(`Monthly report draft generated for ${client.name} (${result.period_current}).`);
@@ -4645,25 +4614,13 @@ export default function App() {
 
   // 8e. Approve a draft report, marking it final and attributing the approval.
   const handleApproveReport = async (reportId: string) => {
-    const updates: Partial<ReportRecord> = {
-      status: 'final',
-      approved_by: currentUser.id,
-      approved_at: new Date().toISOString(),
-    };
-
     if (supabaseActive) {
       try {
-        const rpcResult = await supabaseRaw.rpc('approve_report', { p_report_id: reportId });
-        let saved = rpcResult.data as unknown as ReportRecord;
-        if (rpcResult.error?.code === 'PGRST202') {
-          // Deployment-order compatibility: the existing approval flow keeps working while the
-          // reviewed migration is awaiting its separate production approval.
-          const legacyResult = await supabase.from('reports').update(updates).eq('id', reportId).select();
-          if (legacyResult.error) throw legacyResult.error;
-          saved = (legacyResult.data?.[0] as ReportRecord) || { ...reports.find((r) => r.id === reportId)!, ...updates };
-        } else if (rpcResult.error) {
-          throw rpcResult.error;
-        }
+        const report = reports.find((item) => item.id === reportId);
+        if (!report?.current_version_id) throw new Error('Legacy reports without a saved version cannot be approved.');
+        const rpcResult = await supabaseRaw.rpc('approve_report_v2', { p_report_id: reportId, p_expected_version_id: report.current_version_id });
+        if (rpcResult.error) throw rpcResult.error;
+        const saved = rpcResult.data as unknown as ReportRecord;
         setReports((prev) => prev.map((r) => (r.id === reportId ? saved : r)));
       } catch (err) {
         console.error('Supabase report approve error:', err);
@@ -4672,9 +4629,7 @@ export default function App() {
       }
     }
 
-    if (!supabaseActive) {
-      setReports((prev) => prev.map((r) => (r.id === reportId ? { ...r, ...updates } : r)));
-    }
+    if (!supabaseActive) { showNotification('Approval requires the configured report workspace.', 'info'); return; }
     showNotification('Report approved and marked final.');
   };
 
@@ -6129,6 +6084,7 @@ export default function App() {
                   onReportChanged={(report) =>
                     setReports((current) => [...current.filter((item) => item.id !== report.id), report])
                   }
+                  onReportDeleted={(reportId) => setReports((current) => current.filter((item) => item.id !== reportId))}
                 />
               </div>
             )}

@@ -19,6 +19,7 @@ import { getClientServices } from './clientServices';
 import { isTaskDone } from './taskLifecycle';
 import { isBuiltInRole } from '../data/roles';
 import { getCustomRoleDepartmentId } from '../data/customRoles';
+import { formatLocalCalendarDate } from './reportPeriods';
 
 // Departments whose id happens to equal a real ServiceType (20261101400000_custom_roles_
 // departments_foundation.sql's seed data: 'seo'/'media_buying'/'social_media') — the only
@@ -49,7 +50,7 @@ export interface ComparisonPeriod {
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
-const iso = (d: Date) => d.toISOString().split('T')[0];
+const iso = (d: Date) => formatLocalCalendarDate(d);
 const inRange = (dateStr: string, range: DateRange) => dateStr >= range.start && dateStr <= range.end;
 
 function monthPeriod(year: number, month0: number): ComparisonPeriod {
@@ -69,6 +70,20 @@ export function monthLabelToRange(label: string): DateRange | null {
   const year = parseInt(match[1], 10);
   const month0 = parseInt(match[2], 10) - 1;
   return monthPeriod(year, month0).range;
+}
+
+export function comparisonLabelToRange(label: string): DateRange | null {
+  const monthly = monthLabelToRange(label);
+  if (monthly) return monthly;
+  const quarter = /^(\d{4})-Q([1-4])$/.exec(label);
+  if (quarter) {
+    const year = Number(quarter[1]);
+    const number = Number(quarter[2]);
+    return quarterPeriod(year, number).range;
+  }
+  if (/^\d{4}$/.test(label)) return yearPeriod(Number(label)).range;
+  const custom = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(label);
+  return custom ? { start: custom[1], end: custom[2] } : null;
 }
 
 function quarterPeriod(year: number, quarter: number): ComparisonPeriod {

@@ -509,6 +509,7 @@ export function validateReportRewritePayload(raw: unknown): ReportRewritePayload
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) throw new Error('REPORT_REWRITE payload contains an unsupported field.');
   if (!isNonEmptyString(value.current_text) || String(value.current_text).length > 12000) throw new Error('current_text is required and too long.');
   if (typeof value.creator_note !== 'string' || value.creator_note.length > 4000) throw new Error('creator_note is invalid.');
+  if (value.facts === undefined) value.facts = [];
   if (!Array.isArray(value.facts) || value.facts.length > 200 || value.facts.some((fact) => typeof fact !== 'string' || fact.length > 1000)) {
     throw new Error('facts must be an array of bounded strings.');
   }

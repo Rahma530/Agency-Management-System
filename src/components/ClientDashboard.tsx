@@ -737,7 +737,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const clientReportsForClient = useMemo(
     () =>
       reports
-        .filter((r) => r.client_id === client.id)
+        .filter((r) => r.client_id === client.id && !r.archived_at)
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')),
     [reports, client.id]
   );
