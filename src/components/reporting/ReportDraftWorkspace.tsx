@@ -30,6 +30,8 @@ interface Props {
   extraNotes: ExtraNoteRecord[];
   tasks: TaskRecord[];
   taskAssignees: TaskAssigneeRecord[];
+  openReportId?: string | null;
+  onOpenReportHandled?: () => void;
   onReportChanged: (report: ReportRecord) => void;
   onReportDeleted: (reportId: string) => void;
 }
@@ -65,6 +67,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   extraNotes,
   tasks,
   taskAssignees,
+  openReportId,
+  onOpenReportHandled,
   onReportChanged,
   onReportDeleted,
 }) => {
@@ -84,9 +88,12 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [suggestion, setSuggestion] = useState<ReportAiSuggestionRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [previewManifest, setPreviewManifest] = useState<SourceManifest | null>(null);
   const creationKey = useRef<string | null>(null);
+  const workspaceRef = useRef<HTMLElement | null>(null);
 
   const selectedReport = reports.find((report) => report.id === selectedReportId) || null;
   const currentVersion = selectedReport
@@ -121,6 +128,27 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     });
   }, [period, scopeType, clientId, subjectUserId, employeeScopeMode, selectedClientIds, clients, dailyLogs, extraNotes, tasks, taskAssignees]);
 
+  useEffect(() => {
+    if (!openReportId) return;
+    const report = reports.find((item) => item.id === openReportId);
+    if (!report || (report.scope_type !== 'client' && report.scope_type !== 'employee')) {
+      onOpenReportHandled?.();
+      return;
+    }
+    const hasPendingEditorText = !!draftText.trim() && (!currentVersion || draftText !== currentVersion.content_text);
+    if (hasPendingEditorText && !window.confirm('Discard unsaved editor changes and open the filed report?')) {
+      onOpenReportHandled?.();
+      return;
+    }
+    setShowArchived(!!report.archived_at);
+    setSelectedReportId(report.id);
+    setMessage(null);
+    workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    onOpenReportHandled?.();
+    // This effect consumes an explicit open request. Report-list refreshes must not reopen it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openReportId]);
+
   const buildPreview = async () => {
     if (!period || (scopeType === 'client' ? !clientId : !subjectUserId || !employeeScopeMode || (employeeScopeMode === 'selected_clients' && !selectedClientIds.length))) {
       setMessage('Choose the report subject, period, and an explicit employee client scope first.');
@@ -151,9 +179,13 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       setVersions([]);
       setSources([]);
       setSuggestion(null);
+      setIsLoadingDetails(false);
+      setDetailsError(null);
       return;
     }
     let cancelled = false;
+    setIsLoadingDetails(true);
+    setDetailsError(null);
     (async () => {
       const [versionResult, sourceResult, suggestionResult] = await Promise.all([
         supabaseRaw.from('report_content_versions').select('*').eq('report_id', selectedReportId).order('version_no', { ascending: false }),
@@ -163,7 +195,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       if (cancelled) return;
       const error = versionResult.error || sourceResult.error || suggestionResult.error;
       if (error) {
-        setMessage('Report storage is not available yet. Apply the approved reports migration first.');
+        setDetailsError('Unable to load this report\'s saved content, versions, or source ledger.');
+        setIsLoadingDetails(false);
         return;
       }
       const loadedVersions = (versionResult.data || []) as ReportContentVersionRecord[];
@@ -173,6 +206,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const report = reports.find((item) => item.id === selectedReportId);
       const version = loadedVersions.find((item) => item.id === report?.current_version_id) || loadedVersions[0];
       setDraftText(version?.content_text || '');
+      setIsLoadingDetails(false);
     })();
     return () => { cancelled = true; };
   }, [selectedReportId, reports]);
@@ -388,7 +422,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const confirmDiscard = () => !hasUnsavedChanges || window.confirm('Discard unsaved editor changes?');
 
   return (
-    <section className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4">
+    <section ref={workspaceRef} className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4 scroll-mt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-sm font-bold text-white flex items-center gap-2"><FilePenLine className="w-4 h-4 text-purple-400" />Versioned Report Workspace</h3>
         <div className="flex gap-2">
@@ -399,6 +433,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         </select>
         </div>
       </div>
+
+      <p className="text-[11px] text-stone-400">
+        Build a server-authorized source snapshot, edit the draft, then save a version. AI creates a reviewable proposal only; it never replaces saved text until you explicitly apply it as a new version.
+      </p>
 
       {!selectedReport && (
         <div className="space-y-3">
@@ -428,7 +466,22 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         </div>
       )}
 
-      <textarea disabled={selectedReport?.status === 'final' || !!selectedReport?.archived_at} value={draftText} onChange={(event) => setDraftText(event.target.value)} placeholder="Build a preview or select a saved report" className="w-full min-h-56 px-3 py-3 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white disabled:opacity-70" />
+      {selectedReport && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
+          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Period</span><span className="text-white">{selectedReport.period}</span></div>
+          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Scope</span><span className="text-white">{selectedReport.scope_type === 'employee' ? names.get(selectedReport.subject_user_id || '') || 'Employee' : clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client'}</span></div>
+          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Type</span><span className="text-white">{selectedReport.type}</span></div>
+          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">State</span><span className={selectedReport.status === 'final' ? 'text-emerald-300' : 'text-amber-300'}>{selectedReport.archived_at ? 'archived' : selectedReport.status || 'legacy'}</span></div>
+        </div>
+      )}
+
+      {isLoadingDetails ? (
+        <div className="min-h-56 rounded-xl border border-purple-900/50 bg-[#100c1c] flex items-center justify-center text-xs text-stone-400">Loading saved report content…</div>
+      ) : detailsError ? (
+        <div className="min-h-32 rounded-xl border border-red-900/50 bg-red-950/20 flex items-center justify-center text-xs text-red-200 px-4 text-center">{detailsError}</div>
+      ) : (
+        <textarea readOnly={selectedReport?.status === 'final' || !!selectedReport?.archived_at} value={draftText} onChange={(event) => setDraftText(event.target.value)} placeholder="Build a preview or select a saved report" className="w-full min-h-56 px-3 py-3 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white read-only:text-stone-200 read-only:cursor-default" />
+      )}
 
       <div className="flex flex-wrap gap-2">
         {!selectedReport ? <button disabled={busy || !draftText.trim() || !previewManifest} onClick={createDraft} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save draft</button> : <>
@@ -446,6 +499,32 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3 rounded-xl border border-indigo-800/40 bg-indigo-950/20">
           <div><p className="text-xs font-bold text-stone-300 mb-2">Current text</p><pre className="whitespace-pre-wrap text-xs text-stone-300">{draftText}</pre></div>
           <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre className="whitespace-pre-wrap text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={busy} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300">Keep current</button></div></div>
+        </div>
+      )}
+      {selectedReport && !isLoadingDetails && !detailsError && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <details className="rounded-xl border border-purple-900/30 bg-stone-950/30 p-3">
+            <summary className="cursor-pointer text-xs font-bold text-purple-200">Version history ({versions.length})</summary>
+            {versions.length === 0 ? <p className="text-[11px] text-stone-500 mt-2">No saved content versions are available for this record.</p> : (
+              <div className="space-y-2 mt-2">{versions.map((version) => (
+                <details key={version.id} className="rounded-lg border border-stone-800 p-2">
+                  <summary className="cursor-pointer text-[11px] text-stone-300">v{version.version_no} · {version.origin.replace('_', ' ')}{version.id === selectedReport.current_version_id ? ' · current' : ''}{version.created_at ? ` · ${new Date(version.created_at).toLocaleString()}` : ''}</summary>
+                  <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-stone-300">{version.content_text}</pre>
+                </details>
+              ))}</div>
+            )}
+          </details>
+          <details className="rounded-xl border border-purple-900/30 bg-stone-950/30 p-3">
+            <summary className="cursor-pointer text-xs font-bold text-purple-200">Saved source ledger ({sources.length})</summary>
+            {sources.length === 0 ? <p className="text-[11px] text-stone-500 mt-2">No immutable source items are available for this legacy record.</p> : (
+              <div className="space-y-1.5 mt-2">{sources.map((source) => (
+                <div key={source.id} className="rounded-lg border border-stone-800 p-2 text-[11px] text-stone-300">
+                  <span className="font-semibold text-white">{source.source_kind.replace('_', ' ')}</span> · {source.source_date} · {names.get(source.user_id) || 'Employee'}
+                  <span className="block text-stone-500 font-mono break-all">{source.source_id}</span>
+                </div>
+              ))}</div>
+            )}
+          </details>
         </div>
       )}
       {message && <p className="text-xs text-amber-200">{message}</p>}

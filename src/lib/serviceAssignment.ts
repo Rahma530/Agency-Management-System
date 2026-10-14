@@ -1,11 +1,11 @@
 import { ServiceType, UserRecord, UserRole } from '../types/database';
 import { isActiveEmployee } from './permissions';
 
-export type AssignableServiceType = Extract<ServiceType, 'seo' | 'media_buying' | 'social_media'>;
+export type AssignableServiceType = Extract<ServiceType, 'seo' | 'media_buying' | 'social_media' | 'interface'>;
 
 export interface ServiceAssignmentConfig {
   serviceType: AssignableServiceType;
-  teamLeadRole: UserRole;
+  teamLeadRole: UserRole | null;
   agentRoles: readonly UserRole[];
 }
 
@@ -25,6 +25,11 @@ export const SERVICE_ASSIGNMENT_CONFIG: Record<AssignableServiceType, ServiceAss
     teamLeadRole: 'social_media_team_lead',
     agentRoles: ['social_media_agent'],
   },
+  interface: {
+    serviceType: 'interface',
+    teamLeadRole: null,
+    agentRoles: ['ui_ux_designer'],
+  },
 };
 
 export const getServiceAssignmentConfigForRole = (
@@ -41,7 +46,7 @@ export const getEligibleServiceAssignees = (
   const config = SERVICE_ASSIGNMENT_CONFIG[serviceType];
   return users.filter(
     (user) =>
-      (user.role === config.teamLeadRole || config.agentRoles.includes(user.role)) &&
+      ((config.teamLeadRole !== null && user.role === config.teamLeadRole) || config.agentRoles.includes(user.role)) &&
       isActiveEmployee(user)
   );
 };

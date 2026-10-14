@@ -21,6 +21,7 @@ import {
   Eye,
   Gauge,
   ClipboardCheck,
+  Palette,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -551,6 +552,21 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         icon: <Share2 className="w-5 h-5 text-pink-400" />,
       };
     }
+    if (serviceType === 'interface') {
+      return {
+        serviceType,
+        isTeamLead: false,
+        teamLeadRole,
+        serviceNameEn: 'Interface Design (UI/UX)',
+        departmentName: 'CREATIVE — UI/UX Design',
+        leadRoleTitle: 'UI/UX Design',
+        agentRoleTitle: 'UI/UX Designer',
+        accentColor: '#8b5cf6',
+        badgeBg: 'var(--dept-design-tint)',
+        badgeText: 'var(--dept-design-ink)',
+        icon: <Palette className="w-5 h-5 text-violet-400" />,
+      };
+    }
     return null;
   };
 
@@ -562,7 +578,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
         <h3 className="text-base font-bold text-white">Access Restricted</h3>
         <p className="text-xs text-stone-300">
-          Reserved for SEO, Social Media, and Media Buying teams.
+          Reserved for SEO, Social Media, Media Buying, and assigned UI/UX teams.
         </p>
       </div>
     );
@@ -595,7 +611,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       return true;
     } else {
       const myAssignment = assignments.find(
-        (a) => a.client_id === c.id && a.agent_id === currentUser.id
+        (a) => a.client_id === c.id && a.service_type === serviceType && a.agent_id === currentUser.id
       );
       return !!myAssignment;
     }

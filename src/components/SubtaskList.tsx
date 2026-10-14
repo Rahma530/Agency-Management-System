@@ -14,6 +14,7 @@ interface SubtaskListProps {
   level: 2 | 3;
   onAddSubtask: (parentTask: TaskRecord) => void;
   onEditSubtask: (task: TaskRecord) => void;
+  readOnly?: boolean;
 }
 
 const statusBadge = (status: TaskStatus) => {
@@ -53,6 +54,7 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
   level,
   onAddSubtask,
   onEditSubtask,
+  readOnly = false,
 }) => {
   const children = allTasks.filter((t) => t.parent_task_id === parentTask.id);
 
@@ -106,14 +108,14 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
                     {child.due_date}
                   </span>
                 )}
-                <button
+                {!readOnly && <button
                   onClick={() => onEditSubtask(child)}
                   className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
                   title="Edit"
                 >
                   <Edit2 className="w-3 h-3" />
-                </button>
-                {canNestFurther && (
+                </button>}
+                {canNestFurther && !readOnly && (
                   <button
                     onClick={() => onAddSubtask(child)}
                     className="p-1 rounded bg-stone-900 text-stone-400 hover:text-purple-300"
@@ -133,6 +135,7 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
                 level={(level + 1) as 2 | 3}
                 onAddSubtask={onAddSubtask}
                 onEditSubtask={onEditSubtask}
+                readOnly={readOnly}
               />
             )}
           </div>

@@ -137,7 +137,7 @@ export function isEmployeeAccessibleUnderRLS(
 
   // 4. Shared resources: Graphic Designers and Video Editors are visible to ALL roles
   // (EXCEPT Sales who have no access to creative or technical operational staff)
-  if (targetEmployee.role === 'graphic_designer' || targetEmployee.role === 'video_editor') {
+  if (targetEmployee.role === 'graphic_designer' || targetEmployee.role === 'video_editor' || targetEmployee.role === 'ui_ux_designer') {
     return viewer.role !== 'sales';
   }
 
@@ -175,7 +175,7 @@ export function isEmployeeAccessibleUnderRLS(
   }
 
   // Graphic Designer and Video Editor do NOT gain access to all employee records
-  if (viewer.role === 'graphic_designer' || viewer.role === 'video_editor') {
+  if (viewer.role === 'graphic_designer' || viewer.role === 'video_editor' || viewer.role === 'ui_ux_designer') {
     return false;
   }
 
@@ -252,6 +252,7 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
       'social_media_agent',
       'graphic_designer',
       'video_editor',
+      'ui_ux_designer',
       'ai_engineer',
       'marketing_manager',
     ];
@@ -272,6 +273,9 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
   }
 
   // Graphic Designers & Video Editors
+  if (viewerRole === 'ui_ux_designer') {
+    return ['ui_ux_designer'];
+  }
   if (viewerRole === 'graphic_designer' || viewerRole === 'video_editor') {
     return ['graphic_designer', 'video_editor'];
   }
@@ -360,6 +364,12 @@ export function isClientAccessibleUnderRLS(
     // Strict client-based exclusivity: formal assignment only, no ownership/task fallback
     return inMemoryAssignments.some(
       (a) => a.client_id === client.id && a.service_type === 'media_buying' && a.agent_id === viewer.id
+    );
+  }
+
+  if (viewer.role === 'ui_ux_designer') {
+    return inMemoryAssignments.some(
+      (assignment) => assignment.client_id === client.id && assignment.service_type === 'interface' && assignment.agent_id === viewer.id
     );
   }
 

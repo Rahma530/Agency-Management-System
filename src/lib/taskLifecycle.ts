@@ -89,7 +89,7 @@ export const canEditTaskAssignees = (
   users: Pick<UserRecord, 'id' | 'team'>[],
   clients: Pick<ClientRecord, 'id' | 'am_agent_id'>[]
 ): boolean => {
-  if (currentUser.role === 'sales') return false;
+  if (currentUser.role === 'sales' || currentUser.role === 'ui_ux_designer') return false;
 
   const assigneeIds = resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to);
   const isAdmin = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';

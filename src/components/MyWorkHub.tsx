@@ -119,7 +119,7 @@ const SERVICE_TEAM_LEAD_ROLES: UserRole[] = ['media_buying_team_lead', 'seo_team
 // from active task assignment instead: a genuinely different, more
 // transient signal than an owned relationship, but the only one this app's
 // data model actually gives these roles.
-const TASK_DERIVED_CLIENT_ROLES: UserRole[] = ['graphic_designer', 'video_editor', 'programming_agent'];
+const TASK_DERIVED_CLIENT_ROLES: UserRole[] = ['graphic_designer', 'video_editor', 'programming_agent', 'ui_ux_designer'];
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: 'To Do',

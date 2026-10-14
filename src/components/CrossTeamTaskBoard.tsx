@@ -211,6 +211,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isTaskTypeManagerOpen, setIsTaskTypeManagerOpen] = useState(false);
   const canManageTaskTypes = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
+  const isUiUxDesigner = currentUser?.role === 'ui_ux_designer';
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
   useEffect(() => {
     if (selectedTaskDetails?.id && onMarkTaskViewed) {
@@ -1443,7 +1444,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           )}
 
           {/* Create Task Button */}
-          <button
+          {!isUiUxDesigner && <button
             onClick={() => {
               const recovery = readTaskCreateRecovery(currentUserId);
               if (recovery) {
@@ -1465,7 +1466,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           >
             <PlusCircle className="w-4 h-4 text-purple-200" />
             <span>New Task</span>
-          </button>
+          </button>}
         </div>
 
         {/* Quick Filter Pills Row */}
@@ -1861,13 +1862,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                             >
                               <Eye className="w-3.5 h-3.5" />
                             </button>
-                            <button
+                            {!isUiUxDesigner && <button
                               onClick={() => openEditModal(task)}
                               className="p-1.5 rounded-lg bg-stone-800 text-stone-300 hover:text-purple-300"
                               title="Edit Task"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
-                            </button>
+                            </button>}
                           </div>
                         </td>
                       </tr>
@@ -2216,13 +2217,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-[11px] font-semibold text-stone-400">Subtasks:</label>
-                    <button
+                    {!isUiUxDesigner && <button
                       onClick={() => openAddSubtaskModal(selectedTaskDetails)}
                       className="text-[11px] font-bold text-purple-300 hover:text-purple-200 flex items-center gap-1"
                     >
                       <PlusCircle className="w-3.5 h-3.5" />
                       Add Subtask
-                    </button>
+                    </button>}
                   </div>
                   <SubtaskList
                     parentTask={selectedTaskDetails}
@@ -2231,6 +2232,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     level={2}
                     onAddSubtask={openAddSubtaskModal}
                     onEditSubtask={openEditModal}
+                    readOnly={isUiUxDesigner}
                   />
                 </div>
               )}
@@ -2273,7 +2275,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
             {/* Modal Actions */}
             <div className="pt-3 border-t border-stone-800 flex items-center justify-between">
-              <button
+              {!isUiUxDesigner && <button
                 onClick={() => {
                   const taskToEdit = selectedTaskDetails;
                   setSelectedTaskDetails(null);
@@ -2283,7 +2285,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               >
                 <Edit2 className="w-3.5 h-3.5" />
                 <span>Edit Task</span>
-              </button>
+              </button>}
 
               <button
                 onClick={() => setSelectedTaskDetails(null)}

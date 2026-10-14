@@ -417,8 +417,8 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
       {/* VIEW 1: Dynamic Form per Service Type */}
       {activeView === 'edit' && (
         <fieldset
-          disabled={!canEdit}
-          className={`border-0 p-0 m-0 min-w-0 ${!canEdit ? 'opacity-60' : ''}`}
+          aria-readonly={!canEdit}
+          className="border-0 p-0 m-0 min-w-0"
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {allFieldDefs.map((field) => {
@@ -461,6 +461,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                     dir="auto"
                     placeholder={field.placeholder}
                     value={formData[field.key] || ''}
+                    readOnly={!canEdit}
                     onChange={(e) => handleFieldChange(field.key, e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"
                     style={{
@@ -479,6 +480,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                         ? formData[field.key].join(', ')
                         : formData[field.key] || ''
                     }
+                    readOnly={!canEdit}
                     onChange={(e) =>
                       handleFieldChange(field.key, e.target.value.split(',').map((s) => s.trim()))
                     }
@@ -501,6 +503,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                     dir="auto"
                     placeholder={field.placeholder}
                     value={formData[field.key] || ''}
+                    readOnly={!canEdit}
                     onChange={(e) => handleFieldChange(field.key, e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"
                     style={{
@@ -515,6 +518,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                     dir="auto"
                     placeholder={field.placeholder}
                     value={formData[field.key] || ''}
+                    readOnly={!canEdit}
                     onChange={(e) => handleFieldChange(field.key, e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"
                     style={{

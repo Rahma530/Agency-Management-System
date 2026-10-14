@@ -24,6 +24,7 @@ export type BuiltInRole =
   | 'social_media_agent'        // Social Media Agent
   | 'graphic_designer'          // Graphic Designer
   | 'video_editor'              // Video Editor
+  | 'ui_ux_designer'            // UI/UX Designer — interface briefs + assigned tasks only
   | 'ai_engineer'                // AI Engineer
   // NOT a team lead of graphic_designer/video_editor — that shared resource pool stays exactly
   // as-is (no dedicated manager, visible to everyone but sales via employee_visible()'s existing

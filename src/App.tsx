@@ -3401,14 +3401,23 @@ export default function App() {
   // later edit to the brief (handleSaveBrief never clears it) — submitting is one-way.
   const handleSubmitBrief = async (briefId: string) => {
     const brief = briefs.find((b) => b.id === briefId);
-    if (!brief) return;
+    if (!brief) throw new Error('The brief is no longer available. Refresh and try again.');
 
-    const submittedAt = new Date().toISOString();
+    let submittedAt = new Date().toISOString();
 
     if (supabaseActive) {
       try {
-        const { error } = await supabase.from('briefs').update({ submitted_at: submittedAt }).eq('id', briefId);
+        const { data, error } = await supabase
+          .from('briefs')
+          .update({ submitted_at: submittedAt })
+          .eq('id', briefId)
+          .select('id, submitted_at')
+          .single();
         if (error) throw error;
+        if (!data || data.id !== briefId || !data.submitted_at) {
+          throw new Error('The brief submission was not persisted. Please retry or contact an administrator.');
+        }
+        submittedAt = data.submitted_at;
       } catch (err) {
         console.error('Supabase brief submit error:', err);
         throw err;
