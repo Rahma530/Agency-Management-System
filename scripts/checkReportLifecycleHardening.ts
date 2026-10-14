@@ -3,6 +3,8 @@ import fs from 'node:fs';
 const migration = fs.readFileSync('supabase/migrations/20261107300000_report_workspace_lifecycle_hardening.sql', 'utf8');
 const lockdown = fs.readFileSync('supabase/migrations/20261107400000_report_workspace_direct_write_lockdown.sql', 'utf8');
 const workspace = fs.readFileSync('src/components/reporting/ReportDraftWorkspace.tsx', 'utf8');
+const reportsHub = fs.readFileSync('src/components/ReportsHub.tsx', 'utf8');
+const comparisonDisplay = fs.readFileSync('src/components/reporting/ComparisonDisplay.tsx', 'utf8');
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 const router = fs.readFileSync('supabase/functions/ai-router/index.ts', 'utf8');
 const portal = fs.readFileSync('src/components/clientPortal/ClientPortalView.tsx', 'utf8');
@@ -50,6 +52,22 @@ if (!router.includes("from('report_source_items')") || !router.includes('are alw
 if (!workspace.includes("rpc('save_report_version_v2'") || !workspace.includes("rpc('archive_report_v2'")
   || !workspace.includes("rpc('approve_report_v2'") || !workspace.includes('draftText !== currentVersion.content_text')) {
   throw new Error('Workspace does not enforce concurrency RPCs or saved-version-only actions.');
+}
+for (const label of ['Create Report', 'Saved Reports', 'Archived Reports', 'Activity Sources']) {
+  if (!reportsHub.includes(label)) throw new Error(`Reports UI section is missing: ${label}`);
+}
+if (/\n\s+canGenerateReport(?:\s|=)/.test(reportsHub)
+  || (reportsHub.match(/onGenerateAiSummary=\{onGenerateAiSummary\}/g) || []).length > 1) {
+  throw new Error('Comparison cards still duplicate report or AI generation actions.');
+}
+if (!comparisonDisplay.includes("archiveMode?: 'active' | 'archived' | 'all'")
+  || !comparisonDisplay.includes("r.archived_at ? 'Open / Restore' : 'Open'")) {
+  throw new Error('Saved and archived report lists are not separated or actionable.');
+}
+if (!workspace.includes("rpc('delete_report_permanently'")
+  || !workspace.includes('Original tasks, activity logs, campaigns, and client data are not deleted')
+  || !workspace.includes('but the report cannot be restored')) {
+  throw new Error('Permanent-delete UI does not use the lifecycle RPC or explain its destructive scope.');
 }
 if (!portal.includes(".eq('status', 'final').is('archived_at', null)")) throw new Error('Portal query is not final-and-active only.');
 if (!legacyView.includes('intentionally not re-derived') || legacyView.includes('computeClientTaskCompletionStats')) {
