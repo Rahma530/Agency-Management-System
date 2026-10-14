@@ -521,6 +521,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     return asg ? users.find((u) => u.id === asg.agent_id) : null;
   }, [clientAssignments, users]);
 
+  const assignedUiUxDesigner = useMemo(() => {
+    const asg = clientAssignments.find((a) => a.service_type === 'interface');
+    return asg ? users.find((u) => u.id === asg.agent_id) : null;
+  }, [clientAssignments, users]);
+
   // Campaign Access Evaluation under RLS:
   // - Operational: Media Buying Team Lead, Media Buying Agent (assigned only)
   // - View-Only: Executive, Head of Technical, AM Team Lead, AM Agent (assigned only)
@@ -637,6 +642,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'media_buying_agent' ||
     currentUser.role === 'social_media_team_lead' ||
     currentUser.role === 'social_media_agent' ||
+    currentUser.role === 'ui_ux_designer' ||
     currentUser.role === 'graphic_designer' ||
     currentUser.role === 'video_editor';
 
@@ -2188,6 +2194,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   accentTextClass: 'text-pink-400',
                   avatarClass: 'bg-pink-900/20 border-pink-700/30 text-pink-300',
                   emptyInitial: 'C',
+                })}
+
+                {renderServiceAssignmentCard({
+                  serviceType: 'interface',
+                  title: 'UI/UX Designer',
+                  assignedUser: assignedUiUxDesigner,
+                  emptyLabel: 'Awaiting UI/UX assignment',
+                  departmentLabel: 'CREATIVE — Interface Design',
+                  accentTextClass: 'text-violet-400',
+                  avatarClass: 'bg-violet-900/20 border-violet-700/30 text-violet-300',
+                  emptyInitial: 'U',
                 })}
 
                 {/* Client Portal Access */}

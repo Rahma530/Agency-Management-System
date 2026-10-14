@@ -722,7 +722,10 @@ export const DirectAiSummaryPanel: React.FC<{
     setStage('computing');
     try {
       const row = await onEnsureComparison();
-      if (!row) return; // onEnsureComparison's own failure path already surfaced a notification
+      if (!row) {
+        setGenerationError('The selected period could not be calculated, so no AI summary was requested.');
+        return;
+      }
       if (!canBuildCampaignSummaryPayload(row, viewerServiceFilter)) {
         setIneligible(true);
         return;
@@ -734,6 +737,8 @@ export const DirectAiSummaryPanel: React.FC<{
       } else {
         setGenerationError(fresh.message);
       }
+    } catch {
+      setGenerationError('AI Summary is unavailable right now. The calculated metrics and saved reports were not changed.');
     } finally {
       setStage('idle');
     }
@@ -846,10 +851,12 @@ export const FiledReportsList: React.FC<{
         const scopeLabel = showScope && comparison ? describeComparisonScope(comparison, clients, users) : null;
         const clickable = !!onSelectReport;
         return (
-          <div
+          <button
+            type="button"
             key={r.id}
             onClick={clickable ? () => onSelectReport!(r) : undefined}
-            className={`p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 flex items-center justify-between gap-3 ${
+            disabled={!clickable}
+            className={`w-full text-left p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 flex items-center justify-between gap-3 ${
               clickable ? 'cursor-pointer hover:border-purple-500/50 transition-colors' : ''
             }`}
           >
@@ -867,11 +874,19 @@ export const FiledReportsList: React.FC<{
                   Draft
                 </span>
               )}
+              {r.status === 'final' && (
+                <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-emerald-200 bg-emerald-900/50 uppercase">
+                  Final
+                </span>
+              )}
+              <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-stone-300 bg-stone-800 uppercase">
+                {r.scope_type ? 'Versioned' : 'Legacy'}
+              </span>
               <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-purple-200 bg-purple-900/50 uppercase">
                 {r.type}
               </span>
             </div>
-          </div>
+          </button>
         );
       })}
     </div>

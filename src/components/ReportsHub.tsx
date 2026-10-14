@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2 } from 'lucide-react';
+import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2, X } from 'lucide-react';
 import {
   ClientRecord,
   UserRecord,
@@ -153,7 +153,10 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   );
   const todayStr = useMemo(() => getTodayStr(), []);
   const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
+  const [selectedDailyLog, setSelectedDailyLog] = useState<DailyLogRecord | null>(null);
   const [dailyLogActionError, setDailyLogActionError] = useState<string | null>(null);
+  const [workspaceReportId, setWorkspaceReportId] = useState<string | null>(null);
+  const [selectedLegacyReport, setSelectedLegacyReport] = useState<ReportRecord | null>(null);
 
   const handleSaveEditedDailyLog = async (updates: {
     date: string;
@@ -179,6 +182,15 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     () => clients.filter((c) => dailyLogs.some((l) => l.client_id === c.id)),
     [clients, dailyLogs]
   );
+
+  const openFiledReport = (report: ReportRecord) => {
+    if (report.scope_type === 'client' || report.scope_type === 'employee') {
+      setWorkspaceReportId(report.id);
+      setSelectedLegacyReport(null);
+      return;
+    }
+    setSelectedLegacyReport(report);
+  };
 
   const myClients = useMemo(
     () => resolveClientsForSubject(currentUser, clients, assignments),
@@ -340,6 +352,12 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px] text-stone-300">
+        <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">1. Calculate</strong>Select scope, report type, and period below. Generate calculates deterministic metrics and persists the comparison row.</div>
+        <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">2. AI review</strong>AI Summary uses that selected, saved comparison. Workspace rewrites remain proposals until explicitly applied as a version.</div>
+        <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">3. File & reopen</strong>Save versioned drafts in the Workspace. Filed Reports reopens the persisted content, history, and evidence available for each record.</div>
+      </div>
+
       {flaggedClients.length > 0 && (
         <div className="p-4 rounded-xl border border-red-800/40 bg-red-950/20 space-y-3">
           <h3 className="text-sm font-bold text-red-300 flex items-center gap-2">
@@ -367,20 +385,6 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           </div>
         </div>
       )}
-
-      <ReportDraftWorkspace
-        currentUser={currentUser}
-        users={users}
-        clients={myClients}
-        employees={selectableAgents}
-        reports={reports}
-        dailyLogs={dailyLogs}
-        extraNotes={extraNotes}
-        tasks={tasks}
-        taskAssignees={taskAssignees}
-        onReportChanged={onReportChanged}
-        onReportDeleted={onReportDeleted}
-      />
 
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -547,8 +551,24 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <FileText className="w-4 h-4 text-purple-400" />
           <span>Filed Reports ({visibleReports.length})</span>
         </h3>
-        <FiledReportsList reports={visibleReports} comparisons={clientComparisons} clients={clients} users={users} showScope />
+        <FiledReportsList reports={visibleReports} comparisons={clientComparisons} clients={clients} users={users} showScope onSelectReport={openFiledReport} />
       </div>
+
+      <ReportDraftWorkspace
+        currentUser={currentUser}
+        users={users}
+        clients={myClients}
+        employees={selectableAgents}
+        reports={reports}
+        dailyLogs={dailyLogs}
+        extraNotes={extraNotes}
+        tasks={tasks}
+        taskAssignees={taskAssignees}
+        openReportId={workspaceReportId}
+        onOpenReportHandled={() => setWorkspaceReportId(null)}
+        onReportChanged={onReportChanged}
+        onReportDeleted={onReportDeleted}
+      />
 
       {canSeeDailyActivityReport && (
         <div className="space-y-3">
@@ -587,7 +607,15 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                 const isFutureLog = log.date > todayStr;
                 const canEditThisLog = canEditOwnDailyLog(log, currentUser.id);
                 return (
-                  <div key={log.id} className="p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 text-xs">
+                  <div
+                    key={log.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedDailyLog(log)}
+                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedDailyLog(log); } }}
+                    className="p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 text-xs cursor-pointer hover:border-purple-500/50 transition-colors focus:outline-none focus:ring-1 focus:ring-purple-400"
+                    aria-label={`Open activity details for ${logUser?.name || 'employee'} on ${log.date}`}
+                  >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white">{logUser?.name || 'Employee'}</span>
@@ -608,14 +636,14 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                         {canEditThisLog && (
                           <>
                             <button
-                              onClick={() => setEditingDailyLog(log)}
+                              onClick={(event) => { event.stopPropagation(); setEditingDailyLog(log); }}
                               className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
                               title="Edit this log"
                             >
                               <Edit2 className="w-3 h-3" />
                             </button>
                             <button
-                              onClick={() => handleDeleteDailyLogClick(log)}
+                              onClick={(event) => { event.stopPropagation(); void handleDeleteDailyLogClick(log); }}
                               className="p-1 rounded bg-stone-900 text-stone-400 hover:text-red-400"
                               title="Delete this log"
                             >
@@ -643,6 +671,64 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           onClose={() => setEditingDailyLog(null)}
         />
       )}
+
+      {selectedDailyLog && (() => {
+        const logUser = users.find((user) => user.id === selectedDailyLog.user_id);
+        const logClient = selectedDailyLog.client_id ? clients.find((client) => client.id === selectedDailyLog.client_id) : null;
+        const linkedIds = new Set(selectedDailyLog.linked_task_ids || []);
+        const linkedTasks = tasks.filter((task) => linkedIds.has(task.id));
+        const missingTaskCount = linkedIds.size - linkedTasks.length;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={() => setSelectedDailyLog(null)}>
+            <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-purple-900/50 bg-[#161224] p-5 space-y-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white">Daily activity details</h3>
+                  <p className="text-[11px] text-stone-400">Saved daily_logs record · {selectedDailyLog.date}</p>
+                </div>
+                <button type="button" onClick={() => setSelectedDailyLog(null)} className="p-1.5 rounded-lg text-stone-400 hover:text-white" aria-label="Close activity details"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Employee</span><span className="text-white">{logUser?.name || 'Unknown employee'}</span></div>
+                <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Client</span><span className="text-white">{logClient?.name || 'No client linked'}</span></div>
+                <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Created</span><span className="text-white">{selectedDailyLog.created_at ? new Date(selectedDailyLog.created_at).toLocaleString() : 'Not available'}</span></div>
+              </div>
+              <div className="rounded-xl border border-stone-800 p-3">
+                <p className="text-[11px] font-bold text-stone-400 uppercase mb-2">Activity summary</p>
+                <p className="text-sm text-stone-200 whitespace-pre-wrap break-words">{selectedDailyLog.summary_text}</p>
+              </div>
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-white">Explicitly linked tasks ({linkedIds.size})</h4>
+                {linkedIds.size === 0 ? <p className="text-[11px] text-stone-500">This activity did not save any task links. No relationship is inferred from matching text or dates.</p> : linkedTasks.length === 0 ? <p className="text-[11px] text-amber-300">The saved task references are not available in your current authorized task data.</p> : linkedTasks.map((task) => (
+                  <div key={task.id} className="rounded-xl border border-stone-800 bg-stone-950/30 p-3 text-[11px]">
+                    <div className="flex items-center justify-between gap-2"><span className="font-bold text-white">{task.title}</span><span className="uppercase text-purple-300">{task.status.replace('_', ' ')}</span></div>
+                    <p className="text-stone-400 mt-1">Due {task.due_date || 'not set'} · {task.priority} priority{task.completed_at ? ` · completed ${new Date(task.completed_at).toLocaleString()}` : ''}</p>
+                    {task.done_link && <a href={task.done_link} target="_blank" rel="noreferrer" className="text-purple-300 hover:text-purple-200 mt-1 inline-block">Open submitted work</a>}
+                  </div>
+                ))}
+                {missingTaskCount > 0 && linkedTasks.length > 0 && <p className="text-[11px] text-amber-300">{missingTaskCount} saved task reference(s) are outside the currently visible task set.</p>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {selectedLegacyReport && (() => {
+        const comparison = clientComparisons.find((item) => item.id === selectedLegacyReport.comparison_id) || null;
+        const author = users.find((user) => user.id === selectedLegacyReport.generated_by);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={() => setSelectedLegacyReport(null)}>
+            <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-2xl border border-purple-900/50 bg-[#161224] p-5 space-y-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <div><h3 className="text-sm font-bold text-white">Filed legacy report</h3><p className="text-[11px] text-stone-400">{selectedLegacyReport.period} · {selectedLegacyReport.type} · {selectedLegacyReport.status || 'legacy'} · filed by {author?.name || 'Unknown'}</p></div>
+                <button type="button" onClick={() => setSelectedLegacyReport(null)} className="p-1.5 rounded-lg text-stone-400 hover:text-white" aria-label="Close report"><X className="w-4 h-4" /></button>
+              </div>
+              {comparison ? <ComparisonCard comparison={comparison} subtitle={describeComparisonScope(comparison, clients, users)} viewerServiceFilter={viewerServiceFilter} /> : <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-4 text-xs text-amber-200">This legacy report has no accessible saved comparison/content reference. The record is preserved, but no content is fabricated from current mutable data.</div>}
+              <p className="text-[11px] text-stone-500">Legacy reports predate immutable report versions and source ledgers. They remain read-only and are not auto-classified as test data.</p>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
