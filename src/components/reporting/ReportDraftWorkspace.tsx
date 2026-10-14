@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Bot, CheckCircle2, Download, FilePenLine, Save, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, Bot, CheckCircle2, Download, FilePenLine, Save, Sparkles, Trash2, X } from 'lucide-react';
 import {
   ClientRecord,
   DailyLogRecord,
@@ -32,6 +32,7 @@ interface Props {
   taskAssignees: TaskAssigneeRecord[];
   openReportId?: string | null;
   onOpenReportHandled?: () => void;
+  onClose?: () => void;
   onReportChanged: (report: ReportRecord) => void;
   onReportDeleted: (reportId: string) => void;
 }
@@ -69,6 +70,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   taskAssignees,
   openReportId,
   onOpenReportHandled,
+  onClose,
   onReportChanged,
   onReportDeleted,
 }) => {
@@ -100,6 +102,11 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     ? versions.find((version) => version.id === selectedReport.current_version_id) || versions[0] || null
     : null;
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.name])), [users]);
+  const reportLabel = selectedReport
+    ? `${selectedReport.period} — ${selectedReport.scope_type === 'employee'
+      ? names.get(selectedReport.subject_user_id || '') || 'Employee'
+      : clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client'}`
+    : 'new report';
   const selectedSubject = users.find((user) => user.id === subjectUserId);
   const employeeOptions = useMemo(() => {
     const map = new Map<string, UserRecord>();
@@ -328,8 +335,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const archiveSelected = async () => {
-    if (!selectedReport) return;
-    const reason = window.prompt('Reason for archiving this report:') ?? '';
+    if (!selectedReport || busy) return;
+    const reason = window.prompt(`Reason for archiving "${reportLabel}":`) ?? '';
     if (!reason.trim()) return;
     setBusy(true);
     try {
@@ -345,7 +352,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const restoreSelected = async () => {
-    if (!selectedReport?.archived_at) return;
+    if (!selectedReport?.archived_at || busy) return;
     setBusy(true);
     try {
       const { data, error } = await supabaseRaw.rpc('archive_report_v2', {
@@ -365,9 +372,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const deleteSelected = async () => {
-    if (!selectedReport?.archived_at || !['executive', 'head_of_technical'].includes(currentUser.role)) return;
-    const reason = window.prompt('Permanent deletion reason:') ?? '';
-    if (!reason.trim() || !window.confirm('Permanently delete this archived report? This cannot be undone.')) return;
+    if (!selectedReport?.archived_at || busy || !['executive', 'head_of_technical'].includes(currentUser.role)) return;
+    const reason = window.prompt(`Permanent deletion reason for "${reportLabel}":`) ?? '';
+    if (!reason.trim() || !window.confirm(`Permanently delete "${reportLabel}"? Its report content, versions, source snapshots, and report audit events will be removed. Original tasks, activity logs, campaigns, and client data are not deleted. A deletion tombstone remains, but the report cannot be restored.`)) return;
     setBusy(true);
     try {
       const { error } = await supabaseRaw.rpc('delete_report_permanently', {
@@ -431,6 +438,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           <option value="">Create a new draft</option>
           {workspaceReports.map((report) => <option key={report.id} value={report.id}>{report.period} — {report.scope_type}{report.archived_at ? ' (archived)' : ''}</option>)}
         </select>
+        {onClose && <button type="button" onClick={() => { if (confirmDiscard()) onClose(); }} className="p-2 rounded-lg bg-stone-800 text-stone-300 hover:text-white" title="Close workspace" aria-label="Close report workspace"><X className="w-4 h-4" /></button>}
         </div>
       </div>
 

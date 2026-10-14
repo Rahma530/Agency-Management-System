@@ -835,17 +835,20 @@ export const FiledReportsList: React.FC<{
   clients: ClientRecord[];
   users: UserRecord[];
   showScope?: boolean;
+  archiveMode?: 'active' | 'archived' | 'all';
   // When provided, a report row becomes clickable (used to open MonthlyReportDraftView.tsx for a
   // monthly draft) — omitted, rows stay static exactly as before.
   onSelectReport?: (report: ReportRecord) => void;
-}> = ({ reports, comparisons, clients, users, showScope, onSelectReport }) => {
-  const activeReports = reports.filter((report) => !report.archived_at);
-  if (activeReports.length === 0) {
-    return <p className="text-xs text-stone-500 py-4 text-center">No reports filed yet.</p>;
+}> = ({ reports, comparisons, clients, users, showScope, archiveMode = 'active', onSelectReport }) => {
+  const displayedReports = reports.filter((report) =>
+    archiveMode === 'all' ? true : archiveMode === 'archived' ? !!report.archived_at : !report.archived_at
+  );
+  if (displayedReports.length === 0) {
+    return <p className="text-xs text-stone-500 py-4 text-center">{archiveMode === 'archived' ? 'No archived reports.' : 'No saved reports match these filters.'}</p>;
   }
   return (
     <div className="space-y-2">
-      {activeReports.map((r) => {
+      {displayedReports.map((r) => {
         const author = users.find((u) => u.id === r.generated_by);
         const comparison = comparisons.find((c) => c.id === r.comparison_id);
         const scopeLabel = showScope && comparison ? describeComparisonScope(comparison, clients, users) : null;
@@ -879,12 +882,18 @@ export const FiledReportsList: React.FC<{
                   Final
                 </span>
               )}
+              {r.archived_at && (
+                <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-amber-200 bg-amber-900/50 uppercase">
+                  Archived
+                </span>
+              )}
               <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-stone-300 bg-stone-800 uppercase">
                 {r.scope_type ? 'Versioned' : 'Legacy'}
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-purple-200 bg-purple-900/50 uppercase">
                 {r.type}
               </span>
+              {clickable && <span className="text-[10px] font-bold text-purple-300">{r.archived_at ? 'Open / Restore' : 'Open'}</span>}
             </div>
           </button>
         );

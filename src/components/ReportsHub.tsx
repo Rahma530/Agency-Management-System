@@ -40,6 +40,7 @@ import { DailyLogEditModal } from './DailyLogEditModal';
 import { ReportDraftWorkspace } from './reporting/ReportDraftWorkspace';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
+type ReportsHubSection = 'create' | 'saved' | 'archived' | 'activity';
 
 interface ReportsHubProps {
   currentUser: UserRecord;
@@ -61,10 +62,8 @@ interface ReportsHubProps {
     custom?: { currentRange: DateRange; previousRange?: DateRange }
   ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport: (comparisonId: string, period: string) => Promise<void>;
-  // Phase 4 (AI Orchestrator): same optional-prop convention as ComparisonCard's own
-  // onGenerateAiSummary — reuses this hub's existing nav-level access gate exactly (whoever can
-  // reach ReportsHub at all already sees canGenerateReport below unconditionally, so the AI button
-  // gets no separate check either).
+  // Phase 4 (AI Orchestrator): reuses this hub's existing nav-level access gate. The single AI
+  // action in Create Report is bound to the selected scope, mode, and period controls below.
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   onUpdateDailyLog: (
     logId: string,
@@ -157,6 +156,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const [dailyLogActionError, setDailyLogActionError] = useState<string | null>(null);
   const [workspaceReportId, setWorkspaceReportId] = useState<string | null>(null);
   const [selectedLegacyReport, setSelectedLegacyReport] = useState<ReportRecord | null>(null);
+  const [activeSection, setActiveSection] = useState<ReportsHubSection>('create');
+  const [workspaceContext, setWorkspaceContext] = useState<'create' | 'saved' | 'archived' | null>(null);
+  const [reportSearch, setReportSearch] = useState('');
+  const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'draft' | 'final'>('all');
+  const [selectedComparisonId, setSelectedComparisonId] = useState('');
 
   const handleSaveEditedDailyLog = async (updates: {
     date: string;
@@ -185,11 +189,39 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 
   const openFiledReport = (report: ReportRecord) => {
     if (report.scope_type === 'client' || report.scope_type === 'employee') {
+      const context = report.archived_at ? 'archived' : 'saved';
+      setActiveSection(context);
+      setWorkspaceContext(context);
       setWorkspaceReportId(report.id);
       setSelectedLegacyReport(null);
       return;
     }
     setSelectedLegacyReport(report);
+  };
+
+  const handleWorkspaceReportChanged = (report: ReportRecord) => {
+    onReportChanged(report);
+    if (workspaceContext === 'create') return;
+    const context = report.archived_at ? 'archived' : 'saved';
+    setActiveSection(context);
+    setWorkspaceContext(context);
+    setWorkspaceReportId(report.id);
+  };
+
+  const handleWorkspaceReportDeleted = (reportId: string) => {
+    onReportDeleted(reportId);
+    setWorkspaceReportId(null);
+    setWorkspaceContext(null);
+  };
+
+  const selectSection = (section: ReportsHubSection) => {
+    if (workspaceContext && section !== workspaceContext
+      && !window.confirm('Close the open report workspace? Make sure any editor changes are saved first.')) return;
+    setActiveSection(section);
+    if (section !== workspaceContext) {
+      setWorkspaceContext(null);
+      setWorkspaceReportId(null);
+    }
   };
 
   const myClients = useMemo(
@@ -245,7 +277,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     }
     setIsGenerating(true);
     try {
-      await onGenerateComparison(
+      const generated = await onGenerateComparison(
         resolvedScope,
         reportMode,
         granularity,
@@ -253,6 +285,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           ? { currentRange: customCurrentRange, previousRange: isSinglePeriod ? undefined : customPreviousRange }
           : undefined
       );
+      if (generated) setSelectedComparisonId(generated.id);
     } finally {
       setIsGenerating(false);
     }
@@ -294,9 +327,9 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   // falling through to onGenerateComparison. Returns null with no side effect when no scope is
   // selected yet, same as PeriodSelector's own canGenerate={!!resolvedScope} silently disabling the
   // plain generate button in that case.
-  const ensureComparisonForSummary = (mode: ReportMode): Promise<ClientComparisonRecord | null> =>
-    resolvedScope
-      ? resolveOrGenerateComparison({
+  const ensureComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
+    const comparison = resolvedScope
+      ? await resolveOrGenerateComparison({
           scope: resolvedScope,
           mode,
           granularity,
@@ -305,7 +338,10 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           comparisons: visibleComparisons,
           onGenerateComparison,
         })
-      : Promise.resolve(null);
+      : null;
+    if (comparison) setSelectedComparisonId(comparison.id);
+    return comparison;
+  };
 
   const visibleReports = useMemo(
     () =>
@@ -314,6 +350,24 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')),
     [reports, visibleComparisons, currentUser.id]
   );
+
+  const filteredReports = useMemo(() => {
+    const query = reportSearch.trim().toLowerCase();
+    return visibleReports.filter((report) => {
+      if (reportStatusFilter !== 'all' && report.status !== reportStatusFilter) return false;
+      if (!query) return true;
+      const author = users.find((user) => user.id === report.generated_by)?.name || '';
+      const client = clients.find((item) => item.id === report.client_id)?.name || '';
+      const subject = users.find((user) => user.id === report.subject_user_id)?.name || '';
+      return [report.period, report.type, report.status || '', report.scope_type || '', author, client, subject]
+        .some((value) => value.toLowerCase().includes(query));
+    });
+  }, [visibleReports, reportSearch, reportStatusFilter, users, clients]);
+  const activeReports = filteredReports.filter((report) => !report.archived_at);
+  const archivedReports = filteredReports.filter((report) => !!report.archived_at);
+  const selectedComparison = visibleComparisons.find((comparison) => comparison.id === selectedComparisonId)
+    || visibleComparisons[0]
+    || null;
 
   // Anomaly detection (Module 9): a client's own rolling baseline, not the single-period delta
   // ComparisonCard's narrative already shows — computed here (not in App.tsx) since it's pure
@@ -352,6 +406,25 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2 border-b border-stone-800 pb-3">
+        {([
+          ['create', 'Create Report'],
+          ['saved', `Saved Reports (${visibleReports.filter((report) => !report.archived_at).length})`],
+          ['archived', `Archived Reports (${visibleReports.filter((report) => !!report.archived_at).length})`],
+          ...(canSeeDailyActivityReport ? [['activity', `Activity Sources (${filteredDailyLogs.length})`]] : []),
+        ] as Array<[ReportsHubSection, string]>).map(([section, label]) => (
+          <button
+            key={section}
+            type="button"
+            onClick={() => selectSection(section)}
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${activeSection === section ? 'filled-purple-action bg-purple-600 text-white' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeSection === 'create' && <>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px] text-stone-300">
         <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">1. Calculate</strong>Select scope, report type, and period below. Generate calculates deterministic metrics and persists the comparison row.</div>
         <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">2. AI review</strong>AI Summary uses that selected, saved comparison. Workspace rewrites remain proposals until explicitly applied as a version.</div>
@@ -510,6 +583,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 
       {!!resolvedScope && onGenerateAiSummary && (
         <DirectAiSummaryPanel
+          key={`${reportMode}:${scope}:${selectedClientId}:${selectedAgentId}:${granularity}:${customCurrentRange.start}:${customCurrentRange.end}:${customPreviousRange.start}:${customPreviousRange.end}`}
           mode={reportMode}
           onEnsureComparison={() => ensureComparisonForSummary(reportMode)}
           onGenerateAiSummary={onGenerateAiSummary}
@@ -526,51 +600,76 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         {visibleComparisons.length === 0 ? (
           <p className="text-xs text-stone-500 py-4 text-center">No comparisons generated yet.</p>
         ) : (
-          visibleComparisons.map((cmp) => {
-            const anomalyResult = cmp.client_id ? anomaliesByClientId.get(cmp.client_id) : undefined;
-            const anomalyFlags = anomalyResult?.latestComparisonId === cmp.id ? anomalyResult.flags : undefined;
-            return (
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+              <select value={selectedComparison?.id || ''} onChange={(event) => setSelectedComparisonId(event.target.value)} className="flex-1 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+                {visibleComparisons.map((comparison) => <option key={comparison.id} value={comparison.id}>{describeComparisonScope(comparison, clients, users)} · {comparison.period_current}{comparison.period_previous ? ` vs ${comparison.period_previous}` : ''}</option>)}
+              </select>
+              <button
+                type="button"
+                disabled={!selectedComparison || generatingReportForComparisonId === selectedComparison.id}
+                onClick={() => selectedComparison && void handleGenerateReport(selectedComparison)}
+                className="filled-purple-action px-3 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-50"
+              >
+                {selectedComparison && generatingReportForComparisonId === selectedComparison.id ? 'Saving report…' : 'Save selected as report'}
+              </button>
+            </div>
+            {selectedComparison && (() => {
+              const anomalyResult = selectedComparison.client_id ? anomaliesByClientId.get(selectedComparison.client_id) : undefined;
+              const anomalyFlags = anomalyResult?.latestComparisonId === selectedComparison.id ? anomalyResult.flags : undefined;
+              return (
               <ComparisonCard
-                key={cmp.id}
-                comparison={cmp}
-                subtitle={describeComparisonScope(cmp, clients, users)}
-                canGenerateReport
-                isGeneratingReport={generatingReportForComparisonId === cmp.id}
-                onGenerateReport={() => handleGenerateReport(cmp)}
-                onGenerateAiSummary={onGenerateAiSummary}
+                comparison={selectedComparison}
+                subtitle={describeComparisonScope(selectedComparison, clients, users)}
                 viewerServiceFilter={viewerServiceFilter}
                 anomalyFlags={anomalyFlags}
               />
-            );
-          })
+              );
+            })()}
+          </div>
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="flex justify-end">
+        <button type="button" onClick={() => setWorkspaceContext((current) => current === 'create' ? null : 'create')} className="px-3 py-2 rounded-xl text-xs font-bold bg-stone-800 text-stone-200 hover:text-white">
+          {workspaceContext === 'create' ? 'Hide report composer' : 'Create from activity sources'}
+        </button>
+      </div>
+      {workspaceContext === 'create' && (
+        <ReportDraftWorkspace
+          currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
+          dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
+          onClose={() => setWorkspaceContext(null)} onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
+        />
+      )}
+      </>}
+
+      {(activeSection === 'saved' || activeSection === 'archived') && <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Search period, scope, author, client, or employee…" className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500" />
+          </div>
+          <select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value as 'all' | 'draft' | 'final')} className="px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+            <option value="all">All statuses</option><option value="draft">Draft</option><option value="final">Final</option>
+          </select>
+        </div>
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <FileText className="w-4 h-4 text-purple-400" />
-          <span>Filed Reports ({visibleReports.length})</span>
+          <span>{activeSection === 'archived' ? `Archived Reports (${archivedReports.length})` : `Saved Reports (${activeReports.length})`}</span>
         </h3>
-        <FiledReportsList reports={visibleReports} comparisons={clientComparisons} clients={clients} users={users} showScope onSelectReport={openFiledReport} />
-      </div>
+        <FiledReportsList reports={activeSection === 'archived' ? archivedReports : activeReports} comparisons={clientComparisons} clients={clients} users={users} showScope archiveMode={activeSection === 'archived' ? 'archived' : 'active'} onSelectReport={openFiledReport} />
+        {workspaceContext === activeSection && (
+          <ReportDraftWorkspace
+            currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
+            dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
+            openReportId={workspaceReportId} onOpenReportHandled={() => setWorkspaceReportId(null)}
+            onClose={() => { setWorkspaceContext(null); setWorkspaceReportId(null); }} onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
+          />
+        )}
+      </div>}
 
-      <ReportDraftWorkspace
-        currentUser={currentUser}
-        users={users}
-        clients={myClients}
-        employees={selectableAgents}
-        reports={reports}
-        dailyLogs={dailyLogs}
-        extraNotes={extraNotes}
-        tasks={tasks}
-        taskAssignees={taskAssignees}
-        openReportId={workspaceReportId}
-        onOpenReportHandled={() => setWorkspaceReportId(null)}
-        onReportChanged={onReportChanged}
-        onReportDeleted={onReportDeleted}
-      />
-
-      {canSeeDailyActivityReport && (
+      {activeSection === 'activity' && canSeeDailyActivityReport && (
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
