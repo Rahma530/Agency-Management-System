@@ -39,6 +39,7 @@ import { recordUsage } from './providers/usageLog.ts';
 import { AiProvider, AiProviderError } from './types.ts';
 import { isDetailLevel, isSupportedLanguage, TASK_REGISTRY, validateReportRewritePayload } from './taskRegistry.ts';
 import { runRegistryTask } from './taskRunner.ts';
+import { buildSavedReportFacts } from './reportRewriteGrounding.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
@@ -203,6 +204,9 @@ Deno.serve(async (req) => {
   // spending provider quota on a stale or fabricated report identity. Internal ids are removed by
   // taskRegistry.ts before the provider receives the prompt.
   if (input.task === 'REPORT_REWRITE') {
+    // Older frontend builds include browser-composed facts. They are accepted only for rollout
+    // compatibility and are always discarded below; authorization and provider grounding use the
+    // immutable report_source_items loaded server-side.
     let rewritePayload: ReturnType<typeof validateReportRewritePayload>;
     try {
       rewritePayload = validateReportRewritePayload(input.payload);
@@ -210,13 +214,13 @@ Deno.serve(async (req) => {
       return response({ error: 'Invalid report rewrite request.' }, 400);
     }
     const { data: version, error: versionError } = await admin.from('report_content_versions')
-      .select('report_id').eq('id', rewritePayload.base_version_id).maybeSingle();
+      .select('report_id,content_text').eq('id', rewritePayload.base_version_id).maybeSingle();
     const { data: report, error: reportError } = await admin.from('reports')
-      .select('id,current_version_id,source_hash,archived_at').eq('id', rewritePayload.report_id).maybeSingle();
+      .select('id,current_version_id,source_hash,archived_at,status,creator_note,type').eq('id', rewritePayload.report_id).maybeSingle();
     if (versionError || reportError) {
       return response({ error: 'Report rewrite storage is not ready.' }, 503);
     }
-    if (!version || !report || version.report_id !== report.id || report.archived_at
+    if (!version || !report || version.report_id !== report.id || report.archived_at || report.status === 'final'
       || report.current_version_id !== rewritePayload.base_version_id
       || report.source_hash !== rewritePayload.source_hash) {
       return response({ error: 'The report changed before the rewrite request.' }, 409);
@@ -226,6 +230,21 @@ Deno.serve(async (req) => {
     });
     if (permissionError) return response({ error: 'Report authorization is not ready.' }, 503);
     if (canEdit !== true) return response({ error: 'Report access denied.' }, 403);
+
+    const { data: sourceRows, error: sourceError } = await admin.from('report_source_items')
+      .select('source_kind,source_date,snapshot').eq('report_id', report.id)
+      .order('source_date', { ascending: true }).order('source_kind', { ascending: true });
+    if (sourceError) return response({ error: 'Report source evidence is unavailable.' }, 503);
+    let facts: string[];
+    try { facts = buildSavedReportFacts(sourceRows || []); }
+    catch { return response({ error: 'Saved report evidence cannot be safely rewritten.' }, 422); }
+    input.payload = {
+      ...rewritePayload,
+      current_text: version.content_text,
+      creator_note: String(report.creator_note || ''),
+      audience: report.type === 'client' ? 'client' : 'internal',
+      facts,
+    };
   }
 
   // detail is a request-level option, not payload data — it's never added to a task's input

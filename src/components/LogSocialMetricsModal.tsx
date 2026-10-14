@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Share2 } from 'lucide-react';
+import { localWeekMonday } from '../lib/reportPeriods';
 
 type SocialPlatform = 'facebook' | 'instagram' | 'tiktok' | 'x' | 'linkedin';
 
@@ -13,14 +14,6 @@ const PLATFORM_OPTIONS: { value: SocialPlatform; label: string }[] = [
 
 // Monday-anchored — this app has no pre-existing "week" convention anywhere else, so this
 // function defines it for the first time, purely for this form's own default value.
-function currentWeekMonday(): string {
-  const now = new Date();
-  const day = now.getDay(); // 0 = Sunday .. 6 = Saturday
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
-  return monday.toISOString().split('T')[0];
-}
-
 interface LogSocialMetricsModalProps {
   clientName: string;
   onClose: () => void;
@@ -38,7 +31,7 @@ interface LogSocialMetricsModalProps {
 // editing an already-entered week's numbers should overwrite them, not create a duplicate row.
 export const LogSocialMetricsModal: React.FC<LogSocialMetricsModalProps> = ({ clientName, onClose, onSubmit }) => {
   const [platform, setPlatform] = useState<SocialPlatform>('instagram');
-  const [weekStartDate, setWeekStartDate] = useState(currentWeekMonday());
+  const [weekStartDate, setWeekStartDate] = useState(localWeekMonday());
   const [reach, setReach] = useState('');
   const [engagementRate, setEngagementRate] = useState('');
   const [followerGrowth, setFollowerGrowth] = useState('');

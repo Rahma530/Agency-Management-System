@@ -24,6 +24,13 @@ export interface EmployeeReportSources {
   tasks: EmployeeTaskReportSource[];
 }
 
+export type EmployeeClientScopeMode = 'all_clients' | 'selected_clients' | 'employee_overall';
+
+export interface EmployeeClientScope {
+  mode: EmployeeClientScopeMode;
+  clientIds: string[];
+}
+
 const VIDEO_PATTERN = /\b(video|videos|reel|reels|motion|animation|montage|edit|editing)\b|فيديو|فيديوهات|ريل|ريلز|موشن|مونتاج|تحريك/iu;
 const DESIGN_PATTERN = /\b(design|designs|graphic|graphics|banner|poster|carousel|visual|thumbnail|creative)\b|تصميم|تصميمات|جرافيك|بنر|بوستر|كاروسيل|غلاف|كرياتيف/iu;
 
@@ -78,16 +85,23 @@ export function collectEmployeeReportSources(
   tasks: TaskRecord[],
   taskAssignees: TaskAssigneeRecord[],
   userId: string,
-  period: ReportPeriod
+  period: ReportPeriod,
+  clientScope: EmployeeClientScope = { mode: 'employee_overall', clientIds: [] }
 ): EmployeeReportSources {
+  const allowedClientIds = new Set(clientScope.clientIds);
+  const matchesClientScope = (clientId?: string | null): boolean => {
+    if (clientScope.mode === 'employee_overall') return true;
+    if (!clientId) return false;
+    return allowedClientIds.has(clientId);
+  };
   const work = dedupeReportSourceReferences(
     dailyLogs
-      .filter((log) => log.user_id === userId && isDateInReportPeriod(log.date, period))
+      .filter((log) => log.user_id === userId && matchesClientScope(log.client_id) && isDateInReportPeriod(log.date, period))
       .map((log) => ({ sourceKind: 'daily_log' as const, sourceId: log.id, row: log }))
   );
   const eligibleLogs = work.map((item) => item.row).sort(byDateThenId);
   const notes = dedupeReportSourceReferences(
-    extraNotes
+    (clientScope.mode === 'employee_overall' ? extraNotes : [])
       .filter((note) => note.user_id === userId && isDateInReportPeriod(note.date, period))
       .map((note) => ({ sourceKind: 'extra_note' as const, sourceId: note.id, row: note }))
   );

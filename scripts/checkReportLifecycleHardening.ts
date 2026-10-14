@@ -1,0 +1,62 @@
+import fs from 'node:fs';
+
+const migration = fs.readFileSync('supabase/migrations/20261107300000_report_workspace_lifecycle_hardening.sql', 'utf8');
+const lockdown = fs.readFileSync('supabase/migrations/20261107400000_report_workspace_direct_write_lockdown.sql', 'utf8');
+const workspace = fs.readFileSync('src/components/reporting/ReportDraftWorkspace.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const router = fs.readFileSync('supabase/functions/ai-router/index.ts', 'utf8');
+const portal = fs.readFileSync('src/components/clientPortal/ClientPortalView.tsx', 'utf8');
+const legacyView = fs.readFileSync('src/components/reporting/MonthlyReportDraftView.tsx', 'utf8');
+const config = fs.readFileSync('supabase/config.toml', 'utf8');
+const transactionTests = fs.readFileSync('supabase/verification/20261107300001_report_workspace_lifecycle_transaction_tests.sql', 'utf8');
+const required = [
+  'create_report_draft_v2', 'preview_report_sources_v2', 'employee_scope_mode',
+  "status='final'", 'Final or archived reports are immutable', 'delete_report_permanently',
+  'report_deletion_tombstones', 'Archive the report before permanent deletion', 'content_hash',
+  'save_report_version_v2', 'archive_report_v2', 'approve_report_v2',
+  "type='client' and status='final' and archived_at is null", 'for update',
+];
+for (const fragment of required) {
+  if (!migration.includes(fragment)) throw new Error(`Lifecycle migration is missing: ${fragment}`);
+}
+for (const fragment of [
+  'revoke update (status,approved_by,approved_at,comparison_id,period,client_id,type,updated_at)',
+  "revoke insert (%s) on table public.%I from public, anon, authenticated",
+]) {
+  if (!lockdown.includes(fragment)) throw new Error(`Direct-write lockdown is missing: ${fragment}`);
+}
+if (!migration.includes("p_employee_scope_mode='selected_clients' and cardinality(v_ids)=0")) {
+  throw new Error('Selected Clients can be empty on the server.');
+}
+if (!migration.includes('not public.report_scope_accessible(id, null)')) {
+  throw new Error('Selected client ids are not server-authorized.');
+}
+if (/report_scope_accessible\([^,()]+\)/.test(migration)) {
+  throw new Error('A report_scope_accessible call is missing its agent-id argument.');
+}
+if (!migration.includes("'legacy-'||md5(concat_ws")) {
+  throw new Error('Legacy report creation is not idempotent.');
+}
+if (!workspace.includes('Select an employee (required)') || !workspace.includes('Select All') || !workspace.includes('Clear All')
+  || !workspace.includes('confirmDiscard') || !workspace.includes('creationKey.current ||= crypto.randomUUID()')) {
+  throw new Error('Workspace employee selection, multi-select, unsaved guard, or duplicate-submit protection is missing.');
+}
+if (app.includes("from('reports').insert") || app.includes("from('reports').update")) {
+  throw new Error('A direct legacy reports write bypass remains in App.tsx.');
+}
+if (!router.includes("from('report_source_items')") || !router.includes('are always discarded below')) {
+  throw new Error('REPORT_REWRITE is not grounded from saved server-side source items.');
+}
+if (!workspace.includes("rpc('save_report_version_v2'") || !workspace.includes("rpc('archive_report_v2'")
+  || !workspace.includes("rpc('approve_report_v2'") || !workspace.includes('draftText !== currentVersion.content_text')) {
+  throw new Error('Workspace does not enforce concurrency RPCs or saved-version-only actions.');
+}
+if (!portal.includes(".eq('status', 'final').is('archived_at', null)")) throw new Error('Portal query is not final-and-active only.');
+if (!legacyView.includes('intentionally not re-derived') || legacyView.includes('computeClientTaskCompletionStats')) {
+  throw new Error('Legacy reports can still change from live Task/Brief data.');
+}
+if (!config.includes('[functions.ai-router]') || !config.includes('verify_jwt = true')) throw new Error('ai-router JWT verification is not enabled.');
+for (const behavior of ['stale preview hash', 'idempotent retry', 'final report was editable', 'ordinary agent deleted', 'content_hash']) {
+  if (!transactionTests.includes(behavior)) throw new Error(`Rollback behavior verification is missing: ${behavior}`);
+}
+console.log('OK: lifecycle migration contains explicit scopes, final immutability, archive/delete separation, tombstones, locking, and portal filtering.');

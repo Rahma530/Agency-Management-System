@@ -1,25 +1,12 @@
 import React, { useState } from 'react';
-import { X, FileText, CheckCircle2, ClipboardList, BarChart3 } from 'lucide-react';
+import { X, FileText, BarChart3, AlertTriangle } from 'lucide-react';
 import { BriefFieldDef, ClientRecord, ReportRecord, ClientComparisonRecord, BriefRecord, TaskRecord, ServiceType } from '../../types/database';
-import { computeClientTaskCompletionStats, monthLabelToRange } from '../../lib/reportingEngine';
 import { ServiceMetricsCard } from './ComparisonDisplay';
-import { BriefFieldsReadOnly } from '../BriefFieldsReadOnly';
-
-const SERVICE_LABELS: Record<ServiceType, string> = {
-  media_buying: 'Media Buying',
-  seo: 'SEO',
-  social_media: 'Social Media',
-  interface: 'واجهة',
-  creation: 'Creation',
-  branding: 'Branding',
-};
 
 // Module 9, point 4: a monthly report draft is an auto-compiled document — the client's period
-// summary (already computed by generatePeriodSummary at generation time, re-derived here for
-// display exactly like every other comparison) plus a brief snapshot and task-delivery stats,
-// none of which is stored as rendered text — consistent with how this app already treats
-// comparison narratives as re-derived-at-render-time, not persisted content. Requires an explicit
-// Approve action (report.status: 'draft' -> 'final') before it's treated as final.
+// summary persisted on client_comparisons. Historical legacy rows never stored task/brief
+// snapshots, so this view deliberately does not rebuild those sections from mutable live data.
+// Requires an explicit Approve action only when a safe saved version exists.
 //
 // viewerServiceFilter: this view is reachable from "Filed Reports" by any hasComparisonAccess
 // viewer, including a department agent/team lead scoped to one service (Stage C) — previously this
@@ -38,16 +25,11 @@ export const MonthlyReportDraftView: React.FC<{
   onApprove: () => Promise<void>;
   onClose: () => void;
   viewerServiceFilter?: ServiceType[];
-}> = ({ client, report, comparison, briefs, tasks, briefFieldSchemas, canApprove, onApprove, onClose, viewerServiceFilter }) => {
+}> = ({ client, report, comparison, canApprove, onApprove, onClose, viewerServiceFilter }) => {
   const [isApproving, setIsApproving] = useState(false);
   const isDraft = report.status === 'draft';
+  const hasSavedVersion = !!report.current_version_id;
 
-  const range = monthLabelToRange(report.period);
-  const taskStats = range ? computeClientTaskCompletionStats(tasks, client.id, range) : null;
-
-  const clientBriefs = briefs
-    .filter((b) => b.client_id === client.id)
-    .filter((b) => !viewerServiceFilter || viewerServiceFilter.includes(b.service_type as ServiceType));
 
   const handleApprove = async () => {
     setIsApproving(true);
@@ -124,55 +106,12 @@ export const MonthlyReportDraftView: React.FC<{
           </div>
         )}
 
-        {/* Task delivery */}
-        {taskStats && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Task Delivery</span>
-            </h3>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 text-center">
-                <p className="text-lg font-bold text-white">{taskStats.totalTasks}</p>
-                <p className="text-[11px] text-stone-400">Total Tasks</p>
-              </div>
-              <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 text-center">
-                <p className="text-lg font-bold text-emerald-400">{taskStats.completedTasks}</p>
-                <p className="text-[11px] text-stone-400">Completed This Period</p>
-              </div>
-              <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 text-center">
-                <p className="text-lg font-bold text-purple-300">
-                  {taskStats.onTimeRate === null ? 'N/A' : `${taskStats.onTimeRate}%`}
-                </p>
-                <p className="text-[11px] text-stone-400">On-Time Rate</p>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className="p-3 rounded-xl border border-amber-800/40 bg-amber-950/20 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-100">Legacy report: the saved comparison above is preserved. Live Tasks and Briefs are intentionally not re-derived because this report predates immutable source snapshots.</p>
+        </div>
 
-        {/* Brief snapshot */}
-        {clientBriefs.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-purple-400" />
-              <span>Service Briefs Snapshot</span>
-            </h3>
-            {clientBriefs.map((brief) => (
-              <div key={brief.id} className="p-3 rounded-xl border border-purple-900/20 bg-purple-950/10 space-y-2">
-                <h4 className="text-xs font-bold text-white uppercase tracking-wide">
-                  {SERVICE_LABELS[brief.service_type] || brief.service_type}
-                </h4>
-                <BriefFieldsReadOnly
-                  fields={brief.fields}
-                  fieldDefs={briefFieldSchemas[brief.service_type] || []}
-                  customFieldDefs={brief.custom_field_defs}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isDraft && (
+        {isDraft && hasSavedVersion && (
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
             {canApprove ? (
               <button
@@ -188,6 +127,7 @@ export const MonthlyReportDraftView: React.FC<{
             )}
           </div>
         )}
+        {isDraft && !hasSavedVersion && <p className="text-[11px] text-amber-200 text-right">This legacy draft cannot be approved because it has no immutable saved content version.</p>}
       </div>
     </div>
   );

@@ -1,16 +1,9 @@
 import React, { useState } from 'react';
 import { X, Search } from 'lucide-react';
+import { localWeekMonday } from '../lib/reportPeriods';
 
 // Monday-anchored — same convention as LogSocialMetricsModal.tsx/LogMediaBuyingMetricsModal.tsx's
 // currentWeekMonday().
-function currentWeekMonday(): string {
-  const now = new Date();
-  const day = now.getDay(); // 0 = Sunday .. 6 = Saturday
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
-  return monday.toISOString().split('T')[0];
-}
-
 interface LogSeoMetricsModalProps {
   clientName: string;
   onClose: () => void;
@@ -30,7 +23,7 @@ interface LogSeoMetricsModalProps {
 // (onConflict: client_id, week_start_date) rather than plain-inserting, since re-entering an
 // already-logged week should overwrite it, not create a duplicate row.
 export const LogSeoMetricsModal: React.FC<LogSeoMetricsModalProps> = ({ clientName, onClose, onSubmit }) => {
-  const [weekStartDate, setWeekStartDate] = useState(currentWeekMonday());
+  const [weekStartDate, setWeekStartDate] = useState(localWeekMonday());
   const [organicTraffic, setOrganicTraffic] = useState('');
   const [keywordsTop10Count, setKeywordsTop10Count] = useState('');
   const [backlinksAcquired, setBacklinksAcquired] = useState('');
