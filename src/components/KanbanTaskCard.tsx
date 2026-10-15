@@ -60,6 +60,7 @@ export interface KanbanTaskCardContentProps {
   task: TaskRecord;
   client?: ClientRecord;
   assigneeNames: string[];
+  platformNames: string[];
   subtaskDone: number;
   subtaskTotal: number;
   overdue: boolean;
@@ -83,6 +84,7 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
   task,
   client,
   assigneeNames,
+  platformNames,
   subtaskDone,
   subtaskTotal,
   overdue,
@@ -159,6 +161,20 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
         <Building2 className="w-3 h-3 text-purple-400 shrink-0" />
         <span className="truncate">{client ? client.name : 'Unassigned Client'}</span>
       </div>
+
+      {/* Platform chips (optional) */}
+      {platformNames.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {platformNames.map((name) => (
+            <span
+              key={name}
+              className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-sky-950/50 text-sky-300 border border-sky-800/50"
+            >
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Subtask progress */}
       {subtaskTotal > 0 && (

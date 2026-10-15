@@ -466,6 +466,25 @@ export interface TaskTypeRecord {
   updated_at?: string;
 }
 
+// 6d. platforms — admin-managed reference list of selectable social platforms (Instagram/TikTok/
+// Snapchat/...), independent of task_types. See supabase/migrations/20261108000000_task_platforms.sql.
+export interface PlatformRecord {
+  id: string;
+  name: string;
+  sort_order: number;
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// 6e. task_platform_links — join table, task_id -> platform_id. Writable only via the
+// set_task_platforms() RPC (SECURITY DEFINER); no direct insert/update/delete grant exists.
+export interface TaskPlatformLinkRecord {
+  task_id: string;
+  platform_id: string;
+  created_at?: string;
+}
+
 // 6b. task_comments — threaded comments on a task, capped at 3 levels
 // (comment -> reply -> reply-to-reply) by a DB trigger, same as tasks
 // nesting. Soft-delete via deleted_at (never a real DELETE) so a deleted

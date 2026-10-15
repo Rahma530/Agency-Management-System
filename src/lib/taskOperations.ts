@@ -1,4 +1,4 @@
-import { TaskAttachmentRecord, TaskAssigneeRecord, TaskPriority, TaskRecord } from '../types/database';
+import { TaskAttachmentRecord, TaskAssigneeRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
 import { buildAttachmentStoragePath, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
@@ -34,6 +34,7 @@ export interface CreateTaskCopiesInput {
   taskTypeOther?: string | null;
   parentTaskId?: string | null;
   batchId?: string | null;
+  platformIds?: string[];
 }
 
 export interface CreateTaskFormInput extends CreateTaskCopiesInput {
@@ -73,6 +74,20 @@ export const setTaskAssignees = async (taskId: string, userIds: string[]): Promi
     p_user_ids: [...new Set(userIds.filter(Boolean))],
   });
   throwIfError(error, 'Unable to update task assignees.');
+};
+
+export const fetchTaskPlatformLinks = async (): Promise<TaskPlatformLinkRecord[]> => {
+  const { data, error } = await supabaseRaw.from('task_platform_links').select('*');
+  throwIfError(error, 'Unable to load task platforms.');
+  return (data as TaskPlatformLinkRecord[] | null) || [];
+};
+
+export const setTaskPlatforms = async (taskId: string, platformIds: string[]): Promise<void> => {
+  const { error } = await supabaseRaw.rpc('set_task_platforms', {
+    p_task_id: taskId,
+    p_platform_ids: [...new Set(platformIds.filter(Boolean))],
+  });
+  throwIfError(error, 'Unable to update task platforms.');
 };
 
 export const createTaskCopies = async (input: CreateTaskCopiesInput): Promise<CreateTaskCopiesResult> => {
@@ -123,6 +138,20 @@ export const createTaskCopies = async (input: CreateTaskCopiesInput): Promise<Cr
         message: `The task copy was saved, but assignee synchronization was not confirmed: ${assigneeError instanceof Error ? assigneeError.message : 'Unknown Supabase error.'}`,
       });
       continue;
+    }
+
+    if (input.platformIds !== undefined) {
+      try {
+        await setTaskPlatforms(task.id, input.platformIds);
+      } catch (platformError) {
+        tasks.push(task);
+        failures.push({
+          clientId,
+          task,
+          message: `The task copy was saved, but platform synchronization was not confirmed: ${platformError instanceof Error ? platformError.message : 'Unknown Supabase error.'}`,
+        });
+        continue;
+      }
     }
 
     try {

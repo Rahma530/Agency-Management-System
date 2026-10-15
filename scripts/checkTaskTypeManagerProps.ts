@@ -3,7 +3,7 @@
  * the taskDirectoryUsers merged-name list or the daily_logs edit/delete handlers, is missing one
  * of its required props:
  *   - <CrossTeamTaskBoard>: taskTypes, onCreateTaskType, onUpdateTaskType, taskDirectoryUsers,
- *     taskAssignees
+ *     taskAssignees, platforms, taskPlatformLinks, onCreatePlatform, onUpdatePlatform
  *   - <TaskTypeInlineManager>: taskTypes, scopeTeam, onSelectType, onCreateTaskType,
  *     onUpdateTaskType (scopeRole is intentionally optional — a form with no assignee selected
  *     yet has nothing to pass there)
@@ -32,7 +32,10 @@ const SRC_DIR = join(ROOT, 'src');
 const CHECKS: { tag: string; requiredProps: string[] }[] = [
   {
     tag: '<CrossTeamTaskBoard',
-    requiredProps: ['taskTypes', 'onCreateTaskType', 'onUpdateTaskType', 'taskDirectoryUsers', 'taskAssignees'],
+    requiredProps: [
+      'taskTypes', 'onCreateTaskType', 'onUpdateTaskType', 'taskDirectoryUsers', 'taskAssignees',
+      'platforms', 'taskPlatformLinks', 'onCreatePlatform', 'onUpdatePlatform',
+    ],
   },
   {
     tag: '<TaskTypeInlineManager',
