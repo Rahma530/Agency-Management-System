@@ -43,6 +43,8 @@ import {
   TaskCommentRecord,
   TaskAttachmentRecord,
   TaskAssigneeRecord,
+  PlatformRecord,
+  TaskPlatformLinkRecord,
 } from '../types/database';
 import {
   DndContext,
@@ -86,6 +88,7 @@ import { KanbanColumn } from './KanbanColumn';
 import { KanbanTaskCardContent } from './KanbanTaskCard';
 import { TaskTypeManager } from './TaskTypeManager';
 import { TaskTypeInlineManager } from './TaskTypeInlineManager';
+import { PlatformManager } from './PlatformManager';
 
 interface CrossTeamTaskBoardProps {
   tasks: TaskRecord[];
@@ -105,7 +108,8 @@ interface CrossTeamTaskBoardProps {
     taskId: string,
     updates: Partial<TaskRecord>,
     assigneeIds?: string[],
-    attachments?: StagedTaskAttachment[]
+    attachments?: StagedTaskAttachment[],
+    platformIds?: string[]
   ) => Promise<void>;
   // Admin-managed Task Type reference list (task_types table) — includes inactive rows so an
   // existing task's type can still be resolved/shown after it's deactivated. The admin screen
@@ -117,6 +121,15 @@ interface CrossTeamTaskBoardProps {
   taskTypes: TaskTypeRecord[];
   onCreateTaskType: (row: Omit<TaskTypeRecord, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
   onUpdateTaskType: (id: string, updates: Partial<TaskTypeRecord>) => Promise<void>;
+  // Admin-managed Platform reference list (platforms table) + its task links (task_platform_links
+  // table) — same "includes inactive rows" posture as taskTypes above. The admin screen
+  // (PlatformManager) is gated to executive/head_of_technical/ai_engineer below, matching
+  // platforms_write_rls/platforms_update_rls. Also required (not optional) and enforced at the
+  // one render site by scripts/checkTaskTypeManagerProps.ts, for the same reason as taskTypes.
+  platforms: PlatformRecord[];
+  taskPlatformLinks: TaskPlatformLinkRecord[];
+  onCreatePlatform: (row: Omit<PlatformRecord, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  onUpdatePlatform: (id: string, updates: Partial<PlatformRecord>) => Promise<void>;
   // Pre-fills the search box (matches by assignee name) when arriving here via
   // the "Assign via Task Board" link from CapacityManagement's employee cards.
   initialAssigneeFilter?: string;
@@ -148,6 +161,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   taskTypes,
   onCreateTaskType,
   onUpdateTaskType,
+  platforms,
+  taskPlatformLinks,
+  onCreatePlatform,
+  onUpdatePlatform,
   initialAssigneeFilter,
   taskComments = [],
   onAddTaskComment,
@@ -179,6 +196,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // (see employeeFilterOptions below) — a real department selected there fetches that
   // department's roster via fetchAssignableEmployees(), same RPC the New/Edit Task modals use.
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('all');
+  // Platform filter — matches ANY selected platform (an empty selection means "no filter").
+  const [selectedPlatformIds, setSelectedPlatformIds] = useState<string[]>([]);
   // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
   // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
   // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
@@ -211,6 +230,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isTaskTypeManagerOpen, setIsTaskTypeManagerOpen] = useState(false);
   const canManageTaskTypes = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
+  const [isPlatformManagerOpen, setIsPlatformManagerOpen] = useState(false);
+  const canManagePlatforms = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical' || currentUser?.role === 'ai_engineer';
   const isUiUxDesigner = currentUser?.role === 'ui_ux_designer';
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
   useEffect(() => {
@@ -295,6 +316,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [clients, addSubtaskParent]);
   const [newTeam, setNewTeam] = useState('SEO');
   const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>([]);
+  const [newPlatformIds, setNewPlatformIds] = useState<string[]>([]);
   const [newAttachments, setNewAttachments] = useState<StagedTaskAttachment[]>([]);
   const [newBatchId, setNewBatchId] = useState(() => crypto.randomUUID());
   const [pendingRecovery, setPendingRecovery] = useState<TaskCreateRecoveryRecord | null>(null);
@@ -348,6 +370,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [editClientId, setEditClientId] = useState('');
   const [editTeam, setEditTeam] = useState('');
   const [editAssigneeIds, setEditAssigneeIds] = useState<string[]>([]);
+  const [editPlatformIds, setEditPlatformIds] = useState<string[]>([]);
   const [editAttachments, setEditAttachments] = useState<StagedTaskAttachment[]>([]);
   const [editTeamAssignees, setEditTeamAssignees] = useState<AssignableEmployee[]>([]);
   useEffect(() => {
@@ -666,6 +689,40 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     [tasks, taskAssignees]
   );
 
+  // task_platform_links membership per task, newest-link-first (mirrors taskAssigneeIdsByTask's
+  // own shape so chip/filter code can read both the same way). Platforms carry no ordering
+  // significance beyond display, so insertion order (created_at) is good enough — no "latest"
+  // semantics to resolve, unlike assignees.
+  const taskPlatformIdsByTask = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const link of taskPlatformLinks) {
+      const existing = map.get(link.task_id);
+      if (existing) existing.push(link.platform_id);
+      else map.set(link.task_id, [link.platform_id]);
+    }
+    return map;
+  }, [taskPlatformLinks]);
+
+  // Active platforms, sorted for display — the option list every picker (create/edit forms,
+  // filter) offers. Inactive platforms are deliberately excluded here (same as a retired task
+  // type is excluded from newTaskTypeOptions) but stay resolvable for a task that already has one
+  // via platformsById below.
+  const activePlatformOptions = useMemo(
+    () => platforms.filter((p) => p.active).sort((a, b) => a.sort_order - b.sort_order),
+    [platforms]
+  );
+  const platformsById = useMemo(() => new Map(platforms.map((p) => [p.id, p])), [platforms]);
+  // Edit form's own option list: active platforms, plus any platform the task is currently
+  // tagged with even if it's since been deactivated — same "never silently drop it" rule
+  // editTaskTypeOptions applies to a task's current (possibly retired) task_type.
+  const editPlatformOptions = useMemo(() => {
+    const extra = editPlatformIds
+      .filter((id) => !activePlatformOptions.some((p) => p.id === id))
+      .map((id) => platformsById.get(id))
+      .filter((p): p is PlatformRecord => !!p);
+    return [...activePlatformOptions, ...extra];
+  }, [activePlatformOptions, platformsById, editPlatformIds]);
+
   // 1. Check user visibility based on RLS rules. `tasks` (and so `topLevelTasks`) is already
   // exactly what tasks_select_rls/task_visible_v2 returned for this viewer — 'all' below shows
   // that set as-is, on purpose. 'my_tasks'/'my_team' are convenience NARROWINGS of that same set,
@@ -762,6 +819,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       // Employee-name filter (role-scoped dropdown, distinct from the free-text search below)
       if (selectedAssigneeId !== 'all' && !assigneeIds.includes(selectedAssigneeId)) return false;
 
+      // Platform filter — matches ANY selected platform (an empty selection means "no filter").
+      if (selectedPlatformIds.length > 0) {
+        const platformIds = taskPlatformIdsByTask.get(t.id) || [];
+        if (!selectedPlatformIds.some((id) => platformIds.includes(id))) return false;
+      }
+
       // Search query
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
@@ -785,10 +848,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     selectedPriority,
     selectedStatus,
     selectedAssigneeId,
+    selectedPlatformIds,
     searchQuery,
     clients,
     taskDirectoryUsers,
     taskAssigneeIdsByTask,
+    taskPlatformIdsByTask,
     currentUserId,
     todayStr,
   ]);
@@ -818,6 +883,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         taskType: newSelectedTaskType ? newTaskType : null,
         taskTypeOther: newSelectedTaskType?.is_other ? newTaskTypeOther.trim() || null : null,
         attachments: newAttachments,
+        platformIds: newPlatformIds,
       };
 
       let submission = currentInput;
@@ -866,6 +932,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setNewDescription('');
       setNewEstimatedHours(8);
       setNewAssigneeIds([]);
+      setNewPlatformIds([]);
       setNewAttachments([]);
       setNewBatchId(crypto.randomUUID());
       setNewTaskType('');
@@ -894,6 +961,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setNewBatchId(recovery.batchId);
     setNewClientIds(recovery.input.clientIds);
     setNewAssigneeIds(recovery.input.assigneeIds);
+    setNewPlatformIds(recovery.input.platformIds || []);
     setNewTitle(recovery.input.title);
     setNewDescription(recovery.input.description);
     setNewTeam(recovery.input.team);
@@ -968,6 +1036,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       .filter((row) => row.task_id === task.id)
       .map((row) => row.user_id);
     setEditAssigneeIds(currentAssigneeIds.length > 0 ? currentAssigneeIds : (task.assigned_to ? [task.assigned_to] : []));
+    setEditPlatformIds(taskPlatformLinks.filter((row) => row.task_id === task.id).map((row) => row.platform_id));
     setEditAttachments([]);
     setEditDueDate(task.due_date || '');
     setEditPriority(task.priority);
@@ -995,6 +1064,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setNewClientIds([parentTask.client_id]);
     setNewTeam(parentTask.team || 'SEO');
     setNewAssigneeIds([]);
+    setNewPlatformIds([]);
     setNewAttachments([]);
     setNewBatchId(crypto.randomUUID());
     setNewDueDate(new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0]);
@@ -1030,7 +1100,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         actual_hours: editActualHours,
         task_type: finalTaskType,
         task_type_other: finalTaskTypeOther,
-      }, editAssigneeIds, editAttachments);
+      }, editAssigneeIds, editAttachments, editPlatformIds);
 
       // Update selected details if open
       if (selectedTaskDetails && selectedTaskDetails.id === editingTask.id) {
@@ -1443,6 +1513,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             </button>
           )}
 
+          {/* Platforms admin entry point — executive/head_of_technical/ai_engineer only, matching
+              platforms_write_rls/platforms_update_rls server-side. */}
+          {canManagePlatforms && (
+            <button
+              onClick={() => setIsPlatformManagerOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-stone-300 hover:text-white bg-white/5 hover:bg-white/10 border border-stone-800 transition-all shrink-0"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>Platforms</span>
+            </button>
+          )}
+
           {/* Create Task Button */}
           {!isUiUxDesigner && <button
             onClick={() => {
@@ -1534,7 +1616,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-3 pt-2">
           {/* Team Filter */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Team:</label>
@@ -1628,6 +1710,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             </select>
           </div>
 
+          {/* Platform Filter — matches ANY selected platform */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Platform:</label>
+            <SearchableMultiSelect
+              options={activePlatformOptions.map((p) => ({ id: p.id, label: p.name }))}
+              selectedIds={selectedPlatformIds}
+              onChange={setSelectedPlatformIds}
+              placeholder="All platforms"
+              searchPlaceholder="Search platforms…"
+              emptyMessage="No platforms available."
+            />
+          </div>
+
           {/* Search Input */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Search:</label>
@@ -1661,6 +1756,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   clients={clients}
                   users={taskDirectoryUsers}
                   taskAssignees={taskAssignees}
+                  platforms={platforms}
+                  taskPlatformLinks={taskPlatformLinks}
                   isOverdue={isOverdue}
                   isDueSoon={isDueSoon}
                   onOpenDetails={setSelectedTaskDetails}
@@ -1677,11 +1774,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 const subtasks = tasks.filter((t) => t.parent_task_id === draggingTask.id);
                 const assigneeNames = (taskAssigneeIdsByTask.get(draggingTask.id) || [])
                   .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
+                const platformNames = (taskPlatformIdsByTask.get(draggingTask.id) || [])
+                  .map((id) => platformsById.get(id)?.name)
+                  .filter((name): name is string => !!name);
                 return (
                   <KanbanTaskCardContent
                     task={draggingTask}
                     client={clients.find((c) => c.id === draggingTask.client_id)}
                     assigneeNames={assigneeNames}
+                    platformNames={platformNames}
                     subtaskDone={subtasks.filter((t) => isTaskDone(t.status)).length}
                     subtaskTotal={subtasks.length}
                     overdue={isOverdue(draggingTask)}
@@ -1712,6 +1813,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <th className="p-3.5">Client</th>
                   <th className="p-3.5">Assignee</th>
                   <th className="p-3.5">Team</th>
+                  <th className="p-3.5">Platforms</th>
                   <th className="p-3.5 text-center">Priority</th>
                   <th className="p-3.5 text-center">Status</th>
                   <th className="p-3.5 text-center">Created</th>
@@ -1725,7 +1827,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <tbody className="divide-y divide-stone-800/60">
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-stone-400">
+                    <td colSpan={13} className="p-8 text-center text-stone-400">
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
@@ -1735,6 +1837,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     const assigneeNames = (taskAssigneeIdsByTask.get(task.id) || [])
                       .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
                     const primaryAssigneeName = assigneeNames[0];
+                    const platformNames = (taskPlatformIdsByTask.get(task.id) || [])
+                      .map((id) => platformsById.get(id)?.name)
+                      .filter((name): name is string => !!name);
                     const priority = getPriorityBadge(task.priority);
                     const teamColor = getTeamColor(task.team);
                     const colInfo = columns.find((c) => c.id === task.status);
@@ -1800,6 +1905,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           >
                             {task.team || 'General'}
                           </span>
+                        </td>
+                        <td className="p-3.5">
+                          {platformNames.length > 0 ? (
+                            <div className="flex flex-wrap gap-1 max-w-[160px]">
+                              {platformNames.map((name) => (
+                                <span
+                                  key={name}
+                                  className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-sky-950/50 text-sky-300 border border-sky-800/50"
+                                >
+                                  {name}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-stone-500">—</span>
+                          )}
                         </td>
                         <td className="p-3.5 text-center">
                           <span
@@ -2042,6 +2163,29 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   );
                 })()}
               </div>
+
+              {/* Platforms — read-only display; edited only via the Edit Task form. */}
+              {(() => {
+                const platformNames = (taskPlatformIdsByTask.get(selectedTaskDetails.id) || [])
+                  .map((id) => platformsById.get(id)?.name)
+                  .filter((name): name is string => !!name);
+                if (platformNames.length === 0) return null;
+                return (
+                  <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
+                    <label className="text-[10px] text-stone-400 block mb-1">Platforms:</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {platformNames.map((name) => (
+                        <span
+                          key={name}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-950/50 text-sky-300 border border-sky-800/50"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Hours Tracking, Created & Due Date */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-stone-900/60 border border-stone-800 text-center">
@@ -2459,6 +2603,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {/* Platforms (optional) — always shown, same posture as Task Type below */}
+              <div>
+                <label className="text-xs font-semibold text-stone-300 block mb-1">
+                  Platforms (optional):
+                </label>
+                <SearchableMultiSelect
+                  options={activePlatformOptions.map((p) => ({ id: p.id, label: p.name }))}
+                  selectedIds={newPlatformIds}
+                  onChange={setNewPlatformIds}
+                  disabled={!!activeRecovery}
+                  placeholder="Select platforms…"
+                  searchPlaceholder="Search platforms…"
+                  emptyMessage="No platforms available."
+                />
+              </div>
+
               {/* Task Type (optional) — always shown, same as every other role; never required.
                   Managers (executive/head_of_technical) additionally get the Add type/Edit types
                   controls below, so they can add the first type for a new team/role right from
@@ -2766,6 +2926,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {/* Platforms (optional) — same "never silently drop an inactive one" rule as
+                  editTaskTypeOptions below, via editPlatformOptions. */}
+              <div>
+                <label className="text-xs font-semibold text-stone-300 block mb-1">
+                  Platforms (optional):
+                </label>
+                <SearchableMultiSelect
+                  options={editPlatformOptions.map((p) => ({
+                    id: p.id,
+                    label: `${p.name}${!p.active ? ' (inactive)' : ''}`,
+                  }))}
+                  selectedIds={editPlatformIds}
+                  onChange={setEditPlatformIds}
+                  placeholder="Select platforms…"
+                  searchPlaceholder="Search platforms…"
+                  emptyMessage="No platforms available."
+                />
+              </div>
+
               {/* Task Type (optional) — always shown, same as every other role; includes the
                   task's current type even if it's since been deactivated, so editing never
                   silently drops it. Managers additionally get the Add type/Edit types controls
@@ -2929,6 +3108,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           onCreate={onCreateTaskType}
           onUpdate={onUpdateTaskType}
           onClose={() => setIsTaskTypeManagerOpen(false)}
+        />
+      )}
+
+      {isPlatformManagerOpen && canManagePlatforms && (
+        <PlatformManager
+          platforms={platforms}
+          onCreate={onCreatePlatform}
+          onUpdate={onUpdatePlatform}
+          onClose={() => setIsPlatformManagerOpen(false)}
         />
       )}
     </div>

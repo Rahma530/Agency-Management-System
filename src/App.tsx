@@ -77,6 +77,8 @@ import {
   TaskCommentRecord,
   TaskAttachmentRecord,
   TaskAssigneeRecord,
+  PlatformRecord,
+  TaskPlatformLinkRecord,
   CapacityLogRecord,
   DailyLogRecord,
   ExtraNoteRecord,
@@ -122,10 +124,12 @@ import {
   createTaskCopies,
   deleteTaskAttachmentReference,
   fetchTaskAssignees,
+  fetchTaskPlatformLinks,
   getCapacitySnapshot,
   markTaskViewed,
   removeTaskAttachmentObject,
   setTaskAssignees as persistTaskAssignees,
+  setTaskPlatforms as persistTaskPlatforms,
 } from './lib/taskOperations';
 import {
   clearTaskCreateRecovery,
@@ -281,8 +285,13 @@ export default function App() {
   // task's type can still be resolved/displayed after it's deactivated. See
   // supabase/migrations/20261031900000_task_types.sql.
   const [taskTypes, setTaskTypes] = useState<TaskTypeRecord[]>([]);
+  // Admin-editable platform tag list (platforms table) — includes inactive rows so an existing
+  // task's platform can still be resolved/displayed after it's deactivated. See
+  // supabase/migrations/20261108000000_task_platforms.sql.
+  const [platforms, setPlatforms] = useState<PlatformRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [taskAssignees, setTaskAssignees] = useState<TaskAssigneeRecord[]>([]);
+  const [taskPlatformLinks, setTaskPlatformLinks] = useState<TaskPlatformLinkRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
   const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>(INITIAL_CAPACITY_LOGS);
@@ -1568,11 +1577,26 @@ export default function App() {
           setTaskAssignees([]);
         }
 
+        // Task-platform links — same posture as task_assignees above: source of truth for the
+        // Create/Edit Task forms and the board's chips/filter, independent of any other column.
+        try {
+          setTaskPlatformLinks(await fetchTaskPlatformLinks());
+        } catch (taskPlatformLinkError) {
+          console.error('Failed to load task platform links from Supabase:', taskPlatformLinkError);
+          setTaskPlatformLinks([]);
+        }
+
         // Fetch task types (all rows, including inactive — an existing task may still reference a
         // deactivated type and needs it resolvable for display/editing)
         const { data: taskTypeData, error: taskTypeErr } = await supabase.from('task_types').select('*');
         if (!taskTypeErr && taskTypeData) {
           setTaskTypes(taskTypeData as TaskTypeRecord[]);
+        }
+
+        // Fetch platforms (all rows, including inactive — same reasoning as task types above)
+        const { data: platformData, error: platformErr } = await supabaseRaw.from('platforms').select('*');
+        if (!platformErr && platformData) {
+          setPlatforms(platformData as PlatformRecord[]);
         }
 
         // Fetch task comments
@@ -3562,6 +3586,49 @@ export default function App() {
     showNotification('Task type updated.');
   };
 
+  // 3a-4. Platform CRUD (admin screen, executive/head_of_technical/ai_engineer only — enforced by
+  // platforms_write_rls/platforms_update_rls). No delete handler: there is no DELETE policy on
+  // platforms, so retiring one is always handleUpdatePlatform(id, { active: false }). Uses
+  // supabaseRaw (not the mock proxy) for every write, unlike handleCreateTaskType/
+  // handleUpdateTaskType above — platforms isn't one of that proxy's 4 special-cased tables, so
+  // this is a deliberate consistency choice, not a functional necessity.
+  const handleCreatePlatform = async (
+    row: Omit<PlatformRecord, 'id' | 'created_at' | 'updated_at'>
+  ) => {
+    const newRow: PlatformRecord = { ...row, id: `plat-${Date.now().toString().slice(-6)}` };
+
+    if (supabaseActive) {
+      try {
+        const { data, error } = await supabaseRaw.from('platforms').insert([newRow]).select();
+        if (error) throw error;
+        if (data && data[0]) Object.assign(newRow, data[0]);
+      } catch (err: any) {
+        console.error('Supabase error adding platform:', err);
+        showNotification('Unable to add this platform.', 'info');
+        throw err;
+      }
+    }
+
+    setPlatforms((prev) => [...prev, newRow]);
+    showNotification('Platform added.');
+  };
+
+  const handleUpdatePlatform = async (id: string, updates: Partial<PlatformRecord>) => {
+    if (supabaseActive) {
+      try {
+        const { error } = await supabaseRaw.from('platforms').update(updates).eq('id', id);
+        if (error) throw error;
+      } catch (err: any) {
+        console.error('Supabase error updating platform:', err);
+        showNotification('Unable to save this platform.', 'info');
+        throw err;
+      }
+    }
+
+    setPlatforms((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+    showNotification('Platform updated.');
+  };
+
   // 3b. Mark a brief as viewed by the relevant service Team Lead (clears its "New" indicator).
   // Routed through the mark_brief_viewed() RPC rather than a direct table update — RLS is
   // row-level, not column-level, so a plain UPDATE policy scoped to "clear this timestamp" can't
@@ -3848,7 +3915,8 @@ export default function App() {
     taskId: string,
     updates: Partial<TaskRecord>,
     assigneeIds?: string[],
-    stagedAttachments: StagedTaskAttachment[] = []
+    stagedAttachments: StagedTaskAttachment[] = [],
+    platformIds?: string[]
   ) => {
     const existingTask = tasks.find((t) => t.id === taskId);
     // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
@@ -3900,6 +3968,15 @@ export default function App() {
           .single();
         if (refreshError) throw refreshError;
         persistedTask = refreshedTask as TaskRecord;
+      }
+
+      // Platform membership is persisted only through set_task_platforms. An explicit empty array
+      // clears all platforms; undefined (the default) leaves them untouched — same convention as
+      // requestedAssigneeIds above.
+      if (platformIds !== undefined) {
+        await persistTaskPlatforms(taskId, platformIds);
+        persistedAnyChange = true;
+        setTaskPlatformLinks(await fetchTaskPlatformLinks());
       }
 
       setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
@@ -4007,6 +4084,15 @@ export default function App() {
       assigneeRefreshError = refreshError instanceof Error ? refreshError.message : 'Unknown Supabase error.';
     }
 
+    // createTaskCopies already called set_task_platforms per copy (folding any failure into
+    // batchResult.failures below); this only refreshes the local display state.
+    let platformRefreshError: string | null = null;
+    try {
+      setTaskPlatformLinks(await fetchTaskPlatformLinks());
+    } catch (refreshError) {
+      platformRefreshError = refreshError instanceof Error ? refreshError.message : 'Unknown Supabase error.';
+    }
+
     if (batchResult.failures.length > 0) {
       const clientLabel = (clientId: string) => clients.find((client) => client.id === clientId)?.name || clientId;
       const completedLabels = batchResult.successfulClientIds.map(clientLabel);
@@ -4021,12 +4107,14 @@ export default function App() {
         incompleteDetails.length > 0 ? `Saved copies needing attention: ${incompleteDetails.join(' | ')}.` : '',
         failedDetails.length > 0 ? `Copies not confirmed saved: ${failedDetails.join(' | ')}.` : '',
         assigneeRefreshError ? `Assignee display refresh also failed: ${assigneeRefreshError}.` : '',
+        platformRefreshError ? `Platform display refresh also failed: ${platformRefreshError}.` : '',
         'Retry this open form without changing its task details to reuse the same batch ID without duplicating task copies.',
       ].filter(Boolean).join(' '));
     }
 
-    if (assigneeRefreshError) {
-      throw new Error(`${persistedTasks.length} task ${persistedTasks.length === 1 ? 'copy was' : 'copies were'} saved, but assignees could not be refreshed: ${assigneeRefreshError} Keep this form open and refresh before retrying.`);
+    if (assigneeRefreshError || platformRefreshError) {
+      const detail = [assigneeRefreshError, platformRefreshError].filter(Boolean).join(' ');
+      throw new Error(`${persistedTasks.length} task ${persistedTasks.length === 1 ? 'copy was' : 'copies were'} saved, but assignees/platforms could not be refreshed: ${detail} Keep this form open and refresh before retrying.`);
     }
 
     try {
@@ -5986,6 +6074,10 @@ export default function App() {
                   taskTypes={taskTypes}
                   onCreateTaskType={handleCreateTaskType}
                   onUpdateTaskType={handleUpdateTaskType}
+                  platforms={platforms}
+                  taskPlatformLinks={taskPlatformLinks}
+                  onCreatePlatform={handleCreatePlatform}
+                  onUpdatePlatform={handleUpdatePlatform}
                   initialAssigneeFilter={taskBoardAssigneePrefill}
                   taskComments={taskComments}
                   onAddTaskComment={handleAddTaskComment}

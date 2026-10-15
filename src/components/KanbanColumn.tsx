@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { TaskRecord, TaskStatus, ClientRecord, UserRecord, TaskAssigneeRecord } from '../types/database';
+import { TaskRecord, TaskStatus, ClientRecord, UserRecord, TaskAssigneeRecord, PlatformRecord, TaskPlatformLinkRecord } from '../types/database';
 import { KanbanTaskCard, KanbanColumnMeta } from './KanbanTaskCard';
 import { isTaskDone, resolveOrderedTaskAssigneeIds } from '../lib/taskLifecycle';
 
@@ -17,6 +17,8 @@ interface KanbanColumnProps {
   clients: ClientRecord[];
   users: UserRecord[];
   taskAssignees: TaskAssigneeRecord[];
+  platforms: PlatformRecord[];
+  taskPlatformLinks: TaskPlatformLinkRecord[];
   isOverdue: (task: TaskRecord) => boolean;
   isDueSoon: (task: TaskRecord) => boolean;
   onOpenDetails: (task: TaskRecord) => void;
@@ -37,6 +39,8 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   clients,
   users,
   taskAssignees,
+  platforms,
+  taskPlatformLinks,
   isOverdue,
   isDueSoon,
   onOpenDetails,
@@ -140,6 +144,10 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
             const client = clients.find((c) => c.id === task.client_id);
             const assigneeNames = resolveOrderedTaskAssigneeIds(task.id, taskAssignees, task.assigned_to)
               .map((id) => users.find((u) => u.id === id)?.name || 'Unknown employee');
+            const platformNames = taskPlatformLinks
+              .filter((link) => link.task_id === task.id)
+              .map((link) => platforms.find((p) => p.id === link.platform_id)?.name)
+              .filter((name): name is string => !!name);
             const subtasks = allTasks.filter((t) => t.parent_task_id === task.id);
             const subtaskDone = subtasks.filter((t) => isTaskDone(t.status)).length;
 
@@ -149,6 +157,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 task={task}
                 client={client}
                 assigneeNames={assigneeNames}
+                platformNames={platformNames}
                 subtaskDone={subtaskDone}
                 subtaskTotal={subtasks.length}
                 overdue={isOverdue(task)}
