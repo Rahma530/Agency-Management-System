@@ -21,13 +21,21 @@
 -- Coverage: caller gate (sales caller always rejected; a non-sales caller may query a creative
 -- target; an executive/head_of_technical target requires an executive caller; a deactivated
 -- employee, a nonexistent user, a sales target, and a marketing_manager target are all rejected;
--- p_from > p_to is rejected), the counting rule at its exact boundaries (an empty day, a day with
--- exactly 5 tasks, a day with exactly 6 tasks, today counting a DONE task the same as any other
--- day, a future day counting only open tasks), the return shape (every day in [p_from, p_to] is
--- present, including empty ones, via generate_series — never sparse), and the Cairo-timezone fix
--- (get_server_today()/get_user_schedule_load()'s p_as_of correctly crosses midnight into the next
--- Cairo day while the same instant's bare UTC date has not yet rolled over — simulated via the
--- p_as_of parameter, never by touching the real system clock).
+-- p_from > p_to is rejected), the counting rule at its exact boundaries (a day with no fixture
+-- added, a day with exactly 5 fixture tasks added, a day with exactly 6, today counting a DONE
+-- task the same as any other day, a future day counting only open tasks), the return shape
+-- (every day in [p_from, p_to] is present via generate_series — never sparse), and the
+-- Cairo-timezone fix (get_server_today()/get_user_schedule_load()'s p_as_of correctly crosses
+-- midnight into the next Cairo day while the same instant's bare UTC date has not yet rolled
+-- over — simulated via the p_as_of parameter, never by touching the real system clock).
+--
+-- BASELINE-RELATIVE, not absolute: every numeric assertion is baseline (this environment's real,
+-- pre-existing data, queried before any fixture exists) + the delta this file's own fixtures
+-- contribute — see the BASELINE declare-block comment below. A live run against prod found a
+-- picked persona with real pre-existing tasks on the exact dates this file used to assert
+-- literal counts against (0, 1, 2, 5, 6) — those assertions broke not because the function was
+-- wrong, but because the test assumed the picked user had no real tasks. This file no longer
+-- makes that assumption.
 --
 -- Not covered here (no SQL equivalent): "5 tasks suggests that day," "exactly 6 pushes to the
 -- next working day," and "Friday is skipped" are suggestDueDateAndHours()'s own date-WALKING
@@ -57,14 +65,25 @@ declare
   v_count_by_date jsonb := '{}'::jsonb;
   v_row_count integer;
 
-  -- Scenario 2's own self-diagnosis: a plain join (no RPC, no gate, nothing but tasks +
-  -- task_assignees) for the exact date 2b checks, computed BEFORE calling the function at all —
-  -- if this disagrees with the RPC's own row for that date, the fixture is fine and the function
-  -- is wrong; if it agrees with the RPC but still isn't 1, the fixture itself is wrong. v_diag is
-  -- a scratch buffer for the row-level diagnostic text built into each TEST_FAILED message below,
+  -- BASELINE — this environment's REAL, pre-existing data for the personas this file checks
+  -- counts for, computed with a plain join (no RPC) BEFORE any fixture is inserted, using the
+  -- exact same rule get_user_schedule_load() uses (date <= v_cairo_today: all statuses; date >
+  -- v_cairo_today: open only). Every numeric assertion below is baseline + the delta this file's
+  -- OWN fixtures contribute — never an absolute number — so the suite passes regardless of
+  -- whatever real tasks the picked personas already have (a live run against prod data for
+  -- v_creative_id = usr-0033-ihik, who already had 5 real tasks due on the 2b date, is exactly
+  -- the case this must survive). v_baseline_creative/v_baseline_ordinary are jsonb maps keyed by
+  -- date (text) -> count, built only for the specific dates this file actually checks (not the
+  -- whole window — the row-COUNT check in 2a is already data-independent via generate_series and
+  -- needs no baseline). v_baseline_scenario13 is a scalar: scenario 13 calls the function with an
+  -- explicit p_as_of whose OWN Cairo date (v_as_of_cairo_date) is its cutoff, not v_cairo_today,
+  -- so that one date's baseline cannot share the v_cairo_today-keyed map above. v_diag is a
+  -- scratch buffer for the row-level diagnostic text built into each TEST_FAILED message below,
   -- rebuilt fresh right before each raise (never relied upon outside the `if` block that fills
   -- it).
-  v_expected_count_2b integer;
+  v_baseline_creative jsonb;
+  v_baseline_ordinary jsonb;
+  v_baseline_scenario13 integer;
   v_diag text;
 
   -- A fixed, known instant: 2026-01-14 22:30:00 UTC. January is Cairo standard time (UTC+2,
@@ -140,6 +159,48 @@ begin
   -- Temporarily deactivate v_inactive_id in place — restored only by this whole block's rollback.
   select deactivated_at into v_inactive_original_deactivated_at from public.users where id = v_inactive_id;
   update public.users set deactivated_at = now() where id = v_inactive_id;
+
+  -- ======================================================================
+  -- BASELINE — computed NOW, before any fixture below is inserted, so it reflects only this
+  -- environment's pre-existing real data. See this block's own declare-section comment for why
+  -- these specific (user, date) pairs and not a full-window map.
+  -- ======================================================================
+  select jsonb_object_agg(d::text, cnt) into v_baseline_creative
+  from (
+    select d, (
+      select count(*)
+      from public.tasks t
+      join public.task_assignees ta on ta.task_id = t.id
+      where ta.user_id = v_creative_id
+        and t.due_date = d
+        and (d <= v_cairo_today or t.status not in ('completed', 'closed'))
+    ) as cnt
+    from (values
+      (v_cairo_today - 3), (v_cairo_today - 1), (v_cairo_today),
+      (v_cairo_today + 1), (v_cairo_today + 5), (v_cairo_today + 10)
+    ) as dates(d)
+  ) sub;
+
+  select jsonb_object_agg(d::text, cnt) into v_baseline_ordinary
+  from (
+    select d, (
+      select count(*)
+      from public.tasks t
+      join public.task_assignees ta on ta.task_id = t.id
+      where ta.user_id = v_ordinary_id
+        and t.due_date = d
+        and (d <= v_cairo_today or t.status not in ('completed', 'closed'))
+    ) as cnt
+    from (values (v_cairo_today + 10)) as dates(d)
+  ) sub;
+
+  -- Scenario 13's own cutoff is v_as_of_cairo_date, not v_cairo_today — but since the one date it
+  -- checks EQUALS that cutoff, "date <= cutoff" is trivially true, so this is simply every real
+  -- task of v_creative_id's due exactly then, no status filter needed.
+  select count(*) into v_baseline_scenario13
+  from public.tasks t
+  join public.task_assignees ta on ta.task_id = t.id
+  where ta.user_id = v_creative_id and t.due_date = v_as_of_cairo_date;
 
   -- ======================================================================
   -- Fabricate a throwaway client and throwaway tasks, all assigned to the creative target via
@@ -240,20 +301,13 @@ begin
   -- (including empty ones); the counting rule is correct at the today/past/future boundaries,
   -- INCLUDING that today counts a DONE task exactly the same as a past one (not just open ones).
   --
-  -- Self-diagnosis step (runs BEFORE the RPC, as the current — not yet `authenticated` — role,
-  -- so it cannot be affected by anything the function's own gate or RLS might do): a plain join
-  -- with no RPC involved at all, answering "how many of v_creative_id's tasks are really due on
-  -- the 2b date." If this disagrees with what get_user_schedule_load() reports for that date, the
-  -- FUNCTION is wrong; if it agrees with the RPC (both wrong, or both right but something else
-  -- misread it), the FIXTURE is wrong. Every TEST_FAILED below carries this plus the stored
-  -- fixture row(s) and their task_assignees, so one failed run names the actual cause instead of
-  -- just the symptom.
+  -- Every assertion below is baseline (this environment's real, pre-existing data, computed
+  -- above BEFORE any fixture existed) + the delta this scenario's own fixtures contribute — never
+  -- an absolute number — so it passes regardless of whatever real tasks v_creative_id already
+  -- has. Every TEST_FAILED carries the baseline, the delta expected, and the stored fixture
+  -- row(s) + their task_assignees, so one failed run names the actual cause instead of just the
+  -- symptom.
   -- ======================================================================
-  select count(*) into v_expected_count_2b
-  from public.tasks t
-  join public.task_assignees ta on ta.task_id = t.id
-  where ta.user_id = v_creative_id and t.due_date = v_cairo_today - 3;
-
   perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
   set local role authenticated;
 
@@ -270,21 +324,23 @@ begin
     raise exception 'TEST_FAILED: scenario 2a — expected exactly 15 rows (one per day, 7 before + today + 7 after), got %. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, v_creative_id=%, full_result=%',
       v_row_count, v_cairo_today, v_cairo_today - 7, v_cairo_today + 7, v_creative_id, v_count_by_date;
   end if;
-  if (v_count_by_date ->> (v_cairo_today - 3)::text)::integer <> 1 then
+  if (v_count_by_date ->> (v_cairo_today - 3)::text)::integer <> (v_baseline_creative ->> (v_cairo_today - 3)::text)::integer + 1 then
     select format(
       '{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s}',
       t.id, t.status, t.due_date, t.created_by, t.parent_task_id
     ) into v_diag
     from public.tasks t where t.id = v_task_past_id;
 
-    raise exception 'TEST_FAILED: scenario 2b — a completed task due 3 days ago must still count (today/past counts all). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, expected_count_plain_query=%, fixture_task(v_task_past_id)=%, task_assignees_for_fixture=%, v_creative_id=%',
+    raise exception 'TEST_FAILED: scenario 2b — a completed task due 3 days ago must still count (today/past counts all). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, baseline=%, delta_expected=1, expected=%, fixture_task(v_task_past_id)=%, task_assignees_for_fixture=%, v_creative_id=%',
       v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
       (v_cairo_today - 3)::text, (v_count_by_date ->> (v_cairo_today - 3)::text),
-      v_expected_count_2b, v_diag,
+      (v_baseline_creative ->> (v_cairo_today - 3)::text),
+      (v_baseline_creative ->> (v_cairo_today - 3)::text)::integer + 1,
+      v_diag,
       (select string_agg(user_id, ', ') from public.task_assignees where task_id = v_task_past_id),
       v_creative_id;
   end if;
-  if (v_count_by_date ->> (v_cairo_today - 1)::text)::integer <> 0 then
+  if (v_count_by_date ->> (v_cairo_today - 1)::text)::integer <> (v_baseline_creative ->> (v_cairo_today - 1)::text)::integer then
     select string_agg(
       format('{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s}', t.id, t.status, t.due_date, t.created_by, t.parent_task_id),
       '; '
@@ -293,12 +349,13 @@ begin
     join public.task_assignees ta on ta.task_id = t.id
     where ta.user_id = v_creative_id and t.due_date = v_cairo_today - 1;
 
-    raise exception 'TEST_FAILED: scenario 2c — an empty PAST day must still appear in the result, with count 0. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, v_creative_id=%, unexpected_tasks_found_for_date=%',
+    raise exception 'TEST_FAILED: scenario 2c — a PAST day with no fixture added must match its baseline exactly (no delta). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, baseline=%, delta_expected=0, v_creative_id=%, real_tasks_found_for_date=%',
       v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
       (v_cairo_today - 1)::text, (v_count_by_date ->> (v_cairo_today - 1)::text),
+      (v_baseline_creative ->> (v_cairo_today - 1)::text),
       v_creative_id, coalesce(v_diag, '(none)');
   end if;
-  if (v_count_by_date ->> (v_cairo_today)::text)::integer <> 2 then
+  if (v_count_by_date ->> (v_cairo_today)::text)::integer <> (v_baseline_creative ->> (v_cairo_today)::text)::integer + 2 then
     select string_agg(
       format('{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s, assignees:%s}',
         t.id, t.status, t.due_date, t.created_by, t.parent_task_id,
@@ -307,12 +364,14 @@ begin
     ) into v_diag
     from public.tasks t where t.id in (v_task_today_todo_id, v_task_today_done_id);
 
-    raise exception 'TEST_FAILED: scenario 2d — today must count BOTH its open task and its closed task (2 total), the same today/past rule as any other non-future day. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, v_creative_id=%, fixtures=%',
+    raise exception 'TEST_FAILED: scenario 2d — today must count BOTH its open task and its closed task on top of baseline (+2 total), the same today/past rule as any other non-future day. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, baseline=%, delta_expected=2, expected=%, v_creative_id=%, fixtures=%',
       v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
       (v_cairo_today)::text, (v_count_by_date ->> (v_cairo_today)::text),
+      (v_baseline_creative ->> (v_cairo_today)::text),
+      (v_baseline_creative ->> (v_cairo_today)::text)::integer + 2,
       v_creative_id, v_diag;
   end if;
-  if (v_count_by_date ->> (v_cairo_today + 5)::text)::integer <> 1 then
+  if (v_count_by_date ->> (v_cairo_today + 5)::text)::integer <> (v_baseline_creative ->> (v_cairo_today + 5)::text)::integer + 1 then
     select string_agg(
       format('{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s, assignees:%s}',
         t.id, t.status, t.due_date, t.created_by, t.parent_task_id,
@@ -321,13 +380,17 @@ begin
     ) into v_diag
     from public.tasks t where t.id in (v_task_future_open_id, v_task_future_done_id);
 
-    raise exception 'TEST_FAILED: scenario 2e — a future day with one open + one completed task must count only the open one (expected 1). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, v_creative_id=%, fixtures=%',
+    raise exception 'TEST_FAILED: scenario 2e — a future day with one open + one completed task must count only the open one on top of baseline (+1, not +2). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, baseline=%, delta_expected=1, expected=%, v_creative_id=%, fixtures=%',
       v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
       (v_cairo_today + 5)::text, (v_count_by_date ->> (v_cairo_today + 5)::text),
+      (v_baseline_creative ->> (v_cairo_today + 5)::text),
+      (v_baseline_creative ->> (v_cairo_today + 5)::text)::integer + 1,
       v_creative_id, v_diag;
   end if;
-  if (v_count_by_date ->> (v_cairo_today + 1)::text)::integer <> 0 then
-    raise exception 'TEST_FAILED: scenario 2f — an empty FUTURE day must still appear in the result, with count 0.';
+  if (v_count_by_date ->> (v_cairo_today + 1)::text)::integer <> (v_baseline_creative ->> (v_cairo_today + 1)::text)::integer then
+    raise exception 'TEST_FAILED: scenario 2f — a FUTURE day with no fixture added must match its baseline exactly (no delta; still appears in the result rather than being sparse). DIAGNOSTIC: v_cairo_today=%, row_for_date={due_date:%, task_count:%}, baseline=%, delta_expected=0, v_creative_id=%',
+      v_cairo_today, (v_cairo_today + 1)::text, (v_count_by_date ->> (v_cairo_today + 1)::text),
+      (v_baseline_creative ->> (v_cairo_today + 1)::text), v_creative_id;
   end if;
 
   -- ======================================================================
@@ -362,11 +425,18 @@ begin
     select task_count into v_count_ordinary from public.get_user_schedule_load(v_ordinary_id, v_boundary_day, v_boundary_day);
     reset role; perform set_config('request.jwt.claims', '', true);
 
-    if v_count_creative <> 5 then
-      raise exception 'TEST_FAILED: scenario 3 — the creative target should show exactly 5 tasks on the boundary day, got %.', v_count_creative;
+    -- All 6 boundary fixtures are 'todo' (open) on a FUTURE day, so every one of them
+    -- contributes +1 to the delta regardless of baseline — this scenario is about the exact
+    -- boundary value (5, then 6), not about the day being empty.
+    if v_count_creative <> (v_baseline_creative ->> v_boundary_day::text)::integer + 5 then
+      raise exception 'TEST_FAILED: scenario 3 — the creative target should show baseline+5 tasks on the boundary day. DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=5, expected=%, got=%.',
+        v_boundary_day, (v_baseline_creative ->> v_boundary_day::text),
+        (v_baseline_creative ->> v_boundary_day::text)::integer + 5, v_count_creative;
     end if;
-    if v_count_ordinary <> 1 then
-      raise exception 'TEST_FAILED: scenario 3b — the ordinary employee should show exactly 1 task on the same day (counting is per-assignee, not per-day globally), got %.', v_count_ordinary;
+    if v_count_ordinary <> (v_baseline_ordinary ->> v_boundary_day::text)::integer + 1 then
+      raise exception 'TEST_FAILED: scenario 3b — the ordinary employee should show baseline+1 task on the same day (counting is per-assignee, not per-day globally). DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=1, expected=%, got=%.',
+        v_boundary_day, (v_baseline_ordinary ->> v_boundary_day::text),
+        (v_baseline_ordinary ->> v_boundary_day::text)::integer + 1, v_count_ordinary;
     end if;
 
     -- Now add a 6th task for the creative target on the SAME day — confirms the boundary value
@@ -377,8 +447,10 @@ begin
     set local role authenticated;
     select task_count into v_count_creative from public.get_user_schedule_load(v_creative_id, v_boundary_day, v_boundary_day);
     reset role; perform set_config('request.jwt.claims', '', true);
-    if v_count_creative <> 6 then
-      raise exception 'TEST_FAILED: scenario 3c — the creative target should show exactly 6 tasks on the boundary day after the 6th is added, got %.', v_count_creative;
+    if v_count_creative <> (v_baseline_creative ->> v_boundary_day::text)::integer + 6 then
+      raise exception 'TEST_FAILED: scenario 3c — the creative target should show baseline+6 tasks on the boundary day after the 6th is added. DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=6, expected=%, got=%.',
+        v_boundary_day, (v_baseline_creative ->> v_boundary_day::text),
+        (v_baseline_creative ->> v_boundary_day::text)::integer + 6, v_count_creative;
     end if;
   end;
 
@@ -388,9 +460,12 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_exec_auth)::text, true);
   set local role authenticated;
   if not exists (
-    select 1 from public.get_user_schedule_load(v_creative_id, v_cairo_today, v_cairo_today) where task_count = 2
+    select 1 from public.get_user_schedule_load(v_creative_id, v_cairo_today, v_cairo_today)
+    where task_count = (v_baseline_creative ->> v_cairo_today::text)::integer + 2
   ) then
-    raise exception 'TEST_FAILED: scenario 4 — an executive caller should see the same today-count (2) for the creative target.';
+    raise exception 'TEST_FAILED: scenario 4 — an executive caller should see the same today-count (baseline+2) for the creative target as scenario 2d. DIAGNOSTIC: v_cairo_today=%, baseline=%, delta_expected=2, expected=%.',
+      v_cairo_today, (v_baseline_creative ->> v_cairo_today::text),
+      (v_baseline_creative ->> v_cairo_today::text)::integer + 2;
   end if;
   reset role; perform set_config('request.jwt.claims', '', true);
 
@@ -497,9 +572,10 @@ begin
   set local role authenticated;
   if not exists (
     select 1 from public.get_user_schedule_load(v_creative_id, v_as_of_cairo_date, v_as_of_cairo_date, v_as_of)
-    where task_count = 1
+    where task_count = v_baseline_scenario13 + 1
   ) then
-    raise exception 'TEST_FAILED: scenario 13 — a completed task due on the Cairo date must still count as "today" when p_as_of is the Cairo-midnight-crossing instant (proves the function uses Cairo''s date, not UTC''s, for the today/past-vs-future decision).';
+    raise exception 'TEST_FAILED: scenario 13 — a completed task due on the Cairo date must still count as "today" when p_as_of is the Cairo-midnight-crossing instant (proves the function uses Cairo''s date, not UTC''s, for the today/past-vs-future decision). DIAGNOSTIC: v_as_of=%, v_as_of_cairo_date=%, baseline=%, delta_expected=1, expected=%.',
+      v_as_of, v_as_of_cairo_date, v_baseline_scenario13, v_baseline_scenario13 + 1;
   end if;
   reset role; perform set_config('request.jwt.claims', '', true);
 
