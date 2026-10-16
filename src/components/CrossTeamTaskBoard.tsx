@@ -61,6 +61,7 @@ import {
   isTaskDone,
   canCloseTask,
   canSubmitTaskForClosing,
+  canShowDoneLink,
   canEditTaskAssignees,
   resolveTaskAssigneeIds,
   resolveOrderedTaskAssigneeIds,
@@ -241,14 +242,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     // Mark once when a different task is opened; callback identity must not retrigger the write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTaskDetails?.id]);
-  // Module 12 Phase 9: Drive Link draft, synced whenever a different task's details open.
-  const [driveLinkDraft, setDriveLinkDraft] = useState('');
-  const [isSavingDriveLink, setIsSavingDriveLink] = useState(false);
-  useEffect(() => {
-    setDriveLinkDraft(selectedTaskDetails?.drive_link || '');
-  }, [selectedTaskDetails?.id]);
-  // Done Link draft — same pattern as Drive Link above, distinct field: the assignee's finished-
-  // work link, submitted once the task reaches 'completed', reviewed before closing.
+  // Done Link draft, synced whenever a different task's details open — the one general-purpose
+  // task link field (owner decision; Drive Link has been removed, see canShowDoneLink()).
   const [doneLinkDraft, setDoneLinkDraft] = useState('');
   const [isSavingDoneLink, setIsSavingDoneLink] = useState(false);
   useEffect(() => {
@@ -1135,10 +1130,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
     // 'closed' is the one transition every other status change here is deliberately NOT gated
-    // for: it requires the assignee's done_link to already be submitted and the mover to be the
-    // task's creator, its assignee, or head_of_technical (canCloseTask/canSubmitTaskForClosing in
-    // lib/taskLifecycle.ts) — matched server-side by tasks_update_rls. Every other target status
-    // is unrestricted, same as before.
+    // for: the task must have reached 'completed' first, and the mover must be the task's
+    // creator, its assignee, or head_of_technical (canCloseTask/canSubmitTaskForClosing in
+    // lib/taskLifecycle.ts) — matched server-side by tasks_update_rls. A Done Link is optional and
+    // never required to close a task. Every other target status is unrestricted, same as before.
     if (targetStatus === 'closed') {
       const task = tasks.find((t) => t.id === taskId);
       const denyReason = !task
@@ -1146,7 +1141,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         : !currentUser || !canCloseTask(task, currentUser)
         ? 'Only the task\'s creator, its assignee, or Head of Technical can close it.'
         : !canSubmitTaskForClosing(task)
-        ? 'This task needs a Done Link before it can be closed.'
+        ? 'This task must reach Completed before it can be closed.'
         : null;
       if (denyReason) {
         setNotification({ text: denyReason, type: 'error' });
@@ -1169,20 +1164,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     }
   };
 
-  // Module 12 Phase 9
-  const handleSaveDriveLink = async () => {
-    if (!selectedTaskDetails || !onUpdateTask) return;
-    const nextValue = driveLinkDraft.trim() || null;
-    setIsSavingDriveLink(true);
-    try {
-      await onUpdateTask(selectedTaskDetails.id, { drive_link: nextValue });
-      setSelectedTaskDetails({ ...selectedTaskDetails, drive_link: nextValue });
-    } finally {
-      setIsSavingDriveLink(false);
-    }
-  };
-
-  // Done Link: same save pattern as Drive Link above, distinct field.
   const handleSaveDoneLink = async () => {
     if (!selectedTaskDetails || !onUpdateTask) return;
     const nextValue = doneLinkDraft.trim() || null;
@@ -1820,7 +1801,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <th className="p-3.5 text-center">Due Date</th>
                   <th className="p-3.5 text-center">Est. Hours</th>
                   <th className="p-3.5 text-center">Act. Hours</th>
-                  <th className="p-3.5 text-center">Drive Link</th>
+                  <th className="p-3.5 text-center">Done Link</th>
                   <th className="p-3.5 text-center">Actions</th>
                 </tr>
               </thead>
@@ -1960,13 +1941,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                             : '—'}
                         </td>
                         <td className="p-3.5 text-center" onClick={(e) => e.stopPropagation()}>
-                          {task.drive_link ? (
+                          {task.done_link ? (
                             <a
-                              href={task.drive_link}
+                              href={task.done_link}
                               target="_blank"
                               rel="noreferrer"
                               className="inline-flex items-center gap-1 text-purple-300 hover:text-white"
-                              title={task.drive_link}
+                              title={task.done_link}
                             >
                               <Link2 className="w-3.5 h-3.5" />
                             </a>
@@ -2219,47 +2200,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Drive Link (Module 12 Phase 9) — manually-pasted URL, no real Drive API */}
-              <div>
-                <label className="text-[11px] font-semibold text-stone-400 mb-1.5 flex items-center gap-1.5">
-                  <Link2 className="w-3.5 h-3.5" />
-                  <span>Drive Link:</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="url"
-                    value={driveLinkDraft}
-                    onChange={(e) => setDriveLinkDraft(e.target.value)}
-                    placeholder="https://drive.google.com/..."
-                    className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400"
-                  />
-                  {onUpdateTask && driveLinkDraft !== (selectedTaskDetails.drive_link || '') && (
-                    <button
-                      onClick={handleSaveDriveLink}
-                      disabled={isSavingDriveLink}
-                      className="px-3 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shrink-0"
-                    >
-                      {isSavingDriveLink ? 'Saving...' : 'Save'}
-                    </button>
-                  )}
-                  {selectedTaskDetails.drive_link && (
-                    <a
-                      href={selectedTaskDetails.drive_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-2 rounded-xl bg-stone-900/80 border border-stone-800 text-purple-300 hover:text-white shrink-0"
-                      title="Open in new tab"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                    </a>
-                  )}
-                </div>
-              </div>
-
-              {/* Done Link — surfaced once the task reaches 'completed': the assignee's link to
-                  their finished work, for the creator/assignee/head_of_technical to review before
-                  closing. Distinct from Drive Link above (always-visible general reference). */}
-              {isTaskDone(selectedTaskDetails.status) && (
+              {/* Done Link — the one general-purpose task link field (owner decision: Drive Link
+                  has been removed everywhere). Optional on every task; shown from 'in_progress'
+                  onward OR whenever a value is already set regardless of status (e.g. a
+                  backfilled task that's since moved back to 'todo'/'blocked' — see
+                  canShowDoneLink()); never required to close a task (canSubmitTaskForClosing()). */}
+              {canShowDoneLink(selectedTaskDetails) && (
                 <div>
                   <label className="text-[11px] font-semibold text-stone-400 mb-1.5 flex items-center gap-1.5">
                     <Link2 className="w-3.5 h-3.5" />
@@ -2299,7 +2245,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <button
                       onClick={() => handleMoveStatus(selectedTaskDetails.id, 'closed')}
                       disabled={!canSubmitTaskForClosing(selectedTaskDetails)}
-                      title={!canSubmitTaskForClosing(selectedTaskDetails) ? 'Add a Done Link before closing this task.' : undefined}
+                      title={!canSubmitTaskForClosing(selectedTaskDetails) ? 'This task must reach Completed before it can be closed.' : undefined}
                       className="mt-2 px-3 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       Close Task
