@@ -126,21 +126,32 @@ begin
     raise exception 'TEST_SETUP_FAILED: need one active sales, executive, head_of_technical, and marketing_manager user, each with auth_id.';
   end if;
 
-  select id, auth_id into v_ordinary_id, v_ordinary_auth
-    from public.users
-    where auth_id is not null and deactivated_at is null
-      and role not in ('executive', 'head_of_technical', 'ai_engineer', 'sales', 'marketing_manager')
-      and role not like '%team_lead'
-    order by id limit 1;
-  if v_ordinary_id is null then
-    raise exception 'TEST_SETUP_FAILED: need one active ordinary (non-admin, non-sales, non-marketing-manager, non-team-lead) employee with auth_id.';
-  end if;
-
   select id, auth_id into v_creative_id, v_creative_auth
     from public.users where role in ('graphic_designer', 'video_editor', 'ui_ux_designer') and auth_id is not null and deactivated_at is null
     order by id limit 1;
   if v_creative_id is null then
     raise exception 'TEST_SETUP_FAILED: need one active graphic_designer/video_editor/ui_ux_designer with auth_id.';
+  end if;
+
+  -- Selected AFTER v_creative_id, and explicitly excluding it: v_ordinary_id's own filter below
+  -- excludes admin-ish roles but NOT graphic_designer/video_editor/ui_ux_designer, so without
+  -- `id <> v_creative_id` this can resolve to the SAME real user as v_creative_id whenever that
+  -- creative employee also happens to be the lowest-id user satisfying the broader "ordinary"
+  -- filter. A live run hit exactly this: scenario 3's "assign the 6th task to the ordinary
+  -- employee instead" silently assigned it to v_creative_id too (same account), inflating
+  -- creative's own count by 1 before the deliberate 6th addition ever happened.
+  select id, auth_id into v_ordinary_id, v_ordinary_auth
+    from public.users
+    where auth_id is not null and deactivated_at is null
+      and role not in ('executive', 'head_of_technical', 'ai_engineer', 'sales', 'marketing_manager')
+      and role not like '%team_lead'
+      and id <> v_creative_id
+    order by id limit 1;
+  if v_ordinary_id is null then
+    raise exception 'TEST_SETUP_FAILED: need one active ordinary (non-admin, non-sales, non-marketing-manager, non-team-lead) employee with auth_id, distinct from the creative target.';
+  end if;
+  if v_ordinary_id = v_creative_id then
+    raise exception 'TEST_SETUP_FAILED: v_ordinary_id resolved to the same user as v_creative_id (%) despite the exclusion — scenario 3''s per-assignee distinction would be meaningless.', v_creative_id;
   end if;
 
   select id, auth_id into v_inactive_id, v_inactive_auth_unused
@@ -429,14 +440,28 @@ begin
     -- contributes +1 to the delta regardless of baseline — this scenario is about the exact
     -- boundary value (5, then 6), not about the day being empty.
     if v_count_creative <> (v_baseline_creative ->> v_boundary_day::text)::integer + 5 then
-      raise exception 'TEST_FAILED: scenario 3 — the creative target should show baseline+5 tasks on the boundary day. DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=5, expected=%, got=%.',
+      select string_agg(format('{id:%s, status:%s, due_date:%s}', t.id, t.status, t.due_date), '; ')
+      into v_diag
+      from public.tasks t
+      join public.task_assignees ta on ta.task_id = t.id
+      where ta.user_id = v_creative_id and t.due_date = v_boundary_day;
+
+      raise exception 'TEST_FAILED: scenario 3 — the creative target should show baseline+5 tasks on the boundary day. DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=5, expected=%, got=%, tasks_on_date_for_creative=%, v_creative_id=%, v_ordinary_id=%.',
         v_boundary_day, (v_baseline_creative ->> v_boundary_day::text),
-        (v_baseline_creative ->> v_boundary_day::text)::integer + 5, v_count_creative;
+        (v_baseline_creative ->> v_boundary_day::text)::integer + 5, v_count_creative, v_diag,
+        v_creative_id, v_ordinary_id;
     end if;
     if v_count_ordinary <> (v_baseline_ordinary ->> v_boundary_day::text)::integer + 1 then
-      raise exception 'TEST_FAILED: scenario 3b — the ordinary employee should show baseline+1 task on the same day (counting is per-assignee, not per-day globally). DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=1, expected=%, got=%.',
+      select string_agg(format('{id:%s, status:%s, due_date:%s}', t.id, t.status, t.due_date), '; ')
+      into v_diag
+      from public.tasks t
+      join public.task_assignees ta on ta.task_id = t.id
+      where ta.user_id = v_ordinary_id and t.due_date = v_boundary_day;
+
+      raise exception 'TEST_FAILED: scenario 3b — the ordinary employee should show baseline+1 task on the same day (counting is per-assignee, not per-day globally). DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=1, expected=%, got=%, tasks_on_date_for_ordinary=%, v_creative_id=%, v_ordinary_id=%.',
         v_boundary_day, (v_baseline_ordinary ->> v_boundary_day::text),
-        (v_baseline_ordinary ->> v_boundary_day::text)::integer + 1, v_count_ordinary;
+        (v_baseline_ordinary ->> v_boundary_day::text)::integer + 1, v_count_ordinary, v_diag,
+        v_creative_id, v_ordinary_id;
     end if;
 
     -- Now add a 6th task for the creative target on the SAME day — confirms the boundary value
@@ -448,9 +473,16 @@ begin
     select task_count into v_count_creative from public.get_user_schedule_load(v_creative_id, v_boundary_day, v_boundary_day);
     reset role; perform set_config('request.jwt.claims', '', true);
     if v_count_creative <> (v_baseline_creative ->> v_boundary_day::text)::integer + 6 then
-      raise exception 'TEST_FAILED: scenario 3c — the creative target should show baseline+6 tasks on the boundary day after the 6th is added. DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=6, expected=%, got=%.',
+      select string_agg(format('{id:%s, status:%s, due_date:%s}', t.id, t.status, t.due_date), '; ')
+      into v_diag
+      from public.tasks t
+      join public.task_assignees ta on ta.task_id = t.id
+      where ta.user_id = v_creative_id and t.due_date = v_boundary_day;
+
+      raise exception 'TEST_FAILED: scenario 3c — the creative target should show baseline+6 tasks on the boundary day after the 6th is added. DIAGNOSTIC: v_boundary_day=%, baseline=%, delta_expected=6, expected=%, got=%, tasks_on_date_for_creative=%, v_creative_id=%, v_ordinary_id=%.',
         v_boundary_day, (v_baseline_creative ->> v_boundary_day::text),
-        (v_baseline_creative ->> v_boundary_day::text)::integer + 6, v_count_creative;
+        (v_baseline_creative ->> v_boundary_day::text)::integer + 6, v_count_creative, v_diag,
+        v_creative_id, v_ordinary_id;
     end if;
   end;
 
