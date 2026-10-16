@@ -10,6 +10,16 @@ export interface CapacitySnapshotRow {
 export interface UserScheduleLoadRow {
   due_date: string;
   task_count: number;
+  carried_over_count: number;
+}
+
+export interface UserScheduleLoad {
+  loadByDate: Record<string, number>;
+  // This assignee's overdue, still-open task count — see get_user_schedule_load()'s own comment
+  // in supabase/migrations/20261111000000_user_schedule_load_carry_over.sql. Not scoped to
+  // [fromDate, toDate]; a single scalar for the whole lookup, not a per-day map, since the RPC
+  // itself only ever attaches it to one row (the first working day).
+  carriedOverCount: number;
 }
 
 export interface StagedTaskAttachment {
@@ -194,25 +204,30 @@ export const getCapacitySnapshot = async (userIds: string[]): Promise<Record<str
 };
 
 // Backs the designer-scheduling suggestion feature — see get_user_schedule_load() in
-// supabase/migrations/20261110000000_user_schedule_load.sql and the pure algorithm in
+// supabase/migrations/20261111000000_user_schedule_load_carry_over.sql and the pure algorithm in
 // lib/designerScheduling.ts. Returns a due_date -> task_count map covering every day in
-// [fromDate, toDate] (including empty days, counted as 0 by the RPC itself); never titles, ids,
-// or status — only the aggregate the suggester needs.
+// [fromDate, toDate] (including empty days, counted as 0 by the RPC itself) plus this assignee's
+// overdue-open carry-over count (a single scalar, not a per-day map — see UserScheduleLoad's own
+// comment); never titles, ids, or status — only the aggregates the suggester needs.
 export const getUserScheduleLoad = async (
   userId: string,
   fromDate: string,
   toDate: string
-): Promise<Record<string, number>> => {
+): Promise<UserScheduleLoad> => {
   const { data, error } = await supabaseRaw.rpc('get_user_schedule_load', {
     p_user_id: userId,
     p_from: fromDate,
     p_to: toDate,
   });
   throwIfError(error, 'Unable to load schedule data.');
-  return ((data as UserScheduleLoadRow[] | null) || []).reduce<Record<string, number>>((result, row) => {
-    result[row.due_date] = Number(row.task_count);
-    return result;
-  }, {});
+  const rows = (data as UserScheduleLoadRow[] | null) || [];
+  return {
+    loadByDate: rows.reduce<Record<string, number>>((result, row) => {
+      result[row.due_date] = Number(row.task_count);
+      return result;
+    }, {}),
+    carriedOverCount: rows.reduce((total, row) => total + Number(row.carried_over_count), 0),
+  };
 };
 
 // The one authoritative "today" for the designer-scheduling suggestion feature — Africa/Cairo's

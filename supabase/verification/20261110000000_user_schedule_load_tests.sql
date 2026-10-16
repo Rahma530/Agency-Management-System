@@ -57,6 +57,16 @@ declare
   v_count_by_date jsonb := '{}'::jsonb;
   v_row_count integer;
 
+  -- Scenario 2's own self-diagnosis: a plain join (no RPC, no gate, nothing but tasks +
+  -- task_assignees) for the exact date 2b checks, computed BEFORE calling the function at all —
+  -- if this disagrees with the RPC's own row for that date, the fixture is fine and the function
+  -- is wrong; if it agrees with the RPC but still isn't 1, the fixture itself is wrong. v_diag is
+  -- a scratch buffer for the row-level diagnostic text built into each TEST_FAILED message below,
+  -- rebuilt fresh right before each raise (never relied upon outside the `if` block that fills
+  -- it).
+  v_expected_count_2b integer;
+  v_diag text;
+
   -- A fixed, known instant: 2026-01-14 22:30:00 UTC. January is Cairo standard time (UTC+2,
   -- outside Egypt's DST window), so this is 2026-01-15 00:30:00 in Cairo — 30 minutes into the
   -- "00:00-03:00 Cairo window" this fix specifically targets, and on a DIFFERENT calendar date
@@ -68,9 +78,19 @@ declare
   v_as_of_utc_date date := date '2026-01-14';
   v_server_today date;
   v_task_cairo_today_id text;
+
+  -- The function's OWN notion of "today" (Africa/Cairo, via get_server_today()) — every fixture
+  -- due_date, query window bound, and assertion lookup below uses THIS, never a bare SQL
+  -- CURRENT_DATE (session-timezone-dependent), so the whole suite cannot flake near a
+  -- Cairo/session-timezone midnight-crossing: there is now exactly one "today" in this file, the
+  -- same one get_user_schedule_load() itself computes, fetched once up front and reused
+  -- everywhere (scenarios 12/13's OWN fixed historical instant are intentionally separate from
+  -- this and untouched).
+  v_cairo_today date;
 begin
   reset role;
   perform set_config('request.jwt.claims', '', true);
+  select public.get_server_today() into v_cairo_today;
 
   -- ======================================================================
   -- Setup: select real personas defensively.
@@ -138,11 +158,11 @@ begin
 
   insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
   values
-    (v_task_past_id, v_client_id, 'ZZ past completed', 'test', v_ordinary_id, 'Technical', 'completed', current_date - 3, 'low'),
-    (v_task_today_todo_id, v_client_id, 'ZZ today todo', 'test', v_ordinary_id, 'Technical', 'todo', current_date, 'low'),
-    (v_task_today_done_id, v_client_id, 'ZZ today done', 'test', v_ordinary_id, 'Technical', 'closed', current_date, 'low'),
-    (v_task_future_open_id, v_client_id, 'ZZ future open', 'test', v_ordinary_id, 'Technical', 'in_progress', current_date + 5, 'low'),
-    (v_task_future_done_id, v_client_id, 'ZZ future done', 'test', v_ordinary_id, 'Technical', 'completed', current_date + 5, 'low');
+    (v_task_past_id, v_client_id, 'ZZ past completed', 'test', v_ordinary_id, 'Technical', 'completed', v_cairo_today - 3, 'low'),
+    (v_task_today_todo_id, v_client_id, 'ZZ today todo', 'test', v_ordinary_id, 'Technical', 'todo', v_cairo_today, 'low'),
+    (v_task_today_done_id, v_client_id, 'ZZ today done', 'test', v_ordinary_id, 'Technical', 'closed', v_cairo_today, 'low'),
+    (v_task_future_open_id, v_client_id, 'ZZ future open', 'test', v_ordinary_id, 'Technical', 'in_progress', v_cairo_today + 5, 'low'),
+    (v_task_future_done_id, v_client_id, 'ZZ future done', 'test', v_ordinary_id, 'Technical', 'completed', v_cairo_today + 5, 'low');
 
   insert into public.task_assignees (task_id, user_id, added_by)
   values
@@ -153,12 +173,62 @@ begin
     (v_task_future_done_id, v_creative_id, v_ordinary_id);
 
   -- ======================================================================
+  -- Sanity: confirm each fixture task was actually STORED with the status/due_date/assignee this
+  -- whole scenario depends on — catches a trigger, default, or constraint silently rewriting a
+  -- value on insert (Step 1's own hint (d)) before any assertion below can misattribute a mismatch
+  -- to the function instead of the fixture.
+  -- ======================================================================
+  declare
+    v_check record;
+  begin
+    select id, status, due_date into v_check from public.tasks where id = v_task_past_id;
+    if v_check.status <> 'completed' or v_check.due_date <> v_cairo_today - 3 then
+      raise exception 'TEST_SETUP_FAILED: v_task_past_id stored as status=%, due_date=% (expected completed, %).', v_check.status, v_check.due_date, v_cairo_today - 3;
+    end if;
+    if not exists (select 1 from public.task_assignees where task_id = v_task_past_id and user_id = v_creative_id) then
+      raise exception 'TEST_SETUP_FAILED: v_task_past_id has no task_assignees row for v_creative_id (%).', v_creative_id;
+    end if;
+
+    select id, status, due_date into v_check from public.tasks where id = v_task_today_todo_id;
+    if v_check.status <> 'todo' or v_check.due_date <> v_cairo_today then
+      raise exception 'TEST_SETUP_FAILED: v_task_today_todo_id stored as status=%, due_date=% (expected todo, %).', v_check.status, v_check.due_date, v_cairo_today;
+    end if;
+    if not exists (select 1 from public.task_assignees where task_id = v_task_today_todo_id and user_id = v_creative_id) then
+      raise exception 'TEST_SETUP_FAILED: v_task_today_todo_id has no task_assignees row for v_creative_id (%).', v_creative_id;
+    end if;
+
+    select id, status, due_date into v_check from public.tasks where id = v_task_today_done_id;
+    if v_check.status <> 'closed' or v_check.due_date <> v_cairo_today then
+      raise exception 'TEST_SETUP_FAILED: v_task_today_done_id stored as status=%, due_date=% (expected closed, %).', v_check.status, v_check.due_date, v_cairo_today;
+    end if;
+    if not exists (select 1 from public.task_assignees where task_id = v_task_today_done_id and user_id = v_creative_id) then
+      raise exception 'TEST_SETUP_FAILED: v_task_today_done_id has no task_assignees row for v_creative_id (%).', v_creative_id;
+    end if;
+
+    select id, status, due_date into v_check from public.tasks where id = v_task_future_open_id;
+    if v_check.status <> 'in_progress' or v_check.due_date <> v_cairo_today + 5 then
+      raise exception 'TEST_SETUP_FAILED: v_task_future_open_id stored as status=%, due_date=% (expected in_progress, %).', v_check.status, v_check.due_date, v_cairo_today + 5;
+    end if;
+    if not exists (select 1 from public.task_assignees where task_id = v_task_future_open_id and user_id = v_creative_id) then
+      raise exception 'TEST_SETUP_FAILED: v_task_future_open_id has no task_assignees row for v_creative_id (%).', v_creative_id;
+    end if;
+
+    select id, status, due_date into v_check from public.tasks where id = v_task_future_done_id;
+    if v_check.status <> 'completed' or v_check.due_date <> v_cairo_today + 5 then
+      raise exception 'TEST_SETUP_FAILED: v_task_future_done_id stored as status=%, due_date=% (expected completed, %).', v_check.status, v_check.due_date, v_cairo_today + 5;
+    end if;
+    if not exists (select 1 from public.task_assignees where task_id = v_task_future_done_id and user_id = v_creative_id) then
+      raise exception 'TEST_SETUP_FAILED: v_task_future_done_id has no task_assignees row for v_creative_id (%).', v_creative_id;
+    end if;
+  end;
+
+  -- ======================================================================
   -- Scenario 1: sales may never call this function, regardless of target.
   -- ======================================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_sales_auth)::text, true);
   set local role authenticated;
   begin
-    perform * from public.get_user_schedule_load(v_creative_id, current_date - 7, current_date + 7);
+    perform * from public.get_user_schedule_load(v_creative_id, v_cairo_today - 7, v_cairo_today + 7);
     raise exception 'TEST_FAILED: scenario 1 — sales must never be able to query schedule load.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -169,13 +239,27 @@ begin
   -- Scenario 2: a non-sales caller may query a creative target; every day in range comes back
   -- (including empty ones); the counting rule is correct at the today/past/future boundaries,
   -- INCLUDING that today counts a DONE task exactly the same as a past one (not just open ones).
+  --
+  -- Self-diagnosis step (runs BEFORE the RPC, as the current — not yet `authenticated` — role,
+  -- so it cannot be affected by anything the function's own gate or RLS might do): a plain join
+  -- with no RPC involved at all, answering "how many of v_creative_id's tasks are really due on
+  -- the 2b date." If this disagrees with what get_user_schedule_load() reports for that date, the
+  -- FUNCTION is wrong; if it agrees with the RPC (both wrong, or both right but something else
+  -- misread it), the FIXTURE is wrong. Every TEST_FAILED below carries this plus the stored
+  -- fixture row(s) and their task_assignees, so one failed run names the actual cause instead of
+  -- just the symptom.
   -- ======================================================================
+  select count(*) into v_expected_count_2b
+  from public.tasks t
+  join public.task_assignees ta on ta.task_id = t.id
+  where ta.user_id = v_creative_id and t.due_date = v_cairo_today - 3;
+
   perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
   set local role authenticated;
 
   v_row_count := 0;
   for v_row in
-    select * from public.get_user_schedule_load(v_creative_id, current_date - 7, current_date + 7)
+    select * from public.get_user_schedule_load(v_creative_id, v_cairo_today - 7, v_cairo_today + 7)
   loop
     v_row_count := v_row_count + 1;
     v_count_by_date := v_count_by_date || jsonb_build_object(v_row.due_date::text, v_row.task_count);
@@ -183,21 +267,66 @@ begin
   reset role; perform set_config('request.jwt.claims', '', true);
 
   if v_row_count <> 15 then
-    raise exception 'TEST_FAILED: scenario 2 — expected exactly 15 rows (one per day, 7 before + today + 7 after), got %.', v_row_count;
+    raise exception 'TEST_FAILED: scenario 2a — expected exactly 15 rows (one per day, 7 before + today + 7 after), got %. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, v_creative_id=%, full_result=%',
+      v_row_count, v_cairo_today, v_cairo_today - 7, v_cairo_today + 7, v_creative_id, v_count_by_date;
   end if;
-  if (v_count_by_date ->> (current_date - 3)::text)::integer <> 1 then
-    raise exception 'TEST_FAILED: scenario 2b — a completed task due 3 days ago must still count (today/past counts all).';
+  if (v_count_by_date ->> (v_cairo_today - 3)::text)::integer <> 1 then
+    select format(
+      '{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s}',
+      t.id, t.status, t.due_date, t.created_by, t.parent_task_id
+    ) into v_diag
+    from public.tasks t where t.id = v_task_past_id;
+
+    raise exception 'TEST_FAILED: scenario 2b — a completed task due 3 days ago must still count (today/past counts all). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, expected_count_plain_query=%, fixture_task(v_task_past_id)=%, task_assignees_for_fixture=%, v_creative_id=%',
+      v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
+      (v_cairo_today - 3)::text, (v_count_by_date ->> (v_cairo_today - 3)::text),
+      v_expected_count_2b, v_diag,
+      (select string_agg(user_id, ', ') from public.task_assignees where task_id = v_task_past_id),
+      v_creative_id;
   end if;
-  if (v_count_by_date ->> (current_date - 1)::text)::integer <> 0 then
-    raise exception 'TEST_FAILED: scenario 2c — an empty PAST day must still appear in the result, with count 0.';
+  if (v_count_by_date ->> (v_cairo_today - 1)::text)::integer <> 0 then
+    select string_agg(
+      format('{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s}', t.id, t.status, t.due_date, t.created_by, t.parent_task_id),
+      '; '
+    ) into v_diag
+    from public.tasks t
+    join public.task_assignees ta on ta.task_id = t.id
+    where ta.user_id = v_creative_id and t.due_date = v_cairo_today - 1;
+
+    raise exception 'TEST_FAILED: scenario 2c — an empty PAST day must still appear in the result, with count 0. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, v_creative_id=%, unexpected_tasks_found_for_date=%',
+      v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
+      (v_cairo_today - 1)::text, (v_count_by_date ->> (v_cairo_today - 1)::text),
+      v_creative_id, coalesce(v_diag, '(none)');
   end if;
-  if (v_count_by_date ->> (current_date)::text)::integer <> 2 then
-    raise exception 'TEST_FAILED: scenario 2d — today must count BOTH its open task and its closed task (2 total), the same today/past rule as any other non-future day — got %.', (v_count_by_date ->> (current_date)::text);
+  if (v_count_by_date ->> (v_cairo_today)::text)::integer <> 2 then
+    select string_agg(
+      format('{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s, assignees:%s}',
+        t.id, t.status, t.due_date, t.created_by, t.parent_task_id,
+        (select string_agg(user_id, ',') from public.task_assignees where task_id = t.id)
+      ), '; '
+    ) into v_diag
+    from public.tasks t where t.id in (v_task_today_todo_id, v_task_today_done_id);
+
+    raise exception 'TEST_FAILED: scenario 2d — today must count BOTH its open task and its closed task (2 total), the same today/past rule as any other non-future day. DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, v_creative_id=%, fixtures=%',
+      v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
+      (v_cairo_today)::text, (v_count_by_date ->> (v_cairo_today)::text),
+      v_creative_id, v_diag;
   end if;
-  if (v_count_by_date ->> (current_date + 5)::text)::integer <> 1 then
-    raise exception 'TEST_FAILED: scenario 2e — a future day with one open + one completed task must count only the open one (expected 1).';
+  if (v_count_by_date ->> (v_cairo_today + 5)::text)::integer <> 1 then
+    select string_agg(
+      format('{id:%s, status:%s, due_date:%s, created_by:%s, parent_task_id:%s, assignees:%s}',
+        t.id, t.status, t.due_date, t.created_by, t.parent_task_id,
+        (select string_agg(user_id, ',') from public.task_assignees where task_id = t.id)
+      ), '; '
+    ) into v_diag
+    from public.tasks t where t.id in (v_task_future_open_id, v_task_future_done_id);
+
+    raise exception 'TEST_FAILED: scenario 2e — a future day with one open + one completed task must count only the open one (expected 1). DIAGNOSTIC: v_cairo_today=%, p_from=%, p_to=%, row_for_date={due_date:%, task_count:%}, v_creative_id=%, fixtures=%',
+      v_cairo_today, v_cairo_today - 7, v_cairo_today + 7,
+      (v_cairo_today + 5)::text, (v_count_by_date ->> (v_cairo_today + 5)::text),
+      v_creative_id, v_diag;
   end if;
-  if (v_count_by_date ->> (current_date + 1)::text)::integer <> 0 then
+  if (v_count_by_date ->> (v_cairo_today + 1)::text)::integer <> 0 then
     raise exception 'TEST_FAILED: scenario 2f — an empty FUTURE day must still appear in the result, with count 0.';
   end if;
 
@@ -208,7 +337,7 @@ begin
   -- 1 for the ordinary one), confirming the function counts per-ASSIGNEE, not per-day globally.
   -- ======================================================================
   declare
-    v_boundary_day date := current_date + 10;
+    v_boundary_day date := v_cairo_today + 10;
     v_boundary_task_ids text[] := array[]::text[];
     v_i integer;
     v_task_id text;
@@ -259,7 +388,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_exec_auth)::text, true);
   set local role authenticated;
   if not exists (
-    select 1 from public.get_user_schedule_load(v_creative_id, current_date, current_date) where task_count = 2
+    select 1 from public.get_user_schedule_load(v_creative_id, v_cairo_today, v_cairo_today) where task_count = 2
   ) then
     raise exception 'TEST_FAILED: scenario 4 — an executive caller should see the same today-count (2) for the creative target.';
   end if;
@@ -271,7 +400,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
   set local role authenticated;
   begin
-    perform * from public.get_user_schedule_load(v_fake_user_id, current_date, current_date);
+    perform * from public.get_user_schedule_load(v_fake_user_id, v_cairo_today, v_cairo_today);
     raise exception 'TEST_FAILED: scenario 5 — a nonexistent target user id must be rejected.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -281,7 +410,7 @@ begin
   -- Scenario 6: an INELIGIBLE (deactivated) target is rejected — still impersonating v_ordinary.
   -- ======================================================================
   begin
-    perform * from public.get_user_schedule_load(v_inactive_id, current_date, current_date);
+    perform * from public.get_user_schedule_load(v_inactive_id, v_cairo_today, v_cairo_today);
     raise exception 'TEST_FAILED: scenario 6 — a deactivated target user must be rejected.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -292,7 +421,7 @@ begin
   -- enforced server-side too, not just by the UI's isCreativeAssignee() filter).
   -- ======================================================================
   begin
-    perform * from public.get_user_schedule_load(v_marketing_mgr_id, current_date, current_date);
+    perform * from public.get_user_schedule_load(v_marketing_mgr_id, v_cairo_today, v_cairo_today);
     raise exception 'TEST_FAILED: scenario 7 — a marketing_manager target must be rejected.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -302,7 +431,7 @@ begin
   -- Scenario 8: a head_of_technical target is rejected for a non-executive caller.
   -- ======================================================================
   begin
-    perform * from public.get_user_schedule_load(v_hot_id, current_date, current_date);
+    perform * from public.get_user_schedule_load(v_hot_id, v_cairo_today, v_cairo_today);
     raise exception 'TEST_FAILED: scenario 8 — a non-executive caller must not be able to query a head_of_technical target.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -312,7 +441,7 @@ begin
   -- Scenario 9: a sales target is rejected outright, even for a non-sales caller.
   -- ======================================================================
   begin
-    perform * from public.get_user_schedule_load(v_sales_id, current_date, current_date);
+    perform * from public.get_user_schedule_load(v_sales_id, v_cairo_today, v_cairo_today);
     raise exception 'TEST_FAILED: scenario 9 — a sales target must be rejected regardless of caller.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -322,7 +451,7 @@ begin
   -- Scenario 10: p_from after p_to is rejected.
   -- ======================================================================
   begin
-    perform * from public.get_user_schedule_load(v_creative_id, current_date + 1, current_date);
+    perform * from public.get_user_schedule_load(v_creative_id, v_cairo_today + 1, v_cairo_today);
     raise exception 'TEST_FAILED: scenario 10 — p_from after p_to must be rejected.';
   exception when others then
     if sqlerrm like 'TEST_FAILED%' then raise; end if;
@@ -335,7 +464,7 @@ begin
   -- ======================================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_exec_auth)::text, true);
   set local role authenticated;
-  perform * from public.get_user_schedule_load(v_hot_id, current_date, current_date);
+  perform * from public.get_user_schedule_load(v_hot_id, v_cairo_today, v_cairo_today);
   reset role; perform set_config('request.jwt.claims', '', true);
 
   -- ======================================================================

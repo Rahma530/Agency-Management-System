@@ -78,7 +78,7 @@ import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
 import { TaskAttachmentPicker } from './TaskAttachmentPicker';
 import { SearchableMultiSelect } from './SearchableMultiSelect';
-import type { CreateTaskFormInput, StagedTaskAttachment } from '../lib/taskOperations';
+import type { CreateTaskFormInput, StagedTaskAttachment, UserScheduleLoad } from '../lib/taskOperations';
 import {
   TaskCreateRecoveryRecord,
   clearTaskCreateRecovery,
@@ -147,9 +147,10 @@ interface CrossTeamTaskBoardProps {
   onGetCapacitySnapshot: (userIds: string[]) => Promise<Record<string, number>>;
   // Backs the designer-scheduling due-date/estimated-hours suggestion (see
   // src/lib/designerScheduling.ts and get_user_schedule_load() in
-  // supabase/migrations/20261110000000_user_schedule_load.sql). Optional: when absent, the
-  // suggestion simply never appears — same "degrade, don't crash" posture as onMarkTaskViewed.
-  onGetUserScheduleLoad?: (userId: string, fromDate: string, toDate: string) => Promise<Record<string, number>>;
+  // supabase/migrations/20261111000000_user_schedule_load_carry_over.sql). Optional: when
+  // absent, the suggestion simply never appears — same "degrade, don't crash" posture as
+  // onMarkTaskViewed.
+  onGetUserScheduleLoad?: (userId: string, fromDate: string, toDate: string) => Promise<UserScheduleLoad>;
   // The one authoritative "today" for that same suggestion — Africa/Cairo's current date (see
   // get_server_today() in supabase/migrations/20261110000000_user_schedule_load.sql). Every
   // designer-scheduling call site below calls this rather than deriving "today" from the
@@ -317,6 +318,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     estimatedHours: number;
     warning: boolean;
     userName: string;
+    carriedOverCount: number;
   } | null>(null);
   const [isApplyingAddAssigneeSuggestion, setIsApplyingAddAssigneeSuggestion] = useState(false);
   useEffect(() => {
@@ -502,6 +504,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     warning: boolean;
     basedOnUserId: string;
     consideredCount: number;
+    carriedOverCount: number;
   } | null>(null);
   const [isNewSchedulingLoading, setIsNewSchedulingLoading] = useState(false);
   const [newSchedulingError, setNewSchedulingError] = useState<string | null>(null);
@@ -534,8 +537,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           .then((loads) => {
             if (cancelled) return;
             const loadByDateByUserId: Record<string, Record<string, number>> = {};
+            const carriedOverCountByUserId: Record<string, number> = {};
             newCreativeAssigneeIds.forEach((id, index) => {
-              loadByDateByUserId[id] = loads[index];
+              loadByDateByUserId[id] = loads[index].loadByDate;
+              carriedOverCountByUserId[id] = loads[index].carriedOverCount;
             });
             const mostLoadedId = pickMostLoadedAssignee(loadByDateByUserId, todayStr);
             if (!mostLoadedId) return;
@@ -543,6 +548,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               anchorDate: todayStr,
               loadByDate: loadByDateByUserId[mostLoadedId],
               taskCount: newCopiesCount,
+              carriedOverCount: carriedOverCountByUserId[mostLoadedId],
             });
             setNewSchedulingSuggestion({
               dueDate: suggestion.dueDate,
@@ -550,6 +556,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               warning: suggestion.warning,
               basedOnUserId: mostLoadedId,
               consideredCount: newCreativeAssigneeIds.length,
+              carriedOverCount: carriedOverCountByUserId[mostLoadedId],
             });
             setNewDueDate(suggestion.dueDate);
             setNewEstimatedHours(suggestion.estimatedHours);
@@ -609,6 +616,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     warning: boolean;
     basedOnUserId: string;
     consideredCount: number;
+    carriedOverCount: number;
   } | null>(null);
   const [isEditSchedulingLoading, setIsEditSchedulingLoading] = useState(false);
   const [editSchedulingError, setEditSchedulingError] = useState<string | null>(null);
@@ -636,18 +644,25 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           .then((loads) => {
             if (cancelled) return;
             const loadByDateByUserId: Record<string, Record<string, number>> = {};
+            const carriedOverCountByUserId: Record<string, number> = {};
             editCreativeAssigneeIds.forEach((id, index) => {
-              loadByDateByUserId[id] = loads[index];
+              loadByDateByUserId[id] = loads[index].loadByDate;
+              carriedOverCountByUserId[id] = loads[index].carriedOverCount;
             });
             const mostLoadedId = pickMostLoadedAssignee(loadByDateByUserId, todayStr);
             if (!mostLoadedId) return;
-            const suggestion = suggestDueDateAndHours({ anchorDate: todayStr, loadByDate: loadByDateByUserId[mostLoadedId] });
+            const suggestion = suggestDueDateAndHours({
+              anchorDate: todayStr,
+              loadByDate: loadByDateByUserId[mostLoadedId],
+              carriedOverCount: carriedOverCountByUserId[mostLoadedId],
+            });
             setEditSchedulingSuggestion({
               dueDate: suggestion.dueDate,
               estimatedHours: suggestion.estimatedHours,
               warning: suggestion.warning,
               basedOnUserId: mostLoadedId,
               consideredCount: editCreativeAssigneeIds.length,
+              carriedOverCount: carriedOverCountByUserId[mostLoadedId],
             });
           });
       })
@@ -1182,13 +1197,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         try {
           const todayStr = await onGetServerToday();
           const toDate = addReportDays(todayStr, SUGGESTION_LOOKAHEAD_DAYS);
-          const loadByDate = await onGetUserScheduleLoad(userId, todayStr, toDate);
-          const suggestion = suggestDueDateAndHours({ anchorDate: todayStr, loadByDate });
+          const { loadByDate, carriedOverCount } = await onGetUserScheduleLoad(userId, todayStr, toDate);
+          const suggestion = suggestDueDateAndHours({ anchorDate: todayStr, loadByDate, carriedOverCount });
           setAddAssigneeSuggestion({
             dueDate: suggestion.dueDate,
             estimatedHours: suggestion.estimatedHours,
             warning: suggestion.warning,
             userName: addedUser.name,
+            carriedOverCount,
           });
         } catch {
           // Suggestion is informational only — a failed lookup here must never block or report
@@ -2363,6 +2379,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                                 Suggested for {addAssigneeSuggestion.userName}: {addAssigneeSuggestion.dueDate}, {addAssigneeSuggestion.estimatedHours.toFixed(2)}h.
                                 {' '}This task's due date is unchanged unless applied.
                                 {addAssigneeSuggestion.warning && ` That day is already at or near the ${MAX_TASKS_PER_DAY}/day limit.`}
+                                {addAssigneeSuggestion.carriedOverCount > 0 &&
+                                  ` ${addAssigneeSuggestion.carriedOverCount} overdue open task${addAssigneeSuggestion.carriedOverCount === 1 ? '' : 's'} carried over.`}
                               </span>
                               <button
                                 type="button"
@@ -2866,6 +2884,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       's schedule — editable below.
                       {newCopiesCount > 1 ? ` Creating ${newCopiesCount} copies (one per client), all on this date.` : ''}
                       {newSchedulingSuggestion.warning && ` This day is already at or near the ${MAX_TASKS_PER_DAY}/day limit${newCopiesCount > 1 ? ' once these copies are added' : ''}.`}
+                      {newSchedulingSuggestion.carriedOverCount > 0 &&
+                        ` ${newSchedulingSuggestion.carriedOverCount} overdue open task${newSchedulingSuggestion.carriedOverCount === 1 ? '' : 's'} carried over.`}
                     </>
                   )}
                 </div>
@@ -3218,6 +3238,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           : ''}
                         's schedule. This task's existing due date is left as-is unless you apply it.
                         {editSchedulingSuggestion.warning && ` That day is already at or near the ${MAX_TASKS_PER_DAY}/day limit.`}
+                        {editSchedulingSuggestion.carriedOverCount > 0 &&
+                          ` ${editSchedulingSuggestion.carriedOverCount} overdue open task${editSchedulingSuggestion.carriedOverCount === 1 ? '' : 's'} carried over.`}
                       </>
                     )}
                   </span>

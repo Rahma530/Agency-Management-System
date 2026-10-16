@@ -132,21 +132,40 @@ export interface DueDateSuggestion {
 // capacity (a pathological case in practice), this does not throw or return nothing — it falls
 // back to the last working day it considered, flagged with warning: true, so the caller always
 // has *something* editable to show.
+//
+// `carriedOverCount` (default 0) is this assignee's overdue-open-task count from
+// get_user_schedule_load() (see carried_over_count's own comment in
+// supabase/migrations/20261111000000_user_schedule_load_carry_over.sql) — NOT folded into
+// `loadByDate` by the caller; this function adds it in, exactly once, to the FIRST WORKING day it
+// considers (byte-identical rule to the RPC's own "first working day in the window" placement —
+// one source of truth for "which day absorbs the backlog"), then never again for any later
+// candidate day. So with 2 carried-over + 4 tasks already due today, today reads as 6 (full) and
+// the suggestion moves on to the next working day — exactly as if a 5th and 6th task were already
+// booked today; with 2 carried-over + 0 due today, today reads as 2, still has room, and gets
+// picked. This never shifts loadByDate or any stored date — the function is pure; it only changes
+// what count gets compared against MAX_TASKS_PER_DAY for exactly one candidate day.
 export function suggestDueDateAndHours(params: {
   anchorDate: string;
   loadByDate: Record<string, number>;
   taskCount?: number;
+  carriedOverCount?: number;
 }): DueDateSuggestion {
   const { anchorDate, loadByDate } = params;
   const taskCount = Math.max(1, params.taskCount ?? 1);
+  const carriedOverCount = Math.max(0, params.carriedOverCount ?? 0);
   let candidate = anchorDate;
   let daysSkipped = 0;
   let lastWorkingCandidate = anchorDate;
   let lastWorkingCount = loadByDate[anchorDate] ?? 0;
+  let carryOverApplied = false;
 
   for (let i = 0; i < SUGGESTION_LOOKAHEAD_DAYS; i++) {
     if (isWorkingDay(candidate)) {
-      const count = loadByDate[candidate] ?? 0;
+      let count = loadByDate[candidate] ?? 0;
+      if (!carryOverApplied) {
+        count += carriedOverCount;
+        carryOverApplied = true;
+      }
       lastWorkingCandidate = candidate;
       lastWorkingCount = count;
       if (count < MAX_TASKS_PER_DAY) {

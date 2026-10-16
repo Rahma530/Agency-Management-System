@@ -118,6 +118,75 @@ function main(): void {
   }
 
   // ------------------------------------------------------------------------
+  // suggestDueDateAndHours — carriedOverCount (get_user_schedule_load()'s carried_over_count,
+  // see supabase/migrations/20261111000000_user_schedule_load_carry_over.sql): added into the
+  // FIRST working day's load exactly once, never folded into loadByDate by the caller, never
+  // mutates anything — the function stays pure.
+  // ------------------------------------------------------------------------
+
+  // 0 carried (omitted) — must behave identically to a call with no carriedOverCount at all
+  // (regression: this parameter must be purely additive, never change existing behavior when
+  // absent/zero).
+  {
+    const result = suggestDueDateAndHours({ anchorDate: '2026-10-15', loadByDate: { '2026-10-15': 4 } });
+    assertEqual(result.dueDate, '2026-10-15', '0 carried: dueDate unchanged from the no-carry-over case');
+    assertEqual(result.taskCountOnDate, 4, '0 carried: taskCountOnDate unchanged (no carry-over added)');
+    assertEqual(result.warning, false, '0 carried: warning unchanged');
+  }
+
+  // 2 carried + an empty day — today still has room (2 < 6): picked, taskCountOnDate reflects the
+  // carried-over 2 (so 4 slots remain), no warning.
+  {
+    const result = suggestDueDateAndHours({ anchorDate: '2026-10-15', loadByDate: {}, carriedOverCount: 2 });
+    assertEqual(result.dueDate, '2026-10-15', '2 carried + empty day: dueDate (still picked)');
+    assertEqual(result.taskCountOnDate, 2, '2 carried + empty day: taskCountOnDate is the carried-over count alone');
+    assertEqual(result.warning, false, '2 carried + empty day: no warning (4 slots remain)');
+  }
+
+  // 2 carried + 4 tasks already due today = 6 (full) — must move to the next working day, exactly
+  // as if a 5th and 6th task were already booked today. Tuesday->Wednesday: an ordinary weekday
+  // boundary, no Friday-skip involved.
+  {
+    const result = suggestDueDateAndHours({
+      anchorDate: '2026-10-13',
+      loadByDate: { '2026-10-13': 4 },
+      carriedOverCount: 2,
+    });
+    assertEqual(result.dueDate, '2026-10-14', '2 carried + 4 today (6, full): moves to the next working day');
+    assertEqual(result.taskCountOnDate, 0, '2 carried + 4 today (6, full): the next day starts empty (carry-over applied only once)');
+  }
+
+  // 6 carried alone, nothing else due today — already full on its own, moves to the next working
+  // day the same as above.
+  {
+    const result = suggestDueDateAndHours({ anchorDate: '2026-10-13', loadByDate: {}, carriedOverCount: 6 });
+    assertEqual(result.dueDate, '2026-10-14', '6 carried alone (full): moves to the next working day');
+    assertEqual(result.taskCountOnDate, 0, '6 carried alone (full): the next day starts empty');
+    assertEqual(result.daysSkipped, 1, '6 carried alone (full): exactly one day skipped');
+  }
+
+  // Carried-over on a Friday anchor — Friday is never a candidate at all (work week excludes it
+  // outright, same as the Friday-skip case above), so the carry-over must land on the following
+  // Saturday, not be silently dropped or applied to the (skipped) Friday.
+  {
+    const result = suggestDueDateAndHours({ anchorDate: '2026-10-16', loadByDate: {}, carriedOverCount: 2 });
+    assertEqual(result.dueDate, '2026-10-17', 'carried on a Friday: lands on the following Saturday');
+    assertEqual(result.taskCountOnDate, 2, 'carried on a Friday: the carry-over applies to Saturday, not Friday');
+  }
+
+  // Purity — carriedOverCount must never mutate the loadByDate object passed in, and repeated
+  // calls with the same input must return the same result (no hidden state/side effects).
+  {
+    const loadByDate = { '2026-10-15': 4 };
+    const snapshotBefore = JSON.stringify(loadByDate);
+    const first = suggestDueDateAndHours({ anchorDate: '2026-10-15', loadByDate, carriedOverCount: 2 });
+    const snapshotAfter = JSON.stringify(loadByDate);
+    assertEqual(snapshotAfter, snapshotBefore, 'purity: loadByDate must not be mutated by carriedOverCount');
+    const second = suggestDueDateAndHours({ anchorDate: '2026-10-15', loadByDate, carriedOverCount: 2 });
+    assertEqual(second, first, 'purity: repeated calls with the same input return the same result');
+  }
+
+  // ------------------------------------------------------------------------
   // buildScheduleLoadByDate — the today/past-vs-future counting rule.
   // ------------------------------------------------------------------------
 
