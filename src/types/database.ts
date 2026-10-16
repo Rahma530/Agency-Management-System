@@ -112,10 +112,11 @@ export type ClientSector = 'E-Commerce' | 'Service';
 export type ClientStatus = 'onboarding' | 'active' | 'paused' | 'renewal' | 'closed';
 
 // 'closed' is a manual confirmation step after 'completed' — the task's creator, its assignee, or
-// head_of_technical reviews the assignee's done_link and closes it out themselves (never
-// automatic). Functionally identical to 'completed' for every downstream calculation (capacity,
-// overdue, completion metrics) — see isTaskDone() in lib/taskLifecycle.ts, the single source of
-// truth for that equivalence instead of checking either value inline.
+// head_of_technical closes it out themselves (never automatic; a Done Link is optional and never
+// required to do so — see canSubmitTaskForClosing() in lib/taskLifecycle.ts). Functionally
+// identical to 'completed' for every downstream calculation (capacity, overdue, completion
+// metrics) — see isTaskDone() in lib/taskLifecycle.ts, the single source of truth for that
+// equivalence instead of checking either value inline.
 export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'completed' | 'blocked' | 'closed';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -407,13 +408,14 @@ export interface TaskRecord {
   // Cleared to null whenever assigned_to changes, set when the assignee
   // opens the client this task belongs to.
   assignee_viewed_at?: string | null;
-  // Module 12 Phase 9: manually-pasted Google Drive URL — no real Drive API integration,
-  // same scaffolding-only posture as Module 6's other integration points. General-purpose
-  // reference link, always visible/editable regardless of status — distinct from done_link below.
+  // Module 12 Phase 9: manually-pasted Google Drive URL. DEPRECATED — no longer read or written
+  // by any UI; done_link below is now the one link field. Column kept (never dropped) so existing
+  // values survive; see 20261109000000_task_done_link_backfill.sql, which one-time-copies any
+  // value here into done_link wherever done_link is still blank.
   drive_link?: string | null;
-  // The assignee's link to their finished work (e.g. Google Drive/Figma), submitted once the task
-  // reaches 'completed' and reviewed by the creator/assignee/head_of_technical before manually
-  // closing the task — see canCloseTask() in lib/taskLifecycle.ts.
+  // The one general-purpose task link field (owner decision), optional on every task and never
+  // required to close one (see canSubmitTaskForClosing() in lib/taskLifecycle.ts). Shown from
+  // 'in_progress' onward — see canShowDoneLink() in lib/taskLifecycle.ts.
   done_link?: string | null;
   // Optional, admin-editable task type tag. task_type is a task_types.id (or null if untagged);
   // task_type_other holds the free-text value when that row's is_other flag is set. See

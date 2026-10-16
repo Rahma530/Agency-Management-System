@@ -29,12 +29,21 @@ export const canCloseTask = (
   user.role === 'head_of_technical' ||
   user.role === 'ai_engineer';
 
-// The Close Task control should only be usable once the task has actually reached 'completed' and
-// the assignee has submitted a done_link for the creator/assignee/head_of_technical to review —
-// reinforcing the "review before closing" intent even though done_link is optional at the DB
-// level. Combine with canCloseTask() for the full gate on rendering/enabling that control.
-export const canSubmitTaskForClosing = (task: Pick<TaskRecord, 'status' | 'done_link'>): boolean =>
-  task.status === 'completed' && !!task.done_link?.trim();
+// The Close Task control should only be usable once the task has actually reached 'completed'.
+// done_link is OPTIONAL on every task (owner decision) and is never required to close a task —
+// combine with canCloseTask() for the full gate on rendering/enabling that control.
+export const canSubmitTaskForClosing = (task: Pick<TaskRecord, 'status'>): boolean =>
+  task.status === 'completed';
+
+// Done Link (tasks.done_link) is shown from 'in_progress' onward — not at 'todo'/'blocked', where
+// there's nothing yet to link to — OR whenever the task already carries a non-empty done_link,
+// whatever its current status (e.g. the backfill migration can set one on a task that's since
+// moved back to 'todo'/'blocked'; that value must never become invisible/unreachable). Single
+// source of truth for that stage gate, shared by CrossTeamTaskBoard.tsx and
+// DailyOperationsModule.tsx so the two surfaces can't drift.
+export const canShowDoneLink = (task: Pick<TaskRecord, 'status' | 'done_link'>): boolean =>
+  !!task.done_link?.trim() ||
+  task.status === 'in_progress' || task.status === 'in_review' || isTaskDone(task.status);
 
 // The real, multi-assignee membership for a task — task_assignees rows when any exist, falling
 // back to the legacy single `assigned_to` column only for an older task that predates the

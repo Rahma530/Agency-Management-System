@@ -50,7 +50,7 @@ import {
 import { getTodayStr, isTaskOverdue, isTaskDueToday, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
 import { isActiveEmployee } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveCapacityLimit } from '../lib/capacity';
-import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
+import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
@@ -443,7 +443,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     if (!canCloseTask(task, currentUser) || !canSubmitTaskForClosing(task)) {
       showNotification(
         !canSubmitTaskForClosing(task)
-          ? 'This task needs a Done Link before it can be closed.'
+          ? 'This task must reach Completed before it can be closed.'
           : "Only the task's creator, its assignee, or Head of Technical can close it.",
         'error'
       );
@@ -1904,10 +1904,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
               )}
 
-              {/* Done Link — surfaced once the task reaches 'completed': the assignee's link to
-                  their finished work, for the creator/assignee/head_of_technical to review before
-                  closing. Same pattern as CrossTeamTaskBoard.tsx's own Done Link field. */}
-              {isTaskDone(selectedTaskDetails.status) && (
+              {/* Done Link — the one general-purpose task link field (owner decision: Drive Link
+                  has been removed everywhere). Optional on every task; shown from 'in_progress'
+                  onward OR whenever a value is already set regardless of status (see
+                  canShowDoneLink()); never required to close a task (canSubmitTaskForClosing()).
+                  Same pattern as CrossTeamTaskBoard.tsx's own field. */}
+              {canShowDoneLink(selectedTaskDetails) && (
                 <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800">
                   <label className="text-[11px] font-semibold text-stone-400 mb-1.5 flex items-center gap-1.5">
                     <Link2 className="w-3.5 h-3.5" />
@@ -1947,7 +1949,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     <button
                       onClick={() => handleCloseTask(selectedTaskDetails)}
                       disabled={!canSubmitTaskForClosing(selectedTaskDetails)}
-                      title={!canSubmitTaskForClosing(selectedTaskDetails) ? 'Add a Done Link before closing this task.' : undefined}
+                      title={!canSubmitTaskForClosing(selectedTaskDetails) ? 'This task must reach Completed before it can be closed.' : undefined}
                       className="mt-2 px-3 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       Close Task
