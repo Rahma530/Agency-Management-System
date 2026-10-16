@@ -7,6 +7,11 @@ export interface CapacitySnapshotRow {
   used_capacity: number;
 }
 
+export interface UserScheduleLoadRow {
+  due_date: string;
+  task_count: number;
+}
+
 export interface StagedTaskAttachment {
   id: string;
   file: File;
@@ -186,6 +191,41 @@ export const getCapacitySnapshot = async (userIds: string[]): Promise<Record<str
     result[row.user_id] = Number(row.used_capacity);
     return result;
   }, {});
+};
+
+// Backs the designer-scheduling suggestion feature — see get_user_schedule_load() in
+// supabase/migrations/20261110000000_user_schedule_load.sql and the pure algorithm in
+// lib/designerScheduling.ts. Returns a due_date -> task_count map covering every day in
+// [fromDate, toDate] (including empty days, counted as 0 by the RPC itself); never titles, ids,
+// or status — only the aggregate the suggester needs.
+export const getUserScheduleLoad = async (
+  userId: string,
+  fromDate: string,
+  toDate: string
+): Promise<Record<string, number>> => {
+  const { data, error } = await supabaseRaw.rpc('get_user_schedule_load', {
+    p_user_id: userId,
+    p_from: fromDate,
+    p_to: toDate,
+  });
+  throwIfError(error, 'Unable to load schedule data.');
+  return ((data as UserScheduleLoadRow[] | null) || []).reduce<Record<string, number>>((result, row) => {
+    result[row.due_date] = Number(row.task_count);
+    return result;
+  }, {});
+};
+
+// The one authoritative "today" for the designer-scheduling suggestion feature — Africa/Cairo's
+// current date (see get_server_today() in supabase/migrations/20261110000000_user_schedule_load.sql
+// for why: a bare browser-local date can be any employee's own timezone, and Supabase sessions
+// default to UTC, neither of which is the agency's own calendar). The frontend must call this
+// rather than deriving "today" itself for anything that feeds suggestDueDateAndHours() — see its
+// call sites in CrossTeamTaskBoard.tsx, none of which fall back to a client-computed guess.
+export const getServerToday = async (): Promise<string> => {
+  const { data, error } = await supabaseRaw.rpc('get_server_today', {});
+  throwIfError(error, 'Unable to determine the current date.');
+  if (typeof data !== 'string') throw new Error('get_server_today returned an unexpected value.');
+  return data;
 };
 
 export const addTaskAttachmentForCopies = async (

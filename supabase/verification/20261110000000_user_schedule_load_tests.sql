@@ -1,0 +1,378 @@
+-- ============================================================================
+-- FUNCTION TESTS for 20261110000000_user_schedule_load.sql. NOT a migration — lives outside
+-- supabase/migrations/ so nothing ever applies it automatically.
+--
+-- Run this AFTER the migration is applied, as a single statement (psql -f, or pasted whole into
+-- the SQL editor) — no surrounding BEGIN/COMMIT needed. Every scenario fabricates only
+-- throwaway clients/tasks (zz_ prefixed ids); every PERSONA is a REAL existing active employee
+-- (selected defensively — TEST_SETUP_FAILED, naming exactly what's missing), kept mutually
+-- exclusive by explicit id exclusions, EXCEPT the one persona temporarily deactivated in place
+-- for the "ineligible target" scenario (restored only by this whole DO block's own rollback,
+-- same pattern 20261105000000_task_assignees_rpcs_tests.sql already uses). The final
+-- `raise exception 'TEST_OK_ROLLED_BACK: ...'` aborts the implicit transaction wrapping this
+-- whole DO block, rolling back every single write performed above it — nothing persists either
+-- way, pass or fail.
+--
+-- "Expect this call to fail" scenarios wrap the call in its own nested BEGIN/EXCEPTION block (a
+-- real exception creates an implicit savepoint in plpgsql, so a caught failure doesn't abort the
+-- rest of the test). If the call unexpectedly SUCCEEDS, it raises its own 'TEST_FAILED: ...' from
+-- inside the try block, which the handler re-raises instead of swallowing.
+--
+-- Coverage: caller gate (sales caller always rejected; a non-sales caller may query a creative
+-- target; an executive/head_of_technical target requires an executive caller; a deactivated
+-- employee, a nonexistent user, a sales target, and a marketing_manager target are all rejected;
+-- p_from > p_to is rejected), the counting rule at its exact boundaries (an empty day, a day with
+-- exactly 5 tasks, a day with exactly 6 tasks, today counting a DONE task the same as any other
+-- day, a future day counting only open tasks), the return shape (every day in [p_from, p_to] is
+-- present, including empty ones, via generate_series — never sparse), and the Cairo-timezone fix
+-- (get_server_today()/get_user_schedule_load()'s p_as_of correctly crosses midnight into the next
+-- Cairo day while the same instant's bare UTC date has not yet rolled over — simulated via the
+-- p_as_of parameter, never by touching the real system clock).
+--
+-- Not covered here (no SQL equivalent): "5 tasks suggests that day," "exactly 6 pushes to the
+-- next working day," and "Friday is skipped" are suggestDueDateAndHours()'s own date-WALKING
+-- behavior in src/lib/designerScheduling.ts — this function only ever returns raw per-day
+-- counts, never a suggested date, so there is nothing in this file that exercises date-walking;
+-- those three are covered by scripts/checkDesignerScheduling.ts instead.
+-- ============================================================================
+do $$
+declare
+  v_sales_id text; v_sales_auth uuid;
+  v_ordinary_id text; v_ordinary_auth uuid;
+  v_exec_id text; v_exec_auth uuid;
+  v_creative_id text; v_creative_auth uuid;
+  v_hot_id text; v_hot_auth uuid;
+  v_marketing_mgr_id text; v_marketing_mgr_auth uuid;
+  v_inactive_id text; v_inactive_auth_unused uuid; v_inactive_original_deactivated_at timestamptz;
+
+  v_client_id text;
+  v_task_past_id text;
+  v_task_today_todo_id text;
+  v_task_today_done_id text;
+  v_task_future_open_id text;
+  v_task_future_done_id text;
+  v_fake_user_id text;
+
+  v_row record;
+  v_count_by_date jsonb := '{}'::jsonb;
+  v_row_count integer;
+
+  -- A fixed, known instant: 2026-01-14 22:30:00 UTC. January is Cairo standard time (UTC+2,
+  -- outside Egypt's DST window), so this is 2026-01-15 00:30:00 in Cairo — 30 minutes into the
+  -- "00:00-03:00 Cairo window" this fix specifically targets, and on a DIFFERENT calendar date
+  -- than its own bare UTC date (2026-01-14). Using a fixed historical/future instant (not
+  -- `now()`) makes this deterministic regardless of when the test actually runs — the
+  -- Africa/Cairo offset for this specific instant never changes.
+  v_as_of timestamptz := '2026-01-14 22:30:00+00'::timestamptz;
+  v_as_of_cairo_date date := date '2026-01-15';
+  v_as_of_utc_date date := date '2026-01-14';
+  v_server_today date;
+  v_task_cairo_today_id text;
+begin
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- ======================================================================
+  -- Setup: select real personas defensively.
+  -- ======================================================================
+  select id, auth_id into v_sales_id, v_sales_auth
+    from public.users where role = 'sales' and auth_id is not null and deactivated_at is null order by id limit 1;
+  select id, auth_id into v_exec_id, v_exec_auth
+    from public.users where role = 'executive' and auth_id is not null and deactivated_at is null order by id limit 1;
+  select id, auth_id into v_hot_id, v_hot_auth
+    from public.users where role = 'head_of_technical' and auth_id is not null and deactivated_at is null order by id limit 1;
+  select id, auth_id into v_marketing_mgr_id, v_marketing_mgr_auth
+    from public.users where role = 'marketing_manager' and auth_id is not null and deactivated_at is null order by id limit 1;
+  if v_sales_id is null or v_exec_id is null or v_hot_id is null or v_marketing_mgr_id is null then
+    raise exception 'TEST_SETUP_FAILED: need one active sales, executive, head_of_technical, and marketing_manager user, each with auth_id.';
+  end if;
+
+  select id, auth_id into v_ordinary_id, v_ordinary_auth
+    from public.users
+    where auth_id is not null and deactivated_at is null
+      and role not in ('executive', 'head_of_technical', 'ai_engineer', 'sales', 'marketing_manager')
+      and role not like '%team_lead'
+    order by id limit 1;
+  if v_ordinary_id is null then
+    raise exception 'TEST_SETUP_FAILED: need one active ordinary (non-admin, non-sales, non-marketing-manager, non-team-lead) employee with auth_id.';
+  end if;
+
+  select id, auth_id into v_creative_id, v_creative_auth
+    from public.users where role in ('graphic_designer', 'video_editor', 'ui_ux_designer') and auth_id is not null and deactivated_at is null
+    order by id limit 1;
+  if v_creative_id is null then
+    raise exception 'TEST_SETUP_FAILED: need one active graphic_designer/video_editor/ui_ux_designer with auth_id.';
+  end if;
+
+  select id, auth_id into v_inactive_id, v_inactive_auth_unused
+    from public.users
+    where auth_id is not null and deactivated_at is null
+      and role not in ('executive', 'head_of_technical', 'ai_engineer', 'sales', 'marketing_manager')
+      and role not like '%team_lead'
+      and id not in (v_ordinary_id, v_creative_id)
+    order by id limit 1;
+  if v_inactive_id is null then
+    raise exception 'TEST_SETUP_FAILED: need a second, distinct active ordinary employee with auth_id to temporarily deactivate for the "ineligible target" scenario.';
+  end if;
+
+  v_fake_user_id := 'zz_nonexistent_' || substr(md5(random()::text), 1, 8);
+
+  -- Temporarily deactivate v_inactive_id in place — restored only by this whole block's rollback.
+  select deactivated_at into v_inactive_original_deactivated_at from public.users where id = v_inactive_id;
+  update public.users set deactivated_at = now() where id = v_inactive_id;
+
+  -- ======================================================================
+  -- Fabricate a throwaway client and throwaway tasks, all assigned to the creative target via
+  -- task_assignees (inserted directly here, bypassing RLS, as the unprivileged superuser
+  -- context — same fabrication pattern every other verification file in this repo uses).
+  -- ======================================================================
+  v_client_id := 'zz_schedload_client_' || substr(md5(random()::text), 1, 8);
+  insert into public.clients (id, name, services, status, sales_owner_id)
+  values (v_client_id, 'ZZ Schedule Load Test Client', array['seo'], 'active', v_ordinary_id);
+
+  v_task_past_id := 'zz_schedload_past_' || substr(md5(random()::text), 1, 8);
+  v_task_today_todo_id := 'zz_schedload_todaytodo_' || substr(md5(random()::text), 1, 8);
+  v_task_today_done_id := 'zz_schedload_todaydone_' || substr(md5(random()::text), 1, 8);
+  v_task_future_open_id := 'zz_schedload_futopen_' || substr(md5(random()::text), 1, 8);
+  v_task_future_done_id := 'zz_schedload_futdone_' || substr(md5(random()::text), 1, 8);
+
+  insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
+  values
+    (v_task_past_id, v_client_id, 'ZZ past completed', 'test', v_ordinary_id, 'Technical', 'completed', current_date - 3, 'low'),
+    (v_task_today_todo_id, v_client_id, 'ZZ today todo', 'test', v_ordinary_id, 'Technical', 'todo', current_date, 'low'),
+    (v_task_today_done_id, v_client_id, 'ZZ today done', 'test', v_ordinary_id, 'Technical', 'closed', current_date, 'low'),
+    (v_task_future_open_id, v_client_id, 'ZZ future open', 'test', v_ordinary_id, 'Technical', 'in_progress', current_date + 5, 'low'),
+    (v_task_future_done_id, v_client_id, 'ZZ future done', 'test', v_ordinary_id, 'Technical', 'completed', current_date + 5, 'low');
+
+  insert into public.task_assignees (task_id, user_id, added_by)
+  values
+    (v_task_past_id, v_creative_id, v_ordinary_id),
+    (v_task_today_todo_id, v_creative_id, v_ordinary_id),
+    (v_task_today_done_id, v_creative_id, v_ordinary_id),
+    (v_task_future_open_id, v_creative_id, v_ordinary_id),
+    (v_task_future_done_id, v_creative_id, v_ordinary_id);
+
+  -- ======================================================================
+  -- Scenario 1: sales may never call this function, regardless of target.
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_sales_auth)::text, true);
+  set local role authenticated;
+  begin
+    perform * from public.get_user_schedule_load(v_creative_id, current_date - 7, current_date + 7);
+    raise exception 'TEST_FAILED: scenario 1 — sales must never be able to query schedule load.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  -- ======================================================================
+  -- Scenario 2: a non-sales caller may query a creative target; every day in range comes back
+  -- (including empty ones); the counting rule is correct at the today/past/future boundaries,
+  -- INCLUDING that today counts a DONE task exactly the same as a past one (not just open ones).
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
+  set local role authenticated;
+
+  v_row_count := 0;
+  for v_row in
+    select * from public.get_user_schedule_load(v_creative_id, current_date - 7, current_date + 7)
+  loop
+    v_row_count := v_row_count + 1;
+    v_count_by_date := v_count_by_date || jsonb_build_object(v_row.due_date::text, v_row.task_count);
+  end loop;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  if v_row_count <> 15 then
+    raise exception 'TEST_FAILED: scenario 2 — expected exactly 15 rows (one per day, 7 before + today + 7 after), got %.', v_row_count;
+  end if;
+  if (v_count_by_date ->> (current_date - 3)::text)::integer <> 1 then
+    raise exception 'TEST_FAILED: scenario 2b — a completed task due 3 days ago must still count (today/past counts all).';
+  end if;
+  if (v_count_by_date ->> (current_date - 1)::text)::integer <> 0 then
+    raise exception 'TEST_FAILED: scenario 2c — an empty PAST day must still appear in the result, with count 0.';
+  end if;
+  if (v_count_by_date ->> (current_date)::text)::integer <> 2 then
+    raise exception 'TEST_FAILED: scenario 2d — today must count BOTH its open task and its closed task (2 total), the same today/past rule as any other non-future day — got %.', (v_count_by_date ->> (current_date)::text);
+  end if;
+  if (v_count_by_date ->> (current_date + 5)::text)::integer <> 1 then
+    raise exception 'TEST_FAILED: scenario 2e — a future day with one open + one completed task must count only the open one (expected 1).';
+  end if;
+  if (v_count_by_date ->> (current_date + 1)::text)::integer <> 0 then
+    raise exception 'TEST_FAILED: scenario 2f — an empty FUTURE day must still appear in the result, with count 0.';
+  end if;
+
+  -- ======================================================================
+  -- Scenario 3: counting is correct at the exact 5/6 boundaries — fabricate 6 more throwaway
+  -- tasks, all due the same day, 5 assigned to the creative target and the 6th assigned to the
+  -- ordinary employee (so the SAME day's count differs by viewpoint: 5 for the creative target,
+  -- 1 for the ordinary one), confirming the function counts per-ASSIGNEE, not per-day globally.
+  -- ======================================================================
+  declare
+    v_boundary_day date := current_date + 10;
+    v_boundary_task_ids text[] := array[]::text[];
+    v_i integer;
+    v_task_id text;
+    v_count_creative integer;
+    v_count_ordinary integer;
+  begin
+    for v_i in 1..6 loop
+      v_task_id := 'zz_schedload_boundary_' || v_i || '_' || substr(md5(random()::text), 1, 6);
+      v_boundary_task_ids := array_append(v_boundary_task_ids, v_task_id);
+      insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
+      values (v_task_id, v_client_id, 'ZZ boundary task ' || v_i, 'test', v_ordinary_id, 'Technical', 'todo', v_boundary_day, 'low');
+    end loop;
+    -- First 5 go to the creative target; the 6th goes to the ordinary employee instead.
+    for v_i in 1..5 loop
+      insert into public.task_assignees (task_id, user_id, added_by) values (v_boundary_task_ids[v_i], v_creative_id, v_ordinary_id);
+    end loop;
+    insert into public.task_assignees (task_id, user_id, added_by) values (v_boundary_task_ids[6], v_ordinary_id, v_ordinary_id);
+
+    perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
+    set local role authenticated;
+    select task_count into v_count_creative from public.get_user_schedule_load(v_creative_id, v_boundary_day, v_boundary_day);
+    select task_count into v_count_ordinary from public.get_user_schedule_load(v_ordinary_id, v_boundary_day, v_boundary_day);
+    reset role; perform set_config('request.jwt.claims', '', true);
+
+    if v_count_creative <> 5 then
+      raise exception 'TEST_FAILED: scenario 3 — the creative target should show exactly 5 tasks on the boundary day, got %.', v_count_creative;
+    end if;
+    if v_count_ordinary <> 1 then
+      raise exception 'TEST_FAILED: scenario 3b — the ordinary employee should show exactly 1 task on the same day (counting is per-assignee, not per-day globally), got %.', v_count_ordinary;
+    end if;
+
+    -- Now add a 6th task for the creative target on the SAME day — confirms the boundary value
+    -- 6 itself is reported accurately (the "exactly 6" case the client-side suggester must then
+    -- treat as full).
+    insert into public.task_assignees (task_id, user_id, added_by) values (v_boundary_task_ids[6], v_creative_id, v_ordinary_id);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
+    set local role authenticated;
+    select task_count into v_count_creative from public.get_user_schedule_load(v_creative_id, v_boundary_day, v_boundary_day);
+    reset role; perform set_config('request.jwt.claims', '', true);
+    if v_count_creative <> 6 then
+      raise exception 'TEST_FAILED: scenario 3c — the creative target should show exactly 6 tasks on the boundary day after the 6th is added, got %.', v_count_creative;
+    end if;
+  end;
+
+  -- ======================================================================
+  -- Scenario 4: an executive caller sees the identical counts (admin doors are unconditional).
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_exec_auth)::text, true);
+  set local role authenticated;
+  if not exists (
+    select 1 from public.get_user_schedule_load(v_creative_id, current_date, current_date) where task_count = 2
+  ) then
+    raise exception 'TEST_FAILED: scenario 4 — an executive caller should see the same today-count (2) for the creative target.';
+  end if;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  -- ======================================================================
+  -- Scenario 5: a nonexistent target id is rejected.
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
+  set local role authenticated;
+  begin
+    perform * from public.get_user_schedule_load(v_fake_user_id, current_date, current_date);
+    raise exception 'TEST_FAILED: scenario 5 — a nonexistent target user id must be rejected.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+
+  -- ======================================================================
+  -- Scenario 6: an INELIGIBLE (deactivated) target is rejected — still impersonating v_ordinary.
+  -- ======================================================================
+  begin
+    perform * from public.get_user_schedule_load(v_inactive_id, current_date, current_date);
+    raise exception 'TEST_FAILED: scenario 6 — a deactivated target user must be rejected.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+
+  -- ======================================================================
+  -- Scenario 7: a marketing_manager target is rejected outright (this feature's own exclusion,
+  -- enforced server-side too, not just by the UI's isCreativeAssignee() filter).
+  -- ======================================================================
+  begin
+    perform * from public.get_user_schedule_load(v_marketing_mgr_id, current_date, current_date);
+    raise exception 'TEST_FAILED: scenario 7 — a marketing_manager target must be rejected.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+
+  -- ======================================================================
+  -- Scenario 8: a head_of_technical target is rejected for a non-executive caller.
+  -- ======================================================================
+  begin
+    perform * from public.get_user_schedule_load(v_hot_id, current_date, current_date);
+    raise exception 'TEST_FAILED: scenario 8 — a non-executive caller must not be able to query a head_of_technical target.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+
+  -- ======================================================================
+  -- Scenario 9: a sales target is rejected outright, even for a non-sales caller.
+  -- ======================================================================
+  begin
+    perform * from public.get_user_schedule_load(v_sales_id, current_date, current_date);
+    raise exception 'TEST_FAILED: scenario 9 — a sales target must be rejected regardless of caller.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+
+  -- ======================================================================
+  -- Scenario 10: p_from after p_to is rejected.
+  -- ======================================================================
+  begin
+    perform * from public.get_user_schedule_load(v_creative_id, current_date + 1, current_date);
+    raise exception 'TEST_FAILED: scenario 10 — p_from after p_to must be rejected.';
+  exception when others then
+    if sqlerrm like 'TEST_FAILED%' then raise; end if;
+  end;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  -- ======================================================================
+  -- Scenario 11: an executive caller MAY query a head_of_technical target (the one exception to
+  -- scenario 8's rule).
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_exec_auth)::text, true);
+  set local role authenticated;
+  perform * from public.get_user_schedule_load(v_hot_id, current_date, current_date);
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  -- ======================================================================
+  -- Scenario 12: Cairo timezone fix — get_server_today(p_as_of) with a FIXED instant known to
+  -- fall in the 00:00-03:00 Cairo window (2026-01-14 22:30:00 UTC = 2026-01-15 00:30:00 Cairo)
+  -- must return the Cairo date (2026-01-15), NOT the bare UTC date of that same instant
+  -- (2026-01-14).
+  -- ======================================================================
+  select public.get_server_today(v_as_of) into v_server_today;
+  if v_server_today <> v_as_of_cairo_date then
+    raise exception 'TEST_FAILED: scenario 12 — get_server_today(%) should return the Cairo date %, got %.', v_as_of, v_as_of_cairo_date, v_server_today;
+  end if;
+  if v_server_today = v_as_of_utc_date then
+    raise exception 'TEST_FAILED: scenario 12b — get_server_today() returned the bare UTC date instead of converting to Cairo; the whole point of this fix is that these two must differ for this instant.';
+  end if;
+
+  -- ======================================================================
+  -- Scenario 13: the SAME Cairo-midnight-crossing instant, fed to get_user_schedule_load() via
+  -- p_as_of, must treat a task due on the Cairo date (v_as_of_cairo_date) as "today" (counts a
+  -- DONE task) — proving the fix applies inside the counting logic itself, not just in the
+  -- standalone get_server_today() helper.
+  -- ======================================================================
+  v_task_cairo_today_id := 'zz_schedload_cairotoday_' || substr(md5(random()::text), 1, 8);
+  insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
+  values (v_task_cairo_today_id, v_client_id, 'ZZ Cairo-today completed', 'test', v_ordinary_id, 'Technical', 'completed', v_as_of_cairo_date, 'low');
+  insert into public.task_assignees (task_id, user_id, added_by)
+  values (v_task_cairo_today_id, v_creative_id, v_ordinary_id);
+
+  perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
+  set local role authenticated;
+  if not exists (
+    select 1 from public.get_user_schedule_load(v_creative_id, v_as_of_cairo_date, v_as_of_cairo_date, v_as_of)
+    where task_count = 1
+  ) then
+    raise exception 'TEST_FAILED: scenario 13 — a completed task due on the Cairo date must still count as "today" when p_as_of is the Cairo-midnight-crossing instant (proves the function uses Cairo''s date, not UTC''s, for the today/past-vs-future decision).';
+  end if;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  raise exception 'TEST_OK_ROLLED_BACK: all user schedule load scenarios passed; rolling back every fabricated row and the temporary deactivation.';
+end $$;

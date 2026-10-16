@@ -70,6 +70,9 @@ import { getTodayStr } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { getOperationalTeams, fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
+import { getCreativeTeams, isCreativeAssignee, pickMostLoadedAssignee, suggestDueDateAndHours } from '../lib/designerScheduling';
+import { MAX_TASKS_PER_DAY, SUGGESTION_LOOKAHEAD_DAYS } from '../config/designerScheduling';
+import { addReportDays } from '../lib/reportPeriods';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
@@ -142,6 +145,17 @@ interface CrossTeamTaskBoardProps {
   onUploadTaskAttachment?: (taskId: string, file: File) => Promise<void>;
   onDeleteTaskAttachment?: (attachmentId: string) => Promise<void>;
   onGetCapacitySnapshot: (userIds: string[]) => Promise<Record<string, number>>;
+  // Backs the designer-scheduling due-date/estimated-hours suggestion (see
+  // src/lib/designerScheduling.ts and get_user_schedule_load() in
+  // supabase/migrations/20261110000000_user_schedule_load.sql). Optional: when absent, the
+  // suggestion simply never appears — same "degrade, don't crash" posture as onMarkTaskViewed.
+  onGetUserScheduleLoad?: (userId: string, fromDate: string, toDate: string) => Promise<Record<string, number>>;
+  // The one authoritative "today" for that same suggestion — Africa/Cairo's current date (see
+  // get_server_today() in supabase/migrations/20261110000000_user_schedule_load.sql). Every
+  // designer-scheduling call site below calls this rather than deriving "today" from the
+  // browser's own clock/timezone; if it's absent or its call fails, the suggestion simply does
+  // not appear (never falls back to a client-guessed date).
+  onGetServerToday?: () => Promise<string>;
   onMarkTaskViewed?: (taskId: string) => Promise<void>;
 }
 
@@ -175,6 +189,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onUploadTaskAttachment,
   onDeleteTaskAttachment,
   onGetCapacitySnapshot,
+  onGetUserScheduleLoad,
+  onGetServerToday,
   onMarkTaskViewed,
 }) => {
   // View mode: Kanban board vs Table view
@@ -292,6 +308,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       cancelled = true;
     };
   }, [isAddAssigneeOpen, orgWideAssignableEmployees, onGetCapacitySnapshot]);
+  // Designer-scheduling suggestion for a creative assignee added via the Details-modal "Add
+  // assignee" control — SHOWN only, same "never auto-shift an existing due date" rule as the Edit
+  // form's own suggestion. Reset whenever a different task's details open, so a stale suggestion
+  // from the previous task never lingers.
+  const [addAssigneeSuggestion, setAddAssigneeSuggestion] = useState<{
+    dueDate: string;
+    estimatedHours: number;
+    warning: boolean;
+    userName: string;
+  } | null>(null);
+  const [isApplyingAddAssigneeSuggestion, setIsApplyingAddAssigneeSuggestion] = useState(false);
+  useEffect(() => {
+    setAddAssigneeSuggestion(null);
+  }, [selectedTaskDetails?.id]);
   const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
   // Set when the Create Task modal was opened via "+ Add Subtask" — locks
   // the client to the parent's and attaches parent_task_id on submit.
@@ -460,6 +490,83 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     .filter((u) => newAssigneeIds.includes(u.id))
     .map((u) => u.role);
   const newAssigneeRole = newAssigneeRoles[0];
+
+  // Designer-scheduling suggestion (create form only — a brand-new task has no existing due
+  // date to "shift," so prefilling here is safe; the Edit form and Add-assignee flow below show
+  // the same suggestion but never auto-write it, since those ARE an existing task's due date).
+  // Re-suggests (and re-prefills) every time the set of selected CREATIVE assignees changes;
+  // still freely editable afterward like any other form field.
+  const [newSchedulingSuggestion, setNewSchedulingSuggestion] = useState<{
+    dueDate: string;
+    estimatedHours: number;
+    warning: boolean;
+    basedOnUserId: string;
+    consideredCount: number;
+  } | null>(null);
+  const [isNewSchedulingLoading, setIsNewSchedulingLoading] = useState(false);
+  const [newSchedulingError, setNewSchedulingError] = useState<string | null>(null);
+  const newCreativeAssigneeIds = useMemo(() => {
+    const creativeTeams = getCreativeTeams();
+    return newAssigneeOptions.filter((u) => newAssigneeIds.includes(u.id) && isCreativeAssignee(u, creativeTeams)).map((u) => u.id);
+  }, [newAssigneeOptions, newAssigneeIds]);
+  const newCreativeAssigneeKey = newCreativeAssigneeIds.join('|');
+  // Multi-client create: createTaskCopies (lib/taskOperations.ts) creates one task per selected
+  // client, all sharing this same suggested due date — so a batch of N can push a day over the
+  // cap even though any single task wouldn't. Locked to 1 in subtask mode (always a single
+  // client, per addSubtaskParent's own client lock).
+  const newCopiesCount = addSubtaskParent ? 1 : Math.max(1, newClientIds.length);
+  useEffect(() => {
+    let cancelled = false;
+    if (!onGetUserScheduleLoad || !onGetServerToday || newCreativeAssigneeIds.length === 0 || activeRecovery) {
+      setNewSchedulingSuggestion(null);
+      setNewSchedulingError(null);
+      return;
+    }
+    setIsNewSchedulingLoading(true);
+    setNewSchedulingError(null);
+    // "Today" comes from the server (Africa/Cairo), never guessed from the browser's own
+    // clock/timezone — see onGetServerToday's own comment on the props interface above.
+    onGetServerToday()
+      .then((todayStr) => {
+        if (cancelled) return;
+        const toDate = addReportDays(todayStr, SUGGESTION_LOOKAHEAD_DAYS);
+        return Promise.all(newCreativeAssigneeIds.map((id) => onGetUserScheduleLoad(id, todayStr, toDate)))
+          .then((loads) => {
+            if (cancelled) return;
+            const loadByDateByUserId: Record<string, Record<string, number>> = {};
+            newCreativeAssigneeIds.forEach((id, index) => {
+              loadByDateByUserId[id] = loads[index];
+            });
+            const mostLoadedId = pickMostLoadedAssignee(loadByDateByUserId, todayStr);
+            if (!mostLoadedId) return;
+            const suggestion = suggestDueDateAndHours({
+              anchorDate: todayStr,
+              loadByDate: loadByDateByUserId[mostLoadedId],
+              taskCount: newCopiesCount,
+            });
+            setNewSchedulingSuggestion({
+              dueDate: suggestion.dueDate,
+              estimatedHours: suggestion.estimatedHours,
+              warning: suggestion.warning,
+              basedOnUserId: mostLoadedId,
+              consideredCount: newCreativeAssigneeIds.length,
+            });
+            setNewDueDate(suggestion.dueDate);
+            setNewEstimatedHours(suggestion.estimatedHours);
+          });
+      })
+      .catch((error) => {
+        if (!cancelled) setNewSchedulingError(error instanceof Error ? error.message : 'Unable to load schedule data.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsNewSchedulingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newCreativeAssigneeKey, onGetUserScheduleLoad, onGetServerToday, activeRecovery, newCopiesCount]);
+
   const newTaskTypeOptions = useMemo(
     () =>
       taskTypes.filter(
@@ -491,6 +598,71 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     .filter((u) => editAssigneeIds.includes(u.id))
     .map((u) => u.role);
   const editAssigneeRole = editAssigneeRoles[0];
+
+  // Designer-scheduling suggestion for the Edit form — SHOWN only, never auto-written: this is
+  // an EXISTING task's due date/estimated hours, and "never auto-shift existing due dates" (owner
+  // decision) applies here. The AM/editor must explicitly click "Use suggestion" to copy it into
+  // the (still freely editable) fields below.
+  const [editSchedulingSuggestion, setEditSchedulingSuggestion] = useState<{
+    dueDate: string;
+    estimatedHours: number;
+    warning: boolean;
+    basedOnUserId: string;
+    consideredCount: number;
+  } | null>(null);
+  const [isEditSchedulingLoading, setIsEditSchedulingLoading] = useState(false);
+  const [editSchedulingError, setEditSchedulingError] = useState<string | null>(null);
+  const editCreativeAssigneeIds = useMemo(() => {
+    const creativeTeams = getCreativeTeams();
+    return editAssigneeOptions.filter((u) => editAssigneeIds.includes(u.id) && isCreativeAssignee(u, creativeTeams)).map((u) => u.id);
+  }, [editAssigneeOptions, editAssigneeIds]);
+  const editCreativeAssigneeKey = editCreativeAssigneeIds.join('|');
+  useEffect(() => {
+    let cancelled = false;
+    if (!onGetUserScheduleLoad || !onGetServerToday || editCreativeAssigneeIds.length === 0 || !editingTask) {
+      setEditSchedulingSuggestion(null);
+      setEditSchedulingError(null);
+      return;
+    }
+    setIsEditSchedulingLoading(true);
+    setEditSchedulingError(null);
+    // "Today" comes from the server (Africa/Cairo), never guessed from the browser's own
+    // clock/timezone — see onGetServerToday's own comment on the props interface above.
+    onGetServerToday()
+      .then((todayStr) => {
+        if (cancelled) return;
+        const toDate = addReportDays(todayStr, SUGGESTION_LOOKAHEAD_DAYS);
+        return Promise.all(editCreativeAssigneeIds.map((id) => onGetUserScheduleLoad(id, todayStr, toDate)))
+          .then((loads) => {
+            if (cancelled) return;
+            const loadByDateByUserId: Record<string, Record<string, number>> = {};
+            editCreativeAssigneeIds.forEach((id, index) => {
+              loadByDateByUserId[id] = loads[index];
+            });
+            const mostLoadedId = pickMostLoadedAssignee(loadByDateByUserId, todayStr);
+            if (!mostLoadedId) return;
+            const suggestion = suggestDueDateAndHours({ anchorDate: todayStr, loadByDate: loadByDateByUserId[mostLoadedId] });
+            setEditSchedulingSuggestion({
+              dueDate: suggestion.dueDate,
+              estimatedHours: suggestion.estimatedHours,
+              warning: suggestion.warning,
+              basedOnUserId: mostLoadedId,
+              consideredCount: editCreativeAssigneeIds.length,
+            });
+          });
+      })
+      .catch((error) => {
+        if (!cancelled) setEditSchedulingError(error instanceof Error ? error.message : 'Unable to load schedule data.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsEditSchedulingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editCreativeAssigneeKey, onGetUserScheduleLoad, onGetServerToday, editingTask?.id]);
+
   const editTaskTypeOptions = useMemo(() => {
     const active = taskTypes.filter(
       (t) =>
@@ -995,14 +1167,54 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const handleAddAssignee = async (userId: string) => {
     if (!selectedTaskDetails || !onUpdateTask) return;
     setAssigneeActionError(null);
+    setAddAssigneeSuggestion(null);
     setIsSavingAssignees(true);
     try {
       const currentIds = resolveTaskAssigneeIds(selectedTaskDetails.id, taskAssignees, selectedTaskDetails.assigned_to);
       await onUpdateTask(selectedTaskDetails.id, {}, [...currentIds, userId]);
+
+      // Designer-scheduling suggestion — SHOWN only; this task already has a due date, so it is
+      // never auto-written (owner decision: never auto-shift an existing due date). "Today"
+      // comes from the server (Africa/Cairo), never guessed from the browser's own
+      // clock/timezone — see onGetServerToday's own comment on the props interface above.
+      const addedUser = orgWideAssignableEmployees?.find((employee) => employee.id === userId);
+      if (addedUser && onGetUserScheduleLoad && onGetServerToday && isCreativeAssignee(addedUser)) {
+        try {
+          const todayStr = await onGetServerToday();
+          const toDate = addReportDays(todayStr, SUGGESTION_LOOKAHEAD_DAYS);
+          const loadByDate = await onGetUserScheduleLoad(userId, todayStr, toDate);
+          const suggestion = suggestDueDateAndHours({ anchorDate: todayStr, loadByDate });
+          setAddAssigneeSuggestion({
+            dueDate: suggestion.dueDate,
+            estimatedHours: suggestion.estimatedHours,
+            warning: suggestion.warning,
+            userName: addedUser.name,
+          });
+        } catch {
+          // Suggestion is informational only — a failed lookup here must never block or report
+          // an error for the assignee add itself, which already succeeded above.
+        }
+      }
     } catch (err) {
       setAssigneeActionError(err instanceof Error ? err.message : 'Unable to add this assignee.');
     } finally {
       setIsSavingAssignees(false);
+    }
+  };
+
+  const handleApplyAddAssigneeSuggestion = async () => {
+    if (!selectedTaskDetails || !onUpdateTask || !addAssigneeSuggestion) return;
+    setIsApplyingAddAssigneeSuggestion(true);
+    try {
+      await onUpdateTask(selectedTaskDetails.id, {
+        due_date: addAssigneeSuggestion.dueDate,
+        estimated_hours: addAssigneeSuggestion.estimatedHours,
+      });
+      setAddAssigneeSuggestion(null);
+    } catch (err) {
+      setAssigneeActionError(err instanceof Error ? err.message : 'Unable to apply the suggested date and hours.');
+    } finally {
+      setIsApplyingAddAssigneeSuggestion(false);
     }
   };
 
@@ -2138,6 +2350,30 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           {assigneeActionError && (
                             <p className="mt-1 text-[10px] font-semibold text-red-400">{assigneeActionError}</p>
                           )}
+                          {/* Designer-scheduling suggestion for the just-added creative assignee —
+                              SHOWN only; this task's existing due date is left as-is unless
+                              explicitly applied (never auto-shift an existing due date). */}
+                          {addAssigneeSuggestion && (
+                            <div className={`mt-2 p-2 rounded-lg text-[10px] border flex items-center justify-between gap-2 flex-wrap ${
+                              addAssigneeSuggestion.warning
+                                ? 'bg-amber-950/20 border-amber-700/40 text-amber-200'
+                                : 'bg-stone-900/60 border-stone-800 text-stone-400'
+                            }`}>
+                              <span>
+                                Suggested for {addAssigneeSuggestion.userName}: {addAssigneeSuggestion.dueDate}, {addAssigneeSuggestion.estimatedHours.toFixed(2)}h.
+                                {' '}This task's due date is unchanged unless applied.
+                                {addAssigneeSuggestion.warning && ` That day is already at or near the ${MAX_TASKS_PER_DAY}/day limit.`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={handleApplyAddAssigneeSuggestion}
+                                disabled={isApplyingAddAssigneeSuggestion}
+                                className="shrink-0 px-2 py-0.5 rounded-lg text-[10px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+                              >
+                                {isApplyingAddAssigneeSuggestion ? 'Applying…' : 'Apply'}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </>
@@ -2609,6 +2845,32 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 )}
               </div>
 
+              {/* Designer-scheduling suggestion — prefills Due Date/Estimated Hours below
+                  whenever a creative assignee is selected; both fields stay freely editable
+                  afterward. */}
+              {(isNewSchedulingLoading || newSchedulingError || newSchedulingSuggestion) && (
+                <div className={`p-2.5 rounded-xl text-[11px] border ${
+                  newSchedulingSuggestion?.warning
+                    ? 'bg-amber-950/20 border-amber-700/40 text-amber-200'
+                    : 'bg-stone-900/60 border-stone-800 text-stone-400'
+                }`}>
+                  {isNewSchedulingLoading && 'Checking schedule…'}
+                  {newSchedulingError && `Schedule suggestion unavailable: ${newSchedulingError}`}
+                  {!isNewSchedulingLoading && !newSchedulingError && newSchedulingSuggestion && (
+                    <>
+                      Suggested Due Date and Estimated Hours set below, based on{' '}
+                      {newAssigneeOptions.find((u) => u.id === newSchedulingSuggestion.basedOnUserId)?.name || 'the assignee'}
+                      {newSchedulingSuggestion.consideredCount > 1
+                        ? ` (the most loaded of ${newSchedulingSuggestion.consideredCount} creative assignees)`
+                        : ''}
+                      's schedule — editable below.
+                      {newCopiesCount > 1 ? ` Creating ${newCopiesCount} copies (one per client), all on this date.` : ''}
+                      {newSchedulingSuggestion.warning && ` This day is already at or near the ${MAX_TASKS_PER_DAY}/day limit${newCopiesCount > 1 ? ' once these copies are added' : ''}.`}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Priority & Due Date */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -2649,7 +2911,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   type="number"
                   disabled={!!activeRecovery}
                   min="0.5"
-                  step="0.5"
+                  step="0.01"
                   value={newEstimatedHours}
                   onChange={(e) => setNewEstimatedHours(parseFloat(e.target.value) || 0)}
                   className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
@@ -2935,6 +3197,45 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 )}
               </div>
 
+              {/* Designer-scheduling suggestion — SHOWN only; this task's due date already
+                  exists, so it is never auto-shifted (owner decision). Click "Use suggestion" to
+                  copy it into the still-editable fields below. */}
+              {(isEditSchedulingLoading || editSchedulingError || editSchedulingSuggestion) && (
+                <div className={`p-2.5 rounded-xl text-[11px] border flex items-center justify-between gap-2 flex-wrap ${
+                  editSchedulingSuggestion?.warning
+                    ? 'bg-amber-950/20 border-amber-700/40 text-amber-200'
+                    : 'bg-stone-900/60 border-stone-800 text-stone-400'
+                }`}>
+                  <span>
+                    {isEditSchedulingLoading && 'Checking schedule…'}
+                    {editSchedulingError && `Schedule suggestion unavailable: ${editSchedulingError}`}
+                    {!isEditSchedulingLoading && !editSchedulingError && editSchedulingSuggestion && (
+                      <>
+                        Suggested: {editSchedulingSuggestion.dueDate}, {editSchedulingSuggestion.estimatedHours.toFixed(2)}h — based on{' '}
+                        {editAssigneeOptions.find((u) => u.id === editSchedulingSuggestion.basedOnUserId)?.name || 'the assignee'}
+                        {editSchedulingSuggestion.consideredCount > 1
+                          ? ` (the most loaded of ${editSchedulingSuggestion.consideredCount} creative assignees)`
+                          : ''}
+                        's schedule. This task's existing due date is left as-is unless you apply it.
+                        {editSchedulingSuggestion.warning && ` That day is already at or near the ${MAX_TASKS_PER_DAY}/day limit.`}
+                      </>
+                    )}
+                  </span>
+                  {editSchedulingSuggestion && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditDueDate(editSchedulingSuggestion.dueDate);
+                        setEditEstimatedHours(editSchedulingSuggestion.estimatedHours);
+                      }}
+                      className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500"
+                    >
+                      Use suggestion
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Priority & Due Date */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -2976,7 +3277,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <input
                     type="number"
                     min="0"
-                    step="0.5"
+                    step="0.01"
                     value={editEstimatedHours}
                     onChange={(e) => setEditEstimatedHours(parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"

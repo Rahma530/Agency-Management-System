@@ -126,6 +126,8 @@ import {
   fetchTaskAssignees,
   fetchTaskPlatformLinks,
   getCapacitySnapshot,
+  getServerToday,
+  getUserScheduleLoad,
   markTaskViewed,
   removeTaskAttachmentObject,
   setTaskAssignees as persistTaskAssignees,
@@ -6087,6 +6089,8 @@ export default function App() {
                   onUploadTaskAttachment={handleUploadTaskAttachment}
                   onDeleteTaskAttachment={handleDeleteTaskAttachment}
                   onGetCapacitySnapshot={getCapacitySnapshot}
+                  onGetUserScheduleLoad={getUserScheduleLoad}
+                  onGetServerToday={getServerToday}
                   onMarkTaskViewed={handleMarkTaskViewed}
                 />
               </div>
