@@ -504,6 +504,31 @@ export interface TaskPlatformLinkRecord {
   created_at?: string;
 }
 
+// 6f. task_events — append-only task history, backing the Task Details "History" tab. Writable
+// only by the two SECURITY DEFINER triggers in supabase/migrations/20261116000000_task_events.sql
+// (tasks_log_events_trigger, task_assignees_log_events_trigger); no insert/update/delete grant
+// exists for any client role. No FK on task_id (survives a hard task delete, by that migration's
+// own design), so a row here can outlive its task.
+export type TaskEventType =
+  | 'created'
+  | 'status_changed'
+  | 'priority_changed'
+  | 'due_date_changed'
+  | 'title_changed'
+  | 'team_changed'
+  | 'assignee_added'
+  | 'assignee_removed';
+
+export interface TaskEventRecord {
+  id: string;
+  task_id: string;
+  actor_id: string | null;
+  event_type: TaskEventType;
+  old_value: string | null;
+  new_value: string | null;
+  created_at: string;
+}
+
 // 6b. task_comments — threaded comments on a task, capped at 3 levels
 // (comment -> reply -> reply-to-reply) by a DB trigger, same as tasks
 // nesting. Soft-delete via deleted_at (never a real DELETE) so a deleted

@@ -46,6 +46,7 @@ import {
   TaskAssigneeRecord,
   PlatformRecord,
   TaskPlatformLinkRecord,
+  TaskEventRecord,
 } from '../types/database';
 import {
   DndContext,
@@ -58,7 +59,7 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
-import { computeTaskDeletionPreview } from '../lib/taskOperations';
+import { computeTaskDeletionPreview, fetchTaskEvents } from '../lib/taskOperations';
 import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal';
 import {
   isTaskDone,
@@ -79,6 +80,7 @@ import { addReportDays } from '../lib/reportPeriods';
 import { SubtaskList } from './SubtaskList';
 import { TaskCommentThread } from './TaskCommentThread';
 import { TaskAttachmentList } from './TaskAttachmentList';
+import { TaskHistoryTab } from './TaskHistoryTab';
 import { TaskAttachmentPicker } from './TaskAttachmentPicker';
 import { SearchableMultiSelect } from './SearchableMultiSelect';
 import type { CreateTaskFormInput, StagedTaskAttachment, UserScheduleLoad } from '../lib/taskOperations';
@@ -306,6 +308,40 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   useEffect(() => {
     setDoneLinkDraft(selectedTaskDetails?.done_link || '');
   }, [selectedTaskDetails?.id]);
+  // Details / History tab (public.task_events). Reset to 'details' and drop any previously
+  // fetched rows whenever a different task's details open, so switching tasks never shows a
+  // stale task's history under the new one for an instant.
+  const [activeDetailsTab, setActiveDetailsTab] = useState<'details' | 'history'>('details');
+  const [taskEvents, setTaskEvents] = useState<TaskEventRecord[]>([]);
+  const [isLoadingTaskEvents, setIsLoadingTaskEvents] = useState(false);
+  const [taskEventsError, setTaskEventsError] = useState<string | null>(null);
+  const [taskEventsReloadToken, setTaskEventsReloadToken] = useState(0);
+  useEffect(() => {
+    setActiveDetailsTab('details');
+    setTaskEvents([]);
+    setTaskEventsError(null);
+  }, [selectedTaskDetails?.id]);
+  // Lazy: fetched only once the History tab is actually opened for this task, never when Task
+  // Details itself opens — a task whose details are never switched to History never calls this.
+  useEffect(() => {
+    if (activeDetailsTab !== 'history' || !selectedTaskDetails) return;
+    let cancelled = false;
+    setIsLoadingTaskEvents(true);
+    setTaskEventsError(null);
+    fetchTaskEvents(selectedTaskDetails.id)
+      .then((rows) => {
+        if (!cancelled) setTaskEvents(rows);
+      })
+      .catch((err) => {
+        if (!cancelled) setTaskEventsError(err instanceof Error ? err.message : 'Unable to load task history.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingTaskEvents(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDetailsTab, selectedTaskDetails?.id, taskEventsReloadToken]);
   // Details-modal "Assignees" section (re-assign chain, section B): the org-wide roster for "Add
   // assignee" — deliberately NOT fetchAssignableEmployees(task.team) like the Create/Edit forms,
   // since this control must offer someone from ANY department (e.g. an AM adding a graphic
@@ -2374,7 +2410,43 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
             </div>
 
-            {/* Task Details Content */}
+            {/* Details / History tab switcher */}
+            <div className="flex items-center gap-1 border-b border-stone-800">
+              <button
+                type="button"
+                onClick={() => setActiveDetailsTab('details')}
+                className={`px-3 py-2 text-xs font-bold border-b-2 transition-colors ${
+                  activeDetailsTab === 'details'
+                    ? 'border-purple-400 text-white'
+                    : 'border-transparent text-stone-400 hover:text-white'
+                }`}
+              >
+                Details
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveDetailsTab('history')}
+                className={`px-3 py-2 text-xs font-bold border-b-2 transition-colors ${
+                  activeDetailsTab === 'history'
+                    ? 'border-purple-400 text-white'
+                    : 'border-transparent text-stone-400 hover:text-white'
+                }`}
+              >
+                History
+              </button>
+            </div>
+
+            {activeDetailsTab === 'history' ? (
+              <TaskHistoryTab
+                events={taskEvents}
+                users={taskDirectoryUsers}
+                getStatusLabel={(status) => columns.find((c) => c.id === status)?.label || status}
+                getPriorityLabel={(priority) => getPriorityBadge(priority as TaskPriority).label}
+                isLoading={isLoadingTaskEvents}
+                error={taskEventsError}
+                onRetry={() => setTaskEventsReloadToken((t) => t + 1)}
+              />
+            ) : (
             <div className="space-y-4">
               {/* Description */}
               <div>
@@ -2753,6 +2825,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               )}
             </div>
+            )}
 
             {/* Modal Actions */}
             <div className="pt-3 border-t border-stone-800 flex items-center justify-between">
