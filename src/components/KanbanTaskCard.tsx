@@ -77,6 +77,15 @@ export interface KanbanTaskCardContentProps {
   // visuals, but not interactive (no click-to-open, no stage buttons) since
   // it isn't really mounted where the card normally lives.
   isOverlay?: boolean;
+  // Bulk-action multi-select (shared with the Table view's selectedTaskIds — see
+  // CrossTeamTaskBoard.tsx). canUseBulkActions alone decides whether the checkbox renders at
+  // all; isSelected/anySelected only control its opacity (hover-only vs. always-visible once
+  // anything anywhere is selected). Never rendered on the DragOverlay copy (isOverlay) — there's
+  // nothing for a floating, non-interactive visual to select.
+  canUseBulkActions?: boolean;
+  isSelected?: boolean;
+  anySelected?: boolean;
+  onToggleSelection?: (taskId: string) => void;
 }
 
 // Pure presentational card body — used both for the real (draggable) card
@@ -99,23 +108,48 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
   onEditTask,
   onMoveStatus,
   isOverlay = false,
+  canUseBulkActions = false,
+  isSelected = false,
+  anySelected = false,
+  onToggleSelection,
 }) => {
   const priority = getPriorityBadge(task.priority);
   const teamColor = getTeamColor(task.team);
   const primaryAssigneeName = assigneeNames[0];
   const assigneeTooltip = assigneeNames.join(', ');
+  const showCheckbox = canUseBulkActions && !isOverlay;
 
   return (
     <div
       className={`p-3.5 rounded-xl transition-all group relative space-y-2.5 shadow-md ${
         isOverlay ? 'rotate-2 shadow-2xl cursor-grabbing' : 'cursor-grab active:cursor-grabbing hover:border-purple-500/50'
-      }`}
+      } ${isSelected ? 'ring-2 ring-purple-400' : ''}`}
       style={{
         background: 'var(--gradient-card)',
-        border: `1px solid ${overdue ? 'rgba(245, 163, 163, 0.4)' : 'var(--border-medium)'}`,
+        border: `1px solid ${isSelected ? 'var(--purple-light)' : overdue ? 'rgba(245, 163, 163, 0.4)' : 'var(--border-medium)'}`,
       }}
       onClick={() => !isOverlay && onOpenDetails(task)}
     >
+      {showCheckbox && (
+        <label
+          className={`absolute top-2 w-5 h-5 rounded-md flex items-center justify-center bg-stone-950/80 border border-stone-700 transition-opacity z-10 cursor-pointer ${
+            anySelected || isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+          style={{ insetInlineStart: '0.5rem' }}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            className="w-3.5 h-3.5"
+            aria-label={`Select ${task.title}`}
+            checked={isSelected}
+            onChange={() => onToggleSelection?.(task.id)}
+          />
+        </label>
+      )}
+
       {/* Top Badges: Team & Priority */}
       <div className="flex items-center justify-between gap-1">
         <span
