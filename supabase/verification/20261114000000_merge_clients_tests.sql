@@ -99,9 +99,9 @@ begin
   v_pc_dup_unique_id := 'zz_merge_pc_dupu_' || substr(md5(random()::text), 1, 8);
   insert into public.platform_connections (id, client_id, platform_category, platform_name)
   values
-    (v_pc_keep_id, v_keep_id, 'social', 'facebook'),
-    (v_pc_dup_conflict_id, v_dup_id, 'social', 'facebook'),
-    (v_pc_dup_unique_id, v_dup_id, 'social', 'instagram');
+    (v_pc_keep_id, v_keep_id, 'social_media', 'facebook'),
+    (v_pc_dup_conflict_id, v_dup_id, 'social_media', 'facebook'),
+    (v_pc_dup_unique_id, v_dup_id, 'social_media', 'instagram');
 
   -- assignments: no unique constraint at all, but the duplicate's 'seo' row collides with the
   -- keep client's own 'seo' row at the business-rule level (must be deleted, not moved); the
