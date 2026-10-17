@@ -13,11 +13,10 @@ export interface TaskHistoryTabProps {
   isLoading: boolean;
   error: string | null;
   onRetry: () => void;
-  // "Older history": admin-only (executive/head_of_technical), merging the two pre-task_events
-  // sources (public.activities + public.task_assignee_log) for this one task. false means this
-  // whole section renders nothing at all, regardless of what the other legacy* props hold — the
-  // caller (CrossTeamTaskBoard.tsx) also never fetches them for anyone else in the first place.
-  canSeeLegacyHistory: boolean;
+  // "Older history": merges the two pre-task_events sources (public.activities +
+  // public.task_assignee_log) for this one task. Shown to anyone who can open this Task Details
+  // modal at all — each source's own RLS (task_visible_v2()-based) is what actually scopes which
+  // rows a given viewer gets back, not a role check here or in the caller.
   legacyActivities: ActivityRecord[];
   legacyAssigneeLog: TaskAssigneeLogRecord[];
   isLoadingLegacyHistory: boolean;
@@ -52,7 +51,6 @@ export const TaskHistoryTab: React.FC<TaskHistoryTabProps> = ({
   isLoading,
   error,
   onRetry,
-  canSeeLegacyHistory,
   legacyActivities,
   legacyAssigneeLog,
   isLoadingLegacyHistory,
@@ -151,17 +149,15 @@ export const TaskHistoryTab: React.FC<TaskHistoryTabProps> = ({
   return (
     <div dir="rtl">
       {mainContent}
-      {canSeeLegacyHistory && (
-        <LegacyHistorySection
-          legacyActivities={legacyActivities}
-          legacyAssigneeLog={legacyAssigneeLog}
-          isLoading={isLoadingLegacyHistory}
-          error={legacyHistoryError}
-          onRetry={onRetryLegacyHistory}
-          resolveActorName={resolveActorName}
-          resolveAssigneeName={resolveAssigneeName}
-        />
-      )}
+      <LegacyHistorySection
+        legacyActivities={legacyActivities}
+        legacyAssigneeLog={legacyAssigneeLog}
+        isLoading={isLoadingLegacyHistory}
+        error={legacyHistoryError}
+        onRetry={onRetryLegacyHistory}
+        resolveActorName={resolveActorName}
+        resolveAssigneeName={resolveAssigneeName}
+      />
     </div>
   );
 };

@@ -64,7 +64,6 @@ import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
 import {
   computeTaskDeletionPreview,
   fetchTaskEvents,
-  fetchEarliestTaskEventCutoff,
   fetchLegacyTaskActivities,
   fetchLegacyTaskAssigneeLog,
 } from '../lib/taskOperations';
@@ -350,11 +349,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       cancelled = true;
     };
   }, [activeDetailsTab, selectedTaskDetails?.id, taskEventsReloadToken]);
-  // "Older history" (TaskHistoryTab.tsx) — admin-only, legacy activities/task_assignee_log rows
-  // from before task_events existed. canSeeLegacyHistory gates BOTH ends: the fetch below never
-  // fires for anyone else, and TaskHistoryTab never renders the section for anyone else either,
-  // even if this state somehow held stale data from a role change mid-session.
-  const canSeeLegacyHistory = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
+  // "Older history" (TaskHistoryTab.tsx) — legacy activities/task_assignee_log rows from before
+  // task_events existed. Visible to anyone who can open this Task Details modal at all: both
+  // legacy sources' own RLS now key off task_visible_v2() the same way tasks/task_events do
+  // (activities_select_task_participants, 20261117000000_activities_task_participants_select.sql),
+  // not an admin-only check here — the RLS on each table is what actually scopes this per viewer.
   const [legacyActivities, setLegacyActivities] = useState<ActivityRecord[]>([]);
   const [legacyAssigneeLog, setLegacyAssigneeLog] = useState<TaskAssigneeLogRecord[]>([]);
   const [isLoadingLegacyHistory, setIsLoadingLegacyHistory] = useState(false);
@@ -366,17 +365,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setLegacyHistoryError(null);
   }, [selectedTaskDetails?.id]);
   useEffect(() => {
-    if (activeDetailsTab !== 'history' || !selectedTaskDetails || !canSeeLegacyHistory) return;
+    if (activeDetailsTab !== 'history' || !selectedTaskDetails) return;
     let cancelled = false;
     setIsLoadingLegacyHistory(true);
     setLegacyHistoryError(null);
-    fetchEarliestTaskEventCutoff()
-      .then((cutoff) =>
-        Promise.all([
-          fetchLegacyTaskActivities(selectedTaskDetails.id, cutoff),
-          fetchLegacyTaskAssigneeLog(selectedTaskDetails.id, cutoff),
-        ])
-      )
+    Promise.all([
+      fetchLegacyTaskActivities(selectedTaskDetails.id),
+      fetchLegacyTaskAssigneeLog(selectedTaskDetails.id),
+    ])
       .then(([activities, assigneeLog]) => {
         if (cancelled) return;
         setLegacyActivities(activities);
@@ -391,7 +387,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeDetailsTab, selectedTaskDetails?.id, legacyHistoryReloadToken, canSeeLegacyHistory]);
+  }, [activeDetailsTab, selectedTaskDetails?.id, legacyHistoryReloadToken]);
   // Details-modal "Assignees" section (re-assign chain, section B): the org-wide roster for "Add
   // assignee" — deliberately NOT fetchAssignableEmployees(task.team) like the Create/Edit forms,
   // since this control must offer someone from ANY department (e.g. an AM adding a graphic
@@ -2495,7 +2491,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 isLoading={isLoadingTaskEvents}
                 error={taskEventsError}
                 onRetry={() => setTaskEventsReloadToken((t) => t + 1)}
-                canSeeLegacyHistory={canSeeLegacyHistory}
                 legacyActivities={legacyActivities}
                 legacyAssigneeLog={legacyAssigneeLog}
                 isLoadingLegacyHistory={isLoadingLegacyHistory}
