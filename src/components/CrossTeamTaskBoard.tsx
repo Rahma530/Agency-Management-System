@@ -1400,15 +1400,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
     // 'closed' is the one transition every other status change here is deliberately NOT gated
     // for: the task must have reached 'completed' first, and the mover must be the task's
-    // creator, its assignee, or head_of_technical (canCloseTask/canSubmitTaskForClosing in
+    // creator, any current assignee, or an admin role (canCloseTask/canSubmitTaskForClosing in
     // lib/taskLifecycle.ts) — matched server-side by tasks_update_rls. A Done Link is optional and
     // never required to close a task. Every other target status is unrestricted, same as before.
     if (targetStatus === 'closed') {
       const task = tasks.find((t) => t.id === taskId);
       const denyReason = !task
         ? 'Task not found.'
-        : !currentUser || !canCloseTask(task, currentUser)
-        ? 'Only the task\'s creator, its assignee, or Head of Technical can close it.'
+        : !currentUser || !canCloseTask(task, currentUser, taskAssignees)
+        ? 'Only the task\'s creator, any current assignee, or Executive/Head of Technical/AI Engineer can close it.'
         : !canSubmitTaskForClosing(task)
         ? 'This task must reach Completed before it can be closed.'
         : null;
@@ -2596,7 +2596,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       </a>
                     )}
                   </div>
-                  {selectedTaskDetails.status === 'completed' && currentUser && canCloseTask(selectedTaskDetails, currentUser) && (
+                  {selectedTaskDetails.status === 'completed' && currentUser && canCloseTask(selectedTaskDetails, currentUser, taskAssignees) && (
                     <button
                       onClick={() => handleMoveStatus(selectedTaskDetails.id, 'closed')}
                       disabled={!canSubmitTaskForClosing(selectedTaskDetails)}
