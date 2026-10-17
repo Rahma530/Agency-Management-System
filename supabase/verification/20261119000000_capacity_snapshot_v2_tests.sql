@@ -14,15 +14,13 @@
 -- marker BEFORE checking the real rejection text, so a bug that lets a rejected call silently
 -- succeed can never be mistaken for a pass via a loose substring match.
 --
--- public.assignments is NOT separately exercised here: assignments_insert_rls is itself scoped to
--- the caller's own department role AND requires agent_id's role to belong to that same service's
--- department (seo/media_buying/social_media) — an am_agent (this file's "else"-branch persona)
--- can never legitimately be the agent_id on an assignments row at all, so fabricating one for this
--- test would need a second, department-matched persona and an existing client already subscribed
--- to that service, for no behavior this requested scenario list actually asks to prove. Scenario 5
--- below proves the UNION's de-duplication via its other two sources (clients.am_agent_id and a
--- workload-open task_assignees task), which is exactly "the same client from two sources counted
--- once" as asked — the migration's own header documents why assignments is still in the UNION.
+-- public.assignments (scenario 7 below) is inserted directly, with no preceding `set local role`
+-- at all — this whole DO block runs as the connecting owner/superuser role, which Postgres RLS
+-- never applies to by default, so that one INSERT bypasses assignments_insert_rls entirely rather
+-- than needing a department-matched caller + an existing client already subscribed to that
+-- service (assignments_insert_rls's own real-world requirements, irrelevant to what this test is
+-- actually proving: the RPC's own UNION/dedup/status-filter logic over whatever rows exist,
+-- regardless of how they got there).
 do $$
 declare
   v_client_id text;
@@ -34,13 +32,19 @@ declare
   v_designer_auth uuid;
   v_sales_id text;
   v_sales_auth uuid;
+  v_seo_agent_id text;  -- a department role that can legitimately be assignments.agent_id
+  v_seo_agent_auth uuid;
   v_before integer;
   v_after integer;
   v_client1_id text := 'zz_cap_c1_' || substr(md5(random()::text), 1, 8);
   v_client2_id text := 'zz_cap_c2_' || substr(md5(random()::text), 1, 8);
+  v_client3_id text := 'zz_cap_c3_' || substr(md5(random()::text), 1, 8);
+  v_client4_id text := 'zz_cap_c4_' || substr(md5(random()::text), 1, 8);
   v_task1_id text := 'zz_cap_t1_' || substr(md5(random()::text), 1, 8);
   v_task2_id text := 'zz_cap_t2_' || substr(md5(random()::text), 1, 8);
   v_task3_id text := 'zz_cap_t3_' || substr(md5(random()::text), 1, 8);
+  v_assignment1_id text := 'zz_cap_a1_' || substr(md5(random()::text), 1, 8);
+  v_assignment2_id text := 'zz_cap_a2_' || substr(md5(random()::text), 1, 8);
 begin
   select id into v_client_id from public.clients limit 1;
   if v_client_id is null then
@@ -77,6 +81,13 @@ begin
   limit 1;
   if v_sales_id is null then
     raise exception 'TEST_SETUP_FAILED: no active sales persona found.';
+  end if;
+
+  select id, auth_id into v_seo_agent_id, v_seo_agent_auth from public.users
+  where role = 'seo_agent' and auth_id is not null and deactivated_at is null
+  limit 1;
+  if v_seo_agent_id is null then
+    raise exception 'TEST_SETUP_FAILED: no active seo_agent persona found.';
   end if;
 
   -- ======================================================================
@@ -230,8 +241,8 @@ begin
   -- ======================================================================
   -- Scenario 5: the SAME client reachable via TWO sources at once (clients.am_agent_id AND a
   -- workload-open task_assignees task, both for the same agent) must still count exactly once —
-  -- distinct, not summed. (See this file's header for why public.assignments, the UNION's third
-  -- source, isn't separately exercised here.)
+  -- distinct, not summed. public.assignments is covered separately, as its own standalone source
+  -- and in combination with am_agent_id, in scenario 7 below.
   -- ======================================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
   set local role authenticated;
@@ -282,6 +293,101 @@ begin
 
   if v_after is null then
     raise exception 'TEST_FAILED: scenario 6 — a team lead with capacity_limit = 0 must still get a real row back, got null.';
+  end if;
+
+  -- ======================================================================
+  -- Scenario 7a: public.assignments as a standalone source — a seo_agent reachable ONLY via an
+  -- assignments row (no am_agent_id, no task at all) on an otherwise-untouched active client must
+  -- add exactly 1. The assignments INSERT below runs with NO preceding `set local role` — this
+  -- whole DO block executes as the connecting owner/superuser role, which RLS never applies to —
+  -- deliberately bypassing assignments_insert_rls's own department/role-matching requirements,
+  -- which have nothing to do with what this scenario is testing.
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7a setup, client).';
+  end if;
+  insert into public.clients (id, name, status)
+  values (v_client3_id, 'ZZ Capacity Test Client 3', 'active');
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  perform set_config('request.jwt.claims', json_build_object('sub', v_seo_agent_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7a baseline).';
+  end if;
+  select used_capacity into v_before from public.get_capacity_snapshot(array[v_seo_agent_id]) where user_id = v_seo_agent_id;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  -- No role switch here on purpose (see the scenario comment above) — runs as table owner.
+  insert into public.assignments (id, client_id, service_type, team_lead_id, agent_id)
+  values (v_assignment1_id, v_client3_id, 'seo', v_tl_id, v_seo_agent_id);
+
+  perform set_config('request.jwt.claims', json_build_object('sub', v_seo_agent_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7a check).';
+  end if;
+  select used_capacity into v_after from public.get_capacity_snapshot(array[v_seo_agent_id]) where user_id = v_seo_agent_id;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  if v_after - v_before <> 1 then
+    raise exception 'TEST_FAILED: scenario 7a — a client reachable ONLY via an assignments row must add exactly 1, before %, after %.', v_before, v_after;
+  end if;
+
+  -- ======================================================================
+  -- Scenario 7b: the SAME client now also reachable via am_agent_id (set directly to the SAME
+  -- seo_agent — the DB itself enforces no role constraint on this column; only the app layer and
+  -- RLS-gated write paths normally would, both irrelevant to what this scenario proves) must still
+  -- count exactly once — the assignments row and am_agent_id de-duplicate, not sum.
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7b).';
+  end if;
+  update public.clients set am_agent_id = v_seo_agent_id where id = v_client3_id;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  perform set_config('request.jwt.claims', json_build_object('sub', v_seo_agent_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7b check).';
+  end if;
+  select used_capacity into v_after from public.get_capacity_snapshot(array[v_seo_agent_id]) where user_id = v_seo_agent_id;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  if v_after - v_before <> 1 then
+    raise exception 'TEST_FAILED: scenario 7b — client3 reachable via BOTH assignments and am_agent_id must still count exactly once, before %, after %.', v_before, v_after;
+  end if;
+
+  -- ======================================================================
+  -- Scenario 7c: a PAUSED client reachable ONLY via an assignments row must not count at all —
+  -- same no-preceding-role-switch INSERT as scenario 7a, for the same reason.
+  -- ======================================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7c setup, client).';
+  end if;
+  insert into public.clients (id, name, status)
+  values (v_client4_id, 'ZZ Capacity Test Client 4', 'paused');
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  insert into public.assignments (id, client_id, service_type, team_lead_id, agent_id)
+  values (v_assignment2_id, v_client4_id, 'seo', v_tl_id, v_seo_agent_id);
+
+  perform set_config('request.jwt.claims', json_build_object('sub', v_seo_agent_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7c check).';
+  end if;
+  select used_capacity into v_after from public.get_capacity_snapshot(array[v_seo_agent_id]) where user_id = v_seo_agent_id;
+  reset role; perform set_config('request.jwt.claims', '', true);
+
+  if v_after - v_before <> 1 then
+    raise exception 'TEST_FAILED: scenario 7c — a paused client reachable only via assignments must not count, before %, after %.', v_before, v_after;
   end if;
 
   raise exception 'TEST_OK_ROLLED_BACK: all capacity_snapshot_v2 scenarios passed; rolling back every fabricated change.';
