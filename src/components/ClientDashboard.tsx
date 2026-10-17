@@ -27,6 +27,7 @@ import {
   Plug,
   ClipboardCheck,
   Trash2,
+  Merge,
   StickyNote,
   Share2,
   Search,
@@ -98,7 +99,8 @@ import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
 import { EditClientModal } from './EditClientModal';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient, canMergeClients } from '../lib/permissions';
+import { MergeClientsModal } from './MergeClientsModal';
 import { CLIENT_STATUS_META, formatClientLifecycleDuration, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
@@ -156,6 +158,17 @@ interface ClientDashboardProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical/
+  // ai_engineer only, gated below via canMergeClients(currentUser.role). allClients is the full
+  // roster (not just this one `client`) — needed so the shared MergeClientsModal can search for
+  // a "keep" client across everyone. Optional: whichever of the 4 parents that render
+  // ClientDashboard don't pass these, this button simply never renders.
+  allClients?: ClientRecord[];
+  onPreviewMergeClients?: (keepId: string, duplicateId: string) => Promise<Record<string, { moved?: number; deleted_duplicates?: number; count?: number }>>;
+  onMergeClients?: (
+    keepId: string,
+    duplicateIds: string[]
+  ) => Promise<{ succeeded: string[]; failed: { id: string; error: string } | null }>;
   onAssignAMAgent?: (clientId: string, agentId: string) => Promise<void>;
   onAssignAMTeamLead?: (clientId: string, leadId: string) => Promise<void>;
   onAssignServiceAgent?: (
@@ -285,6 +298,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  allClients,
+  onPreviewMergeClients,
+  onMergeClients,
   onAssignAMAgent,
   onAssignAMTeamLead,
   onAssignServiceAgent,
@@ -323,6 +339,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isDeletingClient, setIsDeletingClient] = useState(false);
   const [deleteBlockers, setDeleteBlockers] = useState<ClientActivitySummaryRow[] | null>(null);
   const [isCheckingDeleteBlockers, setIsCheckingDeleteBlockers] = useState(false);
+  const canShowMergeClients = !!allClients && !!onPreviewMergeClients && !!onMergeClients && canMergeClients(currentUser.role);
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
   const [isSchemaEditorOpen, setIsSchemaEditorOpen] = useState(false);
   const [selectedBriefService, setSelectedBriefService] = useState<ServiceType | null>(null);
   const [isAssigningAM, setIsAssigningAM] = useState(false);
@@ -1284,6 +1302,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               title="Delete Client"
             >
               <Trash2 className="w-5 h-5" />
+            </button>
+          )}
+          {canShowMergeClients && (
+            <button
+              onClick={() => setIsMergeModalOpen(true)}
+              className="p-2 rounded-xl bg-purple-900/30 hover:bg-purple-900/60 text-purple-300 hover:text-white transition-colors self-end sm:self-center"
+              title="Merge this client into another"
+            >
+              <Merge className="w-5 h-5" />
             </button>
           )}
           <button
@@ -3171,6 +3198,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           onClose={() => setIsEditClientModalOpen(false)}
           client={client}
           onSave={onUpdateClientDetails}
+        />
+      )}
+
+      {isMergeModalOpen && allClients && onPreviewMergeClients && onMergeClients && (
+        <MergeClientsModal
+          initialCandidateIds={[client.id]}
+          clients={allClients}
+          users={users}
+          onPreviewMerge={onPreviewMergeClients}
+          onMergeClients={onMergeClients}
+          onClose={() => setIsMergeModalOpen(false)}
         />
       )}
 

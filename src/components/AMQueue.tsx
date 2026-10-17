@@ -22,6 +22,7 @@ import {
   Search,
   UploadCloud,
   PlusCircle,
+  Merge,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -54,10 +55,11 @@ import {
 } from '../types/database';
 import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
-import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
+import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding, canMergeClients } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { ClientDashboard } from './ClientDashboard';
+import { MergeClientsModal } from './MergeClientsModal';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportGenerationResult } from './reporting/ComparisonDisplay';
 
@@ -155,6 +157,15 @@ interface AMQueueProps {
   onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
+  // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical/
+  // ai_engineer only, gated below via canMergeClients(currentRole). Both optional: absent
+  // entirely, the Client Portfolio table's checkbox column and "Merge selected" button, and
+  // ClientDashboard's own single-client entry point below, simply never render.
+  onPreviewMergeClients?: (keepId: string, duplicateId: string) => Promise<Record<string, { moved?: number; deleted_duplicates?: number; count?: number }>>;
+  onMergeClients?: (
+    keepId: string,
+    duplicateIds: string[]
+  ) => Promise<{ succeeded: string[]; failed: { id: string; error: string } | null }>;
 }
 
 export const AMQueue: React.FC<AMQueueProps> = ({
@@ -215,6 +226,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
+  onPreviewMergeClients,
+  onMergeClients,
 }) => {
   const resolvedUser = currentUser || users.find((u) => u.id === currentUserId) || users[0];
   const effectiveUserId = resolvedUser?.id || currentUserId || '';
@@ -272,6 +285,9 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const [assignMessage, setAssignMessage] = useState<{ id: string; text: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMissingDatesOnly, setShowMissingDatesOnly] = useState(false);
+  const canShowMergeClients = !!onMergeClients && !!onPreviewMergeClients && canMergeClients(currentRole);
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
+  const [mergeModalInitialIds, setMergeModalInitialIds] = useState<string[] | null>(null);
 
   // Module 14: search narrows only the rendered list below — the stats bar and Renewal Queue
   // above stay scoped to the full visibleClients portfolio, same precedent as SalesPortalView's
@@ -569,6 +585,15 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             <h3 className="text-sm font-bold" style={{ color: 'var(--ink)' }}>Client Portfolio</h3>
           </div>
           <div className="flex items-center gap-3">
+            {canShowMergeClients && selectedClientIds.size >= 2 && (
+              <button
+                onClick={() => setMergeModalInitialIds([...selectedClientIds])}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-700 text-white hover:bg-purple-600 whitespace-nowrap"
+              >
+                <Merge className="w-3.5 h-3.5" />
+                Merge Selected ({selectedClientIds.size})
+              </button>
+            )}
             <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -600,6 +625,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--ink-soft)', background: 'var(--canvas)' }}>
+                  {canShowMergeClients && <th className="py-3 px-4 w-8"></th>}
                   <th className="py-3 px-4">Client Name</th>
                   <th className="py-3 px-4">Industry</th>
                   <th className="py-3 px-4">Services</th>
@@ -620,6 +646,23 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                       onClick={() => setDashboardClientId(client.id)}
                       className="client-portfolio-row hover:bg-purple-950/30 transition-colors cursor-pointer group"
                     >
+                      {canShowMergeClients && (
+                        <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${client.name}`}
+                            checked={selectedClientIds.has(client.id)}
+                            onChange={(e) => {
+                              setSelectedClientIds((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(client.id);
+                                else next.delete(client.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        </td>
+                      )}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2.5">
                           <div className="client-initial-avatar w-8 h-8 rounded-lg bg-purple-900/30 border border-purple-700/30 flex items-center justify-center font-bold text-purple-300">
@@ -814,6 +857,23 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
+          allClients={clients}
+          onPreviewMergeClients={onPreviewMergeClients}
+          onMergeClients={onMergeClients}
+        />
+      )}
+
+      {mergeModalInitialIds && onPreviewMergeClients && onMergeClients && (
+        <MergeClientsModal
+          initialCandidateIds={mergeModalInitialIds}
+          clients={clients}
+          users={users}
+          onPreviewMerge={onPreviewMergeClients}
+          onMergeClients={onMergeClients}
+          onClose={() => {
+            setMergeModalInitialIds(null);
+            setSelectedClientIds(new Set());
+          }}
         />
       )}
     </div>
