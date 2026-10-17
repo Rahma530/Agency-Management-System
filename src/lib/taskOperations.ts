@@ -1,4 +1,4 @@
-import { TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
+import { TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
 import { buildAttachmentStoragePath, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
@@ -138,6 +138,22 @@ export const setTaskAssignees = async (taskId: string, userIds: string[]): Promi
     p_user_ids: [...new Set(userIds.filter(Boolean))],
   });
   throwIfError(error, 'Unable to update task assignees.');
+};
+
+// Per-task, lazy (called only when a Task Details modal's History tab is actually opened — see
+// CrossTeamTaskBoard.tsx — not fetched into global app state like fetchTaskAssignees() above,
+// since task_events can grow large and most opened tasks never have their History tab visited).
+// RLS on task_events (20261116000000_task_events.sql) already scopes visibility to task_visible_v2()
+// or an admin role, so no permission filtering belongs here.
+export const fetchTaskEvents = async (taskId: string): Promise<TaskEventRecord[]> => {
+  const { data, error } = await supabaseRaw
+    .from('task_events')
+    .select('id, task_id, actor_id, event_type, old_value, new_value, created_at')
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+  throwIfError(error, 'Unable to load task history.');
+  return (data as TaskEventRecord[] | null) || [];
 };
 
 export const fetchTaskPlatformLinks = async (): Promise<TaskPlatformLinkRecord[]> => {
