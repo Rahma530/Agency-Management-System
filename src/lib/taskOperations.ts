@@ -1,4 +1,4 @@
-import { TaskAttachmentRecord, TaskAssigneeRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
+import { TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
 import { buildAttachmentStoragePath, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
@@ -6,6 +6,55 @@ export interface CapacitySnapshotRow {
   user_id: string;
   used_capacity: number;
 }
+
+export interface DeleteTasksResult {
+  requestedCount: number;
+  deletedTaskIds: string[];
+  totalDeletedCount: number;
+}
+
+export interface TaskDeletionPreview {
+  subtreeTaskIds: string[];
+  subtaskCount: number;
+  commentCount: number;
+  attachmentCount: number;
+}
+
+// Pure, client-side mirror of delete_tasks()'s own subtree walk (20261113000000_task_hard_delete.sql)
+// — computed from state already held in memory (tasks/taskComments/taskAttachments), so the
+// confirm dialog can show "this will also remove N subtasks / N comments / N attachments" before
+// the RPC call actually deletes anything. subtaskCount matches the RPC's own definition: every
+// descendant pulled in by parent_task_id, minus the ids the caller explicitly requested.
+export const computeTaskDeletionPreview = (
+  taskIds: string[],
+  tasks: TaskRecord[],
+  taskComments: TaskCommentRecord[],
+  taskAttachments: TaskAttachmentRecord[]
+): TaskDeletionPreview => {
+  const childIdsByParent = new Map<string, string[]>();
+  tasks.forEach((t) => {
+    if (!t.parent_task_id) return;
+    childIdsByParent.set(t.parent_task_id, [...(childIdsByParent.get(t.parent_task_id) || []), t.id]);
+  });
+
+  const requestedIds = new Set(taskIds);
+  const subtreeIds = new Set(taskIds);
+  const collectDescendants = (id: string) => {
+    for (const childId of childIdsByParent.get(id) || []) {
+      if (subtreeIds.has(childId)) continue;
+      subtreeIds.add(childId);
+      collectDescendants(childId);
+    }
+  };
+  requestedIds.forEach(collectDescendants);
+
+  return {
+    subtreeTaskIds: [...subtreeIds],
+    subtaskCount: subtreeIds.size - requestedIds.size,
+    commentCount: taskComments.filter((c) => subtreeIds.has(c.task_id)).length,
+    attachmentCount: taskAttachments.filter((a) => subtreeIds.has(a.task_id)).length,
+  };
+};
 
 export interface UserScheduleLoadRow {
   due_date: string;
@@ -201,6 +250,25 @@ export const getCapacitySnapshot = async (userIds: string[]): Promise<Record<str
     result[row.user_id] = Number(row.used_capacity);
     return result;
   }, {});
+};
+
+// Hard-deletes each given task AND its full subtree (every descendant reachable via
+// parent_task_id, any depth) via delete_tasks() (20261113000000_task_hard_delete.sql) — the only
+// path that can delete a task at all; there is no DELETE RLS/grant on public.tasks itself. The
+// RPC itself re-checks the caller's role (executive/head_of_technical/ai_engineer) regardless of
+// what the UI already gated on — canHardDeleteTasks (lib/permissions.ts) only controls whether
+// the button renders.
+export const deleteTasks = async (taskIds: string[]): Promise<DeleteTasksResult> => {
+  const ids = [...new Set(taskIds.filter(Boolean))];
+  if (ids.length === 0) return { requestedCount: 0, deletedTaskIds: [], totalDeletedCount: 0 };
+  const { data, error } = await supabaseRaw.rpc('delete_tasks', { p_task_ids: ids });
+  throwIfError(error, 'Unable to delete the selected task(s).');
+  const result = (data || {}) as { requested_count?: number; deleted_task_ids?: string[]; total_deleted_count?: number };
+  return {
+    requestedCount: result.requested_count ?? 0,
+    deletedTaskIds: result.deleted_task_ids ?? [],
+    totalDeletedCount: result.total_deleted_count ?? 0,
+  };
 };
 
 // Backs the designer-scheduling suggestion feature — see get_user_schedule_load() in

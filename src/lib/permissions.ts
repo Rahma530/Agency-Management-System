@@ -11,6 +11,13 @@ const CLIENT_REGISTRATION_ROLES: UserRole[] = [
 
 export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
 
+// Task hard delete (delete_tasks() RPC, 20261113000000_task_hard_delete.sql) — mirrors that
+// function's own role gate exactly. Deliberately excludes every *_team_lead: despite owning
+// capacity/employee management for their own department elsewhere in this app, team leads are
+// NOT trusted with permanently destroying tasks (owner decision).
+export const canHardDeleteTasks = (role: UserRole): boolean =>
+  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
+
 // Temporary account setup / real-login handoff (EmployeeTestingMode.tsx) — deliberately narrower
 // than the general leadership set: Head of Technical + AI Engineer only. Executive lost access
 // here on purpose (confirmed) — this is not part of ai_engineer's broader executive/

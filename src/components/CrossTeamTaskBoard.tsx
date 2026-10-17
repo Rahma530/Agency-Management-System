@@ -32,6 +32,7 @@ import {
   Flag,
   Link2,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import {
   TaskRecord,
@@ -56,7 +57,9 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
-import { isActiveEmployee } from '../lib/permissions';
+import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
+import { computeTaskDeletionPreview } from '../lib/taskOperations';
+import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal';
 import {
   isTaskDone,
   canCloseTask,
@@ -158,6 +161,11 @@ interface CrossTeamTaskBoardProps {
   // not appear (never falls back to a client-guessed date).
   onGetServerToday?: () => Promise<string>;
   onMarkTaskViewed?: (taskId: string) => Promise<void>;
+  // Task hard delete (delete_tasks() RPC) — executive/head_of_technical/ai_engineer only, gated
+  // locally below via canHardDeleteTasks(currentUser.role) (lib/permissions.ts), same pattern as
+  // canManageTaskTypes/canManagePlatforms above. Optional: absent entirely (e.g. no currentUser),
+  // the delete controls simply never render.
+  onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
 }
 
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
@@ -193,6 +201,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onGetUserScheduleLoad,
   onGetServerToday,
   onMarkTaskViewed,
+  onHardDeleteTasks,
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
@@ -251,6 +260,37 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isPlatformManagerOpen, setIsPlatformManagerOpen] = useState(false);
   const canManagePlatforms = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical' || currentUser?.role === 'ai_engineer';
   const isUiUxDesigner = currentUser?.role === 'ui_ux_designer';
+  const canDeleteTasks = !!onHardDeleteTasks && !!currentUser && canHardDeleteTasks(currentUser.role);
+
+  // Table view multi-select (checkbox column, canDeleteTasks only) + the one confirm modal shared
+  // by both the bulk "Delete Selected" button here and the single-task delete button in the
+  // Details modal below — deleteModalTaskIds is null when the modal is closed.
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [deleteModalTaskIds, setDeleteModalTaskIds] = useState<string[] | null>(null);
+  const [isDeletingTasks, setIsDeletingTasks] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleConfirmDeleteTasks = async () => {
+    if (!deleteModalTaskIds || !onHardDeleteTasks) return;
+    setIsDeletingTasks(true);
+    setDeleteError(null);
+    try {
+      await onHardDeleteTasks(deleteModalTaskIds);
+      setSelectedTaskIds((prev) => {
+        const next = new Set(prev);
+        deleteModalTaskIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      if (selectedTaskDetails && deleteModalTaskIds.includes(selectedTaskDetails.id)) {
+        setSelectedTaskDetails(null);
+      }
+      setDeleteModalTaskIds(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Unable to delete the selected task(s).');
+    } finally {
+      setIsDeletingTasks(false);
+    }
+  };
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
   useEffect(() => {
     if (selectedTaskDetails?.id && onMarkTaskViewed) {
@@ -2015,10 +2055,34 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="rounded-[18px] overflow-hidden border border-stone-800"
           style={{ background: 'var(--gradient-card)' }}
         >
+          {canDeleteTasks && selectedTaskIds.size > 0 && (
+            <div className="p-3 border-b border-stone-800 bg-red-950/30 flex items-center justify-between">
+              <span className="text-xs font-semibold text-red-300">{selectedTaskIds.size} task(s) selected</span>
+              <button
+                onClick={() => setDeleteModalTaskIds([...selectedTaskIds])}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-red-600 text-white hover:bg-red-500"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Selected ({selectedTaskIds.size})
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
                 <tr>
+                  {canDeleteTasks && (
+                    <th className="p-3.5 w-8">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all tasks"
+                        checked={filteredTasks.length > 0 && filteredTasks.every((t) => selectedTaskIds.has(t.id))}
+                        onChange={(e) => {
+                          setSelectedTaskIds(e.target.checked ? new Set(filteredTasks.map((t) => t.id)) : new Set());
+                        }}
+                      />
+                    </th>
+                  )}
                   <th className="p-3.5">Task</th>
                   <th className="p-3.5">Client</th>
                   <th className="p-3.5">Assignee</th>
@@ -2037,7 +2101,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <tbody className="divide-y divide-stone-800/60">
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="p-8 text-center text-stone-400">
+                    <td colSpan={canDeleteTasks ? 14 : 13} className="p-8 text-center text-stone-400">
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
@@ -2061,6 +2125,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                         className="hover:bg-stone-900/40 transition-colors cursor-pointer"
                         onClick={() => setSelectedTaskDetails(task)}
                       >
+                        {canDeleteTasks && (
+                          <td className="p-3.5" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${task.title}`}
+                              checked={selectedTaskIds.has(task.id)}
+                              onChange={(e) => {
+                                setSelectedTaskIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(task.id);
+                                  else next.delete(task.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
+                        )}
                         <td className="p-3.5">
                           <p className="font-bold text-white hover:text-purple-300 transition-colors">
                             {task.title}
@@ -2269,12 +2350,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
                 <h3 className="text-base font-bold text-white">{selectedTaskDetails.title}</h3>
               </div>
-              <button
-                onClick={() => setSelectedTaskDetails(null)}
-                className="p-1 rounded-lg text-stone-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1">
+                {canDeleteTasks && (
+                  <button
+                    onClick={() => setDeleteModalTaskIds([selectedTaskDetails.id])}
+                    className="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/40"
+                    title="Delete Task"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedTaskDetails(null)}
+                  className="p-1 rounded-lg text-stone-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Task Details Content */}
@@ -3397,6 +3489,26 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           onClose={() => setIsPlatformManagerOpen(false)}
         />
       )}
+
+      {deleteModalTaskIds && (() => {
+        const preview = computeTaskDeletionPreview(deleteModalTaskIds, tasks, taskComments, taskAttachments);
+        const taskNames = deleteModalTaskIds.map((id) => tasks.find((t) => t.id === id)?.title || id);
+        return (
+          <TaskDeleteConfirmModal
+            taskNames={taskNames}
+            subtaskCount={preview.subtaskCount}
+            commentCount={preview.commentCount}
+            attachmentCount={preview.attachmentCount}
+            isDeleting={isDeletingTasks}
+            error={deleteError}
+            onConfirm={handleConfirmDeleteTasks}
+            onClose={() => {
+              setDeleteModalTaskIds(null);
+              setDeleteError(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };

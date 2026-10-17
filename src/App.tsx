@@ -123,6 +123,7 @@ import {
   addTaskAttachmentForCopies,
   createTaskCopies,
   deleteTaskAttachmentReference,
+  deleteTasks,
   fetchTaskAssignees,
   fetchTaskPlatformLinks,
   getCapacitySnapshot,
@@ -4292,6 +4293,32 @@ export default function App() {
     }
   };
 
+  // Task hard delete (delete_tasks() RPC, 20261113000000_task_hard_delete.sql) — executive/
+  // head_of_technical/ai_engineer only, gated in CrossTeamTaskBoard.tsx via canHardDeleteTasks
+  // (lib/permissions.ts); the RPC re-checks the same role gate server-side regardless. Deletes
+  // the given task ids AND their full subtree (descendants via parent_task_id) — logActivity
+  // fires once per id the caller actually requested (not per descendant pulled in), using each
+  // one's title captured before the delete removes it.
+  const handleHardDeleteTasks = async (taskIds: string[]) => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; no task was deleted.');
+    const requestedTitles = new Map(taskIds.map((id) => [id, tasks.find((t) => t.id === id)?.title || id]));
+    const result = await deleteTasks(taskIds);
+    const deletedIds = new Set(result.deletedTaskIds);
+    setTasks((prev) => prev.filter((t) => !deletedIds.has(t.id)));
+    setTaskComments((prev) => prev.filter((c) => !deletedIds.has(c.task_id)));
+    setTaskAttachments((prev) => prev.filter((a) => !deletedIds.has(a.task_id)));
+    setTaskAssignees((prev) => prev.filter((ta) => !deletedIds.has(ta.task_id)));
+    setTaskPlatformLinks((prev) => prev.filter((link) => !deletedIds.has(link.task_id)));
+    for (const id of taskIds) {
+      if (deletedIds.has(id)) await logActivity('delete', 'task', id, requestedTitles.get(id) || id);
+    }
+    showNotification(
+      result.totalDeletedCount > 1
+        ? `${result.totalDeletedCount} tasks deleted permanently.`
+        : 'Task deleted permanently.'
+    );
+  };
+
   // 7. Document a daily activity report (Daily Log)
   const handleCreateDailyLog = async (logData: {
     user_id: string;
@@ -6092,6 +6119,7 @@ export default function App() {
                   onGetUserScheduleLoad={getUserScheduleLoad}
                   onGetServerToday={getServerToday}
                   onMarkTaskViewed={handleMarkTaskViewed}
+                  onHardDeleteTasks={handleHardDeleteTasks}
                 />
               </div>
             )}
