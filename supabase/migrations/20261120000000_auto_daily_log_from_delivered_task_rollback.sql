@@ -13,6 +13,12 @@ drop index if exists idx_daily_logs_task_user_date;
 alter table public.daily_logs
   drop constraint if exists daily_logs_source_check;
 
+-- Named FK dropped explicitly before the column, per the forward migration's own naming
+-- (daily_logs_task_id_fkey) — redundant with DROP COLUMN (which removes any constraint on it
+-- regardless of name) but kept as its own explicit step so the FK's removal isn't implicit.
+alter table public.daily_logs
+  drop constraint if exists daily_logs_task_id_fkey;
+
 alter table public.daily_logs
   drop column if exists source,
   drop column if exists task_id;

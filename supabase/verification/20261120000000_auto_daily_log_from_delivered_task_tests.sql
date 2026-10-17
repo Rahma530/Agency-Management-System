@@ -22,11 +22,14 @@ declare
   v_client_id text := 'zz_dlog_c_' || substr(md5(random()::text), 1, 8);
   v_task_id text := 'zz_dlog_t_' || substr(md5(random()::text), 1, 8);
   v_task2_id text := 'zz_dlog_t2_' || substr(md5(random()::text), 1, 8);
+  v_task3_id text := 'zz_dlog_t3_' || substr(md5(random()::text), 1, 8);
+  v_task4_id text := 'zz_dlog_t4_' || substr(md5(random()::text), 1, 8);
   v_count integer;
   v_row_id text;
   v_today date := (now() at time zone 'Africa/Cairo')::date;
   v_status text;
   v_summary text;
+  v_task_id_check text;
 begin
   select id, auth_id into v_assignee_id, v_assignee_auth from public.users
   where role = 'ui_designer' and auth_id is not null and deactivated_at is null
@@ -263,6 +266,60 @@ begin
   reset role; perform set_config('request.jwt.claims', '', true);
   if v_count <> 0 then
     raise exception 'TEST_FAILED: scenario 10 — an unrelated employee must not see this row, found % visible.', v_count;
+  end if;
+
+  -- ======================================================================
+  -- Scenario 11: a task with a NULL description must still produce a row, summary_text = title
+  -- only, never NULL (string || NULL = NULL is exactly the bug coalesce/nullif/btrim guard against
+  -- in the trigger function).
+  -- ======================================================================
+  insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
+  values (v_task3_id, v_client_id, 'ZZ Daily Log Trigger Test Task 3 (no description)', '', v_am_agent_id, 'creative', 'todo', current_date, 'medium');
+  update public.tasks set description = null where id = v_task3_id;
+  insert into public.task_assignees (task_id, user_id, added_by)
+  values (v_task3_id, v_assignee_id, v_am_agent_id);
+
+  update public.tasks set status = 'in_review' where id = v_task3_id;
+
+  select summary_text into v_summary from public.daily_logs
+  where task_id = v_task3_id and user_id = v_assignee_id and source = 'auto_task';
+  if v_summary is null then
+    raise exception 'TEST_FAILED: scenario 11 — summary_text must not be NULL when description is NULL.';
+  end if;
+  if v_summary is distinct from 'ZZ Daily Log Trigger Test Task 3 (no description)' then
+    raise exception 'TEST_FAILED: scenario 11 — summary_text must be the title alone (no trailing newline/description), found: %.', v_summary;
+  end if;
+
+  -- ======================================================================
+  -- Scenario 12: deleting a task that has an auto-created daily_logs row must succeed (the FK is
+  -- ON DELETE SET NULL, not RESTRICT), the daily_logs row itself must survive, and its task_id
+  -- must become NULL.
+  -- ======================================================================
+  insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
+  values (v_task4_id, v_client_id, 'ZZ Daily Log Trigger Test Task 4 (delete)', 'Delete-cascade check.', v_am_agent_id, 'creative', 'todo', current_date, 'medium');
+  insert into public.task_assignees (task_id, user_id, added_by)
+  values (v_task4_id, v_assignee_id, v_am_agent_id);
+  update public.tasks set status = 'in_review' where id = v_task4_id;
+
+  select id into v_row_id from public.daily_logs
+  where task_id = v_task4_id and user_id = v_assignee_id and source = 'auto_task';
+  if v_row_id is null then
+    raise exception 'TEST_SETUP_FAILED: scenario 12 — expected an auto_task row before testing delete.';
+  end if;
+
+  -- delete_tasks()'s own grant is executive/head_of_technical/ai_engineer only; called directly
+  -- here (no role switch) purely to exercise the FK behavior end-to-end through the real deletion
+  -- path, not to re-test delete_tasks()'s own role gate (already covered by
+  -- 20261113000000_task_hard_delete_tests.sql).
+  perform public.delete_tasks(array[v_task4_id]);
+
+  if not exists (select 1 from public.daily_logs where id = v_row_id) then
+    raise exception 'TEST_FAILED: scenario 12 — the daily_logs row must survive the task''s deletion (ON DELETE SET NULL, not CASCADE).';
+  end if;
+
+  select task_id into v_task_id_check from public.daily_logs where id = v_row_id;
+  if v_task_id_check is not null then
+    raise exception 'TEST_FAILED: scenario 12 — the surviving row''s task_id must become NULL after the task is deleted, found %.', v_task_id_check;
   end if;
 
   raise exception 'TEST_OK_ROLLED_BACK: all auto_daily_log_from_delivered_task scenarios passed; rolling back every fabricated change.';

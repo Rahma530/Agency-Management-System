@@ -18,11 +18,33 @@
 -- immediately visible/editable/deletable by that assignee under the EXISTING policies above with
 -- no change to any of them — direct_report_visible()/am_agent scoping for everyone else also
 -- applies unchanged, since it's the same daily_logs row shape.
+--
+-- task_id FK is ON DELETE SET NULL, named explicitly (daily_logs_task_id_fkey) so the rollback
+-- can drop it on its own before dropping the column. Evidence this needs no change to
+-- delete_tasks()/merge_clients() (20261113000000_task_hard_delete.sql,
+-- 20261114000000_merge_clients.sql): delete_tasks()'s own header comment carries a full FK audit
+-- of every table referencing public.tasks, and explicitly deletes rows up front ONLY for the
+-- RESTRICT/NO ACTION FKs (task_comments, task_attachments, task_assignee_log) that would
+-- otherwise block its `delete from public.tasks` — ON DELETE CASCADE FKs (task_assignees,
+-- task_platform_links) are called out as needing "no handling below — Postgres cascades them on
+-- its own." ON DELETE SET NULL is the same kind of FK action Postgres enforces automatically at
+-- delete time, with even less to go wrong (it can never violate a downstream constraint the way a
+-- CASCADE delete theoretically could) — so daily_logs.task_id needs no entry in that function's
+-- explicit-delete list either, exactly like the two CASCADE FKs it already documents as needing
+-- none. merge_clients()/merge_clients_preview() never delete from public.tasks and only rewrite
+-- client_id columns via their own generic runtime FK discovery (querying pg_constraint for
+-- columns referencing public.clients) — task_id's FK points at public.tasks, not public.clients,
+-- so it is outside what either function ever touches.
 begin;
 
 alter table public.daily_logs
-  add column if not exists task_id text null references public.tasks (id),
+  add column if not exists task_id text null,
   add column if not exists source text not null default 'manual';
+
+alter table public.daily_logs
+  drop constraint if exists daily_logs_task_id_fkey;
+alter table public.daily_logs
+  add constraint daily_logs_task_id_fkey foreign key (task_id) references public.tasks (id) on delete set null;
 
 alter table public.daily_logs
   drop constraint if exists daily_logs_source_check;
@@ -85,7 +107,11 @@ begin
       end if;
 
       v_today := (now() at time zone 'Africa/Cairo')::date;
-      v_summary := new.title || E'\n' || new.description;
+      -- coalesce/nullif/btrim: a null or empty/whitespace-only description must never turn the
+      -- whole summary into NULL (string || NULL = NULL) or leave a trailing blank line — the
+      -- description segment (including its leading newline) is only appended when there's real
+      -- text. title is coalesced too even though tasks.title is NOT NULL today, defensively.
+      v_summary := coalesce(new.title, '') || coalesce(E'\n' || nullif(btrim(new.description), ''), '');
 
       insert into public.daily_logs (id, user_id, date, summary_text, linked_task_ids, client_id, task_id, source)
       select
