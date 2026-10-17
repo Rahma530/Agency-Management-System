@@ -560,7 +560,8 @@ export function validateReportRewriteOutput(parsed: unknown, _detail: DetailLeve
 
 function buildReportRewritePrompt(language: SupportedLanguage): string {
   const languageName = LANGUAGE_NAMES[language];
-  return `You rewrite an existing agency report in ${languageName}. The input contains current_text, an internally preserved creator_note, and immutable source facts. Improve clarity and professional tone without adding, estimating, or changing any fact, event, date, or number. Every number in the output must already occur in the input. Preserve the creator_note's meaning naturally inside the report when relevant, but never label it Extra Note and never expose internal field names, ids, hashes, or technical messages. Return only JSON: {"suggested_text": string}.`;
+  const arabicRules = buildArabicQualityRules(language);
+  return `You rewrite an existing agency report in ${languageName}. The input contains current_text, an internally preserved creator_note, and immutable source facts. Improve clarity and professional tone without adding, estimating, or changing any fact, event, date, or number. Every number in the output must already occur in the input. Preserve the creator_note's meaning naturally inside the report when relevant, but never label it Extra Note and never expose internal field names, ids, hashes, or technical messages.${arabicRules ? `\n\n${arabicRules}` : ''} Return only JSON: {"suggested_text": string}.`;
 }
 
 // ----------------------------------------------------------------------------

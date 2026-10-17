@@ -40,7 +40,7 @@ import { DailyLogEditModal } from './DailyLogEditModal';
 import { ReportDraftWorkspace } from './reporting/ReportDraftWorkspace';
 
 type ReportsHubScope = 'client' | 'own' | 'agent';
-type ReportsHubSection = 'create' | 'saved' | 'archived' | 'activity';
+type ReportsHubSection = 'create' | 'workspace' | 'saved' | 'archived' | 'activity';
 
 interface ReportsHubProps {
   currentUser: UserRecord;
@@ -218,6 +218,13 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     if (workspaceContext && section !== workspaceContext
       && !window.confirm('Close the open report workspace? Make sure any editor changes are saved first.')) return;
     setActiveSection(section);
+    // The dedicated "Report Workspace" tab always opens straight into a fresh draft — same
+    // 'create' context the old toggle button used to open, just reachable as its own visible
+    // tab now instead of behind a secondary "Create from activity sources" button.
+    if (section === 'workspace') {
+      setWorkspaceContext('create');
+      return;
+    }
     if (section !== workspaceContext) {
       setWorkspaceContext(null);
       setWorkspaceReportId(null);
@@ -409,6 +416,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       <div className="flex flex-wrap gap-2 border-b border-stone-800 pb-3">
         {([
           ['create', 'Create Report'],
+          ['workspace', 'Report Workspace'],
           ['saved', `Saved Reports (${visibleReports.filter((report) => !report.archived_at).length})`],
           ['archived', `Archived Reports (${visibleReports.filter((report) => !!report.archived_at).length})`],
           ...(canSeeDailyActivityReport ? [['activity', `Activity Sources (${filteredDailyLogs.length})`]] : []),
@@ -630,19 +638,15 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         )}
       </div>
 
-      <div className="flex justify-end">
-        <button type="button" onClick={() => setWorkspaceContext((current) => current === 'create' ? null : 'create')} className="px-3 py-2 rounded-xl text-xs font-bold bg-stone-800 text-stone-200 hover:text-white">
-          {workspaceContext === 'create' ? 'Hide report composer' : 'Create from activity sources'}
-        </button>
-      </div>
-      {workspaceContext === 'create' && (
+      </>}
+
+      {activeSection === 'workspace' && (
         <ReportDraftWorkspace
           currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
           dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
           onClose={() => setWorkspaceContext(null)} onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
         />
       )}
-      </>}
 
       {(activeSection === 'saved' || activeSection === 'archived') && <div className="space-y-4">
         <div className="flex flex-col sm:flex-row gap-2">

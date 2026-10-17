@@ -275,6 +275,19 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
   };
 
+  // Matches App.tsx's own withTimeout/AI_SUMMARY_TIMEOUT_MS pattern for ai-router calls — not
+  // imported from there since that's a component-internal helper, not an exported utility.
+  const REWRITE_TIMEOUT_MS = 25000;
+  function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (err) => { clearTimeout(timer); reject(err); }
+      );
+    });
+  }
+
   const requestRewrite = async () => {
     if (!selectedReport || !currentVersion || !draftText.trim()) return;
     if (draftText !== currentVersion.content_text) {
@@ -284,20 +297,24 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     setBusy(true);
     setMessage(null);
     try {
-      const { data: aiData, error: aiError } = await supabaseRaw.functions.invoke('ai-router', {
-        body: {
-          task: 'REPORT_REWRITE',
-          language: 'ar',
-          payload: {
-            report_id: selectedReport.id,
-            current_text: draftText,
-            creator_note: selectedReport.creator_note || '',
-            base_version_id: currentVersion.id,
-            source_hash: selectedReport.source_hash,
-            audience: selectedReport.type === 'client' ? 'client' : 'internal',
+      const { data: aiData, error: aiError } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: {
+            task: 'REPORT_REWRITE',
+            language: 'ar',
+            payload: {
+              report_id: selectedReport.id,
+              current_text: draftText,
+              creator_note: selectedReport.creator_note || '',
+              base_version_id: currentVersion.id,
+              source_hash: selectedReport.source_hash,
+              audience: selectedReport.type === 'client' ? 'client' : 'internal',
+            },
           },
-        },
-      });
+        }),
+        REWRITE_TIMEOUT_MS,
+        `AI rewrite timed out after ${REWRITE_TIMEOUT_MS / 1000}s.`
+      );
       if (aiError || !aiData?.ok || !aiData?.result?.suggested_text) throw new Error('rewrite failed');
       const { data, error } = await supabaseRaw.rpc('create_report_ai_suggestion', {
         p_report_id: selectedReport.id,
@@ -308,8 +325,11 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       if (error) throw error;
       setSuggestion(data as unknown as ReportAiSuggestionRecord);
       setMessage('AI proposal is ready for review. It has not changed the report.');
-    } catch {
-      setMessage('AI rewrite is unavailable. The current text and manual note remain unchanged.');
+    } catch (err) {
+      const timedOut = err instanceof Error && err.message.includes('timed out');
+      setMessage(timedOut
+        ? `AI rewrite timed out after ${REWRITE_TIMEOUT_MS / 1000}s. The current text and manual note remain unchanged.`
+        : 'AI rewrite is unavailable. The current text and manual note remain unchanged.');
     } finally {
       setBusy(false);
     }
@@ -488,7 +508,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       ) : detailsError ? (
         <div className="min-h-32 rounded-xl border border-red-900/50 bg-red-950/20 flex items-center justify-center text-xs text-red-200 px-4 text-center">{detailsError}</div>
       ) : (
-        <textarea readOnly={selectedReport?.status === 'final' || !!selectedReport?.archived_at} value={draftText} onChange={(event) => setDraftText(event.target.value)} placeholder="Build a preview or select a saved report" className="w-full min-h-56 px-3 py-3 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white read-only:text-stone-200 read-only:cursor-default" />
+        <textarea dir="auto" readOnly={selectedReport?.status === 'final' || !!selectedReport?.archived_at} value={draftText} onChange={(event) => setDraftText(event.target.value)} placeholder="Build a preview or select a saved report" className="w-full min-h-56 px-3 py-3 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white read-only:text-stone-200 read-only:cursor-default" />
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -505,8 +525,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
 
       {suggestion && selectedReport?.status !== 'final' && !selectedReport?.archived_at && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3 rounded-xl border border-indigo-800/40 bg-indigo-950/20">
-          <div><p className="text-xs font-bold text-stone-300 mb-2">Current text</p><pre className="whitespace-pre-wrap text-xs text-stone-300">{draftText}</pre></div>
-          <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre className="whitespace-pre-wrap text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={busy} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300">Keep current</button></div></div>
+          <div><p className="text-xs font-bold text-stone-300 mb-2">Current text</p><pre dir="auto" className="whitespace-pre-wrap text-xs text-stone-300">{draftText}</pre></div>
+          <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre dir="auto" className="whitespace-pre-wrap text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={busy} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300">Keep current</button></div></div>
         </div>
       )}
       {selectedReport && !isLoadingDetails && !detailsError && (
