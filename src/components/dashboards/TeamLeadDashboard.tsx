@@ -6,6 +6,7 @@ import {
   ClientRecord,
   AssignmentRecord,
   TaskRecord,
+  TaskAssigneeRecord,
   BriefRecord,
   ServiceType,
 } from '../../types/database';
@@ -69,9 +70,11 @@ export const TeamLeadDashboard: React.FC<{
   scopedClients?: ClientRecord[];
   assignments: AssignmentRecord[];
   tasks: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula — see src/lib/capacity.ts.
+  taskAssignees: TaskAssigneeRecord[];
   briefs: BriefRecord[];
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
-}> = ({ currentUser, users, clients, scopedClients, assignments, tasks, briefs, onNavigateToModule }) => {
+}> = ({ currentUser, users, clients, scopedClients, assignments, tasks, taskAssignees, briefs, onNavigateToModule }) => {
   const config = TEAM_LEAD_DEPT_CONFIG[currentUser.role];
   const isAMTeamLead = currentUser.role === 'am_team_lead';
 
@@ -120,9 +123,9 @@ export const TeamLeadDashboard: React.FC<{
   );
 
   const avgCapacityUtilization = useMemo(() => {
-    const rates = deptAgents.map((u) => getUserCapacityData(u, clients, tasks)).filter((d) => !d.isUntracked).map((d) => d.utilizationRate);
+    const rates = deptAgents.map((u) => getUserCapacityData(u, clients, tasks, taskAssignees, assignments)).filter((d) => !d.isUntracked).map((d) => d.utilizationRate);
     return rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length) : null;
-  }, [deptAgents, clients, tasks]);
+  }, [deptAgents, clients, tasks, taskAssignees, assignments]);
 
   if (!config) {
     return (
