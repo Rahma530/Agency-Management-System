@@ -332,15 +332,34 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       // ai-router returns a non-2xx status only for auth/disabled/stale-report-state cases
       // (index.ts's own early `response({ error: ... }, <status>)` calls) — those surface here as
       // a FunctionsHttpError with no `.message`/`.ok` body shape, so they're distinguished by
-      // status rather than by data.message. Everything else (provider failure, output-validation
+      // status, refined by the body's own `code` field where index.ts sets one (the three
+      // REPORT_REWRITE-specific 503s). Everything else (provider failure, output-validation
       // rejection) is a normal 200 response with `ok:false` and a safe, displayable `message`.
       if (aiError) {
         const context = aiError.context;
         const status = context instanceof Response ? context.status : undefined;
+        let code: string | undefined;
+        if (context instanceof Response) {
+          try {
+            const body: unknown = await context.clone().json();
+            if (body && typeof body === 'object' && typeof (body as Record<string, unknown>).code === 'string') {
+              code = (body as Record<string, unknown>).code as string;
+            }
+          } catch { /* A gateway error may not have a JSON body. */ }
+        }
         if (status === 401 || status === 403) {
           throw new Error('You do not have permission to request an AI rewrite for this report.');
         }
         if (status === 503) {
+          if (code === 'REPORT_VERSION_READ_FAILED') {
+            throw new Error('Could not load this report\'s saved version. Try again, or reload the report.');
+          }
+          if (code === 'REPORT_PERMISSION_CHECK_FAILED') {
+            throw new Error('Could not verify your access to this report right now. Try again shortly.');
+          }
+          if (code === 'REPORT_SOURCES_READ_FAILED') {
+            throw new Error('Could not load this report\'s saved evidence. Try again shortly.');
+          }
           throw new Error('The AI rewrite service is currently disabled or not ready. Try again later.');
         }
         if (status === 409 || status === 422 || status === 400) {
@@ -471,10 +490,21 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       setMessage('Save the current text as a version before exporting the PDF.');
       return;
     }
+    const subjectName = selectedReport.scope_type === 'employee'
+      ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
+      : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
+    // period is stored as "YYYY-MM-DD_YYYY-MM-DD" (the save-draft RPC's own format — see
+    // 20261107200000_report_workspace_task_sources.sql's `p_period_start || '_' || ...`) for every
+    // report saved through this workspace; an older/legacy report can still carry a plain
+    // month/quarter label (no underscore), which is shown as-is rather than mis-parsed. jsPDF's
+    // bidi-shaper hook (installed once, module-level, above) already reorders/shapes any Arabic in
+    // this string automatically, so no manual RTL handling is needed here.
+    const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
+    const periodRange = periodTo ? `من ${periodFrom} إلى ${periodTo}` : (selectedReport.period || '');
     await downloadReportPdf({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
       title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
-      subtitle: `${selectedReport.period} · ${selectedReport.scope_type === 'employee' ? (names.get(selectedReport.subject_user_id || '') || 'Employee') : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client')}`,
+      subtitle: `${subjectName} — ${periodRange}`,
       paragraphs: [
         { heading: 'Report Details', body: `Scope: ${selectedReport.employee_scope_mode || selectedReport.scope_type || 'legacy'}\nResponsible: ${names.get(selectedReport.responsible_user_id || '') || 'Not assigned'}\nEvidence: ${sources.length} saved source item(s)${selectedReport.type === 'client' ? '' : ` · Source hash: ${selectedReport.source_hash || 'legacy'}`}` },
         { heading: 'Final Report', body: currentVersion.content_text },

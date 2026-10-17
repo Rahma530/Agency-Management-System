@@ -7,6 +7,13 @@ const facts = buildSavedReportFacts([
 if (facts.length !== 2 || !facts[0].includes('Completed 12 deliverables') || !facts[1].includes('Launch reel')) {
   throw new Error('Saved source snapshots were not converted into provider facts.');
 }
+// A daily_log/extra_note fact must never be prefixed with source_date — only the task-evidence
+// fact (which needs dates structurally, for "linked work-log dates") still carries one.
+// source_date remains untouched on the row itself (still used for ordering in index.ts); only
+// this derived AI-facing fact string drops it.
+if (facts[0] !== 'Completed 12 deliverables' || !facts[1].startsWith('2026-10-13:')) {
+  throw new Error('daily_log/extra_note facts must not carry a leading source_date.');
+}
 for (const invalid of [
   [{ source_kind: 'unknown', source_date: '2026-10-12', snapshot: {} }],
   [{ source_kind: 'daily_log', source_date: '2026-10-12', snapshot: null }],

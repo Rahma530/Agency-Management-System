@@ -91,4 +91,11 @@ if ((creativeContent.match(/Homepage banner design/g) || []).length !== 1) {
   throw new Error('Linked task was duplicated in the composed report.');
 }
 
+// Work log lines must read as "Employee: text", never prefixed with the log's own date — the
+// date stays on the stored row (daily_logs.date / report_source_items.source_date), it just no
+// longer appears inside the composed narrative text.
+if (!clientContent.includes('One: Saturday design work') || clientContent.includes('2026-10-10 —')) {
+  throw new Error('Work log lines must read "Employee: text" without a leading date.');
+}
+
 console.log('OK: report draft sources enforce scope, Friday exclusion, linked-task evidence, Creative counts, and stable dedupe.');

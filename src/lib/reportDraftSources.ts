@@ -159,8 +159,11 @@ export function composeInitialReportContent(
   employeeNames: Map<string, string>,
   isCreativeSubject: boolean
 ): string {
+  // No date prefix: the composed narrative reads as plain "Employee: text" lines. log.date (and
+  // every log's full row) stays exactly as stored — this only changes what's displayed/drafted,
+  // never report_source_items (the audit ledger, which still orders by and keeps source_date).
   const workLines = dailyLogs.map(
-    (log) => `${log.date} — ${employeeNames.get(log.user_id) || 'Employee'}: ${log.summary_text.trim()}`
+    (log) => `${employeeNames.get(log.user_id) || 'Employee'}: ${log.summary_text.trim()}`
   );
   const noteLines = scope === 'employee'
     ? extraNotes.map((note) => `${note.date} — ${note.note_text.trim()}`)

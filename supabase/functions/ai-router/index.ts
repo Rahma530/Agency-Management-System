@@ -218,7 +218,13 @@ Deno.serve(async (req) => {
     const { data: report, error: reportError } = await admin.from('reports')
       .select('id,current_version_id,source_hash,archived_at,status,creator_note,type').eq('id', rewritePayload.report_id).maybeSingle();
     if (versionError || reportError) {
-      return response({ error: 'Report rewrite storage is not ready.' }, 503);
+      // Logged server-side only (code/message from Supabase's own PostgrestError — never row
+      // content: the select() above never returns anything but columns, no secrets live here).
+      console.error('ai-router REPORT_REWRITE version/report read failed:', {
+        versionErrorCode: versionError?.code, versionErrorMessage: versionError?.message,
+        reportErrorCode: reportError?.code, reportErrorMessage: reportError?.message,
+      });
+      return response({ error: 'Report rewrite storage is not ready.', code: 'REPORT_VERSION_READ_FAILED' }, 503);
     }
     if (!version || !report || version.report_id !== report.id || report.archived_at || report.status === 'final'
       || report.current_version_id !== rewritePayload.base_version_id
@@ -228,13 +234,23 @@ Deno.serve(async (req) => {
     const { data: canEdit, error: permissionError } = await callerClient.rpc('report_row_editable', {
       p_report_id: rewritePayload.report_id,
     });
-    if (permissionError) return response({ error: 'Report authorization is not ready.' }, 503);
+    if (permissionError) {
+      console.error('ai-router REPORT_REWRITE report_row_editable RPC failed:', {
+        code: permissionError.code, message: permissionError.message,
+      });
+      return response({ error: 'Report authorization is not ready.', code: 'REPORT_PERMISSION_CHECK_FAILED' }, 503);
+    }
     if (canEdit !== true) return response({ error: 'Report access denied.' }, 403);
 
     const { data: sourceRows, error: sourceError } = await admin.from('report_source_items')
       .select('source_kind,source_date,snapshot').eq('report_id', report.id)
       .order('source_date', { ascending: true }).order('source_kind', { ascending: true });
-    if (sourceError) return response({ error: 'Report source evidence is unavailable.' }, 503);
+    if (sourceError) {
+      console.error('ai-router REPORT_REWRITE report_source_items read failed:', {
+        code: sourceError.code, message: sourceError.message,
+      });
+      return response({ error: 'Report source evidence is unavailable.', code: 'REPORT_SOURCES_READ_FAILED' }, 503);
+    }
     let facts: string[];
     try { facts = buildSavedReportFacts(sourceRows || []); }
     catch { return response({ error: 'Saved report evidence cannot be safely rewritten.' }, 422); }
