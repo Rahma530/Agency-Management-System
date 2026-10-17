@@ -18,7 +18,11 @@ export function buildSavedReportFacts(rows: SavedReportSourceRow[]): string[] {
         : source.source_date;
       fact = `${source.source_date}: task evidence — ${String(snapshot.title || '')}; inferred kind: ${String(snapshot.work_kind || 'unclassified')}; status: ${String(snapshot.status || '')}; linked work-log dates: ${dates}`;
     } else if (source.source_kind === 'daily_log' || source.source_kind === 'extra_note') {
-      fact = `${source.source_date}: ${String(snapshot.summary_text || snapshot.note_text || '')}`;
+      // No date prefix in the fact text itself, matching reportDraftSources.ts's own "Work logs"
+      // narration — source.source_date (the row's own column, used for ordering above and kept
+      // in report_source_items, the audit ledger) is untouched; only this derived AI-facing
+      // string drops it.
+      fact = String(snapshot.summary_text || snapshot.note_text || '');
     } else {
       throw new Error('A saved report source kind is unsupported.');
     }
