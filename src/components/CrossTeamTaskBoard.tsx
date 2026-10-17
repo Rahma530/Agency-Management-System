@@ -2024,6 +2024,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 const subtasks = tasks.filter((t) => t.parent_task_id === draggingTask.id);
                 const assigneeNames = (taskAssigneeIdsByTask.get(draggingTask.id) || [])
                   .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
+                const creatorName = taskDirectoryUsers.find((user) => user.id === draggingTask.created_by)?.name || 'Unknown';
                 const platformNames = (taskPlatformIdsByTask.get(draggingTask.id) || [])
                   .map((id) => platformsById.get(id)?.name)
                   .filter((name): name is string => !!name);
@@ -2033,6 +2034,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     client={clients.find((c) => c.id === draggingTask.client_id)}
                     assigneeNames={assigneeNames}
                     platformNames={platformNames}
+                    creatorName={creatorName}
                     subtaskDone={subtasks.filter((t) => isTaskDone(t.status)).length}
                     subtaskTotal={subtasks.length}
                     overdue={isOverdue(draggingTask)}
@@ -2239,6 +2241,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                         </td>
                         <td className="p-3.5 text-center font-mono text-stone-400">
                           {task.created_at ? task.created_at.split('T')[0] : '—'}
+                          <span className="block text-[9px] text-stone-500 font-sans">
+                            {taskDirectoryUsers.find((user) => user.id === task.created_by)?.name || 'Unknown'}
+                          </span>
                         </td>
                         <td className="p-3.5 text-center font-mono">
                           <span className={overdue ? 'text-red-400 font-bold' : 'text-stone-300'}>
@@ -2390,6 +2395,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              {/* Creator — tasks.created_by, resolved from the already-loaded user directory (no
+                  per-task fetch). A created_by that doesn't match anyone in it falls back to
+                  'Unknown' rather than guessing. */}
+              <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
+                <label className="text-[10px] text-stone-400 block mb-1">Created by:</label>
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 text-purple-400" />
+                  <span className="text-xs font-bold text-white">
+                    {taskDirectoryUsers.find((user) => user.id === selectedTaskDetails.created_by)?.name || 'Unknown'}
+                  </span>
+                  <span className="text-[10px] text-stone-500">
+                    · {selectedTaskDetails.created_at ? selectedTaskDetails.created_at.split('T')[0] : '—'}
+                  </span>
+                </div>
+              </div>
+
               {/* Assignees (re-assign chain, section B): the creator's chip is never removable
                   (the RPC enforces this too; this just avoids showing a control that would only
                   ever fail). Only a viewer canEditTaskAssignees() mirrors as eligible gets the
@@ -2417,24 +2438,39 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           {resolvedIds.map((id) => {
                             const isCreatorChip = id === selectedTaskDetails.created_by;
                             const removable = canEdit && !isCreatorChip;
+                            // The actual task_assignees row for this (task, user) pair — not just
+                            // the id resolveTaskAssigneeIds() returns — so added_by/created_at can
+                            // be shown. Missing for the legacy assigned_to fallback case (a task
+                            // predating task_assignees with no row at all): shown as '—', never
+                            // guessed from anything else.
+                            const assigneeRow = taskAssignees.find(
+                              (ta) => ta.task_id === selectedTaskDetails.id && ta.user_id === id
+                            );
+                            const addedById = assigneeRow?.added_by ?? null;
+                            const addedByName = addedById
+                              ? taskDirectoryUsers.find((user) => user.id === addedById)?.name || 'Unknown'
+                              : '—';
+                            const assignedAtDate = assigneeRow?.created_at ? assigneeRow.created_at.split('T')[0] : '—';
                             return (
-                              <span
-                                key={id}
-                                className="flex items-center gap-1 rounded-full bg-purple-900/40 px-2 py-0.5 text-[10px] font-semibold text-purple-200"
-                              >
-                                {taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee'}
-                                {isCreatorChip && <span className="text-purple-400">(creator)</span>}
-                                {removable && (
-                                  <button
-                                    type="button"
-                                    disabled={isSavingAssignees}
-                                    onClick={() => handleRemoveAssignee(id)}
-                                    className="rounded-full p-0.5 hover:bg-white/10 disabled:opacity-50"
-                                    title="Remove assignee"
-                                  >
-                                    <X className="h-2.5 w-2.5" />
-                                  </button>
-                                )}
+                              <span key={id} className="flex flex-col gap-0.5">
+                                <span className="flex items-center gap-1 rounded-full bg-purple-900/40 px-2 py-0.5 text-[10px] font-semibold text-purple-200">
+                                  {taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee'}
+                                  {isCreatorChip && <span className="text-purple-400">(creator)</span>}
+                                  {removable && (
+                                    <button
+                                      type="button"
+                                      disabled={isSavingAssignees}
+                                      onClick={() => handleRemoveAssignee(id)}
+                                      className="rounded-full p-0.5 hover:bg-white/10 disabled:opacity-50"
+                                      title="Remove assignee"
+                                    >
+                                      <X className="h-2.5 w-2.5" />
+                                    </button>
+                                  )}
+                                </span>
+                                <span className="text-[9px] text-stone-500 px-2">
+                                  Assigned by {addedByName} · {assignedAtDate}
+                                </span>
                               </span>
                             );
                           })}
