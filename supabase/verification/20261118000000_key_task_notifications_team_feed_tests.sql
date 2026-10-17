@@ -127,6 +127,12 @@ begin
   -- in_review). Must notify: admin, and v_am_tl (the am_agent's supervisor). Must NOT notify:
   -- v_other_tl (seo_team_lead — unrelated, no seo_agent assigned yet), or the actor (v_assignee)
   -- about their own action.
+  --
+  -- Every "must NOT notify" check below filters on type = 'task_updated': v_assignee was just
+  -- assigned to task1 in the Setup block above, which already created its own real
+  -- type = 'task_assigned' notification ("You have been assigned a new task: <task1_title>.") —
+  -- a message LIKE '%<task1_title>%' match with no type filter would wrongly count THAT row as
+  -- if it were a (nonexistent) self-notification from this trigger.
   -- ======================================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_assignee_auth, 'role', 'authenticated')::text, true);
   set local role authenticated;
@@ -149,13 +155,13 @@ begin
   end if;
 
   select count(*) into v_count from public.notifications
-  where user_id = v_other_tl_id and message like '%' || v_task1_title || '%';
+  where user_id = v_other_tl_id and type = 'task_updated' and message like '%' || v_task1_title || '%';
   if v_count <> 0 then
     raise exception 'TEST_FAILED: scenario 1 — an unrelated team''s lead must not be notified, got %.', v_count;
   end if;
 
   select count(*) into v_count from public.notifications
-  where user_id = v_assignee_id and message like '%' || v_task1_title || '%';
+  where user_id = v_assignee_id and type = 'task_updated' and message like '%' || v_task1_title || '%';
   if v_count <> 0 then
     raise exception 'TEST_FAILED: scenario 3 — the actor must never be notified about their own action, got %.', v_count;
   end if;
@@ -173,6 +179,9 @@ begin
   update public.tasks set status = 'in_progress' where id = v_task2_id;
   reset role; perform set_config('request.jwt.claims', '', true);
 
+  -- Safe with no type/user filter at all: task2 never has set_task_assignees() called on it, so
+  -- there is no type = 'task_assigned' notification mentioning task2_title that this could ever
+  -- mistakenly count — any match here can only be this trigger's own (wrongly fired) output.
   select count(*) into v_count from public.notifications where message like '%' || v_task2_title || '%';
   if v_count <> 0 then
     raise exception 'TEST_FAILED: scenario 2 — a non-key transition (todo -> in_progress) must notify no one, got %.', v_count;
@@ -235,6 +244,10 @@ begin
     raise exception 'TEST_FAILED: scenario 5 — expected exactly one admin notification for the graphic_designer task''s blocked transition, got %.', v_count;
   end if;
 
+  -- Safe with no type filter: task3's only assignee is v_graphic_designer_id, so
+  -- set_task_assignees()'s own type = 'task_assigned' notification for task3 went to
+  -- v_graphic_designer_id alone — never to v_am_tl_id or v_other_tl_id, neither of whom is
+  -- task3's assignee — so there is nothing of that type for this IN-list to ever pick up.
   select count(*) into v_count from public.notifications
   where user_id in (v_am_tl_id, v_other_tl_id) and message like '%' || v_task3_title || '%';
   if v_count <> 0 then
@@ -344,6 +357,10 @@ begin
     raise exception 'TEST_FAILED: scenario 8 — expected exactly one admin ''Task Sent Back for Revision'' notification for task5''s revision, got %.', v_count;
   end if;
 
+  -- Safe without an explicit type filter: title = 'Task Sent Back for Revision' is only ever
+  -- produced by this trigger's own revision branch — set_task_assignees()'s 'task_assigned'
+  -- notifications always use the fixed title 'New Task Assigned', so there is no overlap to
+  -- mistake for a self-notification here (v_am_tl was never task5's assignee either way).
   select count(*) into v_count from public.notifications
   where user_id = v_am_tl_id and title = 'Task Sent Back for Revision' and message like '%' || v_task5_title || '%';
   if v_count <> 0 then
@@ -403,6 +420,9 @@ begin
     raise exception 'TEST_FAILED: scenario 6 — the status update must succeed even though the trigger''s own notification insert was forced to fail, got status %.', v_status;
   end if;
 
+  -- Safe with no type/user filter at all, same reasoning as scenario 2's own check above: task4
+  -- never has set_task_assignees() called on it, so there is no type = 'task_assigned'
+  -- notification mentioning task4_title this could ever mistakenly count.
   select count(*) into v_count from public.notifications where message like '%' || v_task4_title || '%';
   if v_count <> 0 then
     raise exception 'TEST_FAILED: scenario 6 — the forced constraint should have rejected every notification insert for task4, got %.', v_count;
