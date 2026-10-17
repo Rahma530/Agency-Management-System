@@ -269,13 +269,14 @@ begin
   end if;
 
   -- ======================================================================
-  -- Scenario 11: a task with a NULL description must still produce a row, summary_text = title
+  -- Scenario 11: a task with an EMPTY description (tasks.description is NOT NULL, so NULL itself
+  -- is never a real value to test against — '' and a whitespace-only string are the two actual
+  -- empty-description shapes that can occur live) must still produce a row, summary_text = title
   -- only, never NULL (string || NULL = NULL is exactly the bug coalesce/nullif/btrim guard against
-  -- in the trigger function).
+  -- in the trigger function) and without a trailing blank line.
   -- ======================================================================
   insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority)
-  values (v_task3_id, v_client_id, 'ZZ Daily Log Trigger Test Task 3 (no description)', '', v_am_agent_id, 'creative', 'todo', current_date, 'medium');
-  update public.tasks set description = null where id = v_task3_id;
+  values (v_task3_id, v_client_id, 'ZZ Daily Log Trigger Test Task 3 (empty description)', '', v_am_agent_id, 'creative', 'todo', current_date, 'medium');
   insert into public.task_assignees (task_id, user_id, added_by)
   values (v_task3_id, v_assignee_id, v_am_agent_id);
 
@@ -284,10 +285,30 @@ begin
   select summary_text into v_summary from public.daily_logs
   where task_id = v_task3_id and user_id = v_assignee_id and source = 'auto_task';
   if v_summary is null then
-    raise exception 'TEST_FAILED: scenario 11 — summary_text must not be NULL when description is NULL.';
+    raise exception 'TEST_FAILED: scenario 11 — summary_text must not be NULL when description is an empty string.';
   end if;
-  if v_summary is distinct from 'ZZ Daily Log Trigger Test Task 3 (no description)' then
-    raise exception 'TEST_FAILED: scenario 11 — summary_text must be the title alone (no trailing newline/description), found: %.', v_summary;
+  if v_summary is distinct from 'ZZ Daily Log Trigger Test Task 3 (empty description)' then
+    raise exception 'TEST_FAILED: scenario 11 — summary_text must be the title alone (no trailing newline/description) when description is '''', found: %.', v_summary;
+  end if;
+
+  -- Whitespace-only description must be treated the same as empty — btrim() is what makes this
+  -- indistinguishable from the '' case above. The existing row is backdated first (same trick as
+  -- scenario 4) so the next revision + re-delivery lands on a fresh (task_id, user_id, date)
+  -- tuple instead of hitting ON CONFLICT DO NOTHING against today's already-inserted row.
+  update public.daily_logs set date = v_today - 1
+  where task_id = v_task3_id and user_id = v_assignee_id and source = 'auto_task';
+
+  update public.tasks set description = '   ' where id = v_task3_id;
+  update public.tasks set status = 'todo' where id = v_task3_id;
+  update public.tasks set status = 'in_review' where id = v_task3_id;
+
+  select summary_text into v_summary from public.daily_logs
+  where task_id = v_task3_id and user_id = v_assignee_id and source = 'auto_task' and date = v_today;
+  if v_summary is null then
+    raise exception 'TEST_FAILED: scenario 11b — summary_text must not be NULL when description is whitespace-only.';
+  end if;
+  if v_summary is distinct from 'ZZ Daily Log Trigger Test Task 3 (empty description)' then
+    raise exception 'TEST_FAILED: scenario 11b — summary_text must be the title alone when description is whitespace-only, found: %.', v_summary;
   end if;
 
   -- ======================================================================
