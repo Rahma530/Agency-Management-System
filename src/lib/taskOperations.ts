@@ -1,4 +1,4 @@
-import { ActivityRecord, TaskAssigneeLogRecord, TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
+import { ActivityRecord, TaskAssigneeLogRecord, TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord, TeamTaskActivityFeedRow } from '../types/database';
 import { buildAttachmentStoragePath, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
@@ -456,4 +456,65 @@ export const removeTaskAttachmentObject = async (storagePath: string): Promise<v
 export const markTaskViewed = async (taskId: string): Promise<void> => {
   const { error } = await supabaseRaw.rpc('mark_task_viewed', { p_task_id: taskId });
   throwIfError(error, 'Unable to mark the task as viewed.');
+};
+
+// team_task_activity_feed() (20261118000000_key_task_notifications_team_feed.sql) — the
+// team-lead-scoped equivalent of the admin-only Live Activity Feed's public.activities read.
+// SECURITY DEFINER; the RPC itself re-checks the caller's role (the four team-lead roles plus
+// executive/head_of_technical) regardless of what the UI gates the button on. p_limit is
+// clamped server-side to 100 — passing a larger value here is harmless, not a way to bypass it.
+export const fetchTeamTaskActivityFeed = async (
+  limit = 50,
+  before: string | null = null
+): Promise<TeamTaskActivityFeedRow[]> => {
+  const { data, error } = await supabaseRaw.rpc('team_task_activity_feed', {
+    p_limit: limit,
+    p_before: before,
+  });
+  throwIfError(error, 'Unable to load the team activity feed.');
+  return (data as TeamTaskActivityFeedRow[] | null) || [];
+};
+
+// Maps a team_task_activity_feed() row onto the same ActivityRecord shape LiveActivityFeed.tsx
+// already renders for the admin-sourced public.activities feed, so that component can be reused
+// as-is for the team-lead view (App.tsx passes mapped rows for team leads, raw activities rows
+// for admins). action_type only has 5 values and task_events has 8 event_types, so several map
+// onto 'update' — there is no finer-grained icon/category to pick from the shared component's own
+// getActionIcon(). details carries the same old_value/new_value raw strings TaskHistoryTab.tsx
+// shows for the full per-task History tab, just in English rather than that tab's Arabic
+// phrasing, matching LiveActivityFeed's own existing mixed-language convention (Arabic chrome,
+// raw English/Latin data values).
+export const mapTeamTaskActivityFeedRowToActivityRecord = (row: TeamTaskActivityFeedRow): ActivityRecord => {
+  const actionTypeByEventType: Record<TeamTaskActivityFeedRow['event_type'], ActivityRecord['action_type']> = {
+    created: 'create',
+    status_changed: 'status_change',
+    priority_changed: 'update',
+    due_date_changed: 'update',
+    title_changed: 'update',
+    team_changed: 'update',
+    assignee_added: 'update',
+    assignee_removed: 'update',
+  };
+
+  const detailsByEventType: Record<TeamTaskActivityFeedRow['event_type'], string | null> = {
+    created: null,
+    status_changed: `Status changed from ${row.old_value || '—'} to ${row.new_value || '—'}`,
+    priority_changed: `Priority changed from ${row.old_value || '—'} to ${row.new_value || '—'}`,
+    due_date_changed: `Due date changed from ${row.old_value || '—'} to ${row.new_value || '—'}`,
+    title_changed: `Title changed from "${row.old_value || '—'}" to "${row.new_value || '—'}"`,
+    team_changed: `Team changed from ${row.old_value || '—'} to ${row.new_value || '—'}`,
+    assignee_added: 'Assignee added',
+    assignee_removed: 'Assignee removed',
+  };
+
+  return {
+    id: row.id,
+    user_id: row.actor_id || '',
+    action_type: actionTypeByEventType[row.event_type],
+    target_type: 'task',
+    target_id: row.task_id,
+    target_name: row.task_title,
+    details: detailsByEventType[row.event_type],
+    created_at: row.created_at,
+  };
 };

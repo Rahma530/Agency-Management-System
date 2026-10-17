@@ -127,9 +127,11 @@ import {
   deleteTasks,
   fetchTaskAssignees,
   fetchTaskPlatformLinks,
+  fetchTeamTaskActivityFeed,
   getCapacitySnapshot,
   getServerToday,
   getUserScheduleLoad,
+  mapTeamTaskActivityFeedRowToActivityRecord,
   markTaskViewed,
   removeTaskAttachmentObject,
   setTaskAssignees as persistTaskAssignees,
@@ -1828,19 +1830,35 @@ export default function App() {
       // for everyone else, since activities_select_rls was executive/head_of_technical only), but
       // activities_select_task_participants (20261117000000_activities_task_participants_select.sql)
       // now also lets a task participant see their OWN tasks' rows — which must never surface in
-      // this system-wide feed for a non-admin, so the fetch itself is skipped for them now too.
-      if (!['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role)) return;
-      try {
-        const { data: activityData, error: activityErr } = await supabaseRaw
-          .from('activities')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(50);
-        if (!cancelled && !activityErr && activityData) {
-          setActivities(activityData as ActivityRecord[]);
+      // this system-wide feed for a non-admin, so the fetch itself is skipped for them too.
+      //
+      // The four team-lead roles get their own team-scoped equivalent instead, via
+      // team_task_activity_feed() (20261118000000_key_task_notifications_team_feed.sql) — task
+      // events only (no public.activities row at all), mapped onto the same ActivityRecord shape
+      // so LiveActivityFeed.tsx can render either source unchanged. Any other role fetches
+      // nothing, same as before.
+      if (['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role)) {
+        try {
+          const { data: activityData, error: activityErr } = await supabaseRaw
+            .from('activities')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (!cancelled && !activityErr && activityData) {
+            setActivities(activityData as ActivityRecord[]);
+          }
+        } catch (err) {
+          console.warn('Failed to load activities:', err);
         }
-      } catch (err) {
-        console.warn('Failed to load activities:', err);
+      } else if (['am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role)) {
+        try {
+          const rows = await fetchTeamTaskActivityFeed(50, null);
+          if (!cancelled) {
+            setActivities(rows.map(mapTeamTaskActivityFeedRowToActivityRecord));
+          }
+        } catch (err) {
+          console.warn('Failed to load team activity feed:', err);
+        }
       }
     })();
 
@@ -2171,6 +2189,13 @@ export default function App() {
   // this whole effect, poll fallback and realtime subscription alike, simply never runs for
   // anyone else, so a task participant's own activities_select_task_participants-visible rows
   // (20261117000000_activities_task_participants_select.sql) never reach this system-wide feed.
+  //
+  // Deliberately not extended to the four team-lead roles' own team_task_activity_feed() source
+  // (see the initial-fetch effect above): they get a one-time 50-row snapshot on load/login only,
+  // no live push and no poll fallback — not asked for, and task_events' own AFTER INSERT
+  // notification trigger (20261118000000_key_task_notifications_team_feed.sql) already tells a
+  // team lead about every key transition on their team's tasks as it happens, independent of
+  // whether this feed panel is even open.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -5574,8 +5599,11 @@ export default function App() {
                 Impersonate Employee
               </button>
             )}
-            {/* زر النشاط الحي للمديرين — hidden below md: a desk-admin convenience, not essential mobile nav */}
-            {['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role) && (
+            {/* زر النشاط الحي للمديرين — hidden below md: a desk-admin convenience, not essential mobile nav.
+                Also shown to the four team-lead roles, who get their own team-scoped feed (task
+                events only, via team_task_activity_feed()) instead of the admin activities read —
+                see the activities/team-feed fetch effect above. */}
+            {['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role) && (
               <button
                 onClick={() => setIsActivityFeedOpen(!isActivityFeedOpen)}
                 className="hidden md:flex text-xs px-4 py-2 rounded-xl font-bold items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
@@ -5974,8 +6002,9 @@ export default function App() {
             )}
 
             {/* Live Activity Feed — mobile only; desktop keeps its own header button
-                (hidden md:flex above) instead of duplicating it here. */}
-            {['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role) && (
+                (hidden md:flex above) instead of duplicating it here. Same role set as the
+                desktop button — see its own comment above. */}
+            {['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role) && (
               <div className="md:hidden mt-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
                 <button
                   onClick={() => {

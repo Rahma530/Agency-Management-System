@@ -529,6 +529,23 @@ export interface TaskEventRecord {
   created_at: string;
 }
 
+// Row shape returned by the team_task_activity_feed(p_limit, p_before) RPC
+// (20261118000000_key_task_notifications_team_feed.sql) — a team-scoped equivalent of
+// TaskEventRecord for the four team-lead roles, carrying task_title/actor_name resolved
+// server-side (the RPC's own caller may not have task_visible_v2 access to every task_id it
+// returns, so the client never looks these up itself).
+export interface TeamTaskActivityFeedRow {
+  id: string;
+  task_id: string;
+  task_title: string;
+  actor_id: string | null;
+  actor_name: string;
+  event_type: TaskEventType;
+  old_value: string | null;
+  new_value: string | null;
+  created_at: string;
+}
+
 // 6b. task_comments — threaded comments on a task, capped at 3 levels
 // (comment -> reply -> reply-to-reply) by a DB trigger, same as tasks
 // nesting. Soft-delete via deleted_at (never a real DELETE) so a deleted
