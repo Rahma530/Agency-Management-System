@@ -541,8 +541,24 @@ function normalizeDigits(value: string): string {
   });
 }
 
+// Deliberately digits-only (no leading `-?`), for two confirmed reasons:
+//   1. A fact string like "2026-02-15: task evidence — ..." (source_date is always ISO
+//      YYYY-MM-DD) previously matched as {"2026","-02","-15"} — the dash between date components
+//      was captured as part of the token, purely an artifact of where the digits happen to sit in
+//      the string, not a real signed number.
+//   2. buildArabicQualityRules's own rule 2 (applied to REPORT_REWRITE's prompt — see
+//      buildReportRewritePrompt below) explicitly instructs the model to drop the minus sign when
+//      the direction is already stated in words ("انخفضت النسبة ... 26.2%", never "-26.2%"). With
+//      the sign captured, validateReportRewriteOutput below required an exact "-26.2" vs "26.2"
+//      match and rejected every such — fully correct, prompt-instructed — rewrite, which is why
+//      "Suggest rewrite" could fail on ordinary Arabic report text containing dates or a declining
+//      metric while CAMPAIGN_SUMMARY's own validators (which never do this input/output number
+//      comparison) kept working.
+// Comparing unsigned digit groups still catches the one thing this check exists for — a
+// fabricated or altered number — while no longer depending on incidental sign/punctuation that
+// carries no numeric meaning here.
 function numericTokens(value: string): Set<string> {
-  return new Set((normalizeDigits(value).match(/-?\d+(?:[.,]\d+)?/g) || []).map((token) => token.replace(',', '.')));
+  return new Set((normalizeDigits(value).match(/\d+(?:[.,]\d+)?/g) || []).map((token) => token.replace(',', '.')));
 }
 
 export function validateReportRewriteOutput(parsed: unknown, _detail: DetailLevel, stageInput?: unknown): StageValidationResult {

@@ -288,6 +288,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     });
   }
 
+  // Same secret-redacting guard as App.tsx's own safeAiErrorMessage — ai-router's own `message`
+  // fields are already plain, displayable text (confirmed by reading index.ts/taskRunner.ts: e.g.
+  // "every configured provider is currently in cooldown", "REPORT_REWRITE stage produced output
+  // that did not match the expected schema"), but this still guards against ever surfacing
+  // anything that looks like a credential if that ever changes.
+  const safeAiErrorMessage = (value: unknown, fallback: string): string => {
+    if (typeof value !== 'string') return fallback;
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    if (!normalized || /(?:authorization|bearer|api[_ -]?key|secret|token|stack trace)/i.test(normalized)) {
+      return fallback;
+    }
+    return normalized.slice(0, 300);
+  };
+
   const requestRewrite = async () => {
     if (!selectedReport || !currentVersion || !draftText.trim()) return;
     if (draftText !== currentVersion.content_text) {
@@ -315,7 +329,31 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         REWRITE_TIMEOUT_MS,
         `AI rewrite timed out after ${REWRITE_TIMEOUT_MS / 1000}s.`
       );
-      if (aiError || !aiData?.ok || !aiData?.result?.suggested_text) throw new Error('rewrite failed');
+      // ai-router returns a non-2xx status only for auth/disabled/stale-report-state cases
+      // (index.ts's own early `response({ error: ... }, <status>)` calls) — those surface here as
+      // a FunctionsHttpError with no `.message`/`.ok` body shape, so they're distinguished by
+      // status rather than by data.message. Everything else (provider failure, output-validation
+      // rejection) is a normal 200 response with `ok:false` and a safe, displayable `message`.
+      if (aiError) {
+        const context = aiError.context;
+        const status = context instanceof Response ? context.status : undefined;
+        if (status === 401 || status === 403) {
+          throw new Error('You do not have permission to request an AI rewrite for this report.');
+        }
+        if (status === 503) {
+          throw new Error('The AI rewrite service is currently disabled or not ready. Try again later.');
+        }
+        if (status === 409 || status === 422 || status === 400) {
+          throw new Error('The report changed or is no longer valid for a rewrite. Reload it and try again.');
+        }
+        throw new Error(status
+          ? `AI rewrite request failed (HTTP ${status}). Please try again.`
+          : 'Could not reach the AI rewrite service. Please try again.');
+      }
+      if (!aiData?.ok) {
+        throw new Error(safeAiErrorMessage(aiData?.message, 'The AI rewrite could not be generated. Please try again.'));
+      }
+      if (!aiData.result?.suggested_text) throw new Error('Unexpected AI rewrite response.');
       const { data, error } = await supabaseRaw.rpc('create_report_ai_suggestion', {
         p_report_id: selectedReport.id,
         p_base_version_id: currentVersion.id,
@@ -329,7 +367,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const timedOut = err instanceof Error && err.message.includes('timed out');
       setMessage(timedOut
         ? `AI rewrite timed out after ${REWRITE_TIMEOUT_MS / 1000}s. The current text and manual note remain unchanged.`
-        : 'AI rewrite is unavailable. The current text and manual note remain unchanged.');
+        : `${err instanceof Error ? err.message : 'AI rewrite is unavailable.'} The current text and manual note remain unchanged.`);
     } finally {
       setBusy(false);
     }
