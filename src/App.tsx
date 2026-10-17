@@ -1821,6 +1821,14 @@ export default function App() {
     })();
 
     (async () => {
+      // Live Activity Feed is an admin-oriented, system-wide overview — gated to the same roles
+      // the button itself is gated to (App.tsx's own Live Activity Feed buttons, desktop and
+      // mobile). This fetch has always been role-unrestricted (RLS alone used to make it a no-op
+      // for everyone else, since activities_select_rls was executive/head_of_technical only), but
+      // activities_select_task_participants (20261117000000_activities_task_participants_select.sql)
+      // now also lets a task participant see their OWN tasks' rows — which must never surface in
+      // this system-wide feed for a non-admin, so the fetch itself is skipped for them now too.
+      if (!['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role)) return;
       try {
         const { data: activityData, error: activityErr } = await supabaseRaw
           .from('activities')
@@ -2157,10 +2165,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Real-time activities delivery, mirroring the chat/notifications effects above.
+  // Real-time activities delivery, mirroring the chat/notifications effects above. Same
+  // admin-only gate as the initial fetch above (and the Live Activity Feed buttons themselves) —
+  // this whole effect, poll fallback and realtime subscription alike, simply never runs for
+  // anyone else, so a task participant's own activities_select_task_participants-visible rows
+  // (20261117000000_activities_task_participants_select.sql) never reach this system-wide feed.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
+    if (!['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role)) return;
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
