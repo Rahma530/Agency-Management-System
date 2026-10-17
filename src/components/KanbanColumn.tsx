@@ -24,6 +24,13 @@ interface KanbanColumnProps {
   onOpenDetails: (task: TaskRecord) => void;
   onEditTask: (task: TaskRecord) => void;
   onMoveStatus: (taskId: string, status: TaskStatus) => void;
+  // Bulk-action multi-select, shared with the Table view (CrossTeamTaskBoard.tsx's own
+  // selectedTaskIds). onToggleColumnSelection receives this column's own task ids and the next
+  // "select all" state (true selects every one of them, false clears just this column's own).
+  canUseBulkActions: boolean;
+  selectedTaskIds: Set<string>;
+  onToggleTaskSelection: (taskId: string) => void;
+  onToggleColumnSelection: (taskIds: string[], select: boolean) => void;
 }
 
 // A useDroppable-backed column. Extracted into its own component (rather
@@ -46,6 +53,10 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onOpenDetails,
   onEditTask,
   onMoveStatus,
+  canUseBulkActions,
+  selectedTaskIds,
+  onToggleTaskSelection,
+  onToggleColumnSelection,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const columnRef = React.useRef<HTMLDivElement | null>(null);
@@ -122,6 +133,15 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
       {/* Column Header */}
       <div className="flex items-center justify-between pb-2 border-b border-stone-800">
         <div className="flex items-center gap-2">
+          {canUseBulkActions && tasks.length > 0 && (
+            <input
+              type="checkbox"
+              aria-label={`Select all tasks in ${column.label}`}
+              title={`Select all tasks in ${column.label}`}
+              checked={tasks.every((t) => selectedTaskIds.has(t.id))}
+              onChange={(e) => onToggleColumnSelection(tasks.map((t) => t.id), e.target.checked)}
+            />
+          )}
           <div className="w-2.5 h-2.5 rounded-full" style={{ background: column.color }} />
           <h4 className="text-xs font-bold text-white">{column.label}</h4>
         </div>
@@ -170,6 +190,10 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 onOpenDetails={onOpenDetails}
                 onEditTask={onEditTask}
                 onMoveStatus={onMoveStatus}
+                canUseBulkActions={canUseBulkActions}
+                isSelected={selectedTaskIds.has(task.id)}
+                anySelected={selectedTaskIds.size > 0}
+                onToggleSelection={onToggleTaskSelection}
               />
             );
           })
