@@ -37,7 +37,8 @@ import {
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
-import { isTaskDone } from './lib/taskLifecycle';
+import { isTaskDone, resolveTaskAssigneeIds } from './lib/taskLifecycle';
+import { collectDescendantTaskIds } from './lib/bulkTaskActions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices, getClientServices, SERVICE_LABELS } from './lib/clientServices';
 import {
@@ -4361,6 +4362,68 @@ export default function App() {
     );
   };
 
+  // Duplicate (CrossTeamTaskBoard.tsx's bulk-action toolbar; also usable for a single task).
+  // Goes through createTaskCopies() -> create_task_copy() directly — the SAME RPC, SAME
+  // tasks_insert_rls, and SAME set_task_assignees()/set_task_platforms() calls any other task
+  // creation uses — not handleCreateTask()/onCreateTask, whose batchId + localStorage recovery
+  // bookkeeping (taskCreateRecovery.ts) exists purely for the interactive multi-step Create Task
+  // FORM's own crash-recovery, and has nothing to verify for a one-shot programmatic duplicate.
+  // created_by is always the current caller (create_task_copy() sets it via app_user_id() itself);
+  // status is always 'todo' (hardcoded in that same RPC); comments/attachments/done_link are
+  // never copied because the new row starts with none of those by construction. estimated_hours,
+  // task_type, and platform links ARE copied, beyond the literal "title/description/priority/
+  // date/client/team/type/assignees" list — treated as the same kind of pre-work configuration
+  // task_type already is, not accumulated-during-execution data like actual_hours/comments/
+  // attachments/done_link (which are never copied).
+  //
+  // includeSubtasks duplicates the FULL subtree (any depth — same definition delete_tasks() and
+  // computeTaskDeletionPreview() already use), each duplicated subtask's parent_task_id repointed
+  // at its OWN duplicated parent (idMap), processed in collectDescendantTaskIds()'s own walk
+  // order (parent before its children) so that mapping is always already known.
+  const handleDuplicateTask = async (taskId: string, includeSubtasks: boolean): Promise<void> => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; the task was not duplicated.');
+    const sourceTask = tasks.find((t) => t.id === taskId);
+    if (!sourceTask) throw new Error('Task not found.');
+
+    const idsToDuplicate = includeSubtasks ? [taskId, ...collectDescendantTaskIds(taskId, tasks)] : [taskId];
+    const idMap = new Map<string, string>();
+
+    for (const sourceId of idsToDuplicate) {
+      const source = tasks.find((t) => t.id === sourceId);
+      if (!source) continue; // Shouldn't happen — defensive only.
+
+      const assigneeIds = resolveTaskAssigneeIds(source.id, taskAssignees, source.assigned_to);
+      const platformIds = taskPlatformLinks.filter((link) => link.task_id === source.id).map((link) => link.platform_id);
+      const newParentId = source.parent_task_id ? idMap.get(source.parent_task_id) ?? null : null;
+
+      const result = await createTaskCopies({
+        clientIds: [source.client_id],
+        assigneeIds,
+        title: source.title,
+        description: source.description,
+        team: source.team || '',
+        dueDate: source.due_date,
+        priority: source.priority,
+        estimatedHours: source.estimated_hours ?? undefined,
+        taskType: source.task_type ?? undefined,
+        taskTypeOther: source.task_type_other ?? undefined,
+        parentTaskId: newParentId,
+        platformIds,
+      });
+
+      if (result.tasks.length === 0) {
+        throw new Error(result.failures[0]?.message || `Unable to duplicate "${source.title}".`);
+      }
+      const newTask = result.tasks[0];
+      idMap.set(sourceId, newTask.id);
+      setTasks((prev) => [newTask, ...prev]);
+    }
+
+    setTaskAssignees(await fetchTaskAssignees());
+    setTaskPlatformLinks(await fetchTaskPlatformLinks());
+    await logActivity('create', 'task', idMap.get(taskId) || taskId, `Duplicate of: ${sourceTask.title}`);
+  };
+
   // Client merge (merge_clients() RPC, 20261114000000_merge_clients.sql) — executive/
   // head_of_technical/ai_engineer only, gated in CrossTeamTaskBoard.tsx via canMergeClients
   // (lib/permissions.ts); the RPC re-checks the same role gate server-side regardless. The RPC
@@ -6211,6 +6274,7 @@ export default function App() {
                   onGetServerToday={getServerToday}
                   onMarkTaskViewed={handleMarkTaskViewed}
                   onHardDeleteTasks={handleHardDeleteTasks}
+                  onDuplicateTask={handleDuplicateTask}
                 />
               </div>
             )}

@@ -19,6 +19,7 @@ import {
   X,
   Sparkles,
   Layers,
+  PlayCircle,
   ArrowRightLeft,
   MoveRight,
   MoveLeft,
@@ -80,6 +81,17 @@ import {
 import { getTodayStr, isTaskOverdueForAssignee } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { getOperationalTeams, fetchAssignableEmployees } from '../lib/departmentStaffing';
+import {
+  MAX_BULK_TASKS,
+  runBulkTaskAction,
+  summarizeBulkOutcomes,
+  checkBulkStatusChange,
+  checkBulkAssigneeEdit,
+  checkBulkDuplicate,
+  resolveBulkAssigneeIds,
+  BulkAssigneeMode,
+  BulkActionSummary,
+} from '../lib/bulkTaskActions';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
 import { getCreativeTeams, isCreativeAssignee, pickMostLoadedAssignee, suggestDueDateAndHours } from '../lib/designerScheduling';
 import { MAX_TASKS_PER_DAY, SUGGESTION_LOOKAHEAD_DAYS } from '../config/designerScheduling';
@@ -175,6 +187,10 @@ interface CrossTeamTaskBoardProps {
   // canManageTaskTypes/canManagePlatforms above. Optional: absent entirely (e.g. no currentUser),
   // the delete controls simply never render.
   onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
+  // Duplicate (bulk-action toolbar, Table view). Single-task shaped, same as onUpdateTaskStatus
+  // above — the bulk toolbar calls this once per selected task via runBulkTaskAction(). Optional
+  // for the same reason onHardDeleteTasks is: absent entirely, the Duplicate control doesn't render.
+  onDuplicateTask?: (taskId: string, includeSubtasks: boolean) => Promise<void>;
 }
 
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
@@ -211,6 +227,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onGetServerToday,
   onMarkTaskViewed,
   onHardDeleteTasks,
+  onDuplicateTask,
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
@@ -270,14 +287,69 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const canManagePlatforms = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical' || currentUser?.role === 'ai_engineer';
   const isUiUxDesigner = currentUser?.role === 'ui_ux_designer';
   const canDeleteTasks = !!onHardDeleteTasks && !!currentUser && canHardDeleteTasks(currentUser.role);
+  // Who even SEES the Table view's checkbox column / bulk-action toolbar at all — isUiUxDesigner
+  // is read-only everywhere else in this component (Edit Task/Add Subtask are hidden for it too),
+  // so bulk actions are hidden the same way. This is only the "show the toolbar" gate; each
+  // action re-checks its own real permission per task when it actually runs (bulkTaskActions.ts),
+  // same as the single-task controls those checks already mirror.
+  const canUseBulkActions = !isUiUxDesigner;
 
-  // Table view multi-select (checkbox column, canDeleteTasks only) + the one confirm modal shared
-  // by both the bulk "Delete Selected" button here and the single-task delete button in the
-  // Details modal below — deleteModalTaskIds is null when the modal is closed.
+  // Table view multi-select (checkbox column) + the one confirm modal shared by both the bulk
+  // "Delete Selected" button here and the single-task delete button in the Details modal below —
+  // deleteModalTaskIds is null when the modal is closed.
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [deleteModalTaskIds, setDeleteModalTaskIds] = useState<string[] | null>(null);
   const [isDeletingTasks, setIsDeletingTasks] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Bulk-action toolbar (ClickUp-style), Table view only. bulkPanel picks which action's own
+  // small input panel is open below the toolbar; each panel's "Apply" sets bulkConfirm instead of
+  // running immediately — the confirm dialog (count + action description) is mandatory per spec
+  // before ANY bulk action executes. Delete is deliberately NOT routed through this state at all
+  // — it reuses the pre-existing deleteModalTaskIds confirm flow unchanged ("كما هو").
+  type BulkPanel = 'status' | 'priority' | 'dueDate' | 'assignees' | 'move' | 'duplicate';
+  const [bulkPanel, setBulkPanel] = useState<BulkPanel | null>(null);
+  const [bulkStatusDraft, setBulkStatusDraft] = useState<TaskStatus>('todo');
+  const [bulkPriorityDraft, setBulkPriorityDraft] = useState<TaskPriority>('medium');
+  const [bulkDueDateDraft, setBulkDueDateDraft] = useState('');
+  const [bulkAssigneeMode, setBulkAssigneeMode] = useState<BulkAssigneeMode>('add');
+  const [bulkAssigneeIds, setBulkAssigneeIds] = useState<string[]>([]);
+  const [bulkMoveClientId, setBulkMoveClientId] = useState('');
+  const [bulkMoveTeam, setBulkMoveTeam] = useState('');
+  const [bulkDuplicateIncludeSubtasks, setBulkDuplicateIncludeSubtasks] = useState(false);
+  const [isBulkRunning, setIsBulkRunning] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<{ description: string; run: () => Promise<void> } | null>(null);
+  const [bulkSummary, setBulkSummary] = useState<{ actionLabel: string; summary: BulkActionSummary } | null>(null);
+  const [bulkSelectionError, setBulkSelectionError] = useState<string | null>(null);
+
+  const clearBulkSelection = () => {
+    setSelectedTaskIds(new Set());
+    setBulkPanel(null);
+    setBulkSelectionError(null);
+  };
+
+  // Shared by every bulk action except Delete. Never all-or-nothing (runBulkTaskAction attempts
+  // every task regardless of an earlier one's skip/failure); the 100-task cap is enforced here,
+  // once, rather than duplicated in each panel's own "Apply" handler.
+  const runBulk = async (
+    actionLabel: string,
+    options: Parameters<typeof runBulkTaskAction>[1]
+  ) => {
+    const ids = [...selectedTaskIds];
+    if (ids.length === 0) return;
+    if (ids.length > MAX_BULK_TASKS) {
+      setBulkSelectionError(`You can act on at most ${MAX_BULK_TASKS} tasks at once (${ids.length} selected).`);
+      return;
+    }
+    setIsBulkRunning(true);
+    try {
+      const outcomes = await runBulkTaskAction(ids, options);
+      setBulkSummary({ actionLabel, summary: summarizeBulkOutcomes(outcomes) });
+      clearBulkSelection();
+    } finally {
+      setIsBulkRunning(false);
+    }
+  };
 
   const handleConfirmDeleteTasks = async () => {
     if (!deleteModalTaskIds || !onHardDeleteTasks) return;
@@ -2139,23 +2211,304 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           className="rounded-[18px] overflow-hidden border border-stone-800"
           style={{ background: 'var(--gradient-card)' }}
         >
-          {canDeleteTasks && selectedTaskIds.size > 0 && (
-            <div className="p-3 border-b border-stone-800 bg-red-950/30 flex items-center justify-between">
-              <span className="text-xs font-semibold text-red-300">{selectedTaskIds.size} task(s) selected</span>
-              <button
-                onClick={() => setDeleteModalTaskIds([...selectedTaskIds])}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-red-600 text-white hover:bg-red-500"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete Selected ({selectedTaskIds.size})
-              </button>
-            </div>
-          )}
+          {canUseBulkActions && selectedTaskIds.size > 0 && (() => {
+            const toolbarBtnClass = (active: boolean) =>
+              `flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                active ? 'bg-purple-600 text-white' : 'bg-stone-800 text-stone-200 hover:bg-stone-700'
+              }`;
+            const togglePanel = (panel: BulkPanel) => {
+              setBulkSelectionError(null);
+              setBulkPanel((prev) => (prev === panel ? null : panel));
+              if (panel === 'assignees') loadOrgWideAssignableEmployees();
+            };
+
+            return (
+              <div className="border-b border-stone-800 bg-stone-900/70">
+                <div className="p-3 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-purple-300">{selectedTaskIds.size} task(s) selected</span>
+                    <button onClick={clearBulkSelection} className="text-[11px] text-stone-400 hover:text-white underline">
+                      Clear selection
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button onClick={() => togglePanel('status')} className={toolbarBtnClass(bulkPanel === 'status')}>
+                      <PlayCircle className="w-3.5 h-3.5" /> Status
+                    </button>
+                    <button onClick={() => togglePanel('priority')} className={toolbarBtnClass(bulkPanel === 'priority')}>
+                      <Flag className="w-3.5 h-3.5" /> Priority
+                    </button>
+                    <button onClick={() => togglePanel('dueDate')} className={toolbarBtnClass(bulkPanel === 'dueDate')}>
+                      <Calendar className="w-3.5 h-3.5" /> Due date
+                    </button>
+                    <button onClick={() => togglePanel('assignees')} className={toolbarBtnClass(bulkPanel === 'assignees')}>
+                      <UserCheck className="w-3.5 h-3.5" /> Assignees
+                    </button>
+                    <button onClick={() => togglePanel('move')} className={toolbarBtnClass(bulkPanel === 'move')}>
+                      <ArrowRightLeft className="w-3.5 h-3.5" /> Move
+                    </button>
+                    {onDuplicateTask && (
+                      <button onClick={() => togglePanel('duplicate')} className={toolbarBtnClass(bulkPanel === 'duplicate')}>
+                        <Layers className="w-3.5 h-3.5" /> Duplicate
+                      </button>
+                    )}
+                    {canDeleteTasks && (
+                      <button
+                        onClick={() => setDeleteModalTaskIds([...selectedTaskIds])}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-red-600 text-white hover:bg-red-500"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete ({selectedTaskIds.size})
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {bulkSelectionError && (
+                  <div className="px-3 pb-2 text-[11px] text-red-400">{bulkSelectionError}</div>
+                )}
+
+                {bulkPanel === 'status' && (
+                  <div className="p-3 border-t border-stone-800 flex flex-wrap items-center gap-2">
+                    <select
+                      value={bulkStatusDraft}
+                      onChange={(e) => setBulkStatusDraft(e.target.value as TaskStatus)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
+                    >
+                      {columns.map((col) => (
+                        <option key={col.id} value={col.id}>{col.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={isBulkRunning}
+                      onClick={() => {
+                        const label = columns.find((c) => c.id === bulkStatusDraft)?.label || bulkStatusDraft;
+                        setBulkConfirm({
+                          description: `Change status to "${label}" for ${selectedTaskIds.size} task(s)?`,
+                          run: () =>
+                            runBulk('Change status', {
+                              canPerform: (taskId) => {
+                                const task = tasks.find((t) => t.id === taskId);
+                                if (!task || !currentUser) return { allowed: false, reason: 'Task not found.' };
+                                return checkBulkStatusChange(task, bulkStatusDraft, currentUser, taskAssignees);
+                              },
+                              perform: async (taskId) => {
+                                await onUpdateTaskStatus(taskId, bulkStatusDraft);
+                                setSelectedTaskDetails((prev) =>
+                                  prev && prev.id === taskId ? { ...prev, status: bulkStatusDraft } : prev
+                                );
+                              },
+                            }),
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+
+                {bulkPanel === 'priority' && (
+                  <div className="p-3 border-t border-stone-800 flex flex-wrap items-center gap-2">
+                    <select
+                      value={bulkPriorityDraft}
+                      onChange={(e) => setBulkPriorityDraft(e.target.value as TaskPriority)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
+                    >
+                      {(['low', 'medium', 'high', 'urgent'] as TaskPriority[]).map((p) => (
+                        <option key={p} value={p}>{getPriorityBadge(p).label}</option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={isBulkRunning || !onUpdateTask}
+                      onClick={() => {
+                        const label = getPriorityBadge(bulkPriorityDraft).label;
+                        setBulkConfirm({
+                          description: `Change priority to "${label}" for ${selectedTaskIds.size} task(s)?`,
+                          run: () =>
+                            runBulk('Change priority', {
+                              canPerform: () => ({ allowed: true }),
+                              perform: (taskId) => onUpdateTask!(taskId, { priority: bulkPriorityDraft }),
+                            }),
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+
+                {bulkPanel === 'dueDate' && (
+                  <div className="p-3 border-t border-stone-800 flex flex-wrap items-center gap-2">
+                    <input
+                      type="date"
+                      value={bulkDueDateDraft}
+                      onChange={(e) => setBulkDueDateDraft(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
+                    />
+                    <button
+                      disabled={isBulkRunning || !onUpdateTask || !bulkDueDateDraft}
+                      onClick={() => {
+                        setBulkConfirm({
+                          description: `Change due date to ${bulkDueDateDraft} for ${selectedTaskIds.size} task(s)? No other date is moved automatically.`,
+                          run: () =>
+                            runBulk('Change due date', {
+                              canPerform: () => ({ allowed: true }),
+                              perform: (taskId) => onUpdateTask!(taskId, { due_date: bulkDueDateDraft }),
+                            }),
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+
+                {bulkPanel === 'assignees' && (
+                  <div className="p-3 border-t border-stone-800 space-y-2">
+                    <div className="flex items-center gap-1.5">
+                      {(['add', 'replace', 'remove'] as BulkAssigneeMode[]).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => setBulkAssigneeMode(mode)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold capitalize ${
+                            bulkAssigneeMode === mode ? 'bg-purple-600 text-white' : 'bg-stone-800 text-stone-300 hover:text-white'
+                          }`}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                    <SearchableMultiSelect
+                      options={(orgWideAssignableEmployees || []).map((employee) => ({
+                        id: employee.id,
+                        label: employee.name,
+                        sublabel: employee.team || employee.role,
+                      }))}
+                      selectedIds={bulkAssigneeIds}
+                      onChange={setBulkAssigneeIds}
+                      placeholder={isLoadingOrgWideEmployees ? 'Loading employees…' : 'Pick people…'}
+                      searchPlaceholder="Search by name, any department…"
+                      emptyMessage={isLoadingOrgWideEmployees ? 'Loading employees…' : 'No one available.'}
+                    />
+                    <button
+                      disabled={isBulkRunning || !onUpdateTask || bulkAssigneeIds.length === 0}
+                      onClick={() => {
+                        setBulkConfirm({
+                          description: `${bulkAssigneeMode === 'add' ? 'Add' : bulkAssigneeMode === 'remove' ? 'Remove' : 'Replace'} ${bulkAssigneeIds.length} assignee(s) on ${selectedTaskIds.size} task(s)?`,
+                          run: () =>
+                            runBulk('Update assignees', {
+                              canPerform: (taskId) => {
+                                const task = tasks.find((t) => t.id === taskId);
+                                if (!task || !currentUser) return { allowed: false, reason: 'Task not found.' };
+                                return checkBulkAssigneeEdit(task, currentUser, taskAssignees, users, clients);
+                              },
+                              perform: async (taskId) => {
+                                const task = tasks.find((t) => t.id === taskId);
+                                if (!task) throw new Error('Task not found.');
+                                const currentIds = resolveTaskAssigneeIds(taskId, taskAssignees, task.assigned_to);
+                                const nextIds = resolveBulkAssigneeIds(bulkAssigneeMode, currentIds, bulkAssigneeIds);
+                                await onUpdateTask!(taskId, {}, nextIds);
+                              },
+                            }),
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+
+                {bulkPanel === 'move' && (
+                  <div className="p-3 border-t border-stone-800 flex flex-wrap items-center gap-2">
+                    <select
+                      value={bulkMoveClientId}
+                      onChange={(e) => setBulkMoveClientId(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
+                    >
+                      <option value="">Client: no change</option>
+                      {clients.map((client) => (
+                        <option key={client.id} value={client.id}>{client.name}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={bulkMoveTeam}
+                      onChange={(e) => setBulkMoveTeam(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
+                    >
+                      <option value="">Team: no change</option>
+                      {getOperationalTeams().map((team) => (
+                        <option key={team} value={team}>{team}</option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={isBulkRunning || !onUpdateTask || (!bulkMoveClientId && !bulkMoveTeam)}
+                      onClick={() => {
+                        const parts = [
+                          bulkMoveClientId ? `client to "${clients.find((c) => c.id === bulkMoveClientId)?.name}"` : null,
+                          bulkMoveTeam ? `team to "${bulkMoveTeam}"` : null,
+                        ].filter(Boolean);
+                        setBulkConfirm({
+                          description: `Move ${parts.join(' and ')} for ${selectedTaskIds.size} task(s)?`,
+                          run: () =>
+                            runBulk('Move', {
+                              canPerform: () => ({ allowed: true }),
+                              perform: (taskId) => {
+                                const updates: Partial<TaskRecord> = {};
+                                if (bulkMoveClientId) updates.client_id = bulkMoveClientId;
+                                if (bulkMoveTeam) updates.team = bulkMoveTeam;
+                                return onUpdateTask!(taskId, updates);
+                              },
+                            }),
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+
+                {bulkPanel === 'duplicate' && onDuplicateTask && (
+                  <div className="p-3 border-t border-stone-800 flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-1.5 text-xs text-stone-300">
+                      <input
+                        type="checkbox"
+                        checked={bulkDuplicateIncludeSubtasks}
+                        onChange={(e) => setBulkDuplicateIncludeSubtasks(e.target.checked)}
+                      />
+                      Include subtasks
+                    </label>
+                    <button
+                      disabled={isBulkRunning}
+                      onClick={() => {
+                        setBulkConfirm({
+                          description: `Duplicate ${selectedTaskIds.size} task(s)${bulkDuplicateIncludeSubtasks ? ', including their subtasks' : ''}? Comments, attachments, and the Done Link are never copied; status starts at To Do.`,
+                          run: () =>
+                            runBulk('Duplicate', {
+                              canPerform: () =>
+                                currentUser ? checkBulkDuplicate(currentUser) : { allowed: false, reason: 'Not signed in.' },
+                              perform: (taskId) => onDuplicateTask(taskId, bulkDuplicateIncludeSubtasks),
+                            }),
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
                 <tr>
-                  {canDeleteTasks && (
+                  {canUseBulkActions && (
                     <th className="p-3.5 w-8">
                       <input
                         type="checkbox"
@@ -2185,7 +2538,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <tbody className="divide-y divide-stone-800/60">
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={canDeleteTasks ? 14 : 13} className="p-8 text-center text-stone-400">
+                    <td colSpan={canUseBulkActions ? 14 : 13} className="p-8 text-center text-stone-400">
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
@@ -2209,7 +2562,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                         className="hover:bg-stone-900/40 transition-colors cursor-pointer"
                         onClick={() => setSelectedTaskDetails(task)}
                       >
-                        {canDeleteTasks && (
+                        {canUseBulkActions && (
                           <td className="p-3.5" onClick={(e) => e.stopPropagation()}>
                             <input
                               type="checkbox"
@@ -3669,6 +4022,87 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           />
         );
       })()}
+
+      {/* Bulk action confirm — mandatory count-based confirmation before ANY bulk action (except
+          Delete, which keeps its own pre-existing confirm modal above) actually runs. */}
+      {bulkConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div
+            className="w-full max-w-md rounded-[22px] p-6 space-y-4 shadow-2xl"
+            style={{ background: 'var(--gradient-hero)', border: '1px solid var(--border-medium)' }}
+          >
+            <h3 className="text-sm font-bold text-white">Confirm bulk action</h3>
+            <p className="text-xs text-stone-300">{bulkConfirm.description}</p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setBulkConfirm(null)}
+                disabled={isBulkRunning}
+                className="px-4 py-2 rounded-xl text-xs text-stone-400 hover:text-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const { run } = bulkConfirm;
+                  setBulkConfirm(null);
+                  await run();
+                }}
+                disabled={isBulkRunning}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+              >
+                {isBulkRunning ? 'Applying…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk action result — "Succeeded N / Skipped M (no permission) / Failed K", each skipped
+          or failed task named with its own reason. Never all-or-nothing, so this is the only
+          place that outcome is visible. */}
+      {bulkSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div
+            className="w-full max-w-lg rounded-[22px] p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto"
+            style={{ background: 'var(--gradient-hero)', border: '1px solid var(--border-medium)' }}
+          >
+            <h3 className="text-sm font-bold text-white">{bulkSummary.actionLabel} — result</h3>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="font-bold text-emerald-400">Succeeded {bulkSummary.summary.succeeded.length}</span>
+              <span className="font-bold text-amber-400">Skipped {bulkSummary.summary.skipped.length}</span>
+              <span className="font-bold text-red-400">Failed {bulkSummary.summary.failed.length}</span>
+            </div>
+            {bulkSummary.summary.skipped.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-amber-400">Skipped (no permission):</p>
+                {bulkSummary.summary.skipped.map((item) => (
+                  <p key={item.taskId} className="text-[11px] text-stone-400">
+                    {tasks.find((t) => t.id === item.taskId)?.title || item.taskId}: {item.reason}
+                  </p>
+                ))}
+              </div>
+            )}
+            {bulkSummary.summary.failed.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-red-400">Failed:</p>
+                {bulkSummary.summary.failed.map((item) => (
+                  <p key={item.taskId} className="text-[11px] text-stone-400">
+                    {tasks.find((t) => t.id === item.taskId)?.title || item.taskId}: {item.reason}
+                  </p>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-end pt-2">
+              <button
+                onClick={() => setBulkSummary(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-stone-700 hover:bg-stone-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
