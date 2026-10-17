@@ -3,6 +3,19 @@
 -- Single DO block, distinct real personas, ends in a raised exception so every change is rolled
 -- back regardless of outcome: TEST_OK_ROLLED_BACK on success, a descriptive TEST_FAILED/
 -- TEST_SETUP_FAILED exception otherwise.
+--
+-- Every impersonation below sets request.jwt.claims to {"sub": ..., "role": "authenticated"},
+-- not just {"sub": ...} — users_update_guard() (the trigger backing scenarios 4/6/7 below)
+-- short-circuits with a bare `return new` (no rule enforced at all) whenever
+-- `auth.role() is distinct from 'authenticated'`, and auth.role() reads the JWT's own "role"
+-- claim from request.jwt.claims, NOT the Postgres session role `set local role authenticated`
+-- switches to (a separate mechanism, for RLS) — confirmed by that trigger's own header comment in
+-- 20261030000000_users_update_guard_trigger.sql ("auth.role() reads the JWT's own `role` claim
+-- via current_setting('request.jwt.claims', ...)"). Omitting it does not fail loudly: the trigger
+-- just no-ops, so a self-edit silently succeeds instead of being rejected — exactly what produced
+-- a false TEST_FAILED on scenario 4 before this fix. Each impersonation block below self-checks
+-- auth.role() right after switching role, so any future regression here fails at
+-- TEST_SETUP_FAILED instead of masquerading as a real scenario failure.
 do $$
 declare
   v_admin_id text;
@@ -68,8 +81,11 @@ begin
   -- ======================================================================
   -- Scenario 1: executive/head_of_technical sets an in-scope employee's target — succeeds.
   -- ======================================================================
-  perform set_config('request.jwt.claims', json_build_object('sub', v_admin_auth)::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_admin_auth, 'role', 'authenticated')::text, true);
   set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 1).';
+  end if;
   update public.users set daily_task_target = 10 where id = v_agent_id;
   reset role; perform set_config('request.jwt.claims', '', true);
 
@@ -81,8 +97,11 @@ begin
   -- ======================================================================
   -- Scenario 2: the am_team_lead sets it for their own department's am_agent — succeeds.
   -- ======================================================================
-  perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth)::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
   set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 2).';
+  end if;
   update public.users set daily_task_target = 8 where id = v_agent_id;
   reset role; perform set_config('request.jwt.claims', '', true);
 
@@ -96,8 +115,11 @@ begin
   -- target — rejected silently by RLS (that role is not in the allowed list at all): 0 rows
   -- affected, value unchanged, no exception raised.
   -- ======================================================================
-  perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth)::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_ordinary_auth, 'role', 'authenticated')::text, true);
   set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 3).';
+  end if;
   update public.users set daily_task_target = 20 where id = v_agent_id;
   get diagnostics v_affected = row_count;
   reset role; perform set_config('request.jwt.claims', '', true);
@@ -116,12 +138,18 @@ begin
   -- (employee_manageable()'s self-branch would otherwise let this exact row through).
   -- ======================================================================
   begin
-    perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth)::text, true);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
     set local role authenticated;
+    if auth.role() is distinct from 'authenticated' then
+      raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 4).';
+    end if;
     update public.users set daily_task_target = 5 where id = v_tl_id;
     raise exception 'TEST_FAILED: scenario 4 — a team lead must not be able to set their own daily_task_target.';
   exception when others then
-    if sqlerrm not like '%own daily task target%' then
+    if sqlerrm like 'TEST_FAILED%' or sqlerrm like 'TEST_SETUP_FAILED%' then
+      raise;
+    end if;
+    if sqlerrm is distinct from 'You cannot change your own daily task target.' then
       raise;
     end if;
   end;
@@ -131,12 +159,18 @@ begin
   -- Scenario 5: an out-of-range value is rejected by users_daily_task_target_check.
   -- ======================================================================
   begin
-    perform set_config('request.jwt.claims', json_build_object('sub', v_admin_auth)::text, true);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_admin_auth, 'role', 'authenticated')::text, true);
     set local role authenticated;
+    if auth.role() is distinct from 'authenticated' then
+      raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 5).';
+    end if;
     update public.users set daily_task_target = 51 where id = v_agent_id;
     raise exception 'TEST_FAILED: scenario 5 — 51 must be rejected by users_daily_task_target_check.';
   exception when others then
-    if sqlerrm not like '%daily_task_target%' then
+    if sqlerrm like 'TEST_FAILED%' or sqlerrm like 'TEST_SETUP_FAILED%' then
+      raise;
+    end if;
+    if sqlstate is distinct from '23514' or sqlerrm not like '%users_daily_task_target_check%' then
       raise;
     end if;
   end;
@@ -148,12 +182,18 @@ begin
   -- still rejected with the exact live message "You cannot change your own role.".
   -- ======================================================================
   begin
-    perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth)::text, true);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_tl_auth, 'role', 'authenticated')::text, true);
     set local role authenticated;
+    if auth.role() is distinct from 'authenticated' then
+      raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 6).';
+    end if;
     update public.users set role = 'am_agent' where id = v_tl_id;
     raise exception 'TEST_FAILED: scenario 6 — a team lead must not be able to change their own role.';
   exception when others then
-    if sqlerrm not like '%You cannot change your own role.%' then
+    if sqlerrm like 'TEST_FAILED%' or sqlerrm like 'TEST_SETUP_FAILED%' then
+      raise;
+    end if;
+    if sqlerrm is distinct from 'You cannot change your own role.' then
       raise;
     end if;
   end;
@@ -164,8 +204,11 @@ begin
   -- succeeds — proves the live 5-role seo_dept_roles list (including store_manager, not the
   -- stale 4-role list this migration's own file used to carry) is what's actually in effect.
   -- ======================================================================
-  perform set_config('request.jwt.claims', json_build_object('sub', v_seo_tl_auth)::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_seo_tl_auth, 'role', 'authenticated')::text, true);
   set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 7).';
+  end if;
   update public.users set role = 'seo_agent' where id = v_store_manager_id;
   reset role; perform set_config('request.jwt.claims', '', true);
 
