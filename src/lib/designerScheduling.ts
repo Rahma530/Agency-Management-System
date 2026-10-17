@@ -40,6 +40,20 @@ export function isCreativeAssignee(
   return !!user.team && creativeTeams.includes(user.team);
 }
 
+// This user's effective daily task target (tasks/day) — backs the Daily Operations Module's
+// "Delivered today: N / target" card. users.daily_task_target (set via CapacityManagement.tsx,
+// executive/head_of_technical/team-lead-own-scope only — see
+// 20261115000000_daily_task_target.sql) wins when set; empty falls back to MAX_TASKS_PER_DAY for
+// a Creative-department employee (the same 6/day owner decision the scheduling suggester already
+// uses), or no target at all (null) for everyone else.
+export function resolveDailyTaskTarget(
+  user: Pick<UserRecord, 'role' | 'team' | 'daily_task_target'>,
+  creativeTeams: string[] = getCreativeTeams()
+): number | null {
+  if (user.daily_task_target !== undefined && user.daily_task_target !== null) return user.daily_task_target;
+  return isCreativeAssignee(user, creativeTeams) ? MAX_TASKS_PER_DAY : null;
+}
+
 // ----------------------------------------------------------------------------
 // Working-day arithmetic. Reuses reportPeriods.ts's UTC-safe addReportDays() for date math
 // (existing business-day utility — see the Step 1 audit) rather than reimplementing it; the

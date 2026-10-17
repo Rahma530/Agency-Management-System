@@ -25,6 +25,21 @@ export const canHardDeleteTasks = (role: UserRole): boolean =>
 export const canMergeClients = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
 
+// users.daily_task_target role-level gate (20261115000000_daily_task_target.sql) — mirrors
+// users_update_daily_task_target_rls exactly: executive/head_of_technical (deliberately NOT
+// ai_engineer, unlike canHardDeleteTasks/canMergeClients above — matches
+// employee_manageable()'s own role list, which the server-side policy and trigger both key off
+// of) plus the 4 team leads. This is the role-level half of the gate only; the row-scope check
+// (canManageEmployee) and the no-self-edit rule still apply at the call site — see
+// CapacityManagement.tsx.
+export const canSetDailyTaskTarget = (role: UserRole): boolean =>
+  role === 'executive' ||
+  role === 'head_of_technical' ||
+  role === 'am_team_lead' ||
+  role === 'media_buying_team_lead' ||
+  role === 'seo_team_lead' ||
+  role === 'social_media_team_lead';
+
 // Temporary account setup / real-login handoff (EmployeeTestingMode.tsx) — deliberately narrower
 // than the general leadership set: Head of Technical + AI Engineer only. Executive lost access
 // here on purpose (confirmed) — this is not part of ai_engineer's broader executive/

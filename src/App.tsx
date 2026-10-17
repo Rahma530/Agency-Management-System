@@ -3678,6 +3678,35 @@ export default function App() {
     showNotification('Employee capacity limit updated successfully.');
   };
 
+  // users.daily_task_target (20261115000000_daily_task_target.sql) — mirrors
+  // handleUpdateUserCapacity above (same RLS-filtered-update detection pattern), but the real
+  // self-edit block lives server-side in users_update_guard_trigger's new Rule 5, not just RLS
+  // (see that migration's header for why RLS alone can't enforce it) — a 0-row result here can
+  // mean either "outside your department" or "that's your own row," and the trigger's own raised
+  // exception (surfaced via `error` instead, when it fires) gives the more specific message.
+  const handleUpdateUserDailyTaskTarget = async (userId: string, target: number | null) => {
+    if (supabaseActive) {
+      const { data, error } = await supabaseRaw
+        .from('users')
+        .update({ daily_task_target: target })
+        .eq('id', userId)
+        .select();
+      if (error) {
+        console.error('Supabase error updating daily_task_target:', error);
+        throw error;
+      }
+      if (!data || data.length === 0) {
+        throw new Error('You do not have permission to change this employee\'s daily task target.');
+      }
+    }
+
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, daily_task_target: target } : u))
+    );
+
+    showNotification('Daily task target updated successfully.');
+  };
+
   // Edit an existing employee's name/email/role/team — executive/head_of_technical + all 5 team
   // leads only (RLS's users_update_profile_rls enforces the same scope server-side; this is just
   // the client-side call). Email edits do NOT sync to auth.users automatically here — see the
@@ -6130,6 +6159,7 @@ export default function App() {
                   onLogCapacity={handleLogCapacity}
                   onNavigateToModule={handleNavigateToModule}
                   extraNotes={extraNotes}
+                  onUpdateUserDailyTaskTarget={handleUpdateUserDailyTaskTarget}
                 />
               </div>
             )}
@@ -6191,6 +6221,7 @@ export default function App() {
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
+                  onGetServerToday={getServerToday}
                 />
               </div>
             )}
