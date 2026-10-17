@@ -13,21 +13,28 @@ export const TASK_STATUS_ORDER: TaskStatus[] = ['todo', 'in_progress', 'in_revie
 // checks is needed instead of comparing against either value inline.
 export const isTaskDone = (status: TaskStatus): boolean => status === 'completed' || status === 'closed';
 
-// Who may transition a task INTO 'closed': its creator, its current assignee (the person who did
-// the work can also close it themselves), or an admin role (executive, head_of_technical,
-// ai_engineer — matching task_closable() in supabase/migrations/20261104000000_task_visibility_functions.sql).
+// Who may transition a task INTO 'closed': its creator, ANY current assignee (every row in
+// task_assignees, not only the legacy single assigned_to column — the person who did the work
+// can also close it themselves, whether or not they're the primary/oldest assignee), or an admin
+// role (executive, head_of_technical, ai_engineer) — byte-identical in shape to task_closable()
+// in supabase/migrations/20261104000000_task_visibility_functions.sql, the function
+// tasks_update_rls's own closing gate calls server-side (20261104100000_task_visibility_cutover.sql).
 // Deliberately narrower than every other status transition in this app, which has no
 // assignee/creator restriction at all — this is a new, additional gate specific to the closing
-// action, not a general task-edit permission.
+// action, not a general task-edit permission. Goes through resolveTaskAssigneeIds() so a task
+// with real task_assignees rows is judged by that membership; the legacy assigned_to column is
+// only consulted as a fallback for an older task that predates task_assignees entirely — the same
+// fallback rule every other "is this task mine" check in this file already follows.
 export const canCloseTask = (
-  task: Pick<TaskRecord, 'created_by' | 'assigned_to'>,
-  user: Pick<UserRecord, 'id' | 'role'>
+  task: Pick<TaskRecord, 'id' | 'created_by' | 'assigned_to'>,
+  user: Pick<UserRecord, 'id' | 'role'>,
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id'>[]
 ): boolean =>
-  task.created_by === user.id ||
-  task.assigned_to === user.id ||
   user.role === 'executive' ||
   user.role === 'head_of_technical' ||
-  user.role === 'ai_engineer';
+  user.role === 'ai_engineer' ||
+  task.created_by === user.id ||
+  resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to).includes(user.id);
 
 // The Close Task control should only be usable once the task has actually reached 'completed'.
 // done_link is OPTIONAL on every task (owner decision) and is never required to close a task —

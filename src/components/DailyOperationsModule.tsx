@@ -465,11 +465,11 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // for — matches CrossTeamTaskBoard.tsx's own handleMoveStatus 'closed' guard and
   // tasks_update_rls's server-side check.
   const handleCloseTask = async (task: TaskRecord) => {
-    if (!canCloseTask(task, currentUser) || !canSubmitTaskForClosing(task)) {
+    if (!canCloseTask(task, currentUser, taskAssignees) || !canSubmitTaskForClosing(task)) {
       showNotification(
         !canSubmitTaskForClosing(task)
           ? 'This task must reach Completed before it can be closed.'
-          : "Only the task's creator, its assignee, or Head of Technical can close it.",
+          : "Only the task's creator, any current assignee, or Executive/Head of Technical/AI Engineer can close it.",
         'error'
       );
       return;
@@ -2055,7 +2055,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                       </a>
                     )}
                   </div>
-                  {selectedTaskDetails.status === 'completed' && canCloseTask(selectedTaskDetails, currentUser) && (
+                  {selectedTaskDetails.status === 'completed' && canCloseTask(selectedTaskDetails, currentUser, taskAssignees) && (
                     <button
                       onClick={() => handleCloseTask(selectedTaskDetails)}
                       disabled={!canSubmitTaskForClosing(selectedTaskDetails)}
