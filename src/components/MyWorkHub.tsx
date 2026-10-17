@@ -997,6 +997,8 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
           employee={currentUser}
           clients={clients}
           tasks={tasks}
+          taskAssignees={taskAssignees}
+          assignments={assignments}
           capacityLogs={capacityLogs}
           onClose={() => setIsPerformanceOpen(false)}
         />

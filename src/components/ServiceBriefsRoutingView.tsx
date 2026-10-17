@@ -33,6 +33,7 @@ import {
   AssignmentRecord,
   CampaignRecord,
   TaskRecord,
+  TaskAssigneeRecord,
   DailyLogRecord,
   ExtraNoteRecord,
   ServiceType,
@@ -76,6 +77,8 @@ interface ServiceBriefsRoutingViewProps {
   users: UserRecord[];
   campaigns?: CampaignRecord[];
   tasks?: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula — see src/lib/capacity.ts.
+  taskAssignees?: TaskAssigneeRecord[];
   dailyLogs?: DailyLogRecord[];
   extraNotes?: ExtraNoteRecord[];
   reports?: ReportRecord[];
@@ -416,6 +419,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   users,
   campaigns = [],
   tasks = [],
+  taskAssignees = [],
   dailyLogs = [],
   extraNotes = [],
   reports = [],
@@ -1106,7 +1110,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
                       >
                         <option value="" disabled>Select {serviceNameEn} Specialist...</option>
                         {eligibleAgents.map((ag) => {
-                          const capacityData = getUserCapacityData(ag, clients, tasks);
+                          const capacityData = getUserCapacityData(ag, clients, tasks, taskAssignees, assignments);
                           return (
                             <option key={ag.id} value={ag.id}>
                               {ag.name} ({ag.email}){ag.role === teamLeadRole ? ' (Team Leader)' : ''} {getCapacityIndicator(capacityData)}

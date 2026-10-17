@@ -1,13 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { X, Gauge, TrendingUp, Building2, CheckSquare, Sparkles, Calendar } from 'lucide-react';
-import { UserRecord, ClientRecord, TaskRecord, CapacityLogRecord } from '../types/database';
+import { UserRecord, ClientRecord, TaskRecord, TaskAssigneeRecord, AssignmentRecord, CapacityLogRecord } from '../types/database';
 import { getRoleInfo } from '../data/roles';
-import { getUserCapacityData } from '../lib/capacity';
+import { getUserCapacityData, isCreativeCapacityRole } from '../lib/capacity';
 
 interface EmployeePerformancePageProps {
   employee: UserRecord;
   clients: ClientRecord[];
   tasks: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula — see src/lib/capacity.ts.
+  taskAssignees: TaskAssigneeRecord[];
+  assignments: AssignmentRecord[];
   capacityLogs: CapacityLogRecord[];
   onClose: () => void;
 }
@@ -135,13 +138,23 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
   employee,
   clients,
   tasks,
+  taskAssignees,
+  assignments,
   capacityLogs,
   onClose,
 }) => {
   const roleInfo = getRoleInfo(employee.role);
-  const isAm = employee.role === 'am_agent' || employee.role === 'am_team_lead';
+  // Mirrors getUserCapacityData's own 3-way split (src/lib/capacity.ts): the creative roles are
+  // measured by today's delivered count, every other role (AM, the 4 team leads, and every other
+  // service agent alike) by distinct active clients — team leads just show that count for
+  // information only (isUntracked, handled below via capacityData itself).
+  const isCreative = isCreativeCapacityRole(employee.role);
+  const isClientBased = !isCreative;
 
-  const capacityData = useMemo(() => getUserCapacityData(employee, clients, tasks), [employee, clients, tasks]);
+  const capacityData = useMemo(
+    () => getUserCapacityData(employee, clients, tasks, taskAssignees, assignments),
+    [employee, clients, tasks, taskAssignees, assignments]
+  );
 
   const employeeTasks = useMemo(() => tasks.filter((t) => t.assigned_to === employee.id), [tasks, employee.id]);
   const tasksByStatus = useMemo(() => {
@@ -203,19 +216,25 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
             <StatTile
-              label={isAm ? 'Assigned Clients' : 'Active Tasks'}
+              label={isCreative ? 'Delivered Today' : 'Active Clients'}
               value={capacityData.usedCapacity}
-              icon={isAm ? Building2 : CheckSquare}
+              icon={isCreative ? CheckSquare : Building2}
             />
             <StatTile
               label="Capacity"
-              value={capacityData.isUntracked ? 'N/A' : `${capacityData.utilizationRate}%`}
+              value={
+                capacityData.status === 'target_reached'
+                  ? 'Target reached'
+                  : capacityData.isUntracked
+                  ? 'N/A'
+                  : `${capacityData.utilizationRate}%`
+              }
               icon={Gauge}
             />
             <StatTile label="Completed Tasks" value={tasksByStatus.completed} icon={CheckSquare} />
           </div>
 
-          {isAm ? (
+          {isClientBased ? (
             <div>
               <label className="text-[10px] font-semibold text-stone-400 block mb-1.5">Current Clients</label>
               {capacityData.assignedClients.length === 0 ? (

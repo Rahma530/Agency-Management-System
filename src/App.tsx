@@ -6144,6 +6144,7 @@ export default function App() {
                     briefRevisions={briefRevisions}
                     campaigns={campaigns}
                     tasks={tasks}
+                    taskAssignees={taskAssignees}
                     reports={reports}
                     clientComparisons={clientComparisons}
                     socialInsights={socialInsights}
@@ -6212,6 +6213,7 @@ export default function App() {
                   users={users}
                   campaigns={campaigns}
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
                   dailyLogs={dailyLogs}
                   extraNotes={extraNotes}
                   reports={reports}
@@ -6258,6 +6260,8 @@ export default function App() {
                   users={users}
                   clients={clients}
                   tasks={tasks}
+                  taskAssignees={taskAssignees}
+                  assignments={assignments}
                   capacityLogs={capacityLogs}
                   currentUser={currentUser}
                   onUpdateUserCapacity={handleUpdateUserCapacity}

@@ -31,6 +31,8 @@ import {
   UserRecord,
   ClientRecord,
   TaskRecord,
+  TaskAssigneeRecord,
+  AssignmentRecord,
   CapacityLogRecord,
   ExtraNoteRecord,
   UserRole,
@@ -39,7 +41,7 @@ import { getRoleInfo, isBuiltInRole, AppModuleId } from '../data/roles';
 import { getActiveCustomRole } from '../data/customRoles';
 import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity, canManageEmployee, canSetDailyTaskTarget } from '../lib/permissions';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
-import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
+import { isTeamLeadRole, isCreativeCapacityRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { getEmployeesByDepartment } from '../lib/departmentStaffing';
 import { getTodayStr } from '../lib/employeeWork';
 import { ImportDataModal } from './ImportDataModal';
@@ -48,6 +50,10 @@ interface CapacityManagementProps {
   users: UserRecord[];
   clients: ClientRecord[];
   tasks: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula (clients.am_agent_id ∪
+  // assignments.agent_id ∪ a workload-open task_assignees-linked task) — see src/lib/capacity.ts.
+  taskAssignees: TaskAssigneeRecord[];
+  assignments: AssignmentRecord[];
   capacityLogs: CapacityLogRecord[];
   currentUser?: UserRecord;
   onUpdateUserCapacity: (userId: string, newLimit: number) => Promise<void>;
@@ -62,7 +68,7 @@ interface CapacityManagementProps {
   onUpdateUserDailyTaskTarget?: (userId: string, target: number | null) => Promise<void>;
 }
 
-export type CapacityStatus = 'all' | 'available' | 'near_capacity' | 'over_capacity';
+export type CapacityStatus = 'all' | 'available' | 'near_capacity' | 'over_capacity' | 'target_reached';
 export type ViewMode = 'cards' | 'matrix' | 'logs';
 
 // Reverse link (point 4): always points to the Tasks module, prefilled with
@@ -78,6 +84,8 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   users,
   clients,
   tasks,
+  taskAssignees,
+  assignments,
   capacityLogs,
   currentUser,
   onUpdateUserCapacity,
@@ -323,7 +331,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   // and ServiceBriefsRoutingView also use, adding this screen's own
   // date-scoped capacity log lookup on top.
   const getUserCapacityData = (user: UserRecord) => {
-    const base = getSharedUserCapacityData(user, clients, tasks);
+    const base = getSharedUserCapacityData(user, clients, tasks, taskAssignees, assignments);
 
     // Historical capacity log for this user if date selected
     const userLogs = capacityLogs.filter((log) => log.agent_id === user.id);
@@ -367,10 +375,10 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
 
         return matchDept && matchRole && matchStatus && matchSearch && matchDate;
       });
-  }, [operationalUsers, selectedDepartment, selectedRole, selectedStatus, searchQuery, selectedDate, clients, tasks, capacityLogs]);
+  }, [operationalUsers, selectedDepartment, selectedRole, selectedStatus, searchQuery, selectedDate, clients, tasks, taskAssignees, assignments, capacityLogs]);
 
   // Overall Statistics for KPIs
-  const allUserData = useMemo(() => operationalUsers.map(getUserCapacityData), [operationalUsers, clients, tasks, capacityLogs]);
+  const allUserData = useMemo(() => operationalUsers.map(getUserCapacityData), [operationalUsers, clients, tasks, taskAssignees, assignments, capacityLogs]);
 
   const totalCapacitySum = allUserData.reduce((acc, curr) => acc + curr.capacityLimit, 0);
   const totalUsedSum = allUserData.reduce((acc, curr) => acc + curr.usedCapacity, 0);
@@ -803,6 +811,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               <option value="available" className="bg-stone-900 text-white">Available (under 75%)</option>
               <option value="near_capacity" className="bg-stone-900 text-white">Near Capacity (75% - 99%)</option>
               <option value="over_capacity" className="bg-stone-900 text-white">Over Capacity (100%+)</option>
+              <option value="target_reached" className="bg-stone-900 text-white">Target Reached (creative roles)</option>
             </select>
           </div>
 
@@ -877,6 +886,18 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
               {filteredUserData.map((item) => {
                 const roleBadge = getRoleBadge(item.user.role);
                 const isEditing = editingUserId === item.user.id;
+                // Creative roles' "Limit" is users.daily_task_target, not capacity_limit — this
+                // card's own edit affordance below routes to the SAME daily-target mechanism the
+                // table view already uses (PR #113, 20261115000000_daily_task_target.sql), not
+                // handleStartEdit/onUpdateUserCapacity.
+                const isCreativeRole = isCreativeCapacityRole(item.user.role);
+                const isEditingDailyTarget = editingDailyTargetUserId === item.user.id;
+                const canEditDailyTarget =
+                  !!onUpdateUserDailyTaskTarget &&
+                  !!currentUser &&
+                  currentUser.id !== item.user.id &&
+                  canSetDailyTaskTarget(currentUser.role) &&
+                  canManageEmployee(currentUser, item.user);
 
                 let statusBadgeText = 'Available';
                 let statusBadgeBg = 'rgba(169, 245, 193, 0.15)';
@@ -893,6 +914,14 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                   statusBadgeBg = 'rgba(245, 226, 154, 0.15)';
                   statusBadgeColor = 'var(--roas-mid)';
                   statusBadgeBorder = 'rgba(245, 226, 154, 0.3)';
+                } else if (item.status === 'target_reached') {
+                  // Never red/alarming — reaching a creative role's daily delivery target is the
+                  // point of the day's work, not a problem (see capacity.ts's own header on why
+                  // this is a distinct status from 'over_capacity').
+                  statusBadgeText = 'Target Reached';
+                  statusBadgeBg = 'rgba(169, 213, 245, 0.15)';
+                  statusBadgeColor = 'var(--roas-good)';
+                  statusBadgeBorder = 'rgba(169, 213, 245, 0.3)';
                 }
 
                 return (
@@ -964,35 +993,85 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                         <div>
                           <p className="text-[10px] text-stone-400">Remaining (Buffer)</p>
                           <p
-                            className="text-sm font-bold mt-0.5"
-                            style={{
-                              color: item.remainingCapacity > 0 ? 'var(--roas-good)' : 'var(--roas-bad)',
-                            }}
+                            className={`text-sm font-bold mt-0.5 ${item.isUntracked ? 'text-stone-400' : ''}`}
+                            style={item.isUntracked ? undefined : { color: item.remainingCapacity > 0 ? 'var(--roas-good)' : 'var(--roas-bad)' }}
                           >
-                            {item.remainingCapacity}
+                            {item.isUntracked ? '—' : item.remainingCapacity}
                           </p>
                         </div>
                         <div>
-                          <p className="text-[10px] text-stone-400">Limit</p>
+                          <p className="text-[10px] text-stone-400">{isCreativeRole ? 'Daily Target' : 'Limit'}</p>
                           <div className="flex items-center justify-center gap-1 mt-0.5">
                             <span className="text-sm font-bold text-purple-300">
-                              {item.capacityLimit}
+                              {isTeamLeadRole(item.user.role) ? '—' : isCreativeRole ? (item.capacityLimit || '—') : item.capacityLimit}
                             </span>
-                            {canModifyCapacity && !isEditing && (!currentUser || canManageEmployee(currentUser, item.user)) && (
-                              <button
-                                onClick={() => handleStartEdit(item.user)}
-                                className="text-stone-500 hover:text-purple-300 p-0.5 transition-colors"
-                                title="Edit capacity limit (RLS Authorized)"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
+                            {isCreativeRole ? (
+                              canEditDailyTarget && !isEditingDailyTarget && (
+                                <button
+                                  onClick={() => handleStartEditDailyTarget(item.user)}
+                                  className="text-stone-500 hover:text-purple-300 p-0.5 transition-colors"
+                                  title="Edit daily task target (RLS Authorized)"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              )
+                            ) : (
+                              canModifyCapacity && !isEditing && (!currentUser || canManageEmployee(currentUser, item.user)) && (
+                                <button
+                                  onClick={() => handleStartEdit(item.user)}
+                                  className="text-stone-500 hover:text-purple-300 p-0.5 transition-colors"
+                                  title="Edit capacity limit (RLS Authorized)"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              )
                             )}
                           </div>
                         </div>
                       </div>
 
+                      {/* Edit Daily Target Inline Form — creative roles write users.daily_task_target
+                          (the same mechanism, and the same RLS/trigger-enforced no-self-edit rule,
+                          as the table view's own Daily Target column). */}
+                      {isCreativeRole && isEditingDailyTarget && (
+                        <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 space-y-2">
+                          <div className="flex items-center justify-between text-xs text-purple-200">
+                            <span className="font-semibold">Edit daily task target:</span>
+                            <button
+                              onClick={() => setEditingDailyTargetUserId(null)}
+                              className="text-stone-400 hover:text-white"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              max={50}
+                              value={tempDailyTarget}
+                              onChange={(e) => setTempDailyTarget(e.target.value)}
+                              placeholder="—"
+                              className="w-20 px-2 py-1 rounded-lg text-xs bg-stone-900 border border-purple-400/50 text-white font-bold text-center focus:outline-none"
+                            />
+                            <button
+                              onClick={() => handleSaveDailyTarget(item.user.id)}
+                              disabled={isSavingDailyTarget}
+                              className="flex-1 py-1 px-3 rounded-lg text-xs font-bold text-white flex items-center justify-center gap-1.5 transition-all"
+                              style={{ background: 'var(--gradient-badge)' }}
+                            >
+                              <Save className="w-3 h-3" />
+                              <span>{isSavingDailyTarget ? 'Saving...' : 'Confirm Target'}</span>
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-stone-400">
+                            Leave blank to clear it and fall back to the default ({resolveDailyTaskTarget(item.user) ?? '—'}).
+                          </p>
+                        </div>
+                      )}
+
                       {/* Edit Capacity Inline Form */}
-                      {isEditing && (
+                      {!isCreativeRole && isEditing && (
                         <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 space-y-2">
                           <div className="flex items-center justify-between text-xs text-purple-200">
                             <span className="font-semibold">Edit capacity limit:</span>
@@ -1183,6 +1262,10 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                     statusBadgeText = 'Near Capacity';
                     statusBadgeBg = 'rgba(245, 226, 154, 0.15)';
                     statusBadgeColor = 'var(--roas-mid)';
+                  } else if (item.status === 'target_reached') {
+                    statusBadgeText = 'Target Reached';
+                    statusBadgeBg = 'rgba(169, 213, 245, 0.15)';
+                    statusBadgeColor = 'var(--roas-good)';
                   }
 
                   return (
@@ -1213,7 +1296,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                         </span>
                       </td>
                       <td className="p-3.5 text-center font-bold text-purple-300">
-                        {item.capacityLimit}
+                        {isTeamLeadRole(item.user.role) ? '—' : item.capacityLimit}
                       </td>
                       <td className="p-3.5 text-center">
                         {editingDailyTargetUserId === item.user.id ? (
@@ -1272,10 +1355,10 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                         {item.usedCapacity}
                       </td>
                       <td
-                        className="p-3.5 text-center font-bold"
-                        style={{ color: item.remainingCapacity > 0 ? 'var(--roas-good)' : 'var(--roas-bad)' }}
+                        className={`p-3.5 text-center font-bold ${item.isUntracked ? 'text-stone-400' : ''}`}
+                        style={item.isUntracked ? undefined : { color: item.remainingCapacity > 0 ? 'var(--roas-good)' : 'var(--roas-bad)' }}
                       >
-                        {item.remainingCapacity}
+                        {item.isUntracked ? '—' : item.remainingCapacity}
                       </td>
                       <td
                         className={`p-3.5 text-center font-bold ${item.isUntracked ? 'text-stone-400' : ''}`}

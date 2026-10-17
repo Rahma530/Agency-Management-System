@@ -36,6 +36,7 @@ import {
   UserRole,
   CampaignRecord,
   TaskRecord,
+  TaskAssigneeRecord,
   DailyLogRecord,
   ExtraNoteRecord,
   AssignmentRecord,
@@ -71,6 +72,8 @@ interface AMQueueProps {
   briefRevisions?: BriefRevisionRecord[];
   campaigns?: CampaignRecord[];
   tasks?: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula — see src/lib/capacity.ts.
+  taskAssignees?: TaskAssigneeRecord[];
   dailyLogs?: DailyLogRecord[];
   extraNotes?: ExtraNoteRecord[];
   assignments?: AssignmentRecord[];
@@ -176,6 +179,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   briefRevisions = [],
   campaigns = [],
   tasks = [],
+  taskAssignees = [],
   dailyLogs = [],
   extraNotes = [],
   assignments = [],
@@ -740,7 +744,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                             >
                               <option value="">-- Assign AM --</option>
                               {amTeamLeaders.map((lead) => {
-                                const capacityData = getUserCapacityData(lead, clients);
+                                const capacityData = getUserCapacityData(lead, clients, tasks, taskAssignees, assignments);
                                 return (
                                   <option key={lead.id} value={lead.id}>
                                     {lead.name} (Team Leader) {getCapacityIndicator(capacityData)}
@@ -748,7 +752,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                                 );
                               })}
                               {amAgents.map((ag) => {
-                                const capacityData = getUserCapacityData(ag, clients);
+                                const capacityData = getUserCapacityData(ag, clients, tasks, taskAssignees, assignments);
                                 return (
                                   <option key={ag.id} value={ag.id}>
                                     {ag.name} {getCapacityIndicator(capacityData)}
