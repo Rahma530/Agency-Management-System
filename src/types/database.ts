@@ -427,6 +427,18 @@ export interface TaskRecord {
   // multiple clients" flow will produce. Nothing reads this yet — it has no effect on capacity,
   // KPI, or any report aggregation.
   batch_id?: string | null;
+  // "in_review is not workload" (20261112000000_in_review_not_workload.sql) — all three are
+  // owned entirely by a DB trigger; the client never writes them directly (a write is silently
+  // restored). delivered_at: when status FIRST reached in_review/completed — set once, never
+  // moved by a later transition, including a later re-delivery after a revision. revision_count:
+  // how many times a delivered task (was in_review/completed/closed) has been sent back to
+  // todo/in_progress — 0 means never revised. revision_started_at: when the MOST RECENT revision
+  // began (unlike delivered_at, this one DOES move on each new revision). See
+  // isTaskOverdueForAssignee() in lib/employeeWork.ts for why revision_count, not delivered_at,
+  // is what keeps a revision out of Overdue.
+  delivered_at?: string | null;
+  revision_count?: number;
+  revision_started_at?: string | null;
 }
 
 // 6a. task_assignees — "task assignees" project, PR 1 foundation (database only, not yet read by

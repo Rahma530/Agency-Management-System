@@ -1,6 +1,7 @@
 import { UserRecord, ClientRecord, TaskRecord, UserRole } from '../types/database';
 import { isPausedClient } from './clientStatus';
 import { isTaskDone } from './taskLifecycle';
+import { MAX_TASKS_PER_DAY } from '../config/designerScheduling';
 
 // Team leads don't carry a tracked capacity buffer the way agents do — a
 // capacity_limit of 0 is a normal, intentional value for these 4 roles
@@ -17,6 +18,23 @@ export const isTeamLeadRole = (role?: UserRole) => !!role && TEAM_LEAD_ROLES.inc
 
 export const resolveCapacityLimit = (u: UserRecord) =>
   isTeamLeadRole(u.role) ? (u.capacity_limit ?? 0) : (u.capacity_limit || 8);
+
+// The three designer-scheduling creative roles (graphic_designer/video_editor/ui_ux_designer —
+// byte-identical to the role list get_user_schedule_load()'s own target-eligibility gate checks,
+// supabase/migrations/20261110000000_user_schedule_load.sql), NOT isCreativeAssignee()'s broader
+// team-membership definition: this is purely "which roles get the designer-scheduling 6/day cap
+// shown as their default capacity," a narrower, role-only question that doesn't need live
+// department config to answer.
+const DAILY_WORK_CREATIVE_ROLES: UserRole[] = ['graphic_designer', 'video_editor', 'ui_ux_designer'];
+
+// DailyOperationsModule's "Capacity: N tasks" card only (owner decision) — everywhere else that
+// reads a capacity LIMIT keeps resolveCapacityLimit()'s existing default of 8 unchanged. Mirrors
+// resolveCapacityLimit()'s own `capacity_limit || 8` shape exactly, just with MAX_TASKS_PER_DAY
+// (6, src/config/designerScheduling.ts — the same cap the suggestion algorithm itself enforces)
+// as the fallback for these three roles instead of 8, so an explicitly admin-set capacity_limit
+// still wins over either default.
+export const resolveDailyWorkCapacityLimit = (u: UserRecord): number =>
+  DAILY_WORK_CREATIVE_ROLES.includes(u.role) ? (u.capacity_limit || MAX_TASKS_PER_DAY) : resolveCapacityLimit(u);
 
 export type CapacityStatus = 'available' | 'near_capacity' | 'over_capacity';
 

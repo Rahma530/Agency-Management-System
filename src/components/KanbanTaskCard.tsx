@@ -138,6 +138,27 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
               Due Soon
             </span>
           )}
+          {/* in_review is delivered, waiting on the client — a management board shows this
+              badge, never Overdue (overdue is already false for in_review — see the parent's
+              isOverdue — this is purely the positive "what state is it in" signal). */}
+          {task.status === 'in_review' && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/80 text-amber-400 border border-amber-500/40"
+              title="Delivered, waiting on the client"
+            >
+              Waiting for review
+            </span>
+          )}
+          {/* Revision: a previously-delivered task the client sent back — real workload, never
+              Overdue even past its (unmoved) due_date (owner decision). */}
+          {(task.revision_count ?? 0) > 0 && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/80 text-amber-400 border border-amber-500/40"
+              title="Sent back by the client at least once"
+            >
+              Revision #{task.revision_count}
+            </span>
+          )}
           <span
             className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
             style={{

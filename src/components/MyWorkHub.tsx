@@ -32,7 +32,7 @@ import {
   ServiceType,
 } from '../types/database';
 import { getRoleInfo, AppModuleId } from '../data/roles';
-import { getTodayStr, isTaskOverdue, isTaskDueToday, getSortedEmployeeTasks } from '../lib/employeeWork';
+import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, getSortedEmployeeTasks } from '../lib/employeeWork';
 import { TASK_STATUS_ORDER, isTaskDone, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
 import { canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
@@ -303,7 +303,10 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
     () => (showTasks ? getSortedEmployeeTasks(tasks, currentUser.id) : []),
     [showTasks, tasks, currentUser.id]
   );
-  const overdueTasks = useMemo(() => sortedTasks.filter((t) => isTaskOverdue(t, todayStr)), [sortedTasks, todayStr]);
+  // in_review is delivered, waiting on the client — never Overdue; neither is a revision
+  // (revision_count > 0) even past its unmoved due_date (owner decision — see
+  // isTaskOverdueForAssignee's own comment in lib/employeeWork.ts).
+  const overdueTasks = useMemo(() => sortedTasks.filter((t) => isTaskOverdueForAssignee(t, todayStr)), [sortedTasks, todayStr]);
   const dueTodayTasks = useMemo(() => sortedTasks.filter((t) => isTaskDueToday(t, todayStr)), [sortedTasks, todayStr]);
   const activeTasks = useMemo(() => sortedTasks.filter((t) => !isTaskDone(t.status)), [sortedTasks]);
 
@@ -618,7 +621,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
         <div className="space-y-2 max-h-80 overflow-y-auto">
           {activeTasks.map((task) => {
             const client = clients.find((c) => c.id === task.client_id);
-            const overdue = isTaskOverdue(task, todayStr);
+            const overdue = isTaskOverdueForAssignee(task, todayStr);
             const dueToday = isTaskDueToday(task, todayStr);
             return (
               <div
@@ -633,6 +636,9 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                     )}
                     {!overdue && dueToday && (
                       <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-950 text-amber-300">Due today</span>
+                    )}
+                    {(task.revision_count ?? 0) > 0 && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-950 text-amber-400">Revision #{task.revision_count}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2.5 text-[11px] text-stone-400">
