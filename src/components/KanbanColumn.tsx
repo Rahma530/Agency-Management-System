@@ -144,6 +144,9 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
             const client = clients.find((c) => c.id === task.client_id);
             const assigneeNames = resolveOrderedTaskAssigneeIds(task.id, taskAssignees, task.assigned_to)
               .map((id) => users.find((u) => u.id === id)?.name || 'Unknown employee');
+            // Resolved from the already-loaded directory — no per-task fetch. A created_by that
+            // doesn't match anyone in it (deleted/unknown user) falls back to 'Unknown'.
+            const creatorName = users.find((u) => u.id === task.created_by)?.name || 'Unknown';
             const platformNames = taskPlatformLinks
               .filter((link) => link.task_id === task.id)
               .map((link) => platforms.find((p) => p.id === link.platform_id)?.name)
@@ -158,6 +161,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 client={client}
                 assigneeNames={assigneeNames}
                 platformNames={platformNames}
+                creatorName={creatorName}
                 subtaskDone={subtaskDone}
                 subtaskTotal={subtasks.length}
                 overdue={isOverdue(task)}

@@ -61,6 +61,10 @@ export interface KanbanTaskCardContentProps {
   client?: ClientRecord;
   assigneeNames: string[];
   platformNames: string[];
+  // Abbreviated creator name for the small "Created" footer line below — resolved by the caller
+  // from the already-loaded user directory (tasks.created_by), never fetched per card. Undefined
+  // when the creator can't be resolved from that directory (deleted/unknown user).
+  creatorName?: string;
   subtaskDone: number;
   subtaskTotal: number;
   overdue: boolean;
@@ -85,6 +89,7 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
   client,
   assigneeNames,
   platformNames,
+  creatorName,
   subtaskDone,
   subtaskTotal,
   overdue,
@@ -262,7 +267,10 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
       {task.created_at && (
         <div className="flex items-center gap-1 text-[9px] text-stone-500 -mt-1">
           <Clock className="w-2.5 h-2.5" />
-          <span>Created {task.created_at.split('T')[0]}</span>
+          <span>
+            Created {task.created_at.split('T')[0]}
+            {creatorName && ` by ${creatorName}`}
+          </span>
         </div>
       )}
 
