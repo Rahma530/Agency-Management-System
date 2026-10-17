@@ -4,6 +4,8 @@ import {
   ClientRecord,
   CampaignRecord,
   TaskRecord,
+  TaskAssigneeRecord,
+  AssignmentRecord,
   SocialInsightRecord,
   SeoInsightRecord,
   UserRecord,
@@ -54,11 +56,14 @@ export const DepartmentComparisonPanel: React.FC<{
   clients: ClientRecord[];
   campaigns: CampaignRecord[];
   tasks: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula — see src/lib/capacity.ts.
+  taskAssignees: TaskAssigneeRecord[];
+  assignments: AssignmentRecord[];
   socialInsights: SocialInsightRecord[];
   seoInsights: SeoInsightRecord[];
   users: UserRecord[];
   services?: ServiceType[]; // omit to show all 3 technical departments
-}> = ({ clients, campaigns, tasks, socialInsights, seoInsights, users, services }) => {
+}> = ({ clients, campaigns, tasks, taskAssignees, assignments, socialInsights, seoInsights, users, services }) => {
   const [granularity, setGranularity] = useState<ComparisonGranularity>('monthly');
   const period = useMemo(() => resolveComparisonPeriods(granularity).current, [granularity]);
 
@@ -93,7 +98,7 @@ export const DepartmentComparisonPanel: React.FC<{
 
       const deptUsers = users.filter((u) => u.team === team && isActiveEmployee(u));
       const capacityRates = deptUsers
-        .map((u) => getUserCapacityData(u, clients, tasks))
+        .map((u) => getUserCapacityData(u, clients, tasks, taskAssignees, assignments))
         .filter((d) => !d.isUntracked)
         .map((d) => d.utilizationRate);
 
@@ -106,7 +111,7 @@ export const DepartmentComparisonPanel: React.FC<{
         avgCapacityUtilization: avg(capacityRates),
       };
     });
-  }, [departments, clients, campaigns, tasks, socialInsights, seoInsights, users, period, granularity]);
+  }, [departments, clients, campaigns, tasks, taskAssignees, assignments, socialInsights, seoInsights, users, period, granularity]);
 
   return (
     <div className="department-comparison p-4 rounded-2xl border space-y-4" style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}>

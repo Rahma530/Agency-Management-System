@@ -4,6 +4,7 @@ import {
   ClientRecord,
   CampaignRecord,
   TaskRecord,
+  TaskAssigneeRecord,
   SocialInsightRecord,
   SeoInsightRecord,
   AssignmentRecord,
@@ -25,6 +26,8 @@ interface DashboardHubProps {
   clients: ClientRecord[];
   campaigns: CampaignRecord[];
   tasks: TaskRecord[];
+  // Needed by getUserCapacityData's own UNION formula — see src/lib/capacity.ts.
+  taskAssignees: TaskAssigneeRecord[];
   socialInsights: SocialInsightRecord[];
   seoInsights: SeoInsightRecord[];
   assignments: AssignmentRecord[];
@@ -38,6 +41,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
   clients,
   campaigns,
   tasks,
+  taskAssignees,
   socialInsights,
   seoInsights,
   assignments,
@@ -55,6 +59,8 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         clients={scopedClients}
         campaigns={campaigns}
         tasks={tasks}
+        taskAssignees={taskAssignees}
+        assignments={assignments}
         socialInsights={socialInsights}
         seoInsights={seoInsights}
         users={users}
@@ -68,6 +74,8 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         clients={scopedClients}
         campaigns={campaigns}
         tasks={tasks}
+        taskAssignees={taskAssignees}
+        assignments={assignments}
         socialInsights={socialInsights}
         seoInsights={seoInsights}
         users={users}
@@ -84,6 +92,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         scopedClients={scopedClients}
         assignments={assignments}
         tasks={tasks}
+        taskAssignees={taskAssignees}
         briefs={briefs}
         onNavigateToModule={onNavigateToModule}
       />
@@ -106,6 +115,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
         clients={clients}
         assignments={assignments}
         tasks={tasks}
+        taskAssignees={taskAssignees}
         briefs={briefs}
         onNavigateToModule={onNavigateToModule}
       />
