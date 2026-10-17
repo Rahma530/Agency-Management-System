@@ -66,7 +66,7 @@ import {
   resolveTaskAssigneeIds,
   resolveOrderedTaskAssigneeIds,
 } from '../lib/taskLifecycle';
-import { getTodayStr } from '../lib/employeeWork';
+import { getTodayStr, isTaskOverdueForAssignee } from '../lib/employeeWork';
 import { getAllowedEmployeeRolesUnderRLS } from '../lib/supabase';
 import { getOperationalTeams, fetchAssignableEmployees } from '../lib/departmentStaffing';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
@@ -843,11 +843,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // Helper date functions
   const todayStr = useMemo(() => getTodayStr(), []);
   
-  const isOverdue = (task: TaskRecord) => {
-    if (!task.due_date) return false;
-    if (isTaskDone(task.status)) return false;
-    return task.due_date < todayStr;
-  };
+  // in_review is delivered, waiting on the client — never Overdue; neither is a revision
+  // (revision_count > 0) even past its unmoved due_date (owner decision — see
+  // isTaskOverdueForAssignee's own comment in lib/employeeWork.ts). Was a local reimplementation
+  // of the same today/past-due check employeeWork.ts's own isTaskOverdue already did — now
+  // delegates there instead of carrying a second copy of the rule.
+  const isOverdue = (task: TaskRecord) => isTaskOverdueForAssignee(task, todayStr);
 
   const isDueSoon = (task: TaskRecord) => {
     if (!task.due_date) return false;
@@ -2146,6 +2147,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                           >
                             {colInfo?.label.split(' ')[0]}
                           </span>
+                          {/* Revision: real workload the client sent back — never shown as
+                              Overdue (owner decision), shown here instead so a management board
+                              can tell a first pass from a revision at a glance. */}
+                          {(task.revision_count ?? 0) > 0 && (
+                            <span className="block text-[9px] text-amber-400 font-sans font-bold mt-0.5">
+                              Revision #{task.revision_count}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3.5 text-center font-mono text-stone-400">
                           {task.created_at ? task.created_at.split('T')[0] : '—'}

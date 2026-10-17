@@ -212,8 +212,8 @@ function main(): void {
     assertEqual(counts['2026-10-15'], 1, 'today counts done tasks same as a past day');
   }
 
-  // Future day counts only still-open tasks — a completed/closed task due in the future must NOT
-  // count; only the open one does.
+  // Future day counts only Workload-open tasks (todo/in_progress/blocked) — a completed/closed
+  // task due in the future must NOT count; only the open one does.
   {
     const counts = buildScheduleLoadByDate(
       [
@@ -224,6 +224,29 @@ function main(): void {
       '2026-10-15'
     );
     assertEqual(counts['2026-10-20'], 1, 'future day counts only the open task');
+  }
+
+  // Future day excludes in_review too — delivered, not workload (owner decision), same as
+  // completed/closed; only the open (revision) task counts.
+  {
+    const counts = buildScheduleLoadByDate(
+      [
+        { due_date: '2026-10-20', status: 'in_review' },
+        { due_date: '2026-10-20', status: 'todo' },
+      ],
+      '2026-10-15'
+    );
+    assertEqual(counts['2026-10-20'], 1, 'future day excludes in_review, counts only the open (revision) task');
+  }
+
+  // Future day's open set also includes 'blocked' — Workload-open per the owner's own
+  // definition, not just todo/in_progress.
+  {
+    const counts = buildScheduleLoadByDate(
+      [{ due_date: '2026-10-20', status: 'blocked' }],
+      '2026-10-15'
+    );
+    assertEqual(counts['2026-10-20'], 1, 'future day counts a blocked task as open/workload');
   }
 
   // Archived excluded — even though public.tasks has no archived_at column today, the counting

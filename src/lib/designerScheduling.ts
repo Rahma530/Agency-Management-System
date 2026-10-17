@@ -1,5 +1,5 @@
 import { TaskStatus, UserRecord } from '../types/database';
-import { isTaskDone } from './taskLifecycle';
+import { isTaskWorkloadOpen } from './employeeWork';
 import { addReportDays } from './reportPeriods';
 import { getCombinedDepartmentTeams } from './departmentStaffing';
 import {
@@ -58,12 +58,16 @@ export function isWorkingDay(dateStr: string): boolean {
 }
 
 // ----------------------------------------------------------------------------
-// Per-day load map — mirrors get_user_schedule_load()'s own counting rule exactly (see that
-// migration's comment): today AND every past day count ALL tasks due that day, done or not
-// (never defaulting a 7th task into a day a 6th already quietly completed on); every future day
-// counts only tasks that are still open. archived_at is supported defensively even though
-// public.tasks has no such column today (confirmed via the Step 1 audit) — see the migration's
-// own matching comment for why this mirrors it rather than assuming the column will never exist.
+// Per-day load map — mirrors get_user_schedule_load()'s own counting rule exactly (see
+// 20261112000000_in_review_not_workload.sql's comment): today AND every past day count ALL
+// tasks due that day, whatever their status (never defaulting a 7th task into a day a 6th
+// already quietly completed on); every future day counts only Workload-open tasks
+// (isTaskWorkloadOpen: todo/in_progress/blocked) — in_review is delivered, not workload, so a
+// future-dated in_review task never counts, while a revision (todo/in_progress after being
+// delivered) still does, same as any other open task. archived_at is supported defensively even
+// though public.tasks has no such column today (confirmed via the Step 1 audit) — see the
+// migration's own matching comment for why this mirrors it rather than assuming the column will
+// never exist.
 //
 // Production code normally never calls this directly: the live counts for an assignee the
 // current viewer usually CANNOT see under RLS come from the get_user_schedule_load() RPC instead,
@@ -85,7 +89,7 @@ export function buildScheduleLoadByDate(tasks: ScheduleTaskLike[], todayStr: str
     if (!task.due_date) continue;
     if (task.archived_at) continue;
     const isTodayOrPast = task.due_date <= todayStr;
-    const countsTowardLoad = isTodayOrPast || !isTaskDone(task.status);
+    const countsTowardLoad = isTodayOrPast || isTaskWorkloadOpen(task.status);
     if (!countsTowardLoad) continue;
     counts[task.due_date] = (counts[task.due_date] || 0) + 1;
   }

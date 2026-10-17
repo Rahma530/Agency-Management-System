@@ -47,9 +47,9 @@ import {
   TaskAssigneeRecord,
   UserRole,
 } from '../types/database';
-import { getTodayStr, isTaskOverdue, isTaskDueToday, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
+import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
 import { isActiveEmployee } from '../lib/permissions';
-import { TEAM_LEAD_ROLES, resolveCapacityLimit } from '../lib/capacity';
+import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
@@ -195,8 +195,11 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Today's date string (YYYY-MM-DD)
   const todayStr = useMemo(() => getTodayStr(), []);
 
-  // Helper date functions — shared with MyWorkHub.tsx via lib/employeeWork.ts
-  const isOverdue = (task: TaskRecord) => isTaskOverdue(task, todayStr);
+  // Helper date functions — shared with MyWorkHub.tsx via lib/employeeWork.ts. isOverdue uses
+  // isTaskOverdueForAssignee (not the plain isTaskOverdue): in_review is never Overdue, and
+  // neither is a revision (revision_count > 0) even past its unmoved due_date — see that
+  // function's own comment.
+  const isOverdue = (task: TaskRecord) => isTaskOverdueForAssignee(task, todayStr);
   const isDueToday = (task: TaskRecord) => isTaskDueToday(task, todayStr);
 
   // 1. All tasks assigned to the effective employee — real task_assignees membership, not just
@@ -286,9 +289,25 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return sortedEmployeeTasks.filter((t) => t.status === 'blocked');
   }, [sortedEmployeeTasks]);
 
-  // Total daily estimated hours & active workload
+  // Waiting for review: delivered, sitting with the client — NOT workload (owner decision), so
+  // never folded into any hours total or the Overdue card, but still worth its own section so the
+  // assignee can see what they're waiting on.
+  const waitingForReviewTasks = useMemo(() => {
+    return sortedEmployeeTasks.filter((t) => t.status === 'in_review');
+  }, [sortedEmployeeTasks]);
+
+  // Revisions: workload-open AND previously delivered at least once (revision_count > 0) — real
+  // work the client sent back, shown separately from "What to do today" so it's clear which
+  // tasks are a second (or third...) pass rather than first-time work.
+  const revisionTasks = useMemo(() => {
+    return sortedEmployeeTasks.filter((t) => isTaskWorkloadOpen(t.status) && (t.revision_count ?? 0) > 0);
+  }, [sortedEmployeeTasks]);
+
+  // Total daily estimated hours & active workload. Workload-open (todo/in_progress/blocked) only
+  // — in_review is excluded (owner decision: not workload), so an hours total never counts a
+  // delivered task sitting with the client. A revision IS workload-open, so it's still counted.
   const totalActiveEstimatedHours = useMemo(() => {
-    const activeTasks = sortedEmployeeTasks.filter((t) => !isTaskDone(t.status));
+    const activeTasks = sortedEmployeeTasks.filter((t) => isTaskWorkloadOpen(t.status));
     return activeTasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
   }, [sortedEmployeeTasks]);
 
@@ -297,9 +316,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   }, [sortedEmployeeTasks]);
 
   const todayWorkloadHours = useMemo(() => {
-    // Tasks due today or currently in progress
+    // Tasks due today or currently in progress — workload-open only, so an in_review task due
+    // today (delivered, not workload) never inflates this total.
     const relevantTasks = sortedEmployeeTasks.filter(
-      (t) => t.status === 'in_progress' || isDueToday(t) || isOverdue(t)
+      (t) => isTaskWorkloadOpen(t.status) && (t.status === 'in_progress' || isDueToday(t) || isOverdue(t))
     );
     return relevantTasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
   }, [sortedEmployeeTasks, todayStr]);
@@ -366,13 +386,17 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const teamWorkloadSummary = useMemo(() => {
     return teamMembers.map((member) => {
       const memberTasks = tasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(member.id));
-      const active = memberTasks.filter((t) => !isTaskDone(t.status));
+      // Workload-open, not merely "not done" — in_review is delivered, not active workload
+      // (owner decision), so it's excluded from both the active count and totalEstimated hours
+      // below. It gets its own waitingForReview count instead.
+      const active = memberTasks.filter((t) => isTaskWorkloadOpen(t.status));
       const completed = memberTasks.filter((t) => isTaskDone(t.status));
       const overdue = memberTasks.filter(isOverdue);
       const blocked = memberTasks.filter((t) => t.status === 'blocked');
+      const waitingForReview = memberTasks.filter((t) => t.status === 'in_review');
       const totalEstimated = active.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
       const totalActual = memberTasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0);
-      const limit = resolveCapacityLimit(member);
+      const limit = resolveDailyWorkCapacityLimit(member);
       // Team leads may genuinely have a limit of 0 (no tracked buffer) — not
       // an error, just nothing to compute a rate against.
       const isUntracked = limit === 0;
@@ -385,6 +409,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         completedCount: completed.length,
         overdueCount: overdue.length,
         blockedCount: blocked.length,
+        waitingForReviewCount: waitingForReview.length,
         totalEstimated,
         totalActual,
         limit,
@@ -906,7 +931,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-bold text-white">{todayWorkloadHours} <span className="text-xs font-normal text-stone-400">hrs</span></p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Capacity: {resolveCapacityLimit(effectiveEmployee)} tasks</p>
+                <p className="text-[10px] text-stone-400 mt-0.5">Capacity: {resolveDailyWorkCapacityLimit(effectiveEmployee)} tasks</p>
               </div>
             </div>
 
@@ -1059,7 +1084,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
               </div>
 
-              {sortedEmployeeTasks.filter((t) => !isTaskDone(t.status)).length === 0 ? (
+              {sortedEmployeeTasks.filter((t) => isTaskWorkloadOpen(t.status)).length === 0 ? (
                 <div className="p-8 text-center text-stone-400 text-xs border border-dashed border-stone-800 rounded-xl">
                   <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
                   <p className="font-bold text-white text-sm">All clear! No active tasks pending for you today.</p>
@@ -1067,7 +1092,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               ) : (
                 <div className="space-y-3">
                   {sortedEmployeeTasks
-                    .filter((t) => !isTaskDone(t.status))
+                    .filter((t) => isTaskWorkloadOpen(t.status))
                     .map((task) => {
                       const client = clients.find((c) => c.id === task.client_id);
                       const priority = getPriorityBadge(task.priority);
@@ -1103,6 +1128,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                               {overdue && (
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-950 text-red-400">
                                   Overdue
+                                </span>
+                              )}
+                              {/* Revision: a previously-delivered task the client sent back — real
+                                  workload, but shown as "Revision #n," never as Overdue, even past
+                                  its (unmoved) due_date (owner decision). */}
+                              {(task.revision_count ?? 0) > 0 && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400">
+                                  Revision #{task.revision_count}
                                 </span>
                               )}
                             </div>
@@ -1183,6 +1216,74 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Waiting for review — delivered, sitting with the client. NOT workload (owner
+                decision): never in the hours totals above, never Overdue, shown purely so the
+                assignee can see what they're waiting on. */}
+            {waitingForReviewTasks.length > 0 && (
+              <div
+                className="rounded-[18px] p-4 space-y-3"
+                style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-stone-800">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    <h3 className="text-xs font-bold text-white">Waiting for review</h3>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400">
+                    {waitingForReviewTasks.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {waitingForReviewTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      onClick={() => setSelectedTaskDetails(task)}
+                      className="p-2.5 rounded-xl border border-stone-800 hover:border-purple-500/40 bg-stone-900/60 transition-all cursor-pointer flex items-center justify-between gap-2"
+                    >
+                      <span className="text-xs font-semibold text-white truncate">{task.title}</span>
+                      <span className="text-[10px] text-stone-400 font-mono shrink-0">Due: {task.due_date || 'Not set'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Revisions — workload-open AND previously delivered at least once. Real work, never
+                Overdue (owner decision: the client's review cycle isn't the assignee being late). */}
+            {revisionTasks.length > 0 && (
+              <div
+                className="rounded-[18px] p-4 space-y-3"
+                style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-stone-800">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    <h3 className="text-xs font-bold text-white">Revisions</h3>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400">
+                    {revisionTasks.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {revisionTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      onClick={() => setSelectedTaskDetails(task)}
+                      className="p-2.5 rounded-xl border border-stone-800 hover:border-purple-500/40 bg-stone-900/60 transition-all cursor-pointer flex items-center justify-between gap-2"
+                    >
+                      <span className="text-xs font-semibold text-white truncate">{task.title}</span>
+                      <span className="flex items-center gap-2 shrink-0">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400">
+                          Revision #{task.revision_count}
+                        </span>
+                        <span className="text-[10px] text-stone-400 font-mono">Due: {task.due_date || 'Not set'}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Column 3: Daily Summary & Quick Stats */}
             <div className="space-y-4">
@@ -1806,7 +1907,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     </div>
 
                     {/* Metric Badges Grid */}
-                    <div className="grid grid-cols-3 gap-2 text-center text-xs pt-1">
+                    <div className="grid grid-cols-4 gap-2 text-center text-xs pt-1">
                       <div className="p-2 rounded-xl bg-stone-900 border border-stone-800">
                         <p className="text-[10px] text-stone-400">Completed</p>
                         <p className="text-sm font-bold text-emerald-400 mt-0.5">{item.completedCount}</p>
@@ -1823,6 +1924,15 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         <p className="text-[10px] text-stone-400">Blocked</p>
                         <p className={`text-sm font-bold mt-0.5 ${item.blockedCount > 0 ? 'text-amber-400' : 'text-stone-300'}`}>
                           {item.blockedCount}
+                        </p>
+                      </div>
+
+                      {/* in_review is delivered, waiting on the client — never Overdue (owner
+                          decision); this is the one place a management board shows that state. */}
+                      <div className={`p-2 rounded-xl border ${item.waitingForReviewCount > 0 ? 'bg-amber-950/40 border-amber-500/40' : 'bg-stone-900 border-stone-800'}`}>
+                        <p className="text-[10px] text-stone-400">Waiting for review</p>
+                        <p className={`text-sm font-bold mt-0.5 ${item.waitingForReviewCount > 0 ? 'text-amber-400' : 'text-stone-300'}`}>
+                          {item.waitingForReviewCount}
                         </p>
                       </div>
                     </div>
