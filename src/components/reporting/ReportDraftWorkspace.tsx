@@ -47,7 +47,13 @@ function composeManifestContent(manifest: SourceManifest, creatorNote: string, n
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
-  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => `${source.source_date} — ${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`).join('\n')}`);
+  // No date prefix — matches reportDraftSources.ts's composeInitialReportContent (the OTHER code
+  // path that builds this same "Work logs" heading, for the create-from-already-fetched-state
+  // flow). This one builds from a freshly pulled preview_report_sources_v2 manifest instead — a
+  // separate function entirely, missed when that other one was fixed. source.source_date (the
+  // manifest row's own field, saved into report_source_items verbatim when the draft is created)
+  // is untouched; only this derived display string drops it.
+  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => `${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`).join('\n')}`);
   if (creative && tasks.length) {
     const count = (kind: string) => tasks.filter((source) => source.snapshot.work_kind === kind).length;
     sections.push(`Creative task evidence summary\nDesign tasks evidenced by linked work logs: ${count('design')}\nVideo tasks evidenced by linked work logs: ${count('video')}\nMixed or unclassified tasks requiring review: ${count('mixed') + count('unclassified')}`);
