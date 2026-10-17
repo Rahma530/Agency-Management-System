@@ -93,7 +93,7 @@ import {
   BulkActionSummary,
 } from '../lib/bulkTaskActions';
 import type { AssignableEmployee } from '../lib/departmentStaffing';
-import { getCreativeTeams, isCreativeAssignee, pickMostLoadedAssignee, suggestDueDateAndHours } from '../lib/designerScheduling';
+import { getCreativeTeams, isCreativeAssignee, pickMostLoadedAssignee, resolveDailyTaskTarget, suggestDueDateAndHours } from '../lib/designerScheduling';
 import { MAX_TASKS_PER_DAY, SUGGESTION_LOOKAHEAD_DAYS } from '../config/designerScheduling';
 import { addReportDays } from '../lib/reportPeriods';
 import { SubtaskList } from './SubtaskList';
@@ -689,9 +689,36 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     };
   }, [capacityCandidateKey, onGetCapacitySnapshot]);
 
+  // The real, live role value for this app's UI/UX design employees is 'ui_designer' — NOT the
+  // 'ui_ux_designer' literal baked into this repo's own UserRole type and used elsewhere (e.g.
+  // capacity.ts's DAILY_WORK_CREATIVE_ROLES) — confirmed against production during the capacity
+  // model audit. Typed as a plain string[] (not UserRole[]) so comparing against it doesn't
+  // require 'ui_designer' to exist in that union — scoped to this one function, per this PR's
+  // explicit single-file scope; every other 'ui_ux_designer' occurrence is left untouched.
+  const PICKER_CREATIVE_ROLES: string[] = ['graphic_designer', 'video_editor', 'ui_designer'];
+
+  // get_capacity_snapshot (20261119000000_capacity_snapshot_v2.sql) now measures the 3 creative
+  // roles by today's delivered-task count against daily_task_target, not by the open-task/client
+  // count the else branch (and resolveCapacityLimit's own default) still uses — so `used` here
+  // means something different for them, and needs its own target + label.
+  //
+  // AssignableEmployee (lib/departmentStaffing.ts) has no daily_task_target field at all —
+  // assignable_employees() never selects it — so resolveDailyTaskTarget's own "explicit
+  // daily_task_target wins" branch can never apply here; it always falls through to its
+  // team-based MAX_TASKS_PER_DAY default (or null off-Creative-team). A custom per-employee
+  // target set via CapacityManagement.tsx is correctly reflected everywhere that screen and
+  // DailyOperationsModule read it — just not in this specific picker's badge, a known, narrow
+  // limitation of fixing only this one function (this PR's explicit scope), not a new bug.
   const capacityIndicator = (employee: AssignableEmployee) => {
     const used = capacitySnapshot[employee.id];
     if (used === undefined) return CAPACITY_UNKNOWN_INDICATOR;
+    if (PICKER_CREATIVE_ROLES.includes(employee.role)) {
+      const target = resolveDailyTaskTarget(employee as UserRecord);
+      if (target === null) return `Delivered today: ${used}`;
+      if (used >= target) return `🔴 Delivered today: ${used}/${target}`;
+      if (used / target >= 0.75) return `🟡 Delivered today: ${used}/${target}`;
+      return `🟢 Delivered today: ${used}/${target}`;
+    }
     const limit = resolveCapacityLimit(employee as UserRecord);
     if (limit === 0) return CAPACITY_UNKNOWN_INDICATOR;
     if (used >= limit) return `🔴 ${used}/${limit}`;
