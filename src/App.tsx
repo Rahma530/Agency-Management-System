@@ -4319,6 +4319,52 @@ export default function App() {
     );
   };
 
+  // Client merge (merge_clients() RPC, 20261114000000_merge_clients.sql) — executive/
+  // head_of_technical/ai_engineer only, gated in CrossTeamTaskBoard.tsx via canMergeClients
+  // (lib/permissions.ts); the RPC re-checks the same role gate server-side regardless. The RPC
+  // discovers and repoints every table with a foreign key to clients at runtime — far more state
+  // than this component tracks individually (tasks, assignments, contracts, insights, reports,
+  // ...) — so rather than hand-patching each affected array, a full loadData() refetch keeps
+  // every piece of local state honestly in sync with what the merge actually did server-side.
+  // Sequential: each duplicate is its own merge_clients() call. Stops at the first failure —
+  // whatever succeeded before that point stays merged (loadData() below picks it all up), and the
+  // return value tells the modal exactly where it stopped so it can show "done" vs "not done".
+  const handleMergeClients = async (
+    keepId: string,
+    duplicateIds: string[]
+  ): Promise<{ succeeded: string[]; failed: { id: string; error: string } | null }> => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; no clients were merged.');
+    const succeeded: string[] = [];
+    let failed: { id: string; error: string } | null = null;
+    for (const duplicateId of duplicateIds) {
+      const { error } = await supabaseRaw.rpc('merge_clients', { p_keep_id: keepId, p_duplicate_id: duplicateId });
+      if (error) {
+        failed = { id: duplicateId, error: error.message || 'Unable to merge this client.' };
+        break;
+      }
+      succeeded.push(duplicateId);
+    }
+    if (succeeded.length > 0) await loadData();
+    showNotification(
+      failed
+        ? `${succeeded.length} client(s) merged; stopped before merging the rest.`
+        : 'Clients merged permanently.',
+      failed ? 'info' : undefined
+    );
+    return { succeeded, failed };
+  };
+
+  // Read-only dry run (merge_clients_preview() RPC) — called by MergeClientsModal once per
+  // candidate duplicate before the actual merge, to show what will move/be deleted.
+  const handlePreviewMergeClients = async (
+    keepId: string,
+    duplicateId: string
+  ): Promise<Record<string, { moved?: number; deleted_duplicates?: number; count?: number }>> => {
+    const { data, error } = await supabaseRaw.rpc('merge_clients_preview', { p_keep_id: keepId, p_duplicate_id: duplicateId });
+    if (error) throw error;
+    return (data || {}) as Record<string, { moved?: number; deleted_duplicates?: number; count?: number }>;
+  };
+
   // 7. Document a daily activity report (Daily Log)
   const handleCreateDailyLog = async (logData: {
     user_id: string;
@@ -6011,6 +6057,8 @@ export default function App() {
                     onUpdateClientDetails={handleUpdateClientDetails}
                     onUpdateClientAccess={handleUpdateClientAccess}
                     onFetchClientAccess={handleFetchClientAccess}
+                    onPreviewMergeClients={handlePreviewMergeClients}
+                    onMergeClients={handleMergeClients}
                   />
                 )}
               </div>

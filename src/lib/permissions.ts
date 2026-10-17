@@ -18,6 +18,13 @@ export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATIO
 export const canHardDeleteTasks = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
 
+// Client merge (merge_clients() RPC, 20261114000000_merge_clients.sql) — same role set as
+// canHardDeleteTasks today, tracked as its own function since it is a conceptually distinct
+// action (merges + deletes a client, not a task) and the two role sets are not guaranteed to stay
+// identical going forward.
+export const canMergeClients = (role: UserRole): boolean =>
+  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
+
 // Temporary account setup / real-login handoff (EmployeeTestingMode.tsx) — deliberately narrower
 // than the general leadership set: Head of Technical + AI Engineer only. Executive lost access
 // here on purpose (confirmed) — this is not part of ai_engineer's broader executive/
