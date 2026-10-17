@@ -1,5 +1,5 @@
-import { TaskRecord, TaskPriority, TaskStatus } from '../types/database';
-import { isTaskDone } from './taskLifecycle';
+import { TaskRecord, TaskPriority, TaskStatus, TaskAssigneeRecord } from '../types/database';
+import { isTaskDone, resolveTaskAssigneeIds } from './taskLifecycle';
 
 // Shared by DailyOperationsModule.tsx and MyWorkHub.tsx so both compute
 // "overdue"/"due today"/priority order identically instead of drifting.
@@ -14,6 +14,43 @@ export const getTodayStr = (): string => {
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+// delivered_at (tasks.delivered_at, 20261112000000_in_review_not_workload.sql) is a timestamptz —
+// stored/transmitted as UTC. "Today" for the Delivered-today card is Africa/Cairo's calendar day,
+// the same authority get_server_today()/getServerToday() already use elsewhere, NOT the UTC date
+// (a delivery at, say, 22:30 UTC is already past midnight the next day in Cairo, UTC+2/+3) and NOT
+// the browser's own local day (getTodayStr() above) — a viewer in a different timezone than Cairo
+// must not see a different count than one in Cairo would. Intl.DateTimeFormat with timeZone:
+// 'Africa/Cairo' is the browser-native way to get that civil date without a date library; 'en-CA'
+// is used purely because that locale happens to format as YYYY-MM-DD, matching getServerToday()'s
+// own return shape.
+const CAIRO_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Africa/Cairo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+export const toCairoDateStr = (isoTimestamp: string): string => CAIRO_DATE_FORMATTER.format(new Date(isoTimestamp));
+
+// Delivered today: every task this user is a current assignee of (resolveTaskAssigneeIds — every
+// row in task_assignees, not just the legacy single assigned_to column, so a co-assignee who
+// isn't the "primary" one still counts) whose delivered_at falls on today's Africa/Cairo calendar
+// date. No cap — a task delivered more than once (in_review -> revision -> in_review again) still
+// only has ONE delivered_at (it is set once, never moved — see that migration's own header), so
+// this never double-counts a single task; a genuinely prolific day with more deliveries than the
+// assignee's target is reported as-is, over target, never clamped down to it.
+export const countDeliveredToday = (
+  userId: string,
+  tasks: TaskRecord[],
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id'>[],
+  todayStr: string
+): number =>
+  tasks.filter(
+    (t) =>
+      !!t.delivered_at &&
+      toCairoDateStr(t.delivered_at) === todayStr &&
+      resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(userId)
+  ).length;
 
 export const isTaskOverdue = (task: TaskRecord, todayStr: string): boolean => {
   if (!task.due_date) return false;

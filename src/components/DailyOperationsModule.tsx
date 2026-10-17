@@ -11,7 +11,6 @@ import {
   Layers,
   User,
   Users,
-  Timer,
   ChevronRight,
   ChevronLeft,
   X,
@@ -47,9 +46,10 @@ import {
   TaskAssigneeRecord,
   UserRole,
 } from '../types/database';
-import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate } from '../lib/employeeWork';
+import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate, countDeliveredToday } from '../lib/employeeWork';
 import { isActiveEmployee } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
+import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
@@ -88,6 +88,13 @@ interface DailyOperationsModuleProps {
     note_text: string;
     category: string;
   }) => Promise<void>;
+  // "Today" for the Delivered-today card — Africa/Cairo's current date, the same authority
+  // get_server_today() backs elsewhere (see getServerToday's own comment in
+  // src/lib/taskOperations.ts). Fetched once on mount; falls back to the browser's own local
+  // today (getTodayStr()) if absent or the call fails — unlike the designer-scheduling
+  // suggester's own stricter posture (never shows without it), this card always has something to
+  // show.
+  onGetServerToday?: () => Promise<string>;
 }
 
 export type OperationSubTab = 'daily_view' | 'my_tasks' | 'blockers' | 'daily_activity' | 'manager_view';
@@ -108,9 +115,28 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   onUpdateDailyLog,
   onDeleteDailyLog,
   onCreateExtraNote,
+  onGetServerToday,
 }) => {
   // Navigation between sub views
   const [activeSubTab, setActiveSubTab] = useState<OperationSubTab>('daily_view');
+
+  // Delivered-today card's "today" — Africa/Cairo via the server, never the browser's own clock/
+  // timezone, when available (see onGetServerToday's own comment on the props interface above).
+  const [serverTodayStr, setServerTodayStr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!onGetServerToday) return;
+    let cancelled = false;
+    onGetServerToday()
+      .then((today) => {
+        if (!cancelled) setServerTodayStr(today);
+      })
+      .catch(() => {
+        /* falls back to the browser-local todayStr below */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onGetServerToday]);
 
   // Selected Employee filter (defaults to currentUser, can be changed by managers/team leads)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(currentUser.id);
@@ -194,6 +220,15 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
   // Today's date string (YYYY-MM-DD)
   const todayStr = useMemo(() => getTodayStr(), []);
+
+  // Delivered-today card — Africa/Cairo's "today" when the server call succeeded, else the
+  // browser-local fallback above (see onGetServerToday's own comment).
+  const effectiveTodayStr = serverTodayStr || todayStr;
+  const deliveredToday = useMemo(
+    () => countDeliveredToday(effectiveEmployee.id, tasks, taskAssignees, effectiveTodayStr),
+    [tasks, taskAssignees, effectiveEmployee.id, effectiveTodayStr]
+  );
+  const dailyTaskTarget = useMemo(() => resolveDailyTaskTarget(effectiveEmployee), [effectiveEmployee]);
 
   // Helper date functions — shared with MyWorkHub.tsx via lib/employeeWork.ts. isOverdue uses
   // isTaskOverdueForAssignee (not the plain isTaskOverdue): in_review is never Overdue, and
@@ -303,27 +338,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return sortedEmployeeTasks.filter((t) => isTaskWorkloadOpen(t.status) && (t.revision_count ?? 0) > 0);
   }, [sortedEmployeeTasks]);
 
-  // Total daily estimated hours & active workload. Workload-open (todo/in_progress/blocked) only
-  // — in_review is excluded (owner decision: not workload), so an hours total never counts a
-  // delivered task sitting with the client. A revision IS workload-open, so it's still counted.
-  const totalActiveEstimatedHours = useMemo(() => {
-    const activeTasks = sortedEmployeeTasks.filter((t) => isTaskWorkloadOpen(t.status));
-    return activeTasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
-  }, [sortedEmployeeTasks]);
-
-  const totalActualHoursLogged = useMemo(() => {
-    return sortedEmployeeTasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0);
-  }, [sortedEmployeeTasks]);
-
-  const todayWorkloadHours = useMemo(() => {
-    // Tasks due today or currently in progress — workload-open only, so an in_review task due
-    // today (delivered, not workload) never inflates this total.
-    const relevantTasks = sortedEmployeeTasks.filter(
-      (t) => isTaskWorkloadOpen(t.status) && (t.status === 'in_progress' || isDueToday(t) || isOverdue(t))
-    );
-    return relevantTasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
-  }, [sortedEmployeeTasks, todayStr]);
-
   // 3. TEAM / MANAGER VIEW CALCULATIONS
   // Team members accessible under current user's RLS scope
   const teamMembers = useMemo(() => {
@@ -387,20 +401,20 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return teamMembers.map((member) => {
       const memberTasks = tasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(member.id));
       // Workload-open, not merely "not done" — in_review is delivered, not active workload
-      // (owner decision), so it's excluded from both the active count and totalEstimated hours
-      // below. It gets its own waitingForReview count instead.
+      // (owner decision), so it's excluded from the active count below. It gets its own
+      // waitingForReview count instead.
       const active = memberTasks.filter((t) => isTaskWorkloadOpen(t.status));
       const completed = memberTasks.filter((t) => isTaskDone(t.status));
       const overdue = memberTasks.filter(isOverdue);
       const blocked = memberTasks.filter((t) => t.status === 'blocked');
       const waitingForReview = memberTasks.filter((t) => t.status === 'in_review');
-      const totalEstimated = active.reduce((sum, t) => sum + (t.estimated_hours || 0), 0);
-      const totalActual = memberTasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0);
       const limit = resolveDailyWorkCapacityLimit(member);
       // Team leads may genuinely have a limit of 0 (no tracked buffer) — not
       // an error, just nothing to compute a rate against.
       const isUntracked = limit === 0;
       const rate = isUntracked ? 0 : Math.round((active.length / limit) * 100);
+      const deliveredToday = countDeliveredToday(member.id, tasks, taskAssignees, effectiveTodayStr);
+      const dailyTarget = resolveDailyTaskTarget(member);
 
       return {
         member,
@@ -410,14 +424,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         overdueCount: overdue.length,
         blockedCount: blocked.length,
         waitingForReviewCount: waitingForReview.length,
-        totalEstimated,
-        totalActual,
+        deliveredToday,
+        dailyTarget,
         limit,
         isUntracked,
         rate,
       };
     });
-  }, [teamMembers, tasks, taskAssignees, todayStr]);
+  }, [teamMembers, tasks, taskAssignees, todayStr, effectiveTodayStr]);
 
   // Daily Logs filtered for current employee or team — sorted by the log's own `date` (newest
   // first), then by `created_at` as a tiebreaker for logs sharing the same date, so a backdated
@@ -920,18 +934,30 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         <div className="space-y-6">
           {/* Daily Workload KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
-            {/* Total Today's Estimated Workload */}
+            {/* Delivered Today — replaces the old hours-based "Total Hours Today" card (owner
+                decision: in_review/delivered_at-based, no estimated/actual hours anywhere in
+                this view). No cap: if delivered exceeds the target, shown as "+k" over it. */}
             <div
               className="p-3.5 rounded-[16px] flex flex-col justify-between"
               style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
             >
               <div className="flex items-center justify-between text-stone-400">
-                <span className="text-[11px] font-semibold">Total Hours Today</span>
-                <Timer className="w-3.5 h-3.5 text-purple-400" />
+                <span className="text-[11px] font-semibold">Delivered Today</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-bold text-white">{todayWorkloadHours} <span className="text-xs font-normal text-stone-400">hrs</span></p>
-                <p className="text-[10px] text-stone-400 mt-0.5">Capacity: {resolveDailyWorkCapacityLimit(effectiveEmployee)} tasks</p>
+                <p className="text-2xl font-bold text-white">
+                  {dailyTaskTarget !== null ? (
+                    <>
+                      {deliveredToday} / {dailyTaskTarget}
+                      {deliveredToday > dailyTaskTarget && (
+                        <span className="text-xs font-normal text-emerald-400 ml-1">+{deliveredToday - dailyTaskTarget}</span>
+                      )}
+                    </>
+                  ) : (
+                    deliveredToday
+                  )}
+                </p>
               </div>
             </div>
 
@@ -1044,8 +1070,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-2 border-t border-stone-800 text-[11px]">
-                        <span className="text-stone-400">Est: {task.estimated_hours || 0}h • Actual: {task.actual_hours || 0}h</span>
+                      <div className="flex items-center justify-end pt-2 border-t border-stone-800 text-[11px]">
                         <div className="flex items-center gap-1.5">
                           {!isTaskDone(task.status) && (
                             <button
@@ -1071,7 +1096,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           )}
 
           {/* Section 2: WHAT TO DO TODAY & PRIORITY FIRST QUEUE */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Column 1 & 2: Active Daily Queue */}
             <div
               className="lg:col-span-2 p-4 rounded-[18px] space-y-4"
@@ -1155,10 +1180,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                               <span className="flex items-center gap-1 font-mono">
                                 <Calendar className="w-3 h-3 text-stone-400" />
                                 <span>Due: {task.due_date || 'Not set'}</span>
-                              </span>
-                              <span className="flex items-center gap-1 font-mono">
-                                <Timer className="w-3 h-3 text-purple-300" />
-                                <span>Est: {task.estimated_hours || 0}h • Actual: {task.actual_hours || 0}h</span>
                               </span>
                             </div>
                           </div>
@@ -1285,49 +1306,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               </div>
             )}
 
-            {/* Column 3: Daily Summary & Quick Stats */}
-            <div className="space-y-4">
-              {/* Time Tracking / Hours Summary Widget */}
-              <div
-                className="p-4 rounded-[18px] space-y-3"
-                style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
-              >
-                <div className="flex items-center justify-between text-xs font-bold text-white">
-                  <div className="flex items-center gap-2">
-                    <Timer className="w-4 h-4 text-purple-400" />
-                    <span>Logged Hours</span>
-                  </div>
-                  <span className="text-[11px] text-stone-400 font-mono">
-                    {totalActualHoursLogged} / {totalActiveEstimatedHours}h
-                  </span>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] text-stone-400">
-                    <span>Estimated hours completed:</span>
-                    <span className="font-bold text-white">
-                      {totalActiveEstimatedHours > 0
-                        ? Math.round((totalActualHoursLogged / totalActiveEstimatedHours) * 100)
-                        : 0}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-stone-900 overflow-hidden border border-stone-800">
-                    <div
-                      className="h-full transition-all rounded-full"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          totalActiveEstimatedHours > 0
-                            ? Math.round((totalActualHoursLogged / totalActiveEstimatedHours) * 100)
-                            : 0
-                        )}%`,
-                        background: 'var(--gradient-badge)',
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -1889,7 +1867,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-[10px] text-stone-400">
                         <span>Active tasks: {item.activeCount} / {item.limit}</span>
-                        <span>Allocated hours: {item.totalEstimated}h</span>
+                        <span>
+                          Delivered: {item.deliveredToday}{item.dailyTarget !== null ? ` / ${item.dailyTarget}` : ''}
+                          {item.dailyTarget !== null && item.deliveredToday > item.dailyTarget && (
+                            <span className="text-emerald-400"> (+{item.deliveredToday - item.dailyTarget})</span>
+                          )}
+                        </span>
                       </div>
                       <div className="w-full h-2 rounded-full bg-stone-950 overflow-hidden border border-stone-800">
                         <div

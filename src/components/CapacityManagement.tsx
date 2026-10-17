@@ -37,7 +37,8 @@ import {
 } from '../types/database';
 import { getRoleInfo, isBuiltInRole, AppModuleId } from '../data/roles';
 import { getActiveCustomRole } from '../data/customRoles';
-import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity, canManageEmployee } from '../lib/permissions';
+import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity, canManageEmployee, canSetDailyTaskTarget } from '../lib/permissions';
+import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { isTeamLeadRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
 import { getEmployeesByDepartment } from '../lib/departmentStaffing';
 import { getTodayStr } from '../lib/employeeWork';
@@ -53,6 +54,12 @@ interface CapacityManagementProps {
   onLogCapacity?: (agentId: string, date: string, count: number) => Promise<void>;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   extraNotes?: ExtraNoteRecord[];
+  // users.daily_task_target (20261115000000_daily_task_target.sql) — gated below via
+  // canSetDailyTaskTarget(role) + canManageEmployee() + an explicit self-id check (no self-edit,
+  // unlike onUpdateUserCapacity above — see that migration's header for why RLS alone can't
+  // enforce that and the gate had to move partly into a trigger). Optional: absent, the Daily
+  // Target column still renders, read-only.
+  onUpdateUserDailyTaskTarget?: (userId: string, target: number | null) => Promise<void>;
 }
 
 export type CapacityStatus = 'all' | 'available' | 'near_capacity' | 'over_capacity';
@@ -77,6 +84,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   onLogCapacity,
   onNavigateToModule,
   extraNotes = [],
+  onUpdateUserDailyTaskTarget,
 }) => {
   // View mode
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -93,6 +101,12 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   const [tempLimit, setTempLimit] = useState<number>(8);
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Editing daily task target state — mirrors the capacity-limit editing state above, kept
+  // separate since they're two independent fields with independent permission gates.
+  const [editingDailyTargetUserId, setEditingDailyTargetUserId] = useState<string | null>(null);
+  const [tempDailyTarget, setTempDailyTarget] = useState('');
+  const [isSavingDailyTarget, setIsSavingDailyTarget] = useState(false);
 
   // New Capacity Log modal state
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
@@ -412,6 +426,48 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
       setStatusMessage({ text: err?.message || 'An error occurred while saving the capacity limit.', type: 'error' });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Mirrors employee_manageable()/users_update_guard_trigger's Rule 5
+  // (20261115000000_daily_task_target.sql): canSetDailyTaskTarget is the role-level gate,
+  // canManageEmployee the department-scope check, and the explicit self-id comparison is the
+  // client-side mirror of the one rule RLS alone can't enforce — no self-edit, for anyone.
+  const handleStartEditDailyTarget = (user: UserRecord) => {
+    if (
+      !onUpdateUserDailyTaskTarget ||
+      !currentUser ||
+      currentUser.id === user.id ||
+      !canSetDailyTaskTarget(currentUser.role) ||
+      !canManageEmployee(currentUser, user)
+    ) {
+      setStatusMessage({
+        text: 'RLS permissions: daily task target changes are restricted to executive management and team leads within their own department, and no one may set their own target.',
+        type: 'error',
+      });
+      setTimeout(() => setStatusMessage(null), 4000);
+      return;
+    }
+    setEditingDailyTargetUserId(user.id);
+    setTempDailyTarget(user.daily_task_target != null ? String(user.daily_task_target) : '');
+  };
+
+  const handleSaveDailyTarget = async (userId: string) => {
+    if (!onUpdateUserDailyTaskTarget) return;
+    const trimmed = tempDailyTarget.trim();
+    const value = trimmed === '' ? null : Number(trimmed);
+    if (value !== null && (Number.isNaN(value) || value < 0 || value > 50)) return;
+    setIsSavingDailyTarget(true);
+    try {
+      await onUpdateUserDailyTaskTarget(userId, value);
+      setEditingDailyTargetUserId(null);
+      setStatusMessage({ text: 'Daily task target updated successfully in the database.', type: 'success' });
+      setTimeout(() => setStatusMessage(null), 3500);
+    } catch (err: any) {
+      console.error(err);
+      setStatusMessage({ text: err?.message || 'An error occurred while saving the daily task target.', type: 'error' });
+    } finally {
+      setIsSavingDailyTarget(false);
     }
   };
 
@@ -1103,6 +1159,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                   <th className="p-3.5">Department / Team</th>
                   <th className="p-3.5">Role</th>
                   <th className="p-3.5 text-center">Limit</th>
+                  <th className="p-3.5 text-center">Daily Target (tasks/day)</th>
                   <th className="p-3.5 text-center">Used Capacity</th>
                   <th className="p-3.5 text-center">Open Capacity (Buffer)</th>
                   <th className="p-3.5 text-center">Utilization Rate</th>
@@ -1157,6 +1214,59 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                       </td>
                       <td className="p-3.5 text-center font-bold text-purple-300">
                         {item.capacityLimit}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        {editingDailyTargetUserId === item.user.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <input
+                              type="number"
+                              min={0}
+                              max={50}
+                              value={tempDailyTarget}
+                              onChange={(e) => setTempDailyTarget(e.target.value)}
+                              placeholder="—"
+                              className="w-16 px-1.5 py-1 rounded-lg text-xs bg-stone-900 border border-purple-400/50 text-white font-bold text-center focus:outline-none"
+                            />
+                            <button
+                              onClick={() => handleSaveDailyTarget(item.user.id)}
+                              disabled={isSavingDailyTarget}
+                              className="text-emerald-400 hover:text-emerald-300 p-0.5 disabled:opacity-50"
+                              title="Save"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setEditingDailyTargetUserId(null)}
+                              className="text-stone-400 hover:text-white p-0.5"
+                              title="Cancel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="font-bold text-stone-200">
+                              {item.user.daily_task_target ?? (
+                                <span className="text-stone-500 font-normal">
+                                  {resolveDailyTaskTarget(item.user) !== null ? `Default (${resolveDailyTaskTarget(item.user)})` : '—'}
+                                </span>
+                              )}
+                            </span>
+                            {onUpdateUserDailyTaskTarget &&
+                              currentUser &&
+                              currentUser.id !== item.user.id &&
+                              canSetDailyTaskTarget(currentUser.role) &&
+                              canManageEmployee(currentUser, item.user) && (
+                                <button
+                                  onClick={() => handleStartEditDailyTarget(item.user)}
+                                  className="text-stone-500 hover:text-purple-300 p-0.5 transition-colors"
+                                  title="Edit daily task target"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              )}
+                          </div>
+                        )}
                       </td>
                       <td className="p-3.5 text-center font-bold text-white">
                         {item.usedCapacity}

@@ -129,6 +129,11 @@ export interface UserRecord {
   team?: string | null;
   manager_id?: string | null;
   capacity_limit?: number | null;
+  // Daily task-count target (tasks/day) — set via CapacityManagement.tsx, executive/
+  // head_of_technical/team-lead-own-scope only, no self-edit (20261115000000_daily_task_target.sql).
+  // Empty/null means no explicit target; resolveDailyTaskTarget() (lib/designerScheduling.ts) is
+  // the one place that resolves the Creative-department default (6/day) on top of this.
+  daily_task_target?: number | null;
   // Null for a "pending" employee created via the Add Employee admin flow (single form or bulk
   // upload) — real Supabase Auth account creation needs the service-role key, which never touches
   // the browser, so it happens out-of-band via scripts/provisionAuthUsers.ts. Use
