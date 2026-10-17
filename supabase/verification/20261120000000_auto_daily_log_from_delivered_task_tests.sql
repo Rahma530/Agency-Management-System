@@ -19,6 +19,9 @@ declare
   v_am_agent_auth uuid;
   v_unrelated_id text;      -- not a direct report of anyone involved, not this client's am_agent
   v_unrelated_auth uuid;
+  v_exec_id text;           -- delete_tasks() is executive/head_of_technical/ai_engineer only
+  v_exec_auth uuid;
+  v_app_role text;
   v_client_id text := 'zz_dlog_c_' || substr(md5(random()::text), 1, 8);
   v_task_id text := 'zz_dlog_t_' || substr(md5(random()::text), 1, 8);
   v_task2_id text := 'zz_dlog_t2_' || substr(md5(random()::text), 1, 8);
@@ -50,6 +53,13 @@ begin
   limit 1;
   if v_unrelated_id is null then
     raise exception 'TEST_SETUP_FAILED: no active social_media_agent persona found.';
+  end if;
+
+  select id, auth_id into v_exec_id, v_exec_auth from public.users
+  where role = 'executive' and auth_id is not null and deactivated_at is null
+  limit 1;
+  if v_exec_id is null then
+    raise exception 'TEST_SETUP_FAILED: no active executive persona found.';
   end if;
 
   insert into public.clients (id, name, status, am_agent_id)
@@ -328,11 +338,24 @@ begin
     raise exception 'TEST_SETUP_FAILED: scenario 12 — expected an auto_task row before testing delete.';
   end if;
 
-  -- delete_tasks()'s own grant is executive/head_of_technical/ai_engineer only; called directly
-  -- here (no role switch) purely to exercise the FK behavior end-to-end through the real deletion
-  -- path, not to re-test delete_tasks()'s own role gate (already covered by
-  -- 20261113000000_task_hard_delete_tests.sql).
+  -- delete_tasks() reads app_user_id() internally (deletion_log.deleted_by is NOT NULL) and
+  -- gates on app_user_role() being executive/head_of_technical/ai_engineer — calling it with no
+  -- impersonation leaves both NULL (no auth.uid() match), so app_user_id() is NULL and the
+  -- deletion_log INSERT fails NOT NULL. Only the delete_tasks() CALL itself runs impersonated as
+  -- a real executive — the fabricated setup rows above were all inserted as the connecting
+  -- owner/superuser role on purpose (not under test here), per this session's own convention of
+  -- never impersonating for rows that aren't the thing being exercised.
+  perform set_config('request.jwt.claims', json_build_object('sub', v_exec_auth, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  if auth.role() is distinct from 'authenticated' then
+    raise exception 'TEST_SETUP_FAILED: auth.role() must read ''authenticated'' from request.jwt.claims (scenario 12 delete).';
+  end if;
+  select public.app_user_role() into v_app_role;
+  if v_app_role is distinct from 'executive' then
+    raise exception 'TEST_SETUP_FAILED: app_user_role() must read ''executive'' for the impersonated caller (scenario 12 delete), found %.', v_app_role;
+  end if;
   perform public.delete_tasks(array[v_task4_id]);
+  reset role; perform set_config('request.jwt.claims', '', true);
 
   if not exists (select 1 from public.daily_logs where id = v_row_id) then
     raise exception 'TEST_FAILED: scenario 12 — the daily_logs row must survive the task''s deletion (ON DELETE SET NULL, not CASCADE).';
