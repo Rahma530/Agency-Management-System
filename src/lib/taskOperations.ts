@@ -1,4 +1,4 @@
-import { TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
+import { ActivityRecord, TaskAssigneeLogRecord, TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord } from '../types/database';
 import { buildAttachmentStoragePath, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
@@ -154,6 +154,75 @@ export const fetchTaskEvents = async (taskId: string): Promise<TaskEventRecord[]
     .limit(100);
   throwIfError(error, 'Unable to load task history.');
   return (data as TaskEventRecord[] | null) || [];
+};
+
+// Older-history fallback for a task whose life predates task_events (20261116000000_task_events.sql)
+// — see TaskHistoryTab.tsx's "Older history" section. task_events.created_at has no FK-backed
+// "rollout date" of its own, so the earliest row that table has EVER held, across every task, is
+// used as the cutoff: anything in the two legacy sources below from before that moment predates
+// tracking entirely and is shown; anything from after it is already covered by task_events and
+// would otherwise double up. A single global fact, not per-task, so it's fetched at most once per
+// session and cached here — every caller after the first gets the already-resolved value (or the
+// same in-flight promise) instead of re-querying. Admin-gated by the caller (CrossTeamTaskBoard.tsx)
+// before this is ever invoked — not fetched at all for a non-admin viewer.
+let earliestTaskEventCutoffPromise: Promise<string | null> | null = null;
+export const fetchEarliestTaskEventCutoff = (): Promise<string | null> => {
+  if (!earliestTaskEventCutoffPromise) {
+    earliestTaskEventCutoffPromise = (async () => {
+      const { data, error } = await supabaseRaw
+        .from('task_events')
+        .select('created_at')
+        .order('created_at', { ascending: true })
+        .limit(1);
+      if (error) {
+        earliestTaskEventCutoffPromise = null; // let a later call retry instead of caching a failure
+        throw new Error(error.message || 'Unable to load the task history cutoff.');
+      }
+      const rows = (data as { created_at: string }[] | null) || [];
+      return rows[0]?.created_at ?? null;
+    })();
+  }
+  return earliestTaskEventCutoffPromise;
+};
+
+// public.activities rows for this one task (target_type='task', target_id=taskId), older than
+// the task_events cutoff only (see fetchEarliestTaskEventCutoff above) — beforeCutoff === null
+// means task_events has no rows at all yet, so every legacy row still qualifies. RLS on
+// activities already restricts this to executive/head_of_technical; the caller additionally never
+// invokes this for any other viewer.
+export const fetchLegacyTaskActivities = async (
+  taskId: string,
+  beforeCutoff: string | null
+): Promise<ActivityRecord[]> => {
+  let query = supabaseRaw
+    .from('activities')
+    .select('id, user_id, action_type, target_type, target_id, target_name, details, created_at')
+    .eq('target_type', 'task')
+    .eq('target_id', taskId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (beforeCutoff) query = query.lt('created_at', beforeCutoff);
+  const { data, error } = await query;
+  throwIfError(error, 'Unable to load legacy task activity.');
+  return (data as ActivityRecord[] | null) || [];
+};
+
+// public.task_assignee_log rows for this one task, older than the task_events cutoff only — same
+// reasoning as fetchLegacyTaskActivities above.
+export const fetchLegacyTaskAssigneeLog = async (
+  taskId: string,
+  beforeCutoff: string | null
+): Promise<TaskAssigneeLogRecord[]> => {
+  let query = supabaseRaw
+    .from('task_assignee_log')
+    .select('id, task_id, user_id, action, actor_id, created_at')
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (beforeCutoff) query = query.lt('created_at', beforeCutoff);
+  const { data, error } = await query;
+  throwIfError(error, 'Unable to load legacy assignment log.');
+  return (data as TaskAssigneeLogRecord[] | null) || [];
 };
 
 export const fetchTaskPlatformLinks = async (): Promise<TaskPlatformLinkRecord[]> => {
