@@ -10,12 +10,16 @@
 -- this function only knows how to repoint a single column's value.
 --
 -- Table identifiers are never built from a plain concatenated string: every dynamic table
--- reference below is `%s::regclass` inside format() — the raw oid from pg_constraint is passed
--- through %s, and the literal `::regclass` cast in the template resolves/validates it as a real
--- relation at EXECUTE time (the standard safe idiom for a dynamic table name — equivalent to, but
--- more direct than, round-tripping through quote_ident). Column names (never attacker-controlled;
--- read from pg_attribute, the catalog) still go through %I as defense in depth. Values go through
--- %L (format's own literal-escaping specifier).
+-- reference below passes `v_rec.conrelid::regclass` (the oid from pg_constraint, cast to
+-- regclass BEFORE it reaches format()) through plain %s. regclass's own output function then
+-- prints the already-resolved, correctly quoted/schema-qualified table name as text — valid
+-- directly in a FROM/UPDATE/DELETE target position. (A literal `::regclass` cast written inside
+-- the format() template instead — `%s::regclass` — is wrong: %s would substitute the oid's own
+-- bare numeral, e.g. `update 17541::regclass set ...`, which is a syntax error — a cast
+-- expression is not a valid table reference there. The cast must happen on the value before
+-- format() sees it, not in the template.) Column names (never attacker-controlled; read from
+-- pg_attribute, the catalog) still go through %I as defense in depth. Values go through %L
+-- (format's own literal-escaping specifier).
 --
 -- Conflict handling: a bulk `update ... set <col> = keep where <col> = duplicate` is tried first
 -- per table. If it hits unique_violation (a real unique constraint elsewhere — e.g.
@@ -121,7 +125,7 @@ begin
     v_deleted := 0;
 
     begin
-      execute format('update %s::regclass set %I = %L where %I = %L', v_rec.conrelid, v_colname, p_keep_id, v_colname, p_duplicate_id);
+      execute format('update %s set %I = %L where %I = %L', v_rec.conrelid::regclass, v_colname, p_keep_id, v_colname, p_duplicate_id);
       get diagnostics v_moved = row_count;
     exception when unique_violation then
       -- Row-by-row fallback. This table's own single-column primary key is discovered the same
@@ -140,13 +144,13 @@ begin
       from pg_attribute a
       where a.attrelid = v_rec.conrelid and a.attnum = v_pk_key[1];
 
-      for v_row_id in execute format('select %I::text from %s::regclass where %I = %L', v_pk_col, v_rec.conrelid, v_colname, p_duplicate_id)
+      for v_row_id in execute format('select %I::text from %s where %I = %L', v_pk_col, v_rec.conrelid::regclass, v_colname, p_duplicate_id)
       loop
         begin
-          execute format('update %s::regclass set %I = %L where %I = %L', v_rec.conrelid, v_colname, p_keep_id, v_pk_col, v_row_id);
+          execute format('update %s set %I = %L where %I = %L', v_rec.conrelid::regclass, v_colname, p_keep_id, v_pk_col, v_row_id);
           v_moved := v_moved + 1;
         exception when unique_violation then
-          execute format('delete from %s::regclass where %I = %L', v_rec.conrelid, v_pk_col, v_row_id);
+          execute format('delete from %s where %I = %L', v_rec.conrelid::regclass, v_pk_col, v_row_id);
           v_deleted := v_deleted + 1;
         end;
       end loop;
@@ -251,7 +255,7 @@ begin
 
     v_table_name := v_rec.conrelid::regclass::text;
 
-    execute format('select count(*) from %s::regclass where %I = %L', v_rec.conrelid, v_colname, p_duplicate_id) into v_count;
+    execute format('select count(*) from %s where %I = %L', v_rec.conrelid::regclass, v_colname, p_duplicate_id) into v_count;
 
     v_related_counts := v_related_counts || jsonb_build_object(v_table_name, jsonb_build_object('count', v_count));
   end loop;
