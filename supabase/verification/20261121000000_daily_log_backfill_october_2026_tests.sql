@@ -68,26 +68,35 @@ begin
   -- date generally; every row this creates is rolled back with the rest of this transaction.
   alter table public.tasks disable trigger tasks_track_delivery_and_revisions_trigger;
 
+  -- Every delivered_at literal below is written as a Cairo LOCAL wall-clock time, converted via
+  -- `at time zone 'Africa/Cairo'` rather than a hardcoded '+02:00' offset — Cairo observes DST in
+  -- summer (+03:00), so a fixed '+02:00' literal is wrong for part of the year. The bug this fixes:
+  -- '2026-09-30T23:59:00+02:00'::timestamptz was being interpreted as 2026-10-01 00:59 Cairo LOCAL
+  -- time (one hour later than the literal's own date suggests) whenever Cairo is actually at
+  -- +03:00, pushing it past the backfill's October 1 cutoff and failing scenario 2. Converting the
+  -- local timestamp through its IANA zone name instead always resolves to the correct UTC instant
+  -- for whatever offset actually applies on that date.
+
   -- Task 1: delivered in October 2026 (Cairo), two assignees via task_assignees — scenario 1.
   insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority, delivered_at)
-  values (v_task_oct_id, v_client_id, 'ZZ Backfill October Task', 'Delivered in October.', v_am_agent_id, 'creative', 'in_review', current_date, 'medium', '2026-10-15T10:00:00+02:00'::timestamptz);
+  values (v_task_oct_id, v_client_id, 'ZZ Backfill October Task', 'Delivered in October.', v_am_agent_id, 'creative', 'in_review', current_date, 'medium', ('2026-10-15 10:00:00'::timestamp at time zone 'Africa/Cairo'));
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_oct_id, v_assignee1_id, v_am_agent_id);
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_oct_id, v_assignee2_id, v_am_agent_id);
 
   -- Task 2: delivered BEFORE October 2026 — scenario 2 (must never be backfilled).
   insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority, delivered_at)
-  values (v_task_sep_id, v_client_id, 'ZZ Backfill September Task', 'Delivered before cutoff.', v_am_agent_id, 'creative', 'in_review', current_date, 'medium', '2026-09-30T23:59:00+02:00'::timestamptz);
+  values (v_task_sep_id, v_client_id, 'ZZ Backfill September Task', 'Delivered before cutoff.', v_am_agent_id, 'creative', 'in_review', current_date, 'medium', ('2026-09-30 23:59:00'::timestamp at time zone 'Africa/Cairo'));
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_sep_id, v_assignee1_id, v_am_agent_id);
 
   -- Task 3: closed, delivered in October — scenario 3 (closed is excluded by the status filter).
   insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority, delivered_at)
-  values (v_task_closed_id, v_client_id, 'ZZ Backfill Closed Task', 'Closed, not in_review/completed.', v_am_agent_id, 'creative', 'closed', current_date, 'medium', '2026-10-10T10:00:00+02:00'::timestamptz);
+  values (v_task_closed_id, v_client_id, 'ZZ Backfill Closed Task', 'Closed, not in_review/completed.', v_am_agent_id, 'creative', 'closed', current_date, 'medium', ('2026-10-10 10:00:00'::timestamp at time zone 'Africa/Cairo'));
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_closed_id, v_assignee1_id, v_am_agent_id);
 
   -- Task 4: delivered in October, but the assignee already manually linked it on a DIFFERENT date
   -- — scenario 4 (must be skipped entirely, regardless of the manual log's own date).
   insert into public.tasks (id, client_id, title, description, created_by, team, status, due_date, priority, delivered_at)
-  values (v_task_linked_id, v_client_id, 'ZZ Backfill Already Linked Task', 'Manually linked on a different day.', v_am_agent_id, 'creative', 'in_review', current_date, 'medium', '2026-10-20T10:00:00+02:00'::timestamptz);
+  values (v_task_linked_id, v_client_id, 'ZZ Backfill Already Linked Task', 'Manually linked on a different day.', v_am_agent_id, 'creative', 'in_review', current_date, 'medium', ('2026-10-20 10:00:00'::timestamp at time zone 'Africa/Cairo'));
   insert into public.task_assignees (task_id, user_id, added_by) values (v_task_linked_id, v_assignee1_id, v_am_agent_id);
   insert into public.daily_logs (id, user_id, date, summary_text, linked_task_ids, client_id, source)
   values ('zz_bf_manual_' || substr(md5(random()::text), 1, 8), v_assignee1_id, date '2026-10-05', 'Manually logged on a different day.', array[v_task_linked_id], v_client_id, 'manual');
