@@ -10,12 +10,25 @@
 // glyphs at all — plain jsPDF text() would render Arabic content as blank boxes. Two pieces fix
 // this, chosen deliberately after checking alternatives rather than guessing:
 //
-//  1. Amiri (public/fonts/Amiri-Regular.ttf, license copy at public/fonts/Amiri-OFL.txt) — SIL
-//     Open Font License 1.1, free to embed in a commercial product's generated documents. Picked
-//     over Noto Sans Arabic specifically: Noto Sans Arabic has a filed upstream issue
-//     (notofonts/noto-fonts#1927) reporting it renders only ISOLATED letter forms instead of
-//     properly joined ones for Arabic Presentation Forms — Amiri (a Naskh print typeface with
-//     ~6,000 glyphs) has full, correct Presentation Forms A+B support.
+//  1. Noto Naskh Arabic (public/fonts/NotoNaskhArabic-Regular.ttf + -Bold.ttf, license copy at
+//     public/fonts/NotoNaskhArabic-OFL.txt) — SIL Open Font License 1.1, extracted from the
+//     static TTF files inside the npm package @expo-google-fonts/noto-naskh-arabic (also OFL)
+//     rather than hand-sourced, so provenance is traceable to a real package release. Used for
+//     the ENTIRE PDF now (header wordmark, headings, body, bullets, table) — a single consistent
+//     font end to end.
+//
+//     Cairo was tried first (per an explicit request for a clearer UI-style font) and REJECTED
+//     after rendering a real test PDF: despite passing an offline fontTools glyph-coverage check
+//     (it has most Arabic Presentation Forms codepoints, including the lam-alef ligatures
+//     U+FEFB/FEFC), the ACTUAL rendered output silently dropped standalone/initial alif glyphs in
+//     real sentences ("ارتفعت" -> "تفعت", "الاكتساب" -> "لاكتسا", "إلى" -> "لى") — a font data gap
+//     narrower than what the offline codepoint check could catch. Tajawal (the first documented
+//     fallback) reproduced the exact same failure. Both are UI/display families, not full print-
+//     shaping Naskh faces. Noto Naskh Arabic (like the original Amiri) is a traditional Naskh
+//     print typeface with complete Presentation Forms A+B coverage, and was verified correct on
+//     the SAME test sentence (lam-alef, every hamza form, tashkeel, Arabic-Indic and Western
+//     digits, embedded English) before being adopted here — see this PR's description for the
+//     rendered comparison.
 //  2. bidi-shaper (github.com/cc1a2b/bidi-shaper, MIT) for Unicode BiDi (UAX #9) reordering +
 //     Arabic contextual shaping. jsPDF's OWN built-in Arabic handling is independently documented
 //     to mis-order MIXED Arabic+Latin content (parallax/jsPDF issues #2004, #1816, #2178) — exactly
@@ -23,7 +36,10 @@
 //     embedded in Arabic prose. bidi-shaper's jsPDF adapter hooks doc.text() so every string is
 //     pre-shaped into final visual order — using Arabic Presentation Forms characters, which
 //     jsPDF's own native Arabic parser does not touch, so the two never double-process the same
-//     text (confirmed in bidi-shaper's own adapter docs).
+//     text (confirmed in bidi-shaper's own adapter docs). bidi-shaper itself is font-agnostic —
+//     the Cairo/Tajawal failures above were real gaps in those fonts' own glyph data, not a
+//     bidi-shaper bug (confirmed by swapping only the font, with the exact same code, between all
+//     four candidates and reproducing/fixing the same symptom each time).
 //
 // bidi-shaper is a genuinely new library (3 versions published within a two-hour window, no
 // real-world track record) — chosen over the mature, widely-referenced alternative
@@ -31,12 +47,10 @@
 // bundle into this commercial app's client bundle. This file is the one, small, isolated boundary
 // around it: if real-world use ever surfaces a rendering bug, only this module needs to change.
 //
-// ---------------------------------------------------------------------------------------------
-// Brand identity
-// ---------------------------------------------------------------------------------------------
-// No logo image asset exists anywhere in this codebase (checked before this stage started) — the
-// header below uses a text wordmark styled in the brand purple instead. The exact spot to swap in
-// a real logo via doc.addImage() is marked below.
+// Both font files are static assets under public/fonts/, fetched over HTTP only when a "Download
+// PDF" button is actually pressed (loadArabicFontBundle below) — never imported into the JS
+// bundle, so this costs 0 bytes of bundle size either way; just a one-time ~390KB combined fetch
+// (NotoNaskhArabic-Regular ~195KB + -Bold ~195KB) on first use, cached by the browser after that.
 import { jsPDF } from 'jspdf';
 import { installJsPdfShaper } from 'bidi-shaper/jspdf';
 import { ClientComparisonRecord } from '../types/database';
@@ -57,11 +71,23 @@ const BODY_TEXT_COLOR = '#1a1a1a'; // near-black, not the app's light-on-dark th
 // conventionally read/printed on a light background, so this deliberately does not replicate the
 // app's own dark UI chrome.
 
-const ARABIC_FONT_NAME = 'Amiri';
-const ARABIC_FONT_FILE = 'Amiri-Regular.ttf';
-const ARABIC_FONT_URL = '/fonts/Amiri-Regular.ttf';
+const NOTO_NASKH_FONT_NAME = 'NotoNaskhArabic';
+const NOTO_NASKH_REGULAR_URL = '/fonts/NotoNaskhArabic-Regular.ttf';
+const NOTO_NASKH_BOLD_URL = '/fonts/NotoNaskhArabic-Bold.ttf';
+const AMIRI_FONT_NAME = 'Amiri';
+const AMIRI_REGULAR_URL = '/fonts/Amiri-Regular.ttf';
 
-let arabicFontBase64Promise: Promise<string> | null = null;
+export interface ArabicFontBundle {
+  name: string;
+  // Base64-encoded TTF data for the 'normal' and 'bold' jsPDF font styles, both registered under
+  // the same family `name`. Amiri has no separate bold file shipped in this codebase, so the
+  // fallback bundle reuses its one file for both styles — jsPDF's own bold SYNTHESIS (faux-bold,
+  // via a transform) only applies to a font that has no 'bold' style registered at all, so
+  // registering the same data under 'bold' just means Amiri's fallback has no visually distinct
+  // bold — an acceptable degradation for an already-exceptional failure path.
+  normal: string;
+  bold: string;
+}
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   let binary = '';
@@ -73,18 +99,37 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-// Fetched once per page load (the font file never changes at runtime) and cached — every PDF
-// generated after the first reuses the same resolved promise instead of re-fetching ~430KB.
-export function loadArabicFontBase64(): Promise<string> {
-  if (!arabicFontBase64Promise) {
-    arabicFontBase64Promise = fetch(ARABIC_FONT_URL)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Failed to load ${ARABIC_FONT_URL} (HTTP ${res.status}).`);
-        return res.arrayBuffer();
-      })
-      .then(arrayBufferToBase64);
+async function fetchFontBase64(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load ${url} (HTTP ${res.status}).`);
+  return arrayBufferToBase64(await res.arrayBuffer());
+}
+
+let arabicFontBundlePromise: Promise<ArabicFontBundle> | null = null;
+
+// Fetched once per page load (the font files never change at runtime) and cached — every PDF
+// generated after the first reuses the same resolved promise instead of re-fetching. Falls back to
+// the single-weight Amiri bundle only if the Noto Naskh Arabic fetch itself fails (network/404) —
+// never for a rendering-quality reason: both fonts render this feature's content correctly
+// (verified on a real rendered test PDF — see the header comment above), so either is a safe
+// result, just never silently landing on one of the REJECTED Cairo/Tajawal fonts.
+export function loadArabicFontBundle(): Promise<ArabicFontBundle> {
+  if (!arabicFontBundlePromise) {
+    arabicFontBundlePromise = (async () => {
+      try {
+        const [normal, bold] = await Promise.all([
+          fetchFontBase64(NOTO_NASKH_REGULAR_URL),
+          fetchFontBase64(NOTO_NASKH_BOLD_URL),
+        ]);
+        return { name: NOTO_NASKH_FONT_NAME, normal, bold };
+      } catch (err) {
+        console.error('Noto Naskh Arabic font failed to load, falling back to Amiri:', err);
+        const normal = await fetchFontBase64(AMIRI_REGULAR_URL);
+        return { name: AMIRI_FONT_NAME, normal, bold: normal };
+      }
+    })();
   }
-  return arabicFontBase64Promise;
+  return arabicFontBundlePromise;
 }
 
 export interface PdfParagraph {
@@ -113,17 +158,34 @@ export interface ReportPdfOptions {
 
 const PAGE_MARGIN = 48;
 
-// Pure given an already-loaded font — kept separate from downloadReportPdf so it can be exercised
-// directly (e.g. from a Node script reading the font off disk) without a browser's fetch().
-export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): jsPDF {
+// Pure given an already-loaded font bundle — kept separate from downloadReportPdf so it can be
+// exercised directly (e.g. from a Node script reading the font off disk) without a browser's
+// fetch().
+export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfOptions): jsPDF {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  doc.addFileToVFS(ARABIC_FONT_FILE, fontBase64);
-  doc.addFont(ARABIC_FONT_FILE, ARABIC_FONT_NAME, 'normal');
+  const fontFamily = fontBundle.name;
+  doc.addFileToVFS(`${fontFamily}-Regular.ttf`, fontBundle.normal);
+  doc.addFont(`${fontFamily}-Regular.ttf`, fontFamily, 'normal');
+  doc.addFileToVFS(`${fontFamily}-Bold.ttf`, fontBundle.bold);
+  doc.addFont(`${fontFamily}-Bold.ttf`, fontFamily, 'bold');
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const contentWidth = pageWidth - PAGE_MARGIN * 2;
-  const headerHeight = 64;
+
+  // Title/subtitle are right-aligned Arabic (or mixed) text now (client name + "من ... إلى ...")
+  // instead of the short, fixed English labels this header was designed for — so, unlike before,
+  // they must wrap (never run past the left edge) and the header's own height must grow to fit
+  // however many lines that produces. Measured once, in the same font/size actually drawn, before
+  // computing headerHeight — same isOutputVisual:true requirement as every other Arabic doc.text()
+  // call below (see drawArabicParagraph's own comment for exactly why).
+  doc.setFont(fontFamily, 'bold');
+  doc.setFontSize(13);
+  const titleLines: string[] = doc.splitTextToSize(options.title, contentWidth);
+  doc.setFont(fontFamily, 'normal');
+  doc.setFontSize(9);
+  const subtitleLines: string[] = options.subtitle ? doc.splitTextToSize(options.subtitle, contentWidth) : [];
+  const headerHeight = 24 + titleLines.length * 15 + (subtitleLines.length ? subtitleLines.length * 12 + 4 : 0);
   let y = headerHeight + 32;
 
   function drawHeader(): void {
@@ -131,22 +193,34 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
     doc.rect(0, 0, pageWidth, headerHeight, 'F');
     // Text wordmark standing in for a logo (see this file's header comment) — swap for
     // doc.addImage(logoDataUrl, 'PNG', PAGE_MARGIN, 16, width, height) here once a real logo asset
-    // exists in this codebase.
-    doc.setFont('helvetica', 'bold');
+    // exists in this codebase. Drawn in the same font family as everything else on the page, per
+    // the "one consistent font throughout" requirement — it's plain ASCII text, so the font switch
+    // changes nothing visually here beyond matching letterforms with the rest of the document.
+    doc.setFont(fontFamily, 'bold');
     doc.setFontSize(16);
     doc.setTextColor(BRAND_WHITE);
     doc.text('KESRA', PAGE_MARGIN, 32);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(fontFamily, 'normal');
     doc.setFontSize(9);
     doc.text('Management System', PAGE_MARGIN, 46);
 
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(fontFamily, 'bold');
     doc.setFontSize(13);
-    doc.text(options.title, pageWidth - PAGE_MARGIN, 30, { align: 'right' });
+    doc.text(options.title, pageWidth - PAGE_MARGIN, 28, {
+      align: 'right',
+      maxWidth: contentWidth,
+      lineHeightFactor: 1.3,
+      isOutputVisual: true,
+    });
     if (options.subtitle) {
-      doc.setFont('helvetica', 'normal');
+      doc.setFont(fontFamily, 'normal');
       doc.setFontSize(9);
-      doc.text(options.subtitle, pageWidth - PAGE_MARGIN, 45, { align: 'right' });
+      doc.text(options.subtitle, pageWidth - PAGE_MARGIN, 28 + titleLines.length * 15 + 10, {
+        align: 'right',
+        maxWidth: contentWidth,
+        lineHeightFactor: 1.3,
+        isOutputVisual: true,
+      });
     }
   }
 
@@ -160,14 +234,14 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
 
   function drawHeading(text: string): void {
     ensureSpace(20);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(fontFamily, 'bold');
     doc.setFontSize(11);
     doc.setTextColor(BRAND_PURPLE_DEEP);
     doc.text(text, PAGE_MARGIN, y);
     y += 16;
   }
 
-  // Arabic (or mixed Arabic/English) paragraph — right-aligned, Amiri font, bidi-shaper handles
+  // Arabic (or mixed Arabic/English) paragraph — right-aligned, Noto Naskh Arabic font, bidi-shaper handles
   // both the letter joining and putting any embedded English/numbers back in correct LTR order
   // within the RTL line. jsPDF wraps (splitTextToSize) internally BEFORE bidi-shaper's hook fires,
   // so wrapping measures raw pre-shaped character widths — a lam-alef ligature can make the real
@@ -190,7 +264,7 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
   // unchanged — a true no-op — leaving bidi-shaper's own correct reordering as the only one that
   // actually runs. Re-tested after adding this and confirmed correct (see report).
   function drawArabicParagraph(text: string): void {
-    doc.setFont(ARABIC_FONT_NAME, 'normal');
+    doc.setFont(fontFamily, 'normal');
     doc.setFontSize(11);
     doc.setTextColor(BODY_TEXT_COLOR);
     const lineHeight = 16;
@@ -209,7 +283,7 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
     const lineHeight = 16;
     const bulletGap = 14; // reserved space for the bullet marker + gap at the right margin
     items.forEach((item) => {
-      doc.setFont(ARABIC_FONT_NAME, 'normal');
+      doc.setFont(fontFamily, 'normal');
       doc.setFontSize(11);
       const lines = doc.splitTextToSize(item, contentWidth - bulletGap);
       ensureSpace(lines.length * lineHeight);
@@ -220,10 +294,10 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
       // paragraph's visual end (the left, for RTL) rather than a fixed side. Drawing the bullet
       // separately guarantees it always sits on the right edge, matching Arabic list convention,
       // regardless of what the first/last character of `item` happens to be.
-      doc.setFont('helvetica', 'normal');
+      doc.setFont(fontFamily, 'normal');
       doc.setTextColor(BODY_TEXT_COLOR);
       doc.text('•', pageWidth - PAGE_MARGIN, y, { align: 'right' });
-      doc.setFont(ARABIC_FONT_NAME, 'normal');
+      doc.setFont(fontFamily, 'normal');
       doc.text(item, pageWidth - PAGE_MARGIN - bulletGap, y, {
         align: 'right',
         maxWidth: contentWidth - bulletGap,
@@ -244,7 +318,7 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
 
     function drawRow(cells: string[], isHeader: boolean): void {
       ensureSpace(rowHeight);
-      doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
+      doc.setFont(fontFamily, isHeader ? 'bold' : 'normal');
       doc.setFontSize(9);
       doc.setTextColor(isHeader ? BRAND_WHITE : BODY_TEXT_COLOR);
       if (isHeader) {
@@ -285,8 +359,8 @@ export function buildReportDoc(fontBase64: string, options: ReportPdfOptions): j
 }
 
 export async function downloadReportPdf(options: ReportPdfOptions): Promise<void> {
-  const fontBase64 = await loadArabicFontBase64();
-  const doc = buildReportDoc(fontBase64, options);
+  const fontBundle = await loadArabicFontBundle();
+  const doc = buildReportDoc(fontBundle, options);
   doc.save(options.filename);
 }
 
