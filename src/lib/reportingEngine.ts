@@ -37,7 +37,7 @@ function getDepartmentMappedServiceType(departmentId: string): ServiceType | nul
 // Period boundaries
 // ----------------------------------------------------------------------------
 
-export type ComparisonGranularity = 'monthly' | 'quarterly' | 'yearly';
+export type ComparisonGranularity = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 
 export interface DateRange {
   start: string; // inclusive, YYYY-MM-DD
@@ -96,6 +96,21 @@ function yearPeriod(year: number): ComparisonPeriod {
   return { label: `${year}`, range: { start: `${year}-01-01`, end: `${year}-12-31` } };
 }
 
+// Saturday-to-Friday work week (Africa/Cairo) — same calendar convention as reportPeriods.ts's
+// resolveReportWorkWeek(), kept as its own constant here (rather than importing that function)
+// since this one needs an inclusive 7-day ComparisonPeriod/label like monthPeriod/quarterPeriod/
+// yearPeriod above, not reportPeriods.ts's half-open {startInclusive, endExclusive} shape. Change
+// this single constant (6 = Saturday, per Date.getDay()'s 0=Sunday) if the agency's week start
+// ever moves.
+const WEEK_START_DAY = 6;
+
+function weekPeriod(referenceDate: Date): ComparisonPeriod {
+  const daysSinceStart = (referenceDate.getDay() - WEEK_START_DAY + 7) % 7;
+  const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - daysSinceStart);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+  return { label: `${iso(start)}_${iso(end)}`, range: { start: iso(start), end: iso(end) } };
+}
+
 // Builds the current-vs-previous period pair for a preset granularity, anchored to whichever
 // month/quarter/year the reference date (default: today) falls in.
 export function resolveComparisonPeriods(
@@ -104,6 +119,11 @@ export function resolveComparisonPeriods(
 ): { current: ComparisonPeriod; previous: ComparisonPeriod } {
   const year = referenceDate.getFullYear();
   const month = referenceDate.getMonth(); // 0-indexed
+
+  if (granularity === 'weekly') {
+    const previousReference = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - 7);
+    return { current: weekPeriod(referenceDate), previous: weekPeriod(previousReference) };
+  }
 
   if (granularity === 'monthly') {
     const prevMonth0 = month === 0 ? 11 : month - 1;

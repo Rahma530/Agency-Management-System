@@ -19,6 +19,7 @@ import {
   ReportMode,
   ReportScope,
   resolveClientsForSubject,
+  resolveComparisonPeriods,
   detectClientAnomalies,
   ClientAnomalyResult,
   ensureComparisonForSummary as resolveOrGenerateComparison,
@@ -33,6 +34,7 @@ import {
   ComparisonCard,
   FiledReportsList,
   describeComparisonScope,
+  formatPeriodLabel,
   buildCampaignSummaryPayload,
   runWorkItemBatches,
   CampaignSummaryPayload,
@@ -162,15 +164,20 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const canSeeDailyActivityReport =
     currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || isTeamLead;
   const [dailyLogClientFilter, setDailyLogClientFilter] = useState('all');
-  // Sorted by the log's own `date` (newest first), then by `created_at` as a tiebreaker for logs
-  // sharing the same date — so a backdated or future-dated entry sits where its date says.
-  const filteredDailyLogs = useMemo(
-    () =>
-      dailyLogs
-        .filter((l) => dailyLogClientFilter === 'all' || l.client_id === dailyLogClientFilter)
-        .sort((a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '')),
-    [dailyLogs, dailyLogClientFilter]
-  );
+  const [dailyLogEmployeeFilter, setDailyLogEmployeeFilter] = useState('all');
+  const [dailyLogSearch, setDailyLogSearch] = useState('');
+  // Off by default: the Activity tab follows the top bar's own period (periodStart/periodEnd) so
+  // switching it never means re-picking a date range — "all dates" is an explicit opt-out.
+  const [dailyLogAllDates, setDailyLogAllDates] = useState(false);
+  const [dailyLogVisibleCount, setDailyLogVisibleCount] = useState(50);
+  // Point 3: "التقرير"/"سجل النشاط" — both stay mounted (display:none, never unmounted) so
+  // switching tabs can never lose an unsaved draft in ReportDraftWorkspace or this tab's own
+  // search/filter state below.
+  const [activeTab, setActiveTab] = useState<'report' | 'activity'>('report');
+  const employeesWithLogs = useMemo(() => {
+    const ids = new Set(dailyLogs.map((l) => l.user_id));
+    return users.filter((u) => ids.has(u.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [dailyLogs, users]);
   const todayStr = useMemo(() => getTodayStr(), []);
   const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
   const [selectedDailyLog, setSelectedDailyLog] = useState<DailyLogRecord | null>(null);
@@ -262,7 +269,41 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const todayIso = useMemo(() => getTodayStr(), []);
   const [periodStart, setPeriodStart] = useState(`${todayIso.slice(0, 8)}01`);
   const [periodEnd, setPeriodEnd] = useState(todayIso);
+  // Any manual date edit (top bar A, or Comparison's own A/B below) flips this to 'custom' — see
+  // the onChange handlers on those date inputs and applyPeriodShortcut below.
+  const [periodShortcut, setPeriodShortcut] = useState<ComparisonGranularity | 'custom'>('custom');
   const [clientSearchQuery, setClientSearchQuery] = useState('');
+
+  // Activity tab's own filters — sorted by the log's own `date` (newest first), then by
+  // `created_at` as a tiebreaker for logs sharing the same date, so a backdated or future-dated
+  // entry sits where its date says. Period-filtered against the SAME top-bar periodStart/
+  // periodEnd used by Sources/Draft/Comparison, unless "all dates" is on.
+  const dailyLogsForClientsWithUsers = useMemo(
+    () =>
+      dailyLogs
+        .filter((l) => dailyLogClientFilter === 'all' || l.client_id === dailyLogClientFilter)
+        .filter((l) => dailyLogEmployeeFilter === 'all' || l.user_id === dailyLogEmployeeFilter)
+        .filter((l) => dailyLogAllDates || !periodStart || !periodEnd || (l.date >= periodStart && l.date <= periodEnd))
+        .sort((a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '')),
+    [dailyLogs, dailyLogClientFilter, dailyLogEmployeeFilter, dailyLogAllDates, periodStart, periodEnd]
+  );
+  const filteredDailyLogs = useMemo(() => {
+    const query = dailyLogSearch.trim().toLowerCase();
+    if (!query) return dailyLogsForClientsWithUsers;
+    return dailyLogsForClientsWithUsers.filter((log) => {
+      const logUser = users.find((user) => user.id === log.user_id);
+      const logClient = log.client_id ? clients.find((client) => client.id === log.client_id) : null;
+      return [logUser?.name || '', logClient?.name || '', log.summary_text || '']
+        .some((value) => value.toLowerCase().includes(query));
+    });
+  }, [dailyLogsForClientsWithUsers, dailyLogSearch, users, clients]);
+  const visibleDailyLogs = useMemo(
+    () => filteredDailyLogs.slice(0, dailyLogVisibleCount),
+    [filteredDailyLogs, dailyLogVisibleCount]
+  );
+  useEffect(() => {
+    setDailyLogVisibleCount(50);
+  }, [dailyLogClientFilter, dailyLogEmployeeFilter, dailyLogSearch, dailyLogAllDates, periodStart, periodEnd]);
 
   const searchedClients = useMemo(
     () => myClients.filter((c) => matchesClientQuery(c, clientSearchQuery)),
@@ -320,6 +361,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const [generatingReportForComparisonId, setGeneratingReportForComparisonId] = useState<string | null>(null);
 
   useEffect(() => {
+    // A named shortcut (weekly/monthly/quarterly/yearly) already set an exact calendar-aware B
+    // via applyPeriodShortcut below — this generic day-count-based fallback only applies while
+    // periodShortcut is 'custom' (the initial default, or after a manual date edit), so it never
+    // overwrites a shortcut's own precise previous period.
+    if (periodShortcut !== 'custom') return;
     if (comparisonPeriodTouched.current) return;
     if (!periodStart || !periodEnd || periodStart > periodEnd) return;
     setCustomCurrentRange({ start: periodStart, end: periodEnd });
@@ -327,7 +373,22 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     const prevEnd = addDaysIso(periodStart, -1);
     const prevStart = addDaysIso(prevEnd, -(lengthDays - 1));
     setCustomPreviousRange({ start: prevStart, end: prevEnd });
-  }, [periodStart, periodEnd]);
+  }, [periodStart, periodEnd, periodShortcut]);
+
+  // Weekly/Monthly/Quarterly/Yearly shortcut (point 4): fills top-bar period A from
+  // resolveComparisonPeriods (same reportingEngine.ts logic PeriodSelector.tsx already uses), and
+  // — if comparison mode is on — B from its calendar-aware previous period, in one shot, no
+  // duplicated picking. A manual edit on any of the four date fields below flips periodShortcut
+  // back to 'custom' (see those fields' onChange) and this shortcut no longer drives them.
+  const applyPeriodShortcut = (granularity: ComparisonGranularity) => {
+    const { current, previous } = resolveComparisonPeriods(granularity);
+    setPeriodShortcut(granularity);
+    comparisonPeriodTouched.current = false;
+    setPeriodStart(current.range.start);
+    setPeriodEnd(current.range.end);
+    setCustomCurrentRange(current.range);
+    setCustomPreviousRange(previous.range);
+  };
 
   const isSinglePeriod = reportMode === 'period_summary';
 
@@ -510,6 +571,33 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
       </div>
 
+      {/* Point 3: both tabs stay mounted always (display:none only, never unmount) — this is
+          what keeps an unsaved ReportDraftWorkspace draft AND this page's own search/filter state
+          (periodShortcut, reportSearch, dailyLogSearch/filters below) intact across a tab switch,
+          with no confirmDiscard prompt needed since nothing is actually discarded. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() => setActiveTab('report')}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            activeTab === 'report' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+          }`}
+        >
+          التقرير
+        </button>
+        {canSeeDailyActivityReport && (
+          <button
+            onClick={() => setActiveTab('activity')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              activeTab === 'activity' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+            }`}
+          >
+            سجل النشاط ({dailyLogs.length})
+          </button>
+        )}
+      </div>
+
+      <div style={activeTab === 'report' ? undefined : { display: 'none' }} className="space-y-6">
+
       {flaggedClients.length > 0 && (
         <div className="p-4 rounded-xl border border-red-800/40 bg-red-950/20 space-y-3">
           <h3 className="text-sm font-bold text-red-300 flex items-center gap-2">
@@ -568,6 +656,47 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               Specific Agent
             </button>
           )}
+          <span className="w-px h-5 bg-stone-800 mx-1" />
+          {/* Point 1: one toggle instead of the old separate Comparison section's two buttons —
+              ON = reportMode 'comparison' (period B shown below), OFF = 'period_summary'. */}
+          <button
+            onClick={() => setReportMode(reportMode === 'comparison' ? 'period_summary' : 'comparison')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              reportMode === 'comparison' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+            }`}
+          >
+            مقارنة
+          </button>
+        </div>
+
+        {/* Point 4: Weekly/Monthly/Quarterly/Yearly shortcuts + Custom range marker — fill period
+            A (and, with مقارنة on, B) from reportingEngine.ts's resolveComparisonPeriods, same
+            logic PeriodSelector.tsx already uses for ClientDashboard. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {([
+            ['weekly', 'أسبوعي'],
+            ['monthly', 'شهري'],
+            ['quarterly', 'ربع سنوي'],
+            ['yearly', 'سنوي'],
+          ] as Array<[ComparisonGranularity, string]>).map(([g, label]) => (
+            <button
+              key={g}
+              onClick={() => applyPeriodShortcut(g)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                periodShortcut === g ? 'bg-purple-700 text-white' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            onClick={() => setPeriodShortcut('custom')}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+              periodShortcut === 'custom' ? 'bg-purple-700 text-white' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+            }`}
+          >
+            فترة مخصصة
+          </button>
         </div>
 
         {scopeKind === 'client' && (
@@ -612,9 +741,26 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           </select>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <input type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+        {/* Point 1: period B (previous, for مقارنة) appears next to A in the same date row — no
+            separate Comparison section/title anymore. Point 4: any manual edit here flips
+            periodShortcut to 'custom', same as the Comparison A/B fields further below. */}
+        <div className={`grid grid-cols-1 ${reportMode === 'comparison' ? 'sm:grid-cols-2' : 'sm:grid-cols-2 sm:max-w-md'} gap-3`}>
+          <div className="space-y-1.5">
+            {reportMode === 'comparison' && <p className="text-[11px] text-stone-400">A (الحالية)</p>}
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={periodStart} onChange={(event) => { setPeriodShortcut('custom'); setPeriodStart(event.target.value); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+              <input type="date" value={periodEnd} onChange={(event) => { setPeriodShortcut('custom'); setPeriodEnd(event.target.value); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+            </div>
+          </div>
+          {reportMode === 'comparison' && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] text-stone-400">B (السابقة)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="date" value={customPreviousRange.start} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, start: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+                <input type="date" value={customPreviousRange.end} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, end: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -636,143 +782,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         onRequestAiSummary={onGenerateAiSummary ? requestDraftAiSummary : undefined}
       />
 
-      {/* Merged daily-activity feed (manager/leadership audience only), part of Sources. */}
-      {canSeeDailyActivityReport && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-amber-400" />
-              <span>Daily Activity Log ({filteredDailyLogs.length})</span>
-            </h3>
-            {clientsWithLogs.length > 0 && (
-              <select
-                value={dailyLogClientFilter}
-                onChange={(e) => setDailyLogClientFilter(e.target.value)}
-                className="px-2.5 py-1.5 rounded-lg text-[11px] bg-stone-900 border border-stone-800 text-white outline-none focus:border-purple-400"
-              >
-                <option value="all" className="bg-stone-900">All Clients</option>
-                {clientsWithLogs.map((c) => (
-                  <option key={c.id} value={c.id} className="bg-stone-900">
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {dailyLogActionError && (
-            <p className="text-xs text-[var(--roas-bad)] font-semibold">{dailyLogActionError}</p>
-          )}
-
-          {filteredDailyLogs.length === 0 ? (
-            <p className="text-xs text-stone-500 py-4 text-center">No daily activity logged yet for this scope.</p>
-          ) : (
-            <div className="max-h-96 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-              {filteredDailyLogs.map((log) => {
-                const logUser = users.find((u) => u.id === log.user_id);
-                const logClient = log.client_id ? clients.find((c) => c.id === log.client_id) : null;
-                const isFutureLog = log.date > todayStr;
-                const canEditThisLog = canEditOwnDailyLog(log, currentUser.id);
-                return (
-                  <div
-                    key={log.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedDailyLog(log)}
-                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedDailyLog(log); } }}
-                    className="p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 text-xs cursor-pointer hover:border-purple-500/50 transition-colors focus:outline-none focus:ring-1 focus:ring-purple-400"
-                    aria-label={`Open activity details for ${logUser?.name || 'employee'} on ${log.date}`}
-                  >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white">{logUser?.name || 'Employee'}</span>
-                        <span className="text-stone-500 text-[11px]">({logUser?.team || logUser?.role})</span>
-                        {logClient && (
-                          <span className="text-[10px] font-bold text-purple-300 bg-purple-950/50 px-2 py-0.5 rounded-full border border-purple-800/60">
-                            {logClient.name}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {isFutureLog && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-sky-900/60 text-sky-300 border border-sky-700/50">
-                            Future
-                          </span>
-                        )}
-                        <span className="text-[11px] font-mono text-stone-500">{log.date}</span>
-                        {canEditThisLog && (
-                          <>
-                            <button
-                              onClick={(event) => { event.stopPropagation(); setEditingDailyLog(log); }}
-                              className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
-                              title="Edit this log"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={(event) => { event.stopPropagation(); void handleDeleteDailyLogClick(log); }}
-                              className="p-1 rounded bg-stone-900 text-stone-400 hover:text-red-400"
-                              title="Delete this log"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-stone-300 mt-1.5 whitespace-pre-wrap break-words">{log.summary_text}</p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 3) Comparison — same resolvedScope as Setup, its own two editable periods A/B. */}
-      <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-purple-400" />
-          <span>Comparison</span>
-        </h3>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setReportMode('comparison')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              reportMode === 'comparison' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
-            }`}
-          >
-            Comparison Report
-          </button>
-          <button
-            onClick={() => setReportMode('period_summary')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              reportMode === 'period_summary' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
-            }`}
-          >
-            Period Report
-          </button>
-        </div>
-
-        <div className={`grid grid-cols-1 ${isSinglePeriod ? '' : 'sm:grid-cols-2'} gap-3`}>
-          <div className="space-y-1.5">
-            <p className="text-[11px] text-stone-400">Period A (current)</p>
-            <div className="grid grid-cols-2 gap-2">
-              <input type="date" value={customCurrentRange.start} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomCurrentRange((current) => ({ ...current, start: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-              <input type="date" value={customCurrentRange.end} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomCurrentRange((current) => ({ ...current, end: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-            </div>
-          </div>
-          {!isSinglePeriod && (
-            <div className="space-y-1.5">
-              <p className="text-[11px] text-stone-400">Period B (previous)</p>
-              <div className="grid grid-cols-2 gap-2">
-                <input type="date" value={customPreviousRange.start} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, start: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-                <input type="date" value={customPreviousRange.end} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, end: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-              </div>
-            </div>
-          )}
-        </div>
-
+      {/* Point 1: "نتائج المقارنة" — Calculate/Save-as-report/the saved-comparisons list, moved
+          here from the old separate Comparison section/title. reportMode/platformConnections/SEO
+          gating logic above (handleGenerate, unconnectedServices, isSinglePeriod) is unchanged —
+          only the JSX location moved, right under the draft. */}
+      <div className="space-y-3">
         <button
           type="button"
           disabled={!resolvedScope || isGenerating}
@@ -788,7 +802,12 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
               <select value={selectedComparison?.id || ''} onChange={(event) => setSelectedComparisonId(event.target.value)} className="flex-1 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
-                {visibleComparisons.map((comparison) => <option key={comparison.id} value={comparison.id}>{describeComparisonScope(comparison, clients, users)} · {comparison.period_current}{comparison.period_previous ? ` vs ${comparison.period_previous}` : ''}</option>)}
+                {visibleComparisons.map((comparison) => (
+                  <option key={comparison.id} value={comparison.id} dir="auto">
+                    {describeComparisonScope(comparison, clients, users)} — {formatPeriodLabel(comparison.period_current)}
+                    {comparison.period_previous ? ` ← ${formatPeriodLabel(comparison.period_previous)}` : ''}
+                  </option>
+                ))}
               </select>
               <button
                 type="button"
@@ -837,6 +856,145 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
         <FiledReportsList reports={filteredReports} comparisons={clientComparisons} clients={clients} users={users} showScope archiveMode="all" onSelectReport={openFiledReport} />
       </div>
+
+      </div>
+
+      {/* Point 3: Activity tab — the Daily Activity Log feed, now with its own search/employee/
+          client/period filters, result counter, and 50-per-page pagination instead of rendering
+          all ~480 rows at once. Stays mounted (display:none when inactive) so its own search text
+          and filters survive a tab switch. */}
+      {canSeeDailyActivityReport && (
+        <div style={activeTab === 'activity' ? undefined : { display: 'none' }} className="space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-amber-400" />
+              <span>سجل النشاط ({filteredDailyLogs.length})</span>
+            </h3>
+            <label className="flex items-center gap-1.5 text-[11px] text-stone-400">
+              <input type="checkbox" checked={dailyLogAllDates} onChange={(e) => setDailyLogAllDates(e.target.checked)} />
+              كل التواريخ
+            </label>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                value={dailyLogSearch}
+                onChange={(e) => setDailyLogSearch(e.target.value)}
+                placeholder="بحث باسم الموظف أو العميل أو النص..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500"
+              />
+            </div>
+            {employeesWithLogs.length > 0 && (
+              <select
+                value={dailyLogEmployeeFilter}
+                onChange={(e) => setDailyLogEmployeeFilter(e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg text-[11px] bg-stone-900 border border-stone-800 text-white outline-none focus:border-purple-400"
+              >
+                <option value="all" className="bg-stone-900">كل الموظفين</option>
+                {employeesWithLogs.map((u) => (
+                  <option key={u.id} value={u.id} className="bg-stone-900">{u.name}</option>
+                ))}
+              </select>
+            )}
+            {clientsWithLogs.length > 0 && (
+              <select
+                value={dailyLogClientFilter}
+                onChange={(e) => setDailyLogClientFilter(e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg text-[11px] bg-stone-900 border border-stone-800 text-white outline-none focus:border-purple-400"
+              >
+                <option value="all" className="bg-stone-900">All Clients</option>
+                {clientsWithLogs.map((c) => (
+                  <option key={c.id} value={c.id} className="bg-stone-900">
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {dailyLogActionError && (
+            <p className="text-xs text-[var(--roas-bad)] font-semibold">{dailyLogActionError}</p>
+          )}
+
+          {filteredDailyLogs.length === 0 ? (
+            <p className="text-xs text-stone-500 py-4 text-center">No daily activity logged yet for this scope.</p>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {visibleDailyLogs.map((log) => {
+                  const logUser = users.find((u) => u.id === log.user_id);
+                  const logClient = log.client_id ? clients.find((c) => c.id === log.client_id) : null;
+                  const isFutureLog = log.date > todayStr;
+                  const canEditThisLog = canEditOwnDailyLog(log, currentUser.id);
+                  return (
+                    <div
+                      key={log.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedDailyLog(log)}
+                      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedDailyLog(log); } }}
+                      className="p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80 text-xs cursor-pointer hover:border-purple-500/50 transition-colors focus:outline-none focus:ring-1 focus:ring-purple-400"
+                      aria-label={`Open activity details for ${logUser?.name || 'employee'} on ${log.date}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white">{logUser?.name || 'Employee'}</span>
+                          <span className="text-stone-500 text-[11px]">({logUser?.team || logUser?.role})</span>
+                          {logClient && (
+                            <span className="text-[10px] font-bold text-purple-300 bg-purple-950/50 px-2 py-0.5 rounded-full border border-purple-800/60">
+                              {logClient.name}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {isFutureLog && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-sky-900/60 text-sky-300 border border-sky-700/50">
+                              Future
+                            </span>
+                          )}
+                          <span className="text-[11px] font-mono text-stone-500">{log.date}</span>
+                          {canEditThisLog && (
+                            <>
+                              <button
+                                onClick={(event) => { event.stopPropagation(); setEditingDailyLog(log); }}
+                                className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
+                                title="Edit this log"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={(event) => { event.stopPropagation(); void handleDeleteDailyLogClick(log); }}
+                                className="p-1 rounded bg-stone-900 text-stone-400 hover:text-red-400"
+                                title="Delete this log"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-stone-300 mt-1.5 whitespace-pre-wrap break-words">{log.summary_text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              {visibleDailyLogs.length < filteredDailyLogs.length && (
+                <div className="flex items-center justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDailyLogVisibleCount((n) => n + 50)}
+                    className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white hover:bg-stone-700"
+                  >
+                    عرض المزيد ({visibleDailyLogs.length} / {filteredDailyLogs.length})
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {editingDailyLog && (
         <DailyLogEditModal

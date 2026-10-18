@@ -19,7 +19,7 @@ import {
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
 import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
-import { CampaignSummaryWorkItem } from './ComparisonDisplay';
+import { CampaignSummaryWorkItem, formatPeriodLabel } from './ComparisonDisplay';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
 // so the same values drive both this component's own Sources/Draft logic AND the Comparison
@@ -155,10 +155,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     ? versions.find((version) => version.id === selectedReport.current_version_id) || versions[0] || null
     : null;
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.name])), [users]);
+  // Point 2: "name — من X إلى Y" (not "{period} — {name}") so the Arabic subject name and the
+  // period's two dates each keep their own reading order instead of garbling together — see
+  // formatPeriodLabel's own comment (ComparisonDisplay.tsx) for why raw "start_end" labels read
+  // backwards next to Arabic text. reportSubjectName is kept separate from reportLabel so the
+  // on-screen title (507 below) can additionally wrap just the name in <bdi>; window.prompt/
+  // window.confirm (407/444/445 below) have no bidi markup of their own, so they get the plain
+  // string version.
+  const reportSubjectName = selectedReport
+    ? (selectedReport.scope_type === 'employee'
+        ? names.get(selectedReport.subject_user_id || '') || 'Employee'
+        : clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client')
+    : '';
   const reportLabel = selectedReport
-    ? `${selectedReport.period} — ${selectedReport.scope_type === 'employee'
-      ? names.get(selectedReport.subject_user_id || '') || 'Employee'
-      : clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client'}`
+    ? `${reportSubjectName} — ${formatPeriodLabel(selectedReport.period)}`
     : 'new report';
   const selectedSubject = users.find((user) => user.id === effectiveSubjectUserId);
   const period = useMemo(() => {
@@ -501,10 +511,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   return (
     <section ref={workspaceRef} className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4 scroll-mt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h3 className="text-xs font-bold text-white flex items-center gap-2">
+        <h3 dir="auto" className="text-xs font-bold text-white flex items-center gap-2">
           <FilePenLine className="w-4 h-4 text-purple-400" />
           {selectedReport
-            ? <>{reportLabel}<span className={selectedReport.archived_at ? 'text-stone-400' : selectedReport.status === 'final' ? 'text-emerald-300' : 'text-amber-300'}> · {selectedReport.archived_at ? 'archived' : selectedReport.status || 'legacy'}</span></>
+            ? <><bdi>{reportSubjectName}</bdi> — {formatPeriodLabel(selectedReport.period)}<span className={selectedReport.archived_at ? 'text-stone-400' : selectedReport.status === 'final' ? 'text-emerald-300' : 'text-amber-300'}> · {selectedReport.archived_at ? 'archived' : selectedReport.status || 'legacy'}</span></>
             : 'New draft'}
         </h3>
       </div>

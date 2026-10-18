@@ -463,7 +463,7 @@ export const ComparisonCard: React.FC<{
     <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <span className="text-xs font-bold text-white font-mono">
+          <span dir="ltr" className="text-xs font-bold text-white font-mono">
             {isSummary ? comparison.period_current : `${comparison.period_current} vs ${comparison.period_previous}`}
           </span>
           {isSummary && (
@@ -471,7 +471,9 @@ export const ComparisonCard: React.FC<{
               Period Report
             </span>
           )}
-          {subtitle && <span className="text-[11px] text-stone-400 block">{subtitle}</span>}
+          {/* Point 2: dir="auto" + <bdi> so an Arabic client/agent name here keeps its own
+              reading order even though this whole card sits in an RTL page. */}
+          {subtitle && <span dir="auto" className="text-[11px] text-stone-400 block"><bdi>{subtitle}</bdi></span>}
         </div>
         {canGenerateReport && onGenerateReport && (
           <button
@@ -951,6 +953,18 @@ export const describeComparisonScope = (
   return '';
 };
 
+// Point 2: a period label is either a calendar-unit label (monthly "2026-03", quarterly
+// "2026-Q1", yearly "2026" — plain digits, no RTL ambiguity) or a custom range
+// "YYYY-MM-DD_YYYY-MM-DD", which reads BACKWARDS when concatenated with an Arabic name under RTL
+// (e.g. "18-10-2026_01-10-2026 · وجاهة") because the two LTR date tokens and the "_" separator get
+// visually reordered against the surrounding RTL text. Rendering "من {start} إلى {end}" instead
+// gives the line fixed Arabic anchor words, so the two dates stay in their written (start, then
+// end) order regardless of what RTL/LTR content surrounds them.
+export function formatPeriodLabel(label: string): string {
+  const custom = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(label);
+  return custom ? `من ${custom[1]} إلى ${custom[2]}` : label;
+}
+
 // Filed reports list, resolving each report's scope label via its linked comparison.
 export const FiledReportsList: React.FC<{
   reports: ReportRecord[];
@@ -987,9 +1001,12 @@ export const FiledReportsList: React.FC<{
             }`}
           >
             <div>
-              <p className="text-xs font-bold text-white font-mono">{r.period}</p>
-              <p className="text-[11px] text-stone-400">
-                {scopeLabel ? `${scopeLabel} • ` : ''}
+              <p dir="ltr" className="text-xs font-bold text-white font-mono">{formatPeriodLabel(r.period)}</p>
+              {/* Point 2: dir="auto" + <bdi> around the Arabic scope name only — the rest of the
+                  line (Filed by/date) stays plain LTR-safe text either side of it. */}
+              <p dir="auto" className="text-[11px] text-stone-400">
+                {scopeLabel ? <bdi>{scopeLabel}</bdi> : null}
+                {scopeLabel ? ' • ' : ''}
                 Filed by {author?.name || 'Unknown'}
                 {r.created_at ? ` • ${new Date(r.created_at).toLocaleDateString()}` : ''}
               </p>
