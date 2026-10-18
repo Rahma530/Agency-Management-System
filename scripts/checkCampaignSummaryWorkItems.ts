@@ -1,0 +1,132 @@
+import { buildAnalyzeInput, validateAnalyzeOutput, validateCampaignSummaryPayload } from '../supabase/functions/ai-router/taskRegistry';
+
+const basePayload = {
+  period_current: '2026-10',
+  period_previous: '2026-09',
+  metrics: [{ service: 'media_buying', metric: 'roas', current_value: 3.2, previous_value: 2.8, unit: 'x' }],
+};
+
+// 1) No work_items at all — behaves exactly as before this field existed.
+{
+  const result = validateCampaignSummaryPayload(basePayload);
+  if ('work_items' in result) throw new Error('A payload with no work_items must not gain one.');
+  const input = buildAnalyzeInput(result) as Record<string, unknown>;
+  if ('work_items' in input) throw new Error('buildAnalyzeInput must not add work_items when none was given.');
+  const output = validateAnalyzeOutput({ findings: ['x'], recommendations: [] }, 'brief', input);
+  if (!output.ok || 'work_items' in (output.value as Record<string, unknown>)) {
+    throw new Error('validateAnalyzeOutput must not add work_items to its output when none was in the input.');
+  }
+}
+
+const workItems = [
+  { id: 'a', employee: 'Sara', text: 'Finished the onboarding deck for the client.' },
+  { id: 'b', employee: 'Omar', text: 'Published 3 social posts and replied to comments.' },
+  { id: 'c', employee: 'Sara', text: 'Fixed a tracking pixel issue on the landing page.' },
+];
+
+// 2) A normal batch: payload/input round-trip the ids+text, output is built from them.
+{
+  const result = validateCampaignSummaryPayload({ ...basePayload, work_items: workItems });
+  if (result.work_items?.length !== 3) throw new Error('A valid work_items batch was not accepted.');
+  const input = buildAnalyzeInput(result) as { work_items: typeof workItems };
+  if (input.work_items.length !== 3 || input.work_items[0].text !== workItems[0].text) {
+    throw new Error('buildAnalyzeInput must pass work_items through verbatim.');
+  }
+}
+
+// 3) Missing item in the model's output (dropped, not just reordered) — every input id must
+// still appear in the final value, and the missing one must fall back to its ORIGINAL text, not
+// be deleted or left blank.
+{
+  const result = validateCampaignSummaryPayload({ ...basePayload, work_items: workItems });
+  const input = buildAnalyzeInput(result);
+  const modelOutput = {
+    summary: 'All good.',
+    by_service: [{ service: 'media_buying', text: 'ROAS improved.' }],
+    recommendations: [],
+    // "b" is missing entirely — simulates the model dropping an item.
+    work_items: [
+      { id: 'a', text: 'أنهت سارة تصميم ملف التعريف للعميل.' },
+      { id: 'c', text: 'عالجت سارة مشكلة في بكسل التتبع على صفحة الهبوط.' },
+    ],
+  };
+  const validation = validateAnalyzeOutput(modelOutput, 'detailed', input);
+  if (!validation.ok) throw new Error('A valid detailed output with a partially-missing work_items batch was rejected.');
+  const value = validation.value as { work_items: { id: string; text: string }[] };
+  if (value.work_items.length !== 3) throw new Error('A missing work_items id must still appear in the final output (never dropped).');
+  const byId = new Map(value.work_items.map((w) => [w.id, w.text]));
+  if (byId.get('a') !== 'أنهت سارة تصميم ملف التعريف للعميل.') throw new Error('A present id\'s rephrased text was not kept.');
+  if (byId.get('b') !== workItems[1].text) throw new Error('A missing id must fall back to its exact original source text.');
+  if (byId.get('c') !== 'عالجت سارة مشكلة في بكسل التتبع على صفحة الهبوط.') throw new Error('A present id\'s rephrased text was not kept.');
+}
+
+// 4) Output order differs from input order — the final value must still be in the ORIGINAL input
+// order (never left to whatever order the model answered in), so a caller can render items
+// predictably without re-sorting.
+{
+  const result = validateCampaignSummaryPayload({ ...basePayload, work_items: workItems });
+  const input = buildAnalyzeInput(result);
+  const modelOutput = {
+    findings: ['x'],
+    recommendations: [],
+    work_items: [
+      { id: 'c', text: 'rephrased c' },
+      { id: 'a', text: 'rephrased a' },
+      { id: 'b', text: 'rephrased b' },
+    ],
+  };
+  const validation = validateAnalyzeOutput(modelOutput, 'brief', input);
+  if (!validation.ok) throw new Error('A reordered-but-complete work_items batch was rejected.');
+  const value = validation.value as { work_items: { id: string; text: string }[] };
+  if (value.work_items.map((w) => w.id).join(',') !== 'a,b,c') {
+    throw new Error('validateAnalyzeOutput must return work_items in the original input order, not the model\'s order.');
+  }
+}
+
+// 5) A long text item is rephrased (and can legitimately get shorter or longer in a real model
+// reply) but must never be silently dropped just because it's long — only an outright-missing id
+// triggers the original-text fallback, not length.
+{
+  const longText = 'بند طويل جدا. '.repeat(50);
+  const result = validateCampaignSummaryPayload({ ...basePayload, work_items: [{ id: 'z', text: longText }] });
+  const input = buildAnalyzeInput(result);
+  const validation = validateAnalyzeOutput(
+    { findings: [], recommendations: [], work_items: [{ id: 'z', text: 'إعادة صياغة أقصر لنفس البند.' }] },
+    'brief',
+    input
+  );
+  if (!validation.ok) throw new Error('A rephrased-and-shortened long item was wrongly rejected.');
+  const value = validation.value as { work_items: { id: string; text: string }[] };
+  if (value.work_items[0].text !== 'إعادة صياغة أقصر لنفس البند.') {
+    throw new Error('A long item\'s legitimately-shortened rephrasing must be kept, not replaced by the original.');
+  }
+}
+
+// Payload-level validation regressions: cap, shape, and uniqueness.
+{
+  let rejected = false;
+  try { validateCampaignSummaryPayload({ ...basePayload, work_items: [] }); } catch { rejected = true; }
+  if (!rejected) throw new Error('An empty work_items array must be rejected (omit the field instead).');
+}
+{
+  let rejected = false;
+  try {
+    validateCampaignSummaryPayload({
+      ...basePayload,
+      work_items: Array.from({ length: 31 }, (_, i) => ({ id: String(i), text: 'x' })),
+    });
+  } catch { rejected = true; }
+  if (!rejected) throw new Error('An oversized work_items batch was accepted — the caller must batch into smaller calls.');
+}
+{
+  let rejected = false;
+  try { validateCampaignSummaryPayload({ ...basePayload, work_items: [{ id: 'a', text: 'x' }, { id: 'a', text: 'y' }] }); } catch { rejected = true; }
+  if (!rejected) throw new Error('Duplicate work_items ids within one batch were accepted.');
+}
+{
+  let rejected = false;
+  try { validateCampaignSummaryPayload({ ...basePayload, work_items: [{ id: 'a', text: 'x', unexpected: 'y' }] }); } catch { rejected = true; }
+  if (!rejected) throw new Error('An unknown field inside a work_items entry was accepted.');
+}
+
+console.log('OK: CAMPAIGN_SUMMARY work_items are capped per batch, passed through verbatim, and reconciled id-complete and in original order, with missing ids falling back to their exact original text.');

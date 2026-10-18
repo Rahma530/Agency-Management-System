@@ -19,6 +19,7 @@ import {
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
 import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
+import { CampaignSummaryWorkItem } from './ComparisonDisplay';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
 // so the same values drive both this component's own Sources/Draft logic AND the Comparison
@@ -66,7 +67,10 @@ interface Props {
   // so this component stays decoupled from CampaignSummaryPayload's shape. The current
   // creatorNote text is passed as an argument (not lifted to ReportsHub as its own controlled
   // prop) since this component is the only owner of that textarea's live value.
-  onRequestAiSummary?: (creatorNote?: string) => Promise<{ ok: true; text: string } | { ok: false; message: string }>;
+  onRequestAiSummary?: (
+    creatorNote?: string,
+    workItems?: CampaignSummaryWorkItem[]
+  ) => Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }>;
   // Bumped by ReportsHub whenever the top-bar scope/period changes to a combination with no
   // matching draft — tells this workspace to confirm-discard (if needed) and reset to its empty,
   // new-draft state. A matching draft instead arrives via openReportId as usual.
@@ -339,20 +343,41 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearSignal]);
 
+  // The saved report's own work-log source items — rephrased (never shortened/dropped) by AI
+  // Summary. Sent to ReportsHub in batches of ~25 (see runWorkItemBatches/buildWorkItemBatches in
+  // ComparisonDisplay.tsx), which this component has no need to know about — it only builds and
+  // hands over the full ordered list.
+  const workItemsForAiSummary: CampaignSummaryWorkItem[] = useMemo(
+    () =>
+      sources
+        .filter((source) => source.source_kind === 'daily_log')
+        .map((source) => ({
+          id: source.source_id,
+          employee: names.get(source.user_id) || undefined,
+          text: String(source.snapshot.summary_text || '').trim(),
+        }))
+        .filter((item) => item.text),
+    [sources, names]
+  );
+
   const requestAiSummary = async () => {
     if (!onRequestAiSummary || busy) return;
     if (hasUnsavedChanges && !window.confirm('Replace the current draft text with the AI Summary? Your unsaved manual edits will be lost.')) return;
     setBusy(true);
     setMessage(null);
     try {
-      const result = await onRequestAiSummary(creatorNote);
+      const result = await onRequestAiSummary(creatorNote, workItemsForAiSummary);
       if (!result.ok) {
         setMessage(result.message);
         return;
       }
       setDraftText(result.text);
       setPreviewManifest(null);
-      setMessage('AI Summary inserted into the draft. Save a version to keep it.');
+      setMessage(
+        result.partial
+          ? 'AI Summary inserted into the draft, but some work-log batches could not be rephrased and were kept in their original wording. Save a version to keep it.'
+          : 'AI Summary inserted into the draft. Save a version to keep it.'
+      );
     } finally {
       setBusy(false);
     }

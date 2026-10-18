@@ -34,8 +34,10 @@ import {
   FiledReportsList,
   describeComparisonScope,
   buildCampaignSummaryPayload,
+  runWorkItemBatches,
   CampaignSummaryPayload,
   CampaignSummaryGenerationResult,
+  CampaignSummaryWorkItem,
 } from './reporting/ComparisonDisplay';
 import { DailyLogEditModal } from './DailyLogEditModal';
 import { ReportDraftWorkspace, ReportScopeKind } from './reporting/ReportDraftWorkspace';
@@ -400,14 +402,35 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 
   // Draft section's sole AI action — reuses the exact same ensure/generate path as the
   // Comparison section's own button, then formats the result into plain draft text.
-  const requestDraftAiSummary = async (creatorNote?: string): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
+  // workItems (optional): the draft's own work-log lines, one call per ~25-item batch, strictly
+  // sequential — see runWorkItemBatches/buildWorkItemBatches in ComparisonDisplay.tsx for why (a
+  // single request can't safely rephrase 80+ lines, and a flat cap would silently drop the rest
+  // of a long period instead). Every batch call reuses the SAME comparison/metrics payload — only
+  // its work_items slice differs — so the comparison is only ensured/generated once up front.
+  const requestDraftAiSummary = async (
+    creatorNote?: string,
+    workItems?: CampaignSummaryWorkItem[]
+  ): Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }> => {
     if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
     const comparison = await ensureComparisonForSummary(reportMode);
     if (!comparison) return { ok: false, message: 'Could not generate a comparison for this scope/period yet.' };
-    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter, creatorNote));
-    if (!result.ok) return { ok: false, message: result.message };
-    const sections = [result.result.summary, ...result.result.by_service.map((entry) => entry.text)];
-    return { ok: true, text: sections.join('\n\n') };
+
+    if (!workItems || workItems.length === 0) {
+      const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter, creatorNote));
+      if (!result.ok) return { ok: false, message: result.message };
+      const sections = [result.result.summary, ...result.result.by_service.map((entry) => entry.text)];
+      return { ok: true, text: sections.join('\n\n') };
+    }
+
+    const { items, anyBatchFellBack, summaryResult } = await runWorkItemBatches(workItems, (batch) =>
+      onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter, creatorNote, batch))
+    );
+    const sections = [
+      ...(summaryResult ? [summaryResult.summary, ...summaryResult.by_service.map((entry) => entry.text)] : []),
+      ...items.map((item) => item.text),
+    ];
+    if (sections.length === 0) return { ok: false, message: 'The AI Summary could not be generated for any batch.' };
+    return { ok: true, text: sections.join('\n\n'), partial: anyBatchFellBack };
   };
 
   const visibleReports = useMemo(

@@ -63,6 +63,17 @@ export interface CampaignSummaryMetricPoint {
   unit: string;
 }
 
+// A single work-log line the Draft section's AI Summary rephrases — see buildWorkItemBatches
+// below for why this is always sent in batches of at most WORK_ITEM_BATCH_SIZE, never all at
+// once. id must be stable and unique within the whole draft (report_source_items.source_id),
+// never re-derived from the text itself.
+export interface CampaignSummaryWorkItem {
+  id: string;
+  client?: string;
+  employee?: string;
+  text: string;
+}
+
 export interface CampaignSummaryPayload {
   period_current: string;
   period_previous: string | null;
@@ -72,12 +83,94 @@ export interface CampaignSummaryPayload {
   // reaches a provider. Omitted entirely for a payload with nothing to send, so every pre-existing
   // call site that never passes one behaves exactly as before this field existed.
   creator_note?: string;
+  // Omitted for every pre-existing call site (metrics-only AI Summary/Unified Report). Capped at
+  // WORK_ITEM_BATCH_SIZE server-side too (taskRegistry.ts's MAX_WORK_ITEMS) — this client only
+  // ever sends batches at or under that cap; see buildWorkItemBatches/runWorkItemBatches below.
+  work_items?: CampaignSummaryWorkItem[];
 }
 
 export interface CampaignSummaryDetailedResult {
   summary: string;
   by_service: { service: string; text: string }[];
   recommendations: string[];
+  // Present only when the request included work_items — same length and ids as the batch sent,
+  // in the original order, rephrased text (ai-router falls back to each item's original text for
+  // any id the model dropped, so this is always complete — see runWorkItemBatches below for what
+  // happens if the whole call itself fails rather than just mis-answering).
+  work_items?: { id: string; text: string }[];
+}
+
+// Draft AI Summary work-item batching: a long reporting period can have 80+ source work-log
+// lines, far past what one provider call can safely rephrase/validate in one response — so the
+// caller (not ai-router) splits them into batches of at most this many, sends them ONE BATCH PER
+// CALL, strictly sequentially (never in parallel, so one slow/failing batch can't race another and
+// so provider rate limits see one request at a time), and concatenates every batch's results, in
+// order, into the final rephrased text. ai-router's own per-batch completeness check already
+// guarantees no item is dropped WITHIN a batch that answers successfully; runWorkItemBatches below
+// adds the same guarantee ACROSS batches for a batch that fails outright (network error, every
+// provider down, a non-JSON/wrongly-shaped reply) by retrying once, then falling back to that
+// batch's original text — never losing an earlier or later batch's already-good results.
+export const WORK_ITEM_BATCH_SIZE = 25;
+
+export function buildWorkItemBatches(items: CampaignSummaryWorkItem[]): CampaignSummaryWorkItem[][] {
+  const batches: CampaignSummaryWorkItem[][] = [];
+  for (let i = 0; i < items.length; i += WORK_ITEM_BATCH_SIZE) {
+    batches.push(items.slice(i, i + WORK_ITEM_BATCH_SIZE));
+  }
+  return batches;
+}
+
+export interface WorkItemBatchRunResult {
+  // Every input item, each with its final rephrased (or, on fallback, original) text, in the
+  // original overall order — safe to render/join directly.
+  items: { id: string; text: string }[];
+  // True if at least one batch could not be rephrased at all (both its live attempt and its one
+  // retry failed) and fell back to that batch's original text — the caller surfaces this so the
+  // person knows some lines weren't actually rephrased, even though nothing was lost.
+  anyBatchFellBack: boolean;
+  // The rest of a successful call's output (summary/by_service/recommendations) — taken from the
+  // FIRST batch that answered successfully, since every batch carries the same metrics/period and
+  // would otherwise just repeat the same analysis once per batch.
+  summaryResult?: Omit<CampaignSummaryDetailedResult, 'work_items'>;
+}
+
+// Runs every batch of buildWorkItemBatches sequentially (await before starting the next — never
+// Promise.all) through `call`, aggregating as described on WorkItemBatchRunResult above. A batch
+// whose call throws or returns ok:false is retried once; if the retry also fails, that batch's
+// items fall back to their own original text (sourced from `items`, never dropped) and the run
+// continues with the next batch regardless — one bad batch never loses any other batch's results.
+export async function runWorkItemBatches(
+  items: CampaignSummaryWorkItem[],
+  call: (batch: CampaignSummaryWorkItem[]) => Promise<CampaignSummaryGenerationResult>
+): Promise<WorkItemBatchRunResult> {
+  const batches = buildWorkItemBatches(items);
+  const resultItems: { id: string; text: string }[] = [];
+  let anyBatchFellBack = false;
+  let summaryResult: Omit<CampaignSummaryDetailedResult, 'work_items'> | undefined;
+
+  for (const batch of batches) {
+    let outcome: CampaignSummaryGenerationResult | null = null;
+    for (let attempt = 0; attempt < 2 && !(outcome && outcome.ok); attempt += 1) {
+      try {
+        outcome = await call(batch);
+      } catch {
+        outcome = { ok: false, message: 'This batch could not be reached.' };
+      }
+    }
+    if (outcome?.ok) {
+      if (!summaryResult) {
+        const { work_items, ...rest } = outcome.result;
+        summaryResult = rest;
+      }
+      const byId = new Map((outcome.result.work_items || []).map((w) => [w.id, w.text]));
+      batch.forEach((item) => resultItems.push({ id: item.id, text: byId.get(item.id) ?? item.text }));
+    } else {
+      anyBatchFellBack = true;
+      batch.forEach((item) => resultItems.push({ id: item.id, text: item.text }));
+    }
+  }
+
+  return { items: resultItems, anyBatchFellBack, summaryResult };
 }
 
 // Combined-scope item D: matches ai-router's UNIFIED_CLIENT_REPORT task output shape
@@ -153,7 +246,8 @@ function filterMetricsByViewer<T extends object>(metrics: T, serviceFilter: Serv
 export function buildCampaignSummaryPayload(
   comparison: ClientComparisonRecord,
   serviceFilter?: ServiceType[],
-  creatorNote?: string
+  creatorNote?: string,
+  workItems?: CampaignSummaryWorkItem[]
 ): CampaignSummaryPayload {
   const metrics: CampaignSummaryMetricPoint[] = [];
 
@@ -185,6 +279,7 @@ export function buildCampaignSummaryPayload(
     // Final sanitizing/bounding happens server-side (taskRegistry.ts's
     // validateCampaignSummaryPayload) — this is just "don't send an empty field."
     ...(creatorNote?.trim() ? { creator_note: creatorNote.trim() } : {}),
+    ...(workItems?.length ? { work_items: workItems } : {}),
   };
 }
 
