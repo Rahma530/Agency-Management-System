@@ -67,6 +67,11 @@ export interface CampaignSummaryPayload {
   period_current: string;
   period_previous: string | null;
   metrics: CampaignSummaryMetricPoint[];
+  // Optional editorial guidance (focus/tone/ordering) for the AI Summary draft — never a source
+  // of facts/numbers; ai-router's own taskRegistry.ts sanitizes and bounds it before it ever
+  // reaches a provider. Omitted entirely for a payload with nothing to send, so every pre-existing
+  // call site that never passes one behaves exactly as before this field existed.
+  creator_note?: string;
 }
 
 export interface CampaignSummaryDetailedResult {
@@ -147,7 +152,8 @@ function filterMetricsByViewer<T extends object>(metrics: T, serviceFilter: Serv
 // follower_growth's sign vs. the DeltaBadge already on screen (fixed alongside this phase).
 export function buildCampaignSummaryPayload(
   comparison: ClientComparisonRecord,
-  serviceFilter?: ServiceType[]
+  serviceFilter?: ServiceType[],
+  creatorNote?: string
 ): CampaignSummaryPayload {
   const metrics: CampaignSummaryMetricPoint[] = [];
 
@@ -176,6 +182,9 @@ export function buildCampaignSummaryPayload(
     period_current: comparison.period_current,
     period_previous: comparison.period_previous ?? null,
     metrics,
+    // Final sanitizing/bounding happens server-side (taskRegistry.ts's
+    // validateCampaignSummaryPayload) — this is just "don't send an empty field."
+    ...(creatorNote?.trim() ? { creator_note: creatorNote.trim() } : {}),
   };
 }
 
