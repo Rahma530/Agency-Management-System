@@ -63,8 +63,10 @@ interface Props {
   // REPORT_REWRITE, and apply_report_ai_suggestion for any already-pending suggestion, are
   // untouched). Resolves to replacement draft text, or a safe message on failure — ReportsHub
   // owns ensuring/generating the underlying comparison and calling onGenerateAiSummary itself,
-  // so this component stays decoupled from CampaignSummaryPayload's shape.
-  onRequestAiSummary?: () => Promise<{ ok: true; text: string } | { ok: false; message: string }>;
+  // so this component stays decoupled from CampaignSummaryPayload's shape. The current
+  // creatorNote text is passed as an argument (not lifted to ReportsHub as its own controlled
+  // prop) since this component is the only owner of that textarea's live value.
+  onRequestAiSummary?: (creatorNote?: string) => Promise<{ ok: true; text: string } | { ok: false; message: string }>;
 }
 
 const today = () => formatLocalCalendarDate(new Date());
@@ -327,7 +329,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     setBusy(true);
     setMessage(null);
     try {
-      const result = await onRequestAiSummary();
+      const result = await onRequestAiSummary(creatorNote);
       if (!result.ok) {
         setMessage(result.message);
         return;
@@ -504,7 +506,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             <input type="date" value={periodStart} onChange={(event) => { onPeriodStartChange(event.target.value); setPreviewManifest(null); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
             <input type="date" value={periodEnd} onChange={(event) => { onPeriodEndChange(event.target.value); setPreviewManifest(null); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
           </div>
-          <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Creator context (stored internally and incorporated professionally in client content)" className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+          <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
           <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}

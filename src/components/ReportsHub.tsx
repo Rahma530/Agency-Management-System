@@ -354,11 +354,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 
   // Draft section's sole AI action — reuses the exact same ensure/generate path as the
   // Comparison section's own button, then formats the result into plain draft text.
-  const requestDraftAiSummary = async (): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
+  const requestDraftAiSummary = async (creatorNote?: string): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
     if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
     const comparison = await ensureComparisonForSummary(reportMode);
     if (!comparison) return { ok: false, message: 'Could not generate a comparison for this scope/period yet.' };
-    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter));
+    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter, creatorNote));
     if (!result.ok) return { ok: false, message: result.message };
     const sections = [result.result.summary, ...result.result.by_service.map((entry) => entry.text)];
     return { ok: true, text: sections.join('\n\n') };
