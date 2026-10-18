@@ -19,6 +19,7 @@ import {
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
 import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
+import { extractLinks } from '../../lib/textLinks';
 import { CampaignSummaryWorkItem, formatPeriodLabel } from './ComparisonDisplay';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
@@ -410,17 +411,25 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // the NEW snapshot right away without requiring "حفظ كمسودة جديدة" first; otherwise from the
   // open report's own saved ledger (`sources`), as before. Sent to ReportsHub in batches of ~25
   // (see runWorkItemBatches/buildWorkItemBatches in ComparisonDisplay.tsx), which this component
-  // has no need to know about — it only builds and hands over the full ordered list.
+  // has no need to know about — it only builds and hands over the full ordered list. Any URL
+  // inside a work log's text is pulled out here (extractLinks) into `links` BEFORE this item ever
+  // reaches AI Summary — ai-router only ever sees/rephrases `text`, never the link, and
+  // runWorkItemBatches reattaches `links` unchanged by id once the rephrased text comes back (see
+  // CampaignSummaryWorkItem's own comment).
   const workItemsForAiSummary: CampaignSummaryWorkItem[] = useMemo(() => {
     const sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>> =
       previewManifest ? previewManifest.sources : sources;
     return sourceList
       .filter((source) => source.source_kind === 'daily_log')
-      .map((source) => ({
-        id: source.source_id,
-        employee: names.get(source.user_id) || undefined,
-        text: String(source.snapshot.summary_text || '').trim(),
-      }))
+      .map((source) => {
+        const { cleanText, links } = extractLinks(String(source.snapshot.summary_text || '').trim());
+        return {
+          id: source.source_id,
+          employee: names.get(source.user_id) || undefined,
+          text: cleanText,
+          ...(links.length ? { links } : {}),
+        };
+      })
       .filter((item) => item.text);
   }, [previewManifest, sources, names]);
 
