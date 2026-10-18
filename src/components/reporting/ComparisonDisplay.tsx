@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, Sparkles, Download } from 'luc
 import { ClientComparisonRecord, ClientRecord, ReportRecord, ServiceType, UserRecord } from '../../types/database';
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
 import { downloadReportPdf, buildUnifiedReportMetricsTable, PdfParagraph, PdfBulletList } from '../../lib/pdfExport';
+import { reattachLinks } from '../../lib/textLinks';
 
 // ----------------------------------------------------------------------------
 // Shared presentation pieces for a generated ClientComparisonRecord and the ReportRecords filed
@@ -72,6 +73,13 @@ export interface CampaignSummaryWorkItem {
   client?: string;
   employee?: string;
   text: string;
+  // Client-only — URLs extracted (textLinks.ts's extractLinks) out of `text` before this item is
+  // ever built, so AI Summary never sees or can alter them. NEVER sent to ai-router
+  // (buildCampaignSummaryPayload strips it when building the wire payload — ai-router's own
+  // allowlist would reject an unknown "links" field anyway); runWorkItemBatches reattaches these,
+  // unchanged, to whatever text comes back for this item's id (rephrased or, on fallback, the
+  // original), as separate lines pdfExport.ts's own extractLinks later pulls back out.
+  links?: string[];
 }
 
 export interface CampaignSummaryPayload {
@@ -163,10 +171,15 @@ export async function runWorkItemBatches(
         summaryResult = rest;
       }
       const byId = new Map((outcome.result.work_items || []).map((w) => [w.id, w.text]));
-      batch.forEach((item) => resultItems.push({ id: item.id, text: byId.get(item.id) ?? item.text }));
+      batch.forEach((item) => {
+        const rephrased = byId.get(item.id) ?? item.text;
+        resultItems.push({ id: item.id, text: item.links?.length ? reattachLinks(rephrased, item.links) : rephrased });
+      });
     } else {
       anyBatchFellBack = true;
-      batch.forEach((item) => resultItems.push({ id: item.id, text: item.text }));
+      batch.forEach((item) => {
+        resultItems.push({ id: item.id, text: item.links?.length ? reattachLinks(item.text, item.links) : item.text });
+      });
     }
   }
 
@@ -279,7 +292,9 @@ export function buildCampaignSummaryPayload(
     // Final sanitizing/bounding happens server-side (taskRegistry.ts's
     // validateCampaignSummaryPayload) — this is just "don't send an empty field."
     ...(creatorNote?.trim() ? { creator_note: creatorNote.trim() } : {}),
-    ...(workItems?.length ? { work_items: workItems } : {}),
+    // links is client-only (see CampaignSummaryWorkItem's own comment) — stripped here so it can
+    // never reach ai-router, which doesn't know the field and would reject it outright.
+    ...(workItems?.length ? { work_items: workItems.map(({ links, ...rest }) => rest) } : {}),
   };
 }
 
