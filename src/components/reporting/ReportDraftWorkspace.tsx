@@ -449,8 +449,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
       title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
       subtitle: `${subjectName} — ${periodRange}`,
+      // No "Report Details" block (scope/responsible/evidence count) — the header above already
+      // carries everything this PDF is meant to show: client/employee name + period.
       paragraphs: [
-        { heading: 'Report Details', body: `Scope: ${selectedReport.employee_scope_mode || selectedReport.scope_type || 'legacy'}\nResponsible: ${names.get(selectedReport.responsible_user_id || '') || 'Not assigned'}\nEvidence: ${sources.length} saved source item(s)${selectedReport.type === 'client' ? '' : ` · Source hash: ${selectedReport.source_hash || 'legacy'}`}` },
         { heading: 'Final Report', body: currentVersion.content_text },
       ],
     });
