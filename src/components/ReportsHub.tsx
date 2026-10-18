@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2, X } from 'lucide-react';
+import { BarChart3, TrendingUp, FileText, AlertTriangle, ClipboardList, Search, Edit2, Trash2, X } from 'lucide-react';
 import {
   ClientRecord,
   UserRecord,
@@ -179,6 +179,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const [reportSearch, setReportSearch] = useState('');
   const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'draft' | 'final'>('all');
   const [selectedComparisonId, setSelectedComparisonId] = useState('');
+  const [workspaceClearToken, setWorkspaceClearToken] = useState(0);
 
   const handleSaveEditedDailyLog = async (updates: {
     date: string;
@@ -206,6 +207,20 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   );
 
   const openFiledReport = (report: ReportRecord) => {
+    if (report.scope_type === 'client' || report.scope_type === 'employee') {
+      if (report.scope_type === 'client') {
+        setScopeKind('client');
+        setClientId(report.client_id || '');
+      } else {
+        setScopeKind(report.subject_user_id === currentUser.id ? 'own' : 'employee');
+        setSubjectUserId(report.subject_user_id || '');
+      }
+      const [periodFrom, periodTo] = (report.period || '').split('_');
+      if (periodFrom && periodTo) {
+        setPeriodStart(periodFrom);
+        setPeriodEnd(periodTo);
+      }
+    }
     setWorkspaceReportId(report.id);
     setSelectedLegacyReport(report.scope_type === 'client' || report.scope_type === 'employee' ? null : report);
   };
@@ -258,6 +273,37 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       : scopeKind === 'own'
       ? { type: 'agent', agentId: currentUser.id }
       : (subjectUserId ? { type: 'agent', agentId: subjectUserId } : null);
+
+  // Top bar is the sole scope/period reference: changing it here looks for a matching draft
+  // (same scope + period) and opens it automatically, or clears the workspace to its empty state.
+  const topBarEffectiveScopeType: 'client' | 'employee' = scopeKind === 'client' ? 'client' : 'employee';
+  const topBarEffectiveSubjectUserId = scopeKind === 'own' ? currentUser.id : subjectUserId;
+  const matchingWorkspaceReportId = useMemo(() => {
+    if (topBarEffectiveScopeType === 'client' ? !clientId : !topBarEffectiveSubjectUserId) return null;
+    const periodKey = `${periodStart}_${periodEnd}`;
+    const candidates = reports
+      .filter(
+        (r) =>
+          (r.scope_type === 'client' || r.scope_type === 'employee') &&
+          !r.archived_at &&
+          r.period === periodKey &&
+          (topBarEffectiveScopeType === 'client' ? r.client_id === clientId : r.subject_user_id === topBarEffectiveSubjectUserId)
+      )
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    return candidates[0]?.id || null;
+  }, [reports, topBarEffectiveScopeType, clientId, topBarEffectiveSubjectUserId, periodStart, periodEnd]);
+
+  const lastSyncedScopeKey = useRef('');
+  useEffect(() => {
+    const scopeKey = `${topBarEffectiveScopeType}:${clientId}:${topBarEffectiveSubjectUserId}:${periodStart}:${periodEnd}`;
+    if (lastSyncedScopeKey.current === scopeKey) return;
+    lastSyncedScopeKey.current = scopeKey;
+    if (matchingWorkspaceReportId) {
+      setWorkspaceReportId(matchingWorkspaceReportId);
+    } else {
+      setWorkspaceClearToken((n) => n + 1);
+    }
+  }, [matchingWorkspaceReportId, topBarEffectiveScopeType, clientId, topBarEffectiveSubjectUserId, periodStart, periodEnd]);
 
   // ======================================================================
   // Comparison — same resolvedScope as Setup, its own two independently editable periods (A =
@@ -469,13 +515,9 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
       )}
 
-      {/* 1) Setup: scope + period, shared by Sources/Draft and Comparison below. */}
-      <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <Users className="w-4 h-4 text-purple-400" />
-          <span>Setup</span>
-        </h3>
-
+      {/* Single top bar: the sole scope + period reference for the whole page (Sources/Draft,
+          Comparison, and the matching/auto-open behavior above all key off these controls). */}
+      <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setScopeKind('own')}
@@ -566,6 +608,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         periodStart={periodStart} onPeriodStartChange={setPeriodStart}
         periodEnd={periodEnd} onPeriodEndChange={setPeriodEnd}
         openReportId={workspaceReportId} onOpenReportHandled={() => setWorkspaceReportId(null)}
+        clearSignal={workspaceClearToken}
         onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
         onRequestAiSummary={onGenerateAiSummary ? requestDraftAiSummary : undefined}
       />
