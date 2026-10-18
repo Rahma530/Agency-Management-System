@@ -6398,6 +6398,7 @@ export default function App() {
                   extraNotes={extraNotes}
                   tasks={tasks}
                   taskAssignees={taskAssignees}
+                  platformConnections={platformConnections}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}

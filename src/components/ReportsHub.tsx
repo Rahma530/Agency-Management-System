@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2, X } from 'lucide-react';
 import {
   ClientRecord,
@@ -11,6 +11,7 @@ import {
   ServiceType,
   TaskRecord,
   TaskAssigneeRecord,
+  PlatformConnectionRecord,
 } from '../types/database';
 import {
   ComparisonGranularity,
@@ -27,20 +28,29 @@ import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { getTodayStr } from '../lib/employeeWork';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { canSelectAnyReportAgent, isSelectableReportAgent } from '../lib/reportAgentEligibility';
-import { PeriodSelector } from './reporting/PeriodSelector';
+import { EmployeeClientScopeMode } from '../lib/reportDraftSources';
 import {
   ComparisonCard,
   FiledReportsList,
-  DirectAiSummaryPanel,
   describeComparisonScope,
+  buildCampaignSummaryPayload,
   CampaignSummaryPayload,
   CampaignSummaryGenerationResult,
 } from './reporting/ComparisonDisplay';
 import { DailyLogEditModal } from './DailyLogEditModal';
-import { ReportDraftWorkspace } from './reporting/ReportDraftWorkspace';
+import { ReportDraftWorkspace, ReportScopeKind } from './reporting/ReportDraftWorkspace';
 
-type ReportsHubScope = 'client' | 'own' | 'agent';
-type ReportsHubSection = 'create' | 'workspace' | 'saved' | 'archived' | 'activity';
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function daysBetweenIso(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+}
 
 interface ReportsHubProps {
   currentUser: UserRecord;
@@ -55,6 +65,8 @@ interface ReportsHubProps {
   // — never used for scoping/filtering anything else in this hub.
   tasks?: TaskRecord[];
   taskAssignees?: TaskAssigneeRecord[];
+  // Comparison section's media_buying/social_media gating — see unconnectedServices below.
+  platformConnections?: PlatformConnectionRecord[];
   onGenerateComparison: (
     scope: ReportScope,
     mode: ReportMode,
@@ -63,7 +75,8 @@ interface ReportsHubProps {
   ) => Promise<ClientComparisonRecord | null>;
   onGenerateReport: (comparisonId: string, period: string) => Promise<void>;
   // Phase 4 (AI Orchestrator): reuses this hub's existing nav-level access gate. The single AI
-  // action in Create Report is bound to the selected scope, mode, and period controls below.
+  // action on this page is bound to the selected scope/period controls below, both for the
+  // Comparison section's own button and for "AI Summary" inside the Draft section.
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
   onUpdateDailyLog: (
     logId: string,
@@ -81,6 +94,11 @@ interface ReportsHubProps {
 // generation ClientDashboard already offers, so a client-scoped report can be started from
 // either surface. Available to every team lead and agent role plus Executive/Head of Technical;
 // gated at the nav level via the 'reports' AppModuleId in data/roles.ts.
+//
+// Single unified page (no Create/Workspace/Saved/Archived tabs): Setup (scope+period+Pull
+// sources) -> Sources (work logs + merged daily-activity feed) -> Comparison (same scope, its own
+// two editable periods A/B) -> Draft (edit + AI Summary) -> Save/Approve/PDF/Archive -> Saved +
+// Archived reports list, in that order, all on one scroll.
 export const ReportsHub: React.FC<ReportsHubProps> = ({
   currentUser,
   users,
@@ -92,6 +110,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   extraNotes = [],
   tasks = [],
   taskAssignees = [],
+  platformConnections = [],
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
@@ -156,8 +175,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const [dailyLogActionError, setDailyLogActionError] = useState<string | null>(null);
   const [workspaceReportId, setWorkspaceReportId] = useState<string | null>(null);
   const [selectedLegacyReport, setSelectedLegacyReport] = useState<ReportRecord | null>(null);
-  const [activeSection, setActiveSection] = useState<ReportsHubSection>('create');
-  const [workspaceContext, setWorkspaceContext] = useState<'create' | 'saved' | 'archived' | null>(null);
+  const [reportListFilter, setReportListFilter] = useState<'all' | 'active' | 'archived'>('all');
   const [reportSearch, setReportSearch] = useState('');
   const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'draft' | 'final'>('all');
   const [selectedComparisonId, setSelectedComparisonId] = useState('');
@@ -188,47 +206,18 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   );
 
   const openFiledReport = (report: ReportRecord) => {
-    if (report.scope_type === 'client' || report.scope_type === 'employee') {
-      const context = report.archived_at ? 'archived' : 'saved';
-      setActiveSection(context);
-      setWorkspaceContext(context);
-      setWorkspaceReportId(report.id);
-      setSelectedLegacyReport(null);
-      return;
-    }
-    setSelectedLegacyReport(report);
+    setWorkspaceReportId(report.id);
+    setSelectedLegacyReport(report.scope_type === 'client' || report.scope_type === 'employee' ? null : report);
   };
 
   const handleWorkspaceReportChanged = (report: ReportRecord) => {
     onReportChanged(report);
-    if (workspaceContext === 'create') return;
-    const context = report.archived_at ? 'archived' : 'saved';
-    setActiveSection(context);
-    setWorkspaceContext(context);
     setWorkspaceReportId(report.id);
   };
 
   const handleWorkspaceReportDeleted = (reportId: string) => {
     onReportDeleted(reportId);
     setWorkspaceReportId(null);
-    setWorkspaceContext(null);
-  };
-
-  const selectSection = (section: ReportsHubSection) => {
-    if (workspaceContext && section !== workspaceContext
-      && !window.confirm('Close the open report workspace? Make sure any editor changes are saved first.')) return;
-    setActiveSection(section);
-    // The dedicated "Report Workspace" tab always opens straight into a fresh draft — same
-    // 'create' context the old toggle button used to open, just reachable as its own visible
-    // tab now instead of behind a secondary "Create from activity sources" button.
-    if (section === 'workspace') {
-      setWorkspaceContext('create');
-      return;
-    }
-    if (section !== workspaceContext) {
-      setWorkspaceContext(null);
-      setWorkspaceReportId(null);
-    }
   };
 
   const myClients = useMemo(
@@ -244,53 +233,68 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     [users, currentUser]
   );
 
-  const [scope, setScope] = useState<ReportsHubScope>('own');
-  const [selectedClientId, setSelectedClientId] = useState('');
+  // ======================================================================
+  // Setup — one scope, one from-to period, shared by Sources/Draft (ReportDraftWorkspace) AND
+  // Comparison below (resolvedScope). No second scope/period picker anywhere else on this page.
+  // ======================================================================
+  const [scopeKind, setScopeKind] = useState<ReportScopeKind>('client');
+  const [clientId, setClientId] = useState('');
+  const [subjectUserId, setSubjectUserId] = useState('');
+  const [employeeScopeMode, setEmployeeScopeMode] = useState<EmployeeClientScopeMode | ''>('');
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  const todayIso = useMemo(() => getTodayStr(), []);
+  const [periodStart, setPeriodStart] = useState(`${todayIso.slice(0, 8)}01`);
+  const [periodEnd, setPeriodEnd] = useState(todayIso);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
 
-  // Module 14: narrows the "Specific Client" select's options only — myClients itself (used for
-  // the "All My Clients" count and the anomalies panel below) stays unfiltered.
   const searchedClients = useMemo(
     () => myClients.filter((c) => matchesClientQuery(c, clientSearchQuery)),
     [myClients, clientSearchQuery]
   );
-  const [selectedAgentId, setSelectedAgentId] = useState('');
+
+  const resolvedScope: ReportScope | null =
+    scopeKind === 'client'
+      ? (clientId ? { type: 'client', clientId } : null)
+      : scopeKind === 'own'
+      ? { type: 'agent', agentId: currentUser.id }
+      : (subjectUserId ? { type: 'agent', agentId: subjectUserId } : null);
+
+  // ======================================================================
+  // Comparison — same resolvedScope as Setup, its own two independently editable periods (A =
+  // current, B = previous). Defaults: A mirrors Setup's period, B is the same-length period right
+  // before A — recomputed only until the viewer actually edits either Comparison date field.
+  // ======================================================================
   const [reportMode, setReportMode] = useState<ReportMode>('comparison');
-  const [granularity, setGranularity] = useState<ComparisonGranularity | 'custom'>('monthly');
   const [customCurrentRange, setCustomCurrentRange] = useState<DateRange>({ start: '', end: '' });
   const [customPreviousRange, setCustomPreviousRange] = useState<DateRange>({ start: '', end: '' });
+  const comparisonPeriodTouched = useRef(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingReportForComparisonId, setGeneratingReportForComparisonId] = useState<string | null>(null);
 
-  const isSinglePeriod = reportMode === 'period_summary';
+  useEffect(() => {
+    if (comparisonPeriodTouched.current) return;
+    if (!periodStart || !periodEnd || periodStart > periodEnd) return;
+    setCustomCurrentRange({ start: periodStart, end: periodEnd });
+    const lengthDays = daysBetweenIso(periodStart, periodEnd) + 1;
+    const prevEnd = addDaysIso(periodStart, -1);
+    const prevStart = addDaysIso(prevEnd, -(lengthDays - 1));
+    setCustomPreviousRange({ start: prevStart, end: prevEnd });
+  }, [periodStart, periodEnd]);
 
-  const resolvedScope: ReportScope | null =
-    scope === 'client'
-      ? selectedClientId
-        ? { type: 'client', clientId: selectedClientId }
-        : null
-      : scope === 'own'
-      ? { type: 'agent', agentId: currentUser.id }
-      : selectedAgentId
-      ? { type: 'agent', agentId: selectedAgentId }
-      : null;
+  const isSinglePeriod = reportMode === 'period_summary';
 
   const handleGenerate = async () => {
     if (!resolvedScope) return;
-    if (granularity === 'custom') {
-      const missingCurrent = !customCurrentRange.start || !customCurrentRange.end;
-      const missingPrevious = !isSinglePeriod && (!customPreviousRange.start || !customPreviousRange.end);
-      if (missingCurrent || missingPrevious) return;
-    }
+    const missingCurrent = !customCurrentRange.start || !customCurrentRange.end;
+    const missingPrevious = !isSinglePeriod && (!customPreviousRange.start || !customPreviousRange.end);
+    if (missingCurrent || missingPrevious) return;
     setIsGenerating(true);
     try {
       const generated = await onGenerateComparison(
         resolvedScope,
         reportMode,
-        granularity,
-        granularity === 'custom'
-          ? { currentRange: customCurrentRange, previousRange: isSinglePeriod ? undefined : customPreviousRange }
-          : undefined
+        'custom',
+        { currentRange: customCurrentRange, previousRange: isSinglePeriod ? undefined : customPreviousRange }
       );
       if (generated) setSelectedComparisonId(generated.id);
     } finally {
@@ -331,15 +335,13 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   // ClientDashboard.tsx's own DirectAiSummaryPanel — binds reportingEngine.ts's shared
   // ensureComparisonForSummary to whichever scope is currently selected (client or agent), looking
   // it up in visibleComparisons first (already scoped to what this viewer is allowed to see) before
-  // falling through to onGenerateComparison. Returns null with no side effect when no scope is
-  // selected yet, same as PeriodSelector's own canGenerate={!!resolvedScope} silently disabling the
-  // plain generate button in that case.
+  // falling through to onGenerateComparison.
   const ensureComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
     const comparison = resolvedScope
       ? await resolveOrGenerateComparison({
           scope: resolvedScope,
           mode,
-          granularity,
+          granularity: 'custom',
           customCurrentRange,
           customPreviousRange,
           comparisons: visibleComparisons,
@@ -348,6 +350,18 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       : null;
     if (comparison) setSelectedComparisonId(comparison.id);
     return comparison;
+  };
+
+  // Draft section's sole AI action — reuses the exact same ensure/generate path as the
+  // Comparison section's own button, then formats the result into plain draft text.
+  const requestDraftAiSummary = async (): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
+    if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
+    const comparison = await ensureComparisonForSummary(reportMode);
+    if (!comparison) return { ok: false, message: 'Could not generate a comparison for this scope/period yet.' };
+    const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter));
+    if (!result.ok) return { ok: false, message: result.message };
+    const sections = [result.result.summary, ...result.result.by_service.map((entry) => entry.text)];
+    return { ok: true, text: sections.join('\n\n') };
   };
 
   const visibleReports = useMemo(
@@ -361,6 +375,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const filteredReports = useMemo(() => {
     const query = reportSearch.trim().toLowerCase();
     return visibleReports.filter((report) => {
+      if (reportListFilter === 'active' && report.archived_at) return false;
+      if (reportListFilter === 'archived' && !report.archived_at) return false;
       if (reportStatusFilter !== 'all' && report.status !== reportStatusFilter) return false;
       if (!query) return true;
       const author = users.find((user) => user.id === report.generated_by)?.name || '';
@@ -369,12 +385,24 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       return [report.period, report.type, report.status || '', report.scope_type || '', author, client, subject]
         .some((value) => value.toLowerCase().includes(query));
     });
-  }, [visibleReports, reportSearch, reportStatusFilter, users, clients]);
-  const activeReports = filteredReports.filter((report) => !report.archived_at);
-  const archivedReports = filteredReports.filter((report) => !!report.archived_at);
+  }, [visibleReports, reportSearch, reportStatusFilter, reportListFilter, users, clients]);
   const selectedComparison = visibleComparisons.find((comparison) => comparison.id === selectedComparisonId)
     || visibleComparisons[0]
     || null;
+
+  // Platform-connections gating (plan item 3): media_buying/social_media only — seo is computed
+  // from internal tasks, never gated. Looked up only when the resolved scope is a single client
+  // (an agent/all-my-clients aggregate pools many clients, so there's no single connection status
+  // to check — those rows show their numbers unchanged, same as before this change).
+  const unconnectedServices = useMemo(() => {
+    if (!selectedComparison?.client_id) return [];
+    const statusFor = (platformName: string) =>
+      platformConnections.find((row) => row.client_id === selectedComparison.client_id && row.platform_name === platformName)?.status;
+    const result: Array<'media_buying' | 'social_media'> = [];
+    if (statusFor('media_buying') !== 'connected') result.push('media_buying');
+    if (statusFor('social_media') !== 'connected') result.push('social_media');
+    return result;
+  }, [selectedComparison, platformConnections]);
 
   // Anomaly detection (Module 9): a client's own rolling baseline, not the single-period delta
   // ComparisonCard's narrative already shows — computed here (not in App.tsx) since it's pure
@@ -413,32 +441,6 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-b border-stone-800 pb-3">
-        {([
-          ['create', 'Create Report'],
-          ['workspace', 'Report Workspace'],
-          ['saved', `Saved Reports (${visibleReports.filter((report) => !report.archived_at).length})`],
-          ['archived', `Archived Reports (${visibleReports.filter((report) => !!report.archived_at).length})`],
-          ...(canSeeDailyActivityReport ? [['activity', `Activity Sources (${filteredDailyLogs.length})`]] : []),
-        ] as Array<[ReportsHubSection, string]>).map(([section, label]) => (
-          <button
-            key={section}
-            type="button"
-            onClick={() => selectSection(section)}
-            className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${activeSection === section ? 'filled-purple-action bg-purple-600 text-white' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {activeSection === 'create' && <>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px] text-stone-300">
-        <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">1. Calculate</strong>Select scope, report type, and period below. Generate calculates deterministic metrics and persists the comparison row.</div>
-        <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">2. AI review</strong>AI Summary uses that selected, saved comparison. Workspace rewrites remain proposals until explicitly applied as a version.</div>
-        <div className="rounded-xl border border-stone-800 bg-stone-950/30 p-3"><strong className="text-white block mb-1">3. File & reopen</strong>Save versioned drafts in the Workspace. Filed Reports reopens the persisted content, history, and evidence available for each record.</div>
-      </div>
-
       {flaggedClients.length > 0 && (
         <div className="p-4 rounded-xl border border-red-800/40 bg-red-950/20 space-y-3">
           <h3 className="text-sm font-bold text-red-300 flex items-center gap-2">
@@ -467,34 +469,35 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         </div>
       )}
 
+      {/* 1) Setup: scope + period, shared by Sources/Draft and Comparison below. */}
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <Users className="w-4 h-4 text-purple-400" />
-          <span>Scope</span>
+          <span>Setup</span>
         </h3>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => setScope('own')}
+            onClick={() => setScopeKind('own')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              scope === 'own' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              scopeKind === 'own' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
             All My Clients ({myClients.length})
           </button>
           <button
-            onClick={() => setScope('client')}
+            onClick={() => setScopeKind('client')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              scope === 'client' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+              scopeKind === 'client' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
             Specific Client
           </button>
           {canSelectSpecificAgent && (
             <button
-              onClick={() => setScope('agent')}
+              onClick={() => setScopeKind('employee')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                scope === 'agent' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                scopeKind === 'employee' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
               }`}
             >
               Specific Agent
@@ -502,7 +505,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           )}
         </div>
 
-        {scope === 'client' && (
+        {scopeKind === 'client' && (
           <div className="space-y-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -515,8 +518,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               />
             </div>
             <select
-              value={selectedClientId}
-              onChange={(e) => setSelectedClientId(e.target.value)}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
               className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
             >
               <option value="">-- Select a client --</option>
@@ -529,10 +532,10 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           </div>
         )}
 
-        {scope === 'agent' && (
+        {scopeKind === 'employee' && (
           <select
-            value={selectedAgentId}
-            onChange={(e) => setSelectedAgentId(e.target.value)}
+            value={subjectUserId}
+            onChange={(e) => setSubjectUserId(e.target.value)}
             className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
           >
             <option value="">-- Select an agent --</option>
@@ -543,137 +546,32 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             ))}
           </select>
         )}
-      </div>
 
-      <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-purple-400" />
-          <span>Report Type</span>
-        </h3>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setReportMode('comparison')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              reportMode === 'comparison' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
-            }`}
-          >
-            Comparison Report
-          </button>
-          <button
-            onClick={() => setReportMode('period_summary')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              reportMode === 'period_summary' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
-            }`}
-          >
-            Period Report
-          </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+          <input type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
         </div>
-        <p className="text-[11px] text-stone-400">
-          {isSinglePeriod
-            ? 'Totals for one period, no comparison.'
-            : 'Current vs. prior period, with deltas and a recommendation.'}
-        </p>
       </div>
 
-      <PeriodSelector
-        granularity={granularity}
-        onGranularityChange={setGranularity}
-        customCurrentRange={customCurrentRange}
-        onCustomCurrentRangeChange={setCustomCurrentRange}
-        customPreviousRange={customPreviousRange}
-        onCustomPreviousRangeChange={setCustomPreviousRange}
-        canGenerate={!!resolvedScope}
-        isGenerating={isGenerating}
-        onGenerate={handleGenerate}
-        disabledReason="Select a scope first."
-        singlePeriod={isSinglePeriod}
+      {/* 2) Sources + Draft + Save/Approve/PDF/Archive + Version history/Source ledger — all
+          already one cohesive block inside ReportDraftWorkspace. */}
+      <ReportDraftWorkspace
+        currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
+        dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
+        scopeKind={scopeKind} onScopeKindChange={setScopeKind}
+        clientId={clientId} onClientIdChange={setClientId}
+        subjectUserId={subjectUserId} onSubjectUserIdChange={setSubjectUserId}
+        employeeScopeMode={employeeScopeMode} onEmployeeScopeModeChange={setEmployeeScopeMode}
+        selectedClientIds={selectedClientIds} onSelectedClientIdsChange={setSelectedClientIds}
+        periodStart={periodStart} onPeriodStartChange={setPeriodStart}
+        periodEnd={periodEnd} onPeriodEndChange={setPeriodEnd}
+        openReportId={workspaceReportId} onOpenReportHandled={() => setWorkspaceReportId(null)}
+        onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
+        onRequestAiSummary={onGenerateAiSummary ? requestDraftAiSummary : undefined}
       />
 
-      {!!resolvedScope && onGenerateAiSummary && (
-        <DirectAiSummaryPanel
-          key={`${reportMode}:${scope}:${selectedClientId}:${selectedAgentId}:${granularity}:${customCurrentRange.start}:${customCurrentRange.end}:${customPreviousRange.start}:${customPreviousRange.end}`}
-          mode={reportMode}
-          onEnsureComparison={() => ensureComparisonForSummary(reportMode)}
-          onGenerateAiSummary={onGenerateAiSummary}
-          viewerServiceFilter={viewerServiceFilter}
-        />
-      )}
-
-      <div className="space-y-3">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-emerald-400" />
-          <span>Comparisons ({visibleComparisons.length})</span>
-        </h3>
-
-        {visibleComparisons.length === 0 ? (
-          <p className="text-xs text-stone-500 py-4 text-center">No comparisons generated yet.</p>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-              <select value={selectedComparison?.id || ''} onChange={(event) => setSelectedComparisonId(event.target.value)} className="flex-1 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
-                {visibleComparisons.map((comparison) => <option key={comparison.id} value={comparison.id}>{describeComparisonScope(comparison, clients, users)} · {comparison.period_current}{comparison.period_previous ? ` vs ${comparison.period_previous}` : ''}</option>)}
-              </select>
-              <button
-                type="button"
-                disabled={!selectedComparison || generatingReportForComparisonId === selectedComparison.id}
-                onClick={() => selectedComparison && void handleGenerateReport(selectedComparison)}
-                className="filled-purple-action px-3 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-50"
-              >
-                {selectedComparison && generatingReportForComparisonId === selectedComparison.id ? 'Saving report…' : 'Save selected as report'}
-              </button>
-            </div>
-            {selectedComparison && (() => {
-              const anomalyResult = selectedComparison.client_id ? anomaliesByClientId.get(selectedComparison.client_id) : undefined;
-              const anomalyFlags = anomalyResult?.latestComparisonId === selectedComparison.id ? anomalyResult.flags : undefined;
-              return (
-              <ComparisonCard
-                comparison={selectedComparison}
-                subtitle={describeComparisonScope(selectedComparison, clients, users)}
-                viewerServiceFilter={viewerServiceFilter}
-                anomalyFlags={anomalyFlags}
-              />
-              );
-            })()}
-          </div>
-        )}
-      </div>
-
-      </>}
-
-      {activeSection === 'workspace' && (
-        <ReportDraftWorkspace
-          currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
-          dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
-          onClose={() => setWorkspaceContext(null)} onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
-        />
-      )}
-
-      {(activeSection === 'saved' || activeSection === 'archived') && <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Search period, scope, author, client, or employee…" className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500" />
-          </div>
-          <select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value as 'all' | 'draft' | 'final')} className="px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
-            <option value="all">All statuses</option><option value="draft">Draft</option><option value="final">Final</option>
-          </select>
-        </div>
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <FileText className="w-4 h-4 text-purple-400" />
-          <span>{activeSection === 'archived' ? `Archived Reports (${archivedReports.length})` : `Saved Reports (${activeReports.length})`}</span>
-        </h3>
-        <FiledReportsList reports={activeSection === 'archived' ? archivedReports : activeReports} comparisons={clientComparisons} clients={clients} users={users} showScope archiveMode={activeSection === 'archived' ? 'archived' : 'active'} onSelectReport={openFiledReport} />
-        {workspaceContext === activeSection && (
-          <ReportDraftWorkspace
-            currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
-            dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
-            openReportId={workspaceReportId} onOpenReportHandled={() => setWorkspaceReportId(null)}
-            onClose={() => { setWorkspaceContext(null); setWorkspaceReportId(null); }} onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
-          />
-        )}
-      </div>}
-
-      {activeSection === 'activity' && canSeeDailyActivityReport && (
+      {/* Merged daily-activity feed (manager/leadership audience only), part of Sources. */}
+      {canSeeDailyActivityReport && (
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -764,6 +662,115 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           )}
         </div>
       )}
+
+      {/* 3) Comparison — same resolvedScope as Setup, its own two editable periods A/B. */}
+      <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <BarChart3 className="w-4 h-4 text-purple-400" />
+          <span>Comparison</span>
+        </h3>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setReportMode('comparison')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              reportMode === 'comparison' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+            }`}
+          >
+            Comparison Report
+          </button>
+          <button
+            onClick={() => setReportMode('period_summary')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              reportMode === 'period_summary' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+            }`}
+          >
+            Period Report
+          </button>
+        </div>
+
+        <div className={`grid grid-cols-1 ${isSinglePeriod ? '' : 'sm:grid-cols-2'} gap-3`}>
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-stone-400">Period A (current)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={customCurrentRange.start} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomCurrentRange((current) => ({ ...current, start: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+              <input type="date" value={customCurrentRange.end} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomCurrentRange((current) => ({ ...current, end: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+            </div>
+          </div>
+          {!isSinglePeriod && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] text-stone-400">Period B (previous)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="date" value={customPreviousRange.start} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, start: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+                <input type="date" value={customPreviousRange.end} onChange={(event) => { comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, end: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          disabled={!resolvedScope || isGenerating}
+          onClick={handleGenerate}
+          className="filled-purple-action px-3 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-50"
+        >
+          {isGenerating ? 'Calculating…' : 'Calculate comparison'}
+        </button>
+
+        {visibleComparisons.length === 0 ? (
+          <p className="text-xs text-stone-500 py-4 text-center">No comparisons generated yet.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+              <select value={selectedComparison?.id || ''} onChange={(event) => setSelectedComparisonId(event.target.value)} className="flex-1 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+                {visibleComparisons.map((comparison) => <option key={comparison.id} value={comparison.id}>{describeComparisonScope(comparison, clients, users)} · {comparison.period_current}{comparison.period_previous ? ` vs ${comparison.period_previous}` : ''}</option>)}
+              </select>
+              <button
+                type="button"
+                disabled={!selectedComparison || generatingReportForComparisonId === selectedComparison.id}
+                onClick={() => selectedComparison && void handleGenerateReport(selectedComparison)}
+                className="filled-purple-action px-3 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-50"
+              >
+                {selectedComparison && generatingReportForComparisonId === selectedComparison.id ? 'Saving report…' : 'Save selected as report'}
+              </button>
+            </div>
+            {selectedComparison && (() => {
+              const anomalyResult = selectedComparison.client_id ? anomaliesByClientId.get(selectedComparison.client_id) : undefined;
+              const anomalyFlags = anomalyResult?.latestComparisonId === selectedComparison.id ? anomalyResult.flags : undefined;
+              return (
+              <ComparisonCard
+                comparison={selectedComparison}
+                subtitle={describeComparisonScope(selectedComparison, clients, users)}
+                viewerServiceFilter={viewerServiceFilter}
+                anomalyFlags={anomalyFlags}
+                unconnectedServices={unconnectedServices}
+                onGenerateAiSummary={onGenerateAiSummary}
+              />
+              );
+            })()}
+          </div>
+        )}
+      </div>
+
+      {/* 7) Saved + Archived reports list. */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <FileText className="w-4 h-4 text-purple-400" />
+          <span>Reports ({filteredReports.length})</span>
+        </h3>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Search period, scope, author, client, or employee…" className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500" />
+          </div>
+          <select value={reportListFilter} onChange={(event) => setReportListFilter(event.target.value as 'all' | 'active' | 'archived')} className="px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+            <option value="all">All (saved + archived)</option><option value="active">Saved only</option><option value="archived">Archived only</option>
+          </select>
+          <select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value as 'all' | 'draft' | 'final')} className="px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+            <option value="all">All statuses</option><option value="draft">Draft</option><option value="final">Final</option>
+          </select>
+        </div>
+        <FiledReportsList reports={filteredReports} comparisons={clientComparisons} clients={clients} users={users} showScope archiveMode="all" onSelectReport={openFiledReport} />
+      </div>
 
       {editingDailyLog && (
         <DailyLogEditModal

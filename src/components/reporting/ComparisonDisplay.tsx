@@ -265,7 +265,12 @@ export const ComparisonCard: React.FC<{
   // narrative text, and the AI-summary payload alike, so no surface on this card can leak another
   // department's numbers to a scoped viewer.
   viewerServiceFilter?: ServiceType[];
-}> = ({ comparison, subtitle, canGenerateReport, isGeneratingReport, onGenerateReport, anomalyFlags, onGenerateAiSummary, viewerServiceFilter }) => {
+  // Unified Reports tab (ReportsHub.tsx): media_buying/social_media are platform_connections-gated
+  // — a service in this list shows "المنصة غير مربوطة بعد" instead of its (misleadingly zero)
+  // numbers. seo is deliberately never passed here: it is computed from internal tasks, not an
+  // external platform, so it is never gated regardless of platform_connections' own row for it.
+  unconnectedServices?: Array<'media_buying' | 'social_media'>;
+}> = ({ comparison, subtitle, canGenerateReport, isGeneratingReport, onGenerateReport, anomalyFlags, onGenerateAiSummary, viewerServiceFilter, unconnectedServices }) => {
   const isSummary = comparison.row_kind === 'period_summary';
   // Narrowed to the viewer's own service(s) before computing the narrative — otherwise a scoped
   // viewer would still read rule-based findings about a department that isn't theirs, even though
@@ -377,24 +382,38 @@ export const ComparisonCard: React.FC<{
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {(!viewerServiceFilter || viewerServiceFilter.includes('media_buying')) && (
-          <ServiceMetricsCard
-            serviceKey="media_buying"
-            title="Media Buying"
-            current={comparison.metrics_current.media_buying}
-            previous={comparison.metrics_previous.media_buying}
-            delta={comparison.delta.media_buying}
-            flat={isSummary}
-          />
+          unconnectedServices?.includes('media_buying') ? (
+            <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 space-y-2">
+              <h5 className="text-xs font-bold text-white uppercase tracking-wide">Media Buying</h5>
+              <p className="text-xs text-stone-400">المنصة غير مربوطة بعد</p>
+            </div>
+          ) : (
+            <ServiceMetricsCard
+              serviceKey="media_buying"
+              title="Media Buying"
+              current={comparison.metrics_current.media_buying}
+              previous={comparison.metrics_previous.media_buying}
+              delta={comparison.delta.media_buying}
+              flat={isSummary}
+            />
+          )
         )}
         {(!viewerServiceFilter || viewerServiceFilter.includes('social_media')) && (
-          <ServiceMetricsCard
-            serviceKey="social_media"
-            title="Social Media"
-            current={comparison.metrics_current.social_media}
-            previous={comparison.metrics_previous.social_media}
-            delta={comparison.delta.social_media}
-            flat={isSummary}
-          />
+          unconnectedServices?.includes('social_media') ? (
+            <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 space-y-2">
+              <h5 className="text-xs font-bold text-white uppercase tracking-wide">Social Media</h5>
+              <p className="text-xs text-stone-400">المنصة غير مربوطة بعد</p>
+            </div>
+          ) : (
+            <ServiceMetricsCard
+              serviceKey="social_media"
+              title="Social Media"
+              current={comparison.metrics_current.social_media}
+              previous={comparison.metrics_previous.social_media}
+              delta={comparison.delta.social_media}
+              flat={isSummary}
+            />
+          )
         )}
         {(!viewerServiceFilter || viewerServiceFilter.includes('seo')) && (
           <ServiceMetricsCard
