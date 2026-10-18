@@ -211,12 +211,17 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openReportId]);
 
-  const buildPreview = async () => {
+  // Shared by buildPreview (new-draft flow, below) and pullSourcesAgain (an already-open report,
+  // further down): both just need a fresh, server-authorized source manifest for the current
+  // scope/period — preview_report_sources_v2 is read-only (`language sql stable`, no side
+  // effects), so calling it again any number of times is always safe. Returns null (and sets
+  // `message`) on a validation/RPC failure instead of throwing, so each caller's own try/finally
+  // stays simple.
+  const fetchSourceManifest = async (): Promise<SourceManifest | null> => {
     if (!period || (effectiveScopeType === 'client' ? !clientId : !effectiveSubjectUserId || !effectiveEmployeeScopeMode || (effectiveEmployeeScopeMode === 'selected_clients' && !selectedClientIds.length))) {
       setMessage('Choose the report subject, period, and an explicit employee client scope first.');
-      return;
+      return null;
     }
-    setBusy(true);
     try {
       const { data, error } = await supabaseRaw.rpc('preview_report_sources_v2', {
         p_scope_type: effectiveScopeType, p_client_id: effectiveScopeType === 'client' ? clientId : null,
@@ -226,17 +231,53 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         p_period_start: period.startInclusive, p_period_end_exclusive: period.endExclusive,
       });
       if (error) throw error;
-      const manifest = data as unknown as SourceManifest;
+      return data as unknown as SourceManifest;
+    } catch {
+      setMessage('Unable to build the server-authorized source preview. Confirm the lifecycle migration is applied.');
+      return null;
+    }
+  };
+
+  const buildPreview = async () => {
+    setBusy(true);
+    try {
+      const manifest = await fetchSourceManifest();
+      if (!manifest) return;
       setPreviewManifest(manifest);
       setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject)));
       creationKey.current = null;
       setMessage(`Preview built from ${manifest.source_count} authorized immutable source(s).`);
-    } catch {
-      setMessage('Unable to build the server-authorized source preview. Confirm the lifecycle migration is applied.');
+    } finally { setBusy(false); }
+  };
+
+  // "سحب المصادر من جديد" for an ALREADY-OPEN report: pulls a fresh source snapshot for the same
+  // scope/period, but — unlike buildPreview above — never touches draftText and never saves
+  // anything by itself. save_report_version_v2 (below) only ever re-saves TEXT under the report's
+  // EXISTING source_hash/ledger; it has no way to adopt a new one. So when this fresh manifest's
+  // source_hash actually differs from the open report's, the only way to persist it is a NEW
+  // report row (saveAsNewDraftFromPulledSources, via create_report_draft_v2 — confirmed allowed:
+  // there is no unique constraint on (scope, period) in reports, only on (generated_by,
+  // creation_key)). The pulled manifest also becomes what AI Summary's work_items are built from
+  // (see workItemsForAiSummary below), so "يتيح AI Summary عليها" works without any extra step.
+  const pullSourcesAgain = async () => {
+    setBusy(true);
+    try {
+      const manifest = await fetchSourceManifest();
+      if (!manifest) return;
+      setPreviewManifest(manifest);
+      setMessage(
+        selectedReport && manifest.source_hash === selectedReport.source_hash
+          ? `تم سحب لقطة جديدة لكنها مطابقة للمصادر المحفوظة حالياً (${manifest.source_count} مصدر). لا جديد لحفظه.`
+          : `تم سحب لقطة مصادر جديدة: ${manifest.source_count} مصدر معتمد. نص المسودة لم يتغيّر — استخدم AI Summary أو عدّل يدوياً، ثم "حفظ كمسودة جديدة بهذه المصادر" لحفظها (نسخة/تقرير جديد، أدلته الجديدة).`
+      );
     } finally { setBusy(false); }
   };
 
   useEffect(() => {
+    // A previously-pulled preview is scoped to whichever report was open when it was fetched —
+    // never carry it over to a different report (switching drafts, or opening a different filed
+    // report) where it would silently feed the wrong report's AI Summary/"save as new draft".
+    setPreviewManifest(null);
     if (!selectedReportId) {
       setVersions([]);
       setSources([]);
@@ -333,6 +374,17 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const hasUnsavedChanges = !!draftText.trim() && (!currentVersion || draftText !== currentVersion.content_text);
   const confirmDiscard = () => !hasUnsavedChanges || window.confirm('Discard unsaved editor changes?');
 
+  // save_report_version_v2 only ever re-saves TEXT under the report's EXISTING source_hash/
+  // ledger (confirmed in the migration: it copies v_report.source_hash verbatim, never touches
+  // report_source_items) — it cannot adopt a freshly-pulled snapshot. So once previewManifest's
+  // hash genuinely differs from the open report's, createDraft (confirmed to have no "only when
+  // !selectedReport" gate, and no unique constraint on (scope, period) blocks a second report for
+  // the same one) is reused as-is to create a NEW report row carrying the new ledger — it already
+  // switches selectedReportId to that new report on success.
+  const canSaveAsNewDraftFromPulledSources =
+    !!selectedReport && !!previewManifest && previewManifest.source_hash !== selectedReport.source_hash
+    && !selectedReport.archived_at && selectedReport.status !== 'final';
+
   const clearSignalSeen = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (clearSignal === undefined) return;
@@ -353,22 +405,24 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearSignal]);
 
-  // The saved report's own work-log source items — rephrased (never shortened/dropped) by AI
-  // Summary. Sent to ReportsHub in batches of ~25 (see runWorkItemBatches/buildWorkItemBatches in
-  // ComparisonDisplay.tsx), which this component has no need to know about — it only builds and
-  // hands over the full ordered list.
-  const workItemsForAiSummary: CampaignSummaryWorkItem[] = useMemo(
-    () =>
-      sources
-        .filter((source) => source.source_kind === 'daily_log')
-        .map((source) => ({
-          id: source.source_id,
-          employee: names.get(source.user_id) || undefined,
-          text: String(source.snapshot.summary_text || '').trim(),
-        }))
-        .filter((item) => item.text),
-    [sources, names]
-  );
+  // Work-log source items AI Summary rephrases (never shortened/dropped) — from a freshly-pulled
+  // preview (previewManifest, "سحب المصادر من جديد") when one is present, so AI Summary works on
+  // the NEW snapshot right away without requiring "حفظ كمسودة جديدة" first; otherwise from the
+  // open report's own saved ledger (`sources`), as before. Sent to ReportsHub in batches of ~25
+  // (see runWorkItemBatches/buildWorkItemBatches in ComparisonDisplay.tsx), which this component
+  // has no need to know about — it only builds and hands over the full ordered list.
+  const workItemsForAiSummary: CampaignSummaryWorkItem[] = useMemo(() => {
+    const sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>> =
+      previewManifest ? previewManifest.sources : sources;
+    return sourceList
+      .filter((source) => source.source_kind === 'daily_log')
+      .map((source) => ({
+        id: source.source_id,
+        employee: names.get(source.user_id) || undefined,
+        text: String(source.snapshot.summary_text || '').trim(),
+      }))
+      .filter((item) => item.text);
+  }, [previewManifest, sources, names]);
 
   const requestAiSummary = async () => {
     if (!onRequestAiSummary || busy) return;
@@ -533,7 +587,21 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             </div>
           )}
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">سحب المصادر من جديد</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+        </div>
+      )}
+
+      {/* Always visible for an already-open report (point أ of the fix): previously this button
+          only existed in the !selectedReport branch above, so once the top bar auto-opened a
+          matching draft, there was no way to re-pull fresh sources for it at all. Never touches
+          draftText by itself — see pullSourcesAgain's own comment. */}
+      {selectedReport && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={pullSourcesAgain} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">سحب المصادر من جديد</button>
+          <span className="text-[11px] text-stone-400">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span>
+          {canSaveAsNewDraftFromPulledSources && (
+            <button disabled={busy || !draftText.trim()} onClick={createDraft} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />حفظ كمسودة جديدة بهذه المصادر</button>
+          )}
         </div>
       )}
 
