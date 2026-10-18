@@ -39,9 +39,9 @@ if (/report_scope_accessible\([^,()]+\)/.test(migration)) {
 if (!migration.includes("'legacy-'||md5(concat_ws")) {
   throw new Error('Legacy report creation is not idempotent.');
 }
-if (!workspace.includes('Select an employee (required)') || !workspace.includes('Select All') || !workspace.includes('Clear All')
+if (!reportsHub.includes('-- Select an agent --') || !workspace.includes('Select All') || !workspace.includes('Clear All')
   || !workspace.includes('confirmDiscard') || !workspace.includes('creationKey.current ||= crypto.randomUUID()')) {
-  throw new Error('Workspace employee selection, multi-select, unsaved guard, or duplicate-submit protection is missing.');
+  throw new Error('Top-bar employee selection, workspace multi-select, unsaved guard, or duplicate-submit protection is missing.');
 }
 if (app.includes("from('reports').insert") || app.includes("from('reports').update")) {
   throw new Error('A direct legacy reports write bypass remains in App.tsx.');
@@ -53,10 +53,14 @@ if (!workspace.includes("rpc('save_report_version_v2'") || !workspace.includes("
   || !workspace.includes("rpc('approve_report_v2'") || !workspace.includes('draftText !== currentVersion.content_text')) {
   throw new Error('Workspace does not enforce concurrency RPCs or saved-version-only actions.');
 }
-// Unified single-page Reports tab (no Create/Workspace/Saved/Archived/Activity tabs anymore) —
-// checks the functional sections exist instead of the old tab labels.
-for (const label of ['Setup', 'Comparison', 'Daily Activity Log', 'Reports (']) {
-  if (!reportsHub.includes(label)) throw new Error(`Reports UI section is missing: ${label}`);
+// Unified single-page Reports tab (no Create/Workspace/Saved/Archived/Activity tabs, no "Setup"
+// heading, no second scope/period picker anymore) — checks the functional sections/top-bar
+// controls exist instead of the old tab/section labels.
+for (const label of ['Comparison', 'Daily Activity Log', 'Reports (', 'All My Clients (', 'Specific Client', 'Pull sources']) {
+  if (!reportsHub.includes(label) && !workspace.includes(label)) throw new Error(`Reports UI section is missing: ${label}`);
+}
+if (reportsHub.includes('>Setup<') || workspace.includes('Versioned Report Workspace')) {
+  throw new Error('A removed section heading ("Setup" / "Versioned Report Workspace") is still present.');
 }
 if (/\n\s+canGenerateReport(?:\s|=)/.test(reportsHub)
   || (reportsHub.match(/onGenerateAiSummary=\{onGenerateAiSummary\}/g) || []).length > 1) {

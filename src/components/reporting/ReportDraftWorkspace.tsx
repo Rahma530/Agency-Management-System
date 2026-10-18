@@ -18,7 +18,7 @@ import {
   collectClientReportSources, collectEmployeeReportSources, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
-import { isCreativeReportSubject, isEligibleReportSubject } from '../../lib/reportAgentEligibility';
+import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
 // so the same values drive both this component's own Sources/Draft logic AND the Comparison
@@ -67,6 +67,10 @@ interface Props {
   // creatorNote text is passed as an argument (not lifted to ReportsHub as its own controlled
   // prop) since this component is the only owner of that textarea's live value.
   onRequestAiSummary?: (creatorNote?: string) => Promise<{ ok: true; text: string } | { ok: false; message: string }>;
+  // Bumped by ReportsHub whenever the top-bar scope/period changes to a combination with no
+  // matching draft — tells this workspace to confirm-discard (if needed) and reset to its empty,
+  // new-draft state. A matching draft instead arrives via openReportId as usual.
+  clearSignal?: number;
 }
 
 const today = () => formatLocalCalendarDate(new Date());
@@ -118,6 +122,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   periodEnd,
   onPeriodEndChange,
   onRequestAiSummary,
+  clearSignal,
 }) => {
   // scopeKind 'own' always resolves to the current user's own employee-overall-all-clients work
   // — the same p_scope_type:'employee' shape as a manually picked employee, just with
@@ -137,7 +142,6 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [message, setMessage] = useState<string | null>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
   const [previewManifest, setPreviewManifest] = useState<SourceManifest | null>(null);
   const creationKey = useRef<string | null>(null);
   const workspaceRef = useRef<HTMLElement | null>(null);
@@ -153,13 +157,6 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       : clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client'}`
     : 'new report';
   const selectedSubject = users.find((user) => user.id === effectiveSubjectUserId);
-  const employeeOptions = useMemo(() => {
-    const map = new Map<string, UserRecord>();
-    if (isEligibleReportSubject(currentUser)) map.set(currentUser.id, currentUser);
-    employees.forEach((employee) => map.set(employee.id, employee));
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [currentUser, employees]);
-
   const period = useMemo(() => {
     try {
       return resolveReportPeriod(periodStart, periodEnd);
@@ -192,7 +189,6 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       onOpenReportHandled?.();
       return;
     }
-    setShowArchived(!!report.archived_at);
     setSelectedReportId(report.id);
     setMessage(null);
     workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -322,6 +318,26 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
 
   const hasUnsavedChanges = !!draftText.trim() && (!currentVersion || draftText !== currentVersion.content_text);
   const confirmDiscard = () => !hasUnsavedChanges || window.confirm('Discard unsaved editor changes?');
+
+  const clearSignalSeen = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (clearSignal === undefined) return;
+    if (clearSignalSeen.current === undefined) {
+      clearSignalSeen.current = clearSignal;
+      return;
+    }
+    if (clearSignalSeen.current === clearSignal) return;
+    clearSignalSeen.current = clearSignal;
+    if (!selectedReportId && !draftText.trim()) return;
+    if (!confirmDiscard()) return;
+    setSelectedReportId('');
+    setDraftText('');
+    setPreviewManifest(null);
+    setMessage(null);
+    // confirmDiscard/hasUnsavedChanges close over draftText/currentVersion on every render; only
+    // clearSignal should retrigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clearSignal]);
 
   const requestAiSummary = async () => {
     if (!onRequestAiSummary || busy) return;
@@ -456,41 +472,21 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     });
   };
 
-  const workspaceReports = reports.filter((report) => (report.scope_type === 'client' || report.scope_type === 'employee') && (!!report.archived_at === showArchived));
-
   return (
     <section ref={workspaceRef} className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4 scroll-mt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2"><FilePenLine className="w-4 h-4 text-purple-400" />Versioned Report Workspace</h3>
-        <div className="flex gap-2">
-        <button onClick={() => { if (confirmDiscard()) { setShowArchived((value) => !value); setSelectedReportId(''); setDraftText(''); } }} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-200">{showArchived ? 'Active reports' : 'Archived reports'}</button>
-        <select value={selectedReportId} onChange={(event) => { if (confirmDiscard()) setSelectedReportId(event.target.value); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white">
-          <option value="">Create a new draft</option>
-          {workspaceReports.map((report) => <option key={report.id} value={report.id}>{report.period} — {report.scope_type}{report.archived_at ? ' (archived)' : ''}</option>)}
-        </select>
-        </div>
+        <h3 className="text-xs font-bold text-white flex items-center gap-2">
+          <FilePenLine className="w-4 h-4 text-purple-400" />
+          {selectedReport
+            ? <>{reportLabel}<span className={selectedReport.archived_at ? 'text-stone-400' : selectedReport.status === 'final' ? 'text-emerald-300' : 'text-amber-300'}> · {selectedReport.archived_at ? 'archived' : selectedReport.status || 'legacy'}</span></>
+            : 'New draft'}
+        </h3>
       </div>
-
-      <p className="text-[11px] text-stone-400">
-        Build a server-authorized source snapshot, edit the draft, then save a version. AI creates a reviewable proposal only; it never replaces saved text until you explicitly apply it as a new version.
-      </p>
 
       {!selectedReport && (
         <div className="space-y-3">
-          <div className="flex gap-2">
-            {([
-              ['client', 'Specific Client'],
-              ['employee', 'Specific Agent'],
-              ['own', 'All My Clients'],
-            ] as Array<[ReportScopeKind, string]>).map(([kind, label]) => (
-              <button key={kind} onClick={() => { if (confirmDiscard()) { onScopeKindChange(kind); setDraftText(''); setPreviewManifest(null); } }} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${scopeKind === kind ? 'bg-purple-600 text-white' : 'bg-stone-900 text-stone-400'}`}>{label}</button>
-            ))}
-          </div>
-          {scopeKind === 'client' ? (
-            <select value={clientId} onChange={(event) => { if (confirmDiscard()) { onClientIdChange(event.target.value); setDraftText(''); setPreviewManifest(null); } }} className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white"><option value="">Select client</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select>
-          ) : scopeKind === 'employee' ? (
+          {scopeKind === 'employee' && (
             <div className="space-y-3">
-              <select value={subjectUserId} onChange={(event) => { if (confirmDiscard()) { onSubjectUserIdChange(event.target.value); setDraftText(''); setPreviewManifest(null); } }} className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white"><option value="">Select an employee (required)</option>{employeeOptions.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select>
               <select value={employeeScopeMode} onChange={(event) => { if (confirmDiscard()) { onEmployeeScopeModeChange(event.target.value as EmployeeClientScopeMode | ''); onSelectedClientIdsChange([]); setDraftText(''); setPreviewManifest(null); } }} className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white"><option value="">Select client scope (required)</option><option value="all_clients">All Clients</option><option value="selected_clients">Selected Clients</option><option value="employee_overall">Employee Overall</option></select>
               {employeeScopeMode === 'selected_clients' && <div className="p-3 rounded-xl border border-purple-900/40 space-y-2">
                 <input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Search clients" className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
@@ -499,24 +495,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
               </div>}
               {employeeScopeMode && <p className="text-[11px] text-stone-400">Scope: {employeeScopeMode === 'all_clients' ? 'all authorized client-associated work' : employeeScopeMode === 'employee_overall' ? 'all eligible employee work, including non-client records' : `${selectedClientIds.length} selected client(s)`}</p>}
             </div>
-          ) : (
-            <p className="text-[11px] text-stone-400">Your own work across every authorized client-associated record.</p>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <input type="date" value={periodStart} onChange={(event) => { onPeriodStartChange(event.target.value); setPreviewManifest(null); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-            <input type="date" value={periodEnd} onChange={(event) => { onPeriodEndChange(event.target.value); setPreviewManifest(null); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          </div>
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
           <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
-        </div>
-      )}
-
-      {selectedReport && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
-          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Period</span><span className="text-white">{selectedReport.period}</span></div>
-          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Scope</span><span className="text-white">{selectedReport.scope_type === 'employee' ? names.get(selectedReport.subject_user_id || '') || 'Employee' : clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client'}</span></div>
-          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">Type</span><span className="text-white">{selectedReport.type}</span></div>
-          <div className="rounded-lg bg-stone-950/50 p-2"><span className="text-stone-500 block">State</span><span className={selectedReport.status === 'final' ? 'text-emerald-300' : 'text-amber-300'}>{selectedReport.archived_at ? 'archived' : selectedReport.status || 'legacy'}</span></div>
         </div>
       )}
 
