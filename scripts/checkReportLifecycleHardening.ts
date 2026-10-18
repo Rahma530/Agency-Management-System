@@ -56,11 +56,36 @@ if (!workspace.includes("rpc('save_report_version_v2'") || !workspace.includes("
 // Unified single-page Reports tab (no Create/Workspace/Saved/Archived/Activity tabs, no "Setup"
 // heading, no second scope/period picker anymore) — checks the functional sections/top-bar
 // controls exist instead of the old tab/section labels.
-for (const label of ['Comparison', 'Daily Activity Log', 'Reports (', 'All My Clients (', 'Specific Client', 'Pull sources']) {
+for (const label of ['Reports (', 'All My Clients (', 'Specific Client', 'Pull sources']) {
   if (!reportsHub.includes(label) && !workspace.includes(label)) throw new Error(`Reports UI section is missing: ${label}`);
 }
 if (reportsHub.includes('>Setup<') || workspace.includes('Versioned Report Workspace')) {
   throw new Error('A removed section heading ("Setup" / "Versioned Report Workspace") is still present.');
+}
+// Comparison merged into the top bar (point 1): the old separate "Comparison" section title and
+// its own two "Comparison Report"/"Period Report" mode buttons are gone, replaced by a single
+// "مقارنة" toggle in the top bar's scope row, with its results (Calculate/Save-as-report/the
+// saved list) now living right under the draft instead of under their own section.
+if (/<span>Comparison<\/span>/.test(reportsHub) || reportsHub.includes('>Comparison Report<') || reportsHub.includes('>Period Report<')) {
+  throw new Error('The old separate "Comparison" section/title or its two mode buttons are still present.');
+}
+if (!reportsHub.includes('مقارنة') || !reportsHub.includes('Calculate comparison') || !reportsHub.includes('Save selected as report')) {
+  throw new Error('The مقارنة toggle, or the comparison results (Calculate/Save as report) now expected under the draft, is missing.');
+}
+// Point 3: both "التقرير"/"سجل النشاط" tabs stay mounted (CSS display only) rather than
+// unmounting, so a tab switch can't drop an unsaved draft or this page's own search/filter state.
+if (!reportsHub.includes('سجل النشاط')
+  || !reportsHub.includes("activeTab === 'activity' ? undefined : { display: 'none' }")
+  || !reportsHub.includes("activeTab === 'report' ? undefined : { display: 'none' }")) {
+  throw new Error('The Activity tab is missing, or a tab is unmounted instead of CSS-hidden.');
+}
+// Point 4: Weekly/Monthly/Quarterly/Yearly + Custom-range shortcuts, reusing
+// reportingEngine.ts's resolveComparisonPeriods (same logic PeriodSelector.tsx already uses).
+for (const label of ['أسبوعي', 'شهري', 'ربع سنوي', 'سنوي', 'فترة مخصصة']) {
+  if (!reportsHub.includes(label)) throw new Error(`Period shortcut button is missing: ${label}`);
+}
+if (!reportsHub.includes('applyPeriodShortcut') || !reportsHub.includes('resolveComparisonPeriods')) {
+  throw new Error("Period shortcuts are not wired to reportingEngine.ts's resolveComparisonPeriods.");
 }
 if (/\n\s+canGenerateReport(?:\s|=)/.test(reportsHub)
   || (reportsHub.match(/onGenerateAiSummary=\{onGenerateAiSummary\}/g) || []).length > 1) {
