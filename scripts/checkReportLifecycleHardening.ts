@@ -53,7 +53,9 @@ if (!workspace.includes("rpc('save_report_version_v2'") || !workspace.includes("
   || !workspace.includes("rpc('approve_report_v2'") || !workspace.includes('draftText !== currentVersion.content_text')) {
   throw new Error('Workspace does not enforce concurrency RPCs or saved-version-only actions.');
 }
-for (const label of ['Create Report', 'Saved Reports', 'Archived Reports', 'Activity Sources']) {
+// Unified single-page Reports tab (no Create/Workspace/Saved/Archived/Activity tabs anymore) —
+// checks the functional sections exist instead of the old tab labels.
+for (const label of ['Setup', 'Comparison', 'Daily Activity Log', 'Reports (']) {
   if (!reportsHub.includes(label)) throw new Error(`Reports UI section is missing: ${label}`);
 }
 if (/\n\s+canGenerateReport(?:\s|=)/.test(reportsHub)
