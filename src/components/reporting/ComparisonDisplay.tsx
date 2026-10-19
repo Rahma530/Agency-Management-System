@@ -479,7 +479,7 @@ export const ComparisonCard: React.FC<{
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <span dir="ltr" className="text-xs font-bold text-white font-mono">
-            {isSummary ? comparison.period_current : `${comparison.period_current} vs ${comparison.period_previous}`}
+            {isSummary ? formatPeriodLabel(comparison.period_current) : `${formatPeriodLabel(comparison.period_current)} vs ${formatPeriodLabel(comparison.period_previous)}`}
           </span>
           {isSummary && (
             <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded font-semibold text-purple-200 bg-purple-900/50 uppercase align-middle">
@@ -968,16 +968,35 @@ export const describeComparisonScope = (
   return '';
 };
 
-// Point 2: a period label is either a calendar-unit label (monthly "2026-03", quarterly
-// "2026-Q1", yearly "2026" — plain digits, no RTL ambiguity) or a custom range
-// "YYYY-MM-DD_YYYY-MM-DD", which reads BACKWARDS when concatenated with an Arabic name under RTL
-// (e.g. "18-10-2026_01-10-2026 · وجاهة") because the two LTR date tokens and the "_" separator get
-// visually reordered against the surrounding RTL text. Rendering "من {start} إلى {end}" instead
-// gives the line fixed Arabic anchor words, so the two dates stay in their written (start, then
-// end) order regardless of what RTL/LTR content surrounds them.
+// A period label is either a calendar-unit label (monthly "2026-03", quarterly "2026-Q1",
+// yearly "2026") or a range "YYYY-MM-DD_YYYY-MM-DD" (used for both weekly and custom-range
+// periods — they share the same stored shape, so the two can't be told apart here). Render
+// every shape as a readable English string (e.g. "Oct 1 - Oct 18, 2026") and keep callers
+// wrapping the result in dir="ltr" so it doesn't reverse inside the surrounding RTL layout.
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatIsoDateShort(iso: string): { month: string; day: number; year: number } {
+  const [y, m, d] = iso.split('-').map(Number);
+  return { month: MONTH_NAMES[m - 1], day: d, year: y };
+}
+
 export function formatPeriodLabel(label: string): string {
   const custom = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(label);
-  return custom ? `من ${custom[1]} إلى ${custom[2]}` : label;
+  if (custom) {
+    const start = formatIsoDateShort(custom[1]);
+    const end = formatIsoDateShort(custom[2]);
+    if (start.year === end.year) {
+      return `${start.month} ${start.day} - ${end.month} ${end.day}, ${start.year}`;
+    }
+    return `${start.month} ${start.day}, ${start.year} - ${end.month} ${end.day}, ${end.year}`;
+  }
+  const monthly = /^(\d{4})-(\d{2})$/.exec(label);
+  if (monthly) {
+    return `${MONTH_NAMES[Number(monthly[2]) - 1]} ${monthly[1]}`;
+  }
+  const quarterly = /^(\d{4})-Q([1-4])$/.exec(label);
+  if (quarterly) return `Q${quarterly[2]} ${quarterly[1]}`;
+  return label;
 }
 
 // Filed reports list, resolving each report's scope label via its linked comparison.

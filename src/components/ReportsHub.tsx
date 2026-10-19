@@ -517,7 +517,6 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     });
   }, [visibleReports, reportSearch, reportStatusFilter, reportListFilter, users, clients]);
   const selectedComparison = visibleComparisons.find((comparison) => comparison.id === selectedComparisonId)
-    || visibleComparisons[0]
     || null;
 
   // Platform-connections gating (plan item 3): media_buying/social_media only — seo is computed
@@ -629,6 +628,13 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       {/* Single top bar: the sole scope + period reference for the whole page (Sources/Draft,
           Comparison, and the matching/auto-open behavior above all key off these controls). */}
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-3">
+        {/* Point 2: one single row — scope buttons, Compare toggle, and the period shortcuts all
+            adjacent (flex-wrap only kicks in on narrow screens; no separate second row on wide
+            screens). Point 1 (Compare toggle): ON = reportMode 'comparison' (period B shown
+            below), OFF = 'period_summary'. Point 4: Weekly/Monthly/Quarterly/Yearly shortcuts +
+            Custom Range marker fill period A (and, with Compare on, B) from
+            reportingEngine.ts's resolveComparisonPeriods, same logic PeriodSelector.tsx already
+            uses for ClientDashboard. */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setScopeKind('own')}
@@ -657,27 +663,20 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             </button>
           )}
           <span className="w-px h-5 bg-stone-800 mx-1" />
-          {/* Point 1: one toggle instead of the old separate Comparison section's two buttons —
-              ON = reportMode 'comparison' (period B shown below), OFF = 'period_summary'. */}
           <button
             onClick={() => setReportMode(reportMode === 'comparison' ? 'period_summary' : 'comparison')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
               reportMode === 'comparison' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
-            مقارنة
+            Compare
           </button>
-        </div>
-
-        {/* Point 4: Weekly/Monthly/Quarterly/Yearly shortcuts + Custom range marker — fill period
-            A (and, with مقارنة on, B) from reportingEngine.ts's resolveComparisonPeriods, same
-            logic PeriodSelector.tsx already uses for ClientDashboard. */}
-        <div className="flex items-center gap-2 flex-wrap">
+          <span className="w-px h-5 bg-stone-800 mx-1" />
           {([
-            ['weekly', 'أسبوعي'],
-            ['monthly', 'شهري'],
-            ['quarterly', 'ربع سنوي'],
-            ['yearly', 'سنوي'],
+            ['weekly', 'Weekly'],
+            ['monthly', 'Monthly'],
+            ['quarterly', 'Quarterly'],
+            ['yearly', 'Yearly'],
           ] as Array<[ComparisonGranularity, string]>).map(([g, label]) => (
             <button
               key={g}
@@ -695,7 +694,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               periodShortcut === 'custom' ? 'bg-purple-700 text-white' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
-            فترة مخصصة
+            Custom Range
           </button>
         </div>
 
@@ -746,18 +745,20 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             periodShortcut to 'custom', same as the Comparison A/B fields further below. */}
         <div className={`grid grid-cols-1 ${reportMode === 'comparison' ? 'sm:grid-cols-2' : 'sm:grid-cols-2 sm:max-w-md'} gap-3`}>
           <div className="space-y-1.5">
-            {reportMode === 'comparison' && <p className="text-[11px] text-stone-400">A (الحالية)</p>}
+            {reportMode === 'comparison' && <p className="text-[11px] text-stone-400">A (Current)</p>}
+            {/* Point 3: dir="ltr" + min-w-[9.5rem] so the date shows its full year (was cropped
+                to e.g. "10/01/202"). */}
             <div className="grid grid-cols-2 gap-2">
-              <input type="date" value={periodStart} onChange={(event) => { setPeriodShortcut('custom'); setPeriodStart(event.target.value); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-              <input type="date" value={periodEnd} onChange={(event) => { setPeriodShortcut('custom'); setPeriodEnd(event.target.value); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+              <input type="date" dir="ltr" value={periodStart} onChange={(event) => { setPeriodShortcut('custom'); setPeriodStart(event.target.value); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+              <input type="date" dir="ltr" value={periodEnd} onChange={(event) => { setPeriodShortcut('custom'); setPeriodEnd(event.target.value); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
             </div>
           </div>
           {reportMode === 'comparison' && (
             <div className="space-y-1.5">
-              <p className="text-[11px] text-stone-400">B (السابقة)</p>
+              <p className="text-[11px] text-stone-400">B (Previous)</p>
               <div className="grid grid-cols-2 gap-2">
-                <input type="date" value={customPreviousRange.start} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, start: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-                <input type="date" value={customPreviousRange.end} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, end: event.target.value })); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+                <input type="date" dir="ltr" value={customPreviousRange.start} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, start: event.target.value })); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
+                <input type="date" dir="ltr" value={customPreviousRange.end} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, end: event.target.value })); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
               </div>
             </div>
           )}
@@ -802,6 +803,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
               <select value={selectedComparison?.id || ''} onChange={(event) => setSelectedComparisonId(event.target.value)} className="flex-1 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+                <option value="" disabled>Select a comparison to save...</option>
                 {visibleComparisons.map((comparison) => (
                   <option key={comparison.id} value={comparison.id} dir="auto">
                     {describeComparisonScope(comparison, clients, users)} — {formatPeriodLabel(comparison.period_current)}
