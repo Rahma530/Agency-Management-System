@@ -1897,7 +1897,13 @@ export default function App() {
   // insert above.
   const renewalAlertsCheckedRef = useRef(false);
   useEffect(() => {
-    if (!supabaseActive || renewalAlertsCheckedRef.current) return;
+    // usersLoadedFromSupabase (not just users.length > 0) guards against the INITIAL_USERS seed
+    // fallback: `users` starts as INITIAL_USERS (src/App.tsx:270) and loadData's own error path
+    // never replaces it on a failed/slow fetch, so a renewal check that fired before the real
+    // fetch resolved could notify demo user ids that violate notifications_user_id_fkey on
+    // production (23503) -- the same guard this file already uses for the same reason at
+    // 921/968/6475/6483.
+    if (!supabaseActive || !usersLoadedFromSupabase || renewalAlertsCheckedRef.current) return;
     if (clients.length === 0 || users.length === 0) return;
     renewalAlertsCheckedRef.current = true;
 
@@ -1955,7 +1961,7 @@ export default function App() {
     };
 
     checkRenewalAlerts();
-  }, [clients, users, supabaseActive]);
+  }, [clients, users, supabaseActive, usersLoadedFromSupabase]);
 
   // Real-time chat delivery (Phase 2). A demo-mode login never calls
   // supabase.auth.signInWithPassword, so there's no real JWT to open an authenticated
@@ -2583,6 +2589,16 @@ export default function App() {
       })
       .filter((role): role is UserRole => role !== null);
 
+    // usersLoadedFromSupabase guards against the same INITIAL_USERS-seed race the renewal-alert
+    // effect fixes above: a role-filter over `users` run before the real Supabase fetch resolves
+    // could notify demo user ids, which would violate notifications_user_id_fkey. Skips only the
+    // notification step here (console.warn), never the registration itself -- the AM lead/agent
+    // notifications above use client.am_team_lead_id/am_agent_id directly, not a role filter, so
+    // they are unaffected and still fire.
+    if (!usersLoadedFromSupabase) {
+      console.warn('Skipping client-registration team-lead notifications: users not yet loaded from Supabase.');
+      return;
+    }
     for (const teamLeadRole of activeServiceLeadRoles) {
       const recipients = users.filter((u) => u.role === teamLeadRole && isActiveEmployee(u));
       for (const recipient of recipients) {
@@ -3505,7 +3521,9 @@ export default function App() {
         ? 'social_media_team_lead'
         : null;
 
-    if (teamLeadRole && supabaseActive) {
+    if (teamLeadRole && supabaseActive && !usersLoadedFromSupabase) {
+      console.warn('Skipping brief-submission team-lead notification: users not yet loaded from Supabase.');
+    } else if (teamLeadRole && supabaseActive) {
       const client = clients.find((c) => c.id === brief.client_id);
       const recipients = users.filter((u) => u.role === teamLeadRole && isActiveEmployee(u));
       for (const recipient of recipients) {
