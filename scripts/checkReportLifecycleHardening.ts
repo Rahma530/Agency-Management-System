@@ -64,13 +64,13 @@ if (reportsHub.includes('>Setup<') || workspace.includes('Versioned Report Works
 }
 // Comparison merged into the top bar (point 1): the old separate "Comparison" section title and
 // its own two "Comparison Report"/"Period Report" mode buttons are gone, replaced by a single
-// "مقارنة" toggle in the top bar's scope row, with its results (Calculate/Save-as-report/the
+// "Compare" toggle in the top bar's scope row, with its results (Calculate/Save-as-report/the
 // saved list) now living right under the draft instead of under their own section.
 if (/<span>Comparison<\/span>/.test(reportsHub) || reportsHub.includes('>Comparison Report<') || reportsHub.includes('>Period Report<')) {
   throw new Error('The old separate "Comparison" section/title or its two mode buttons are still present.');
 }
-if (!reportsHub.includes('مقارنة') || !reportsHub.includes('Calculate comparison') || !reportsHub.includes('Save selected as report')) {
-  throw new Error('The مقارنة toggle, or the comparison results (Calculate/Save as report) now expected under the draft, is missing.');
+if (!reportsHub.includes('Compare') || !reportsHub.includes('Calculate comparison') || !reportsHub.includes('Save selected as report')) {
+  throw new Error('The Compare toggle, or the comparison results (Calculate/Save as report) now expected under the draft, is missing.');
 }
 // Point 3: both "التقرير"/"سجل النشاط" tabs stay mounted (CSS display only) rather than
 // unmounting, so a tab switch can't drop an unsaved draft or this page's own search/filter state.
@@ -81,7 +81,7 @@ if (!reportsHub.includes('سجل النشاط')
 }
 // Point 4: Weekly/Monthly/Quarterly/Yearly + Custom-range shortcuts, reusing
 // reportingEngine.ts's resolveComparisonPeriods (same logic PeriodSelector.tsx already uses).
-for (const label of ['أسبوعي', 'شهري', 'ربع سنوي', 'سنوي', 'فترة مخصصة']) {
+for (const label of ['Weekly', 'Monthly', 'Quarterly', 'Yearly', 'Custom Range']) {
   if (!reportsHub.includes(label)) throw new Error(`Period shortcut button is missing: ${label}`);
 }
 if (!reportsHub.includes('applyPeriodShortcut') || !reportsHub.includes('resolveComparisonPeriods')) {

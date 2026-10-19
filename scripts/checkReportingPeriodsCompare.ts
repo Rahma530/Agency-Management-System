@@ -41,16 +41,22 @@ import { formatPeriodLabel } from '../src/components/reporting/ComparisonDisplay
   }
 }
 
-// Point 2: formatPeriodLabel turns a custom "start_end" label into clear "من X إلى Y" wording
-// (so an Arabic scope name next to it can't scramble the date order under RTL), and leaves a
-// plain calendar-unit label (monthly/quarterly/yearly — no "_", no RTL ambiguity) unchanged.
+// formatPeriodLabel renders every stored label shape as a readable English string (weekly and
+// custom-range labels share the same "start_end" shape, so both format the same way here), and
+// leaves a plain yearly label (already clean digits) unchanged.
 {
-  if (formatPeriodLabel('2026-10-01_2026-10-18') !== 'من 2026-10-01 إلى 2026-10-18') {
-    throw new Error('formatPeriodLabel did not convert a custom range label to "من...إلى" wording.');
+  if (formatPeriodLabel('2026-10-01_2026-10-18') !== 'Oct 1 - Oct 18, 2026') {
+    throw new Error(`formatPeriodLabel did not format a same-month custom range label, got "${formatPeriodLabel('2026-10-01_2026-10-18')}"`);
   }
-  if (formatPeriodLabel('2026-10') !== '2026-10') throw new Error('formatPeriodLabel must leave a monthly label unchanged.');
-  if (formatPeriodLabel('2026-Q4') !== '2026-Q4') throw new Error('formatPeriodLabel must leave a quarterly label unchanged.');
+  if (formatPeriodLabel('2026-09-28_2026-10-04') !== 'Sep 28 - Oct 4, 2026') {
+    throw new Error(`formatPeriodLabel did not format a cross-month custom range label, got "${formatPeriodLabel('2026-09-28_2026-10-04')}"`);
+  }
+  if (formatPeriodLabel('2026-12-28_2027-01-03') !== 'Dec 28, 2026 - Jan 3, 2027') {
+    throw new Error(`formatPeriodLabel did not format a cross-year custom range label, got "${formatPeriodLabel('2026-12-28_2027-01-03')}"`);
+  }
+  if (formatPeriodLabel('2026-10') !== 'Oct 2026') throw new Error('formatPeriodLabel did not format a monthly label.');
+  if (formatPeriodLabel('2026-Q4') !== 'Q4 2026') throw new Error('formatPeriodLabel did not format a quarterly label.');
   if (formatPeriodLabel('2026') !== '2026') throw new Error('formatPeriodLabel must leave a yearly label unchanged.');
 }
 
-console.log('OK: weekly comparison periods (Saturday-Friday) match monthly/quarterly/yearly\'s own resolveComparisonPeriods pattern, and formatPeriodLabel clarifies custom-range labels without touching calendar-unit ones.');
+console.log('OK: weekly comparison periods (Saturday-Friday) match monthly/quarterly/yearly\'s own resolveComparisonPeriods pattern, and formatPeriodLabel renders every label shape as a readable English string.');
