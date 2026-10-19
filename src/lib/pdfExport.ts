@@ -54,6 +54,7 @@
 import { jsPDF } from 'jspdf';
 import { installJsPdfShaper } from 'bidi-shaper/jspdf';
 import { ClientComparisonRecord } from '../types/database';
+import { extractLinks } from './textLinks';
 
 // Registers bidi-shaper's preProcessText hook once, globally, on jsPDF's shared API object — every
 // doc.text() call on every jsPDF instance created after this runs is shaped/reordered
@@ -70,6 +71,8 @@ const BRAND_WHITE = '#ffffff';
 const BODY_TEXT_COLOR = '#1a1a1a'; // near-black, not the app's light-on-dark theme — PDFs are
 // conventionally read/printed on a light background, so this deliberately does not replicate the
 // app's own dark UI chrome.
+const LINK_COLOR = '#1a56db'; // standard "visited-safe" hyperlink blue, distinct from BRAND_PURPLE
+// so a link never reads as a themed heading/accent.
 
 const NOTO_NASKH_FONT_NAME = 'NotoNaskhArabic';
 const NOTO_NASKH_REGULAR_URL = '/fonts/NotoNaskhArabic-Regular.ttf';
@@ -263,26 +266,56 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
   // of doBidiReorder's seven branches evaluate false, so it returns the input completely
   // unchanged — a true no-op — leaving bidi-shaper's own correct reordering as the only one that
   // actually runs. Re-tested after adding this and confirmed correct (see report).
+  // A raw "https://..." URL left inside an Arabic paragraph/bullet reads backwards (bidi treats
+  // its LTR run as a single unit, but a long URL wrapped across lines by jsPDF's own
+  // splitTextToSize can still visually invert against the surrounding RTL text) and is plain,
+  // unclickable text. Extracted out of the sentence (extractLinks, textLinks.ts) and drawn here,
+  // one per own LTR line below the paragraph/bullet/cell it came from: blue, underlined, and a
+  // real clickable annotation (doc.textWithLink) — never embedded back into the Arabic body.
+  // Deliberately NOT given isOutputVisual/bidi-shaper treatment: this is already plain ASCII with
+  // nothing to reorder or shape, the same assumption drawTable's English cells already rely on.
+  function drawLinkLines(links: string[], indent = 0): void {
+    const lineHeight = 14;
+    links.forEach((link) => {
+      doc.setFont(fontFamily, 'normal');
+      doc.setFontSize(10);
+      const subLines: string[] = doc.splitTextToSize(link, contentWidth - indent);
+      ensureSpace(subLines.length * lineHeight);
+      doc.setTextColor(LINK_COLOR);
+      subLines.forEach((subLine, i) => {
+        const lineY = y + i * lineHeight;
+        doc.textWithLink(subLine, PAGE_MARGIN + indent, lineY, { url: link, align: 'left' });
+        const textWidth = doc.getTextWidth(subLine);
+        doc.setDrawColor(LINK_COLOR);
+        doc.line(PAGE_MARGIN + indent, lineY + 2, PAGE_MARGIN + indent + textWidth, lineY + 2);
+      });
+      y += subLines.length * lineHeight + 4;
+    });
+  }
+
   function drawArabicParagraph(text: string): void {
+    const { cleanText, links } = extractLinks(text);
     doc.setFont(fontFamily, 'normal');
     doc.setFontSize(11);
     doc.setTextColor(BODY_TEXT_COLOR);
     const lineHeight = 16;
-    const estimatedLines = doc.splitTextToSize(text, contentWidth);
+    const estimatedLines = doc.splitTextToSize(cleanText, contentWidth);
     ensureSpace(estimatedLines.length * lineHeight);
-    doc.text(text, pageWidth - PAGE_MARGIN, y, {
+    doc.text(cleanText, pageWidth - PAGE_MARGIN, y, {
       align: 'right',
       maxWidth: contentWidth,
       lineHeightFactor: 1.4,
       isOutputVisual: true,
     });
     y += estimatedLines.length * lineHeight + 10;
+    drawLinkLines(links);
   }
 
   function drawBulletList(items: string[]): void {
     const lineHeight = 16;
     const bulletGap = 14; // reserved space for the bullet marker + gap at the right margin
-    items.forEach((item) => {
+    items.forEach((rawItem) => {
+      const { cleanText: item, links } = extractLinks(rawItem);
       doc.setFont(fontFamily, 'normal');
       doc.setFontSize(11);
       const lines = doc.splitTextToSize(item, contentWidth - bulletGap);
@@ -305,6 +338,9 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
         isOutputVisual: true,
       });
       y += lines.length * lineHeight + 4;
+      // Indented to roughly where the bullet's own text starts, so a link visually belongs to
+      // its bullet rather than reading as a new top-level line.
+      drawLinkLines(links, bulletGap);
     });
     y += 6;
   }
@@ -326,7 +362,20 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
         doc.rect(PAGE_MARGIN, y - 14, contentWidth, rowHeight, 'F');
       }
       cells.forEach((cell, i) => {
-        doc.text(cell, PAGE_MARGIN + i * colWidth + 6, y);
+        // Defensive: today's metrics-table cells are always numeric/English labels, never a URL,
+        // but a cell that does contain one still gets a real clickable annotation (same style as
+        // the paragraph/bullet link lines) instead of silently rendering dead text.
+        const cellLink = !isHeader ? extractLinks(cell).links[0] : undefined;
+        if (cellLink) {
+          doc.setTextColor(LINK_COLOR);
+          doc.textWithLink(cell, PAGE_MARGIN + i * colWidth + 6, y, { url: cellLink });
+          const textWidth = doc.getTextWidth(cell);
+          doc.setDrawColor(LINK_COLOR);
+          doc.line(PAGE_MARGIN + i * colWidth + 6, y + 2, PAGE_MARGIN + i * colWidth + 6 + textWidth, y + 2);
+          doc.setTextColor(isHeader ? BRAND_WHITE : BODY_TEXT_COLOR);
+        } else {
+          doc.text(cell, PAGE_MARGIN + i * colWidth + 6, y);
+        }
       });
       if (!isHeader) {
         doc.setDrawColor('#dddddd');
