@@ -129,8 +129,15 @@ function composeManifestContent(
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
-  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => {
-    const line = `${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`;
+  // Each line is a genuinely distinct daily_log row (one per employee per day) — report_source_
+  // manifest_v2 returns one row per real daily_logs record, never a join fanout, so this never
+  // duplicates a single log. But several real, separate days of work can carry the exact same
+  // boilerplate text (a recurring task like "Post story" auto-logs identical wording each day it's
+  // completed), and without a date on the line those look like accidental duplicates. Sorting by
+  // date (the manifest's own order is source_kind/source_id, effectively random) and prefixing each
+  // line with its date makes clear these are distinct days' work, not the same source pulled twice.
+  if (logs.length) sections.push(`Work logs (primary source)\n${[...logs].sort((a, b) => a.source_date.localeCompare(b.source_date)).map((source) => {
+    const line = `${source.source_date} — ${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`;
     const attachmentLines = linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []);
     return attachmentLines.length ? [line, ...attachmentLines].join('\n') : line;
   }).join('\n')}`);
