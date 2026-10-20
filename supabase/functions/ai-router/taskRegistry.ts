@@ -818,10 +818,13 @@ function buildWorkItemGroupSystemPrompt(language: SupportedLanguage): string {
     `always safe to leave an item out of every group.\n` +
     `- An item may belong to at most one group.\n\n` +
     `For every group of 2 or more items you form, write ONE short, natural sentence in ` +
-    `${languageName} describing the shared activity, and explicitly state the exact number of ` +
-    `times it happened. That number must equal precisely how many item ids you put in that ` +
-    `group's "ids" array — count them yourself and use that exact integer; never estimate, round, ` +
-    `or guess a different number. Your sentence must contain that one number and no other number.\n\n` +
+    `${languageName} describing the shared activity, with the count placed directly before what ` +
+    `was repeated (e.g. "posted 5 stories", NOT "posted a story 5 times" — put the number next to ` +
+    `the thing being counted, not after the action as a trailing "X times"). In Arabic, this means ` +
+    `a pattern like "تم نشر 5 ستوريز" or "نشرت 5 ستوريز", NOT "تم نشر ستوري 5 مرات". The number must ` +
+    `equal precisely how many item ids you put in that group's "ids" array — count them yourself ` +
+    `and use that exact integer; never estimate, round, or guess a different number. Your sentence ` +
+    `must contain that one number and no other number.\n\n` +
     `Respond with ONLY this JSON array — no markdown code fences, no explanation: ` +
     `[{"ids": string[], "text": string}, ...]. Include an entry ONLY for a group of 2 or more ` +
     `ids. Do not include an entry for an item you are leaving ungrouped — simply omit it entirely.`
