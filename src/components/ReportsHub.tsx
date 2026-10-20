@@ -22,7 +22,6 @@ import {
   resolveComparisonPeriods,
   detectClientAnomalies,
   ClientAnomalyResult,
-  ensureComparisonForSummary as resolveOrGenerateComparison,
 } from '../lib/reportingEngine';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
@@ -353,7 +352,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   // current, B = previous). Defaults: A mirrors Setup's period, B is the same-length period right
   // before A — recomputed only until the viewer actually edits either Comparison date field.
   // ======================================================================
-  const [reportMode, setReportMode] = useState<ReportMode>('comparison');
+  const [reportMode, setReportMode] = useState<ReportMode>('period_summary');
   const [customCurrentRange, setCustomCurrentRange] = useState<DateRange>({ start: '', end: '' });
   const [customPreviousRange, setCustomPreviousRange] = useState<DateRange>({ start: '', end: '' });
   const comparisonPeriodTouched = useRef(false);
@@ -440,40 +439,38 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     [clientComparisons, myClientIds, selectableAgentIds, currentUser.id]
   );
 
-  // UX-flow change: lets "Generate AI Summary" work before any comparison row exists yet, same as
-  // ClientDashboard.tsx's own DirectAiSummaryPanel — binds reportingEngine.ts's shared
-  // ensureComparisonForSummary to whichever scope is currently selected (client or agent), looking
-  // it up in visibleComparisons first (already scoped to what this viewer is allowed to see) before
-  // falling through to onGenerateComparison.
-  const ensureComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
-    const comparison = resolvedScope
-      ? await resolveOrGenerateComparison({
-          scope: resolvedScope,
-          mode,
-          granularity: 'custom',
-          customCurrentRange,
-          customPreviousRange,
-          comparisons: visibleComparisons,
-          onGenerateComparison,
-        })
-      : null;
+  // AI Summary is intentionally a fresh generation, not an "ensure" lookup: its source data is
+  // selected anew by ReportDraftWorkspace, and its metrics must be recomputed from the current
+  // in-scope records rather than borrowing a same-period comparison saved by an earlier request.
+  // handleGenerateComparison keeps its normal upsert behavior for the comparison display; this
+  // bypasses only the client-side reuse shortcut used by the comparison UI.
+  const generateComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
+    if (!resolvedScope) return null;
+    if (!customCurrentRange.start || !customCurrentRange.end) return null;
+    if (mode === 'comparison' && (!customPreviousRange.start || !customPreviousRange.end)) return null;
+    const comparison = await onGenerateComparison(
+      resolvedScope,
+      mode,
+      'custom',
+      { currentRange: customCurrentRange, previousRange: mode === 'comparison' ? customPreviousRange : undefined }
+    );
     if (comparison) setSelectedComparisonId(comparison.id);
     return comparison;
   };
 
-  // Draft section's sole AI action — reuses the exact same ensure/generate path as the
-  // Comparison section's own button, then formats the result into plain draft text.
+  // Draft section's sole AI action — always recomputes the comparison for this request, then
+  // formats the result into plain draft text.
   // workItems (optional): the draft's own work-log lines, one call per ~25-item batch, strictly
   // sequential — see runWorkItemBatches/buildWorkItemBatches in ComparisonDisplay.tsx for why (a
   // single request can't safely rephrase 80+ lines, and a flat cap would silently drop the rest
-  // of a long period instead). Every batch call reuses the SAME comparison/metrics payload — only
-  // its work_items slice differs — so the comparison is only ensured/generated once up front.
+  // of a long period instead). Every batch call reuses this request's freshly-computed
+  // comparison/metrics payload — only its work_items slice differs.
   const requestDraftAiSummary = async (
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
   ): Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }> => {
     if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
-    const comparison = await ensureComparisonForSummary(reportMode);
+    const comparison = await generateComparisonForSummary(reportMode);
     if (!comparison) return { ok: false, message: 'Could not generate a comparison for this scope/period yet.' };
 
     if (!workItems || workItems.length === 0) {

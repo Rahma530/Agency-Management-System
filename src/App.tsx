@@ -4692,10 +4692,53 @@ export default function App() {
       return null;
     }
 
+    // Every "Generate AI Summary"/"Generate Comparison" click must compute over data read fresh
+    // from the database, not whatever's been sitting in this tab's React state since the last
+    // loadData() run — otherwise a stale browser tab silently produces stale metrics even though
+    // the click itself always triggers a real (re)generation now (see ReportsHub.tsx's/
+    // ClientDashboard.tsx's own ensureComparisonForSummary — the reuse-shortcut was removed there,
+    // but reused *input data* here would have reintroduced the same staleness one level down).
+    // setClients/setCampaigns/etc. are intentionally NOT called here: React state updates are
+    // async, so the freshly-fetched arrays below — not the state setters — are what this
+    // generation actually uses; keeping them local avoids a half-applied global state update for a
+    // scope narrower than the full client list.
+    // KNOWN GAP, accepted for this phase: `assignments` (which resolveClientsForSubject above used
+    // to decide which clients belong to an agent-scoped subject) is not refetched here — only the
+    // five inputs this function's own metrics computation reads (clients, campaigns, tasks,
+    // social_insights, seo_insights) are. Membership itself going live too is a separate change.
+    let freshClients = scopedClients;
+    let freshCampaigns = campaigns;
+    let freshTasks = tasks;
+    let freshSocialInsights = socialInsights;
+    let freshSeoInsights = seoInsights;
+
+    if (supabaseActive) {
+      const clientIds = scopedClients.map((c) => c.id);
+      const [clientsRes, campaignsRes, tasksRes, socialRes, seoRes] = await Promise.all([
+        supabaseRaw.from('clients').select(NON_SENSITIVE_CLIENT_COLUMNS).in('id', clientIds),
+        supabaseRaw.from('campaigns').select('*').in('client_id', clientIds),
+        supabaseRaw.from('tasks').select('*').in('client_id', clientIds),
+        supabase.from('social_insights').select('*').in('client_id', clientIds),
+        supabase.from('seo_insights').select('*').in('client_id', clientIds),
+      ]);
+      const fetchError =
+        clientsRes.error || campaignsRes.error || tasksRes.error || socialRes.error || seoRes.error;
+      if (fetchError) {
+        console.error('Fresh-data fetch for comparison/period-summary generation failed:', fetchError);
+        showNotification('Unable to read fresh data for this report — nothing was generated.', 'info');
+        return null;
+      }
+      freshClients = (clientsRes.data as ClientRecord[]) || [];
+      freshCampaigns = (campaignsRes.data as CampaignRecord[]) || [];
+      freshTasks = (tasksRes.data as TaskRecord[]) || [];
+      freshSocialInsights = (socialRes.data as SocialInsightRecord[]) || [];
+      freshSeoInsights = (seoRes.data as SeoInsightRecord[]) || [];
+    }
+
     const result =
       mode === 'comparison'
-        ? generateClientComparison(scopedClients, current, previous!, campaigns, tasks, socialInsights, seoInsights, serviceFilter)
-        : generatePeriodSummary(scopedClients, current, campaigns, tasks, socialInsights, seoInsights, serviceFilter);
+        ? generateClientComparison(freshClients, current, previous!, freshCampaigns, freshTasks, freshSocialInsights, freshSeoInsights, serviceFilter)
+        : generatePeriodSummary(freshClients, current, freshCampaigns, freshTasks, freshSocialInsights, freshSeoInsights, serviceFilter);
 
     // created_at is preserved from whatever's already in local state (cheap, synchronous) for
     // both write paths below; the network round trip only decides insert-vs-update targeting.
