@@ -276,6 +276,14 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [clientSearch, setClientSearch] = useState('');
   const [creatorNote, setCreatorNote] = useState('');
   const [draftText, setDraftText] = useState('');
+  // One-step undo for whatever draftText held right before AI Summary, Group similar entries, or
+  // Clear AI text last overwrote it — so an accidental or unwanted overwrite (e.g. running Group
+  // similar entries after AI Summary, which rebuilds the Work logs section from the original
+  // per-employee lines and so cannot preserve an AI Summary's free-form rewrite) can be undone
+  // with one click instead of a full page refresh. Reset to null whenever a different report (or
+  // no report) is opened, so a snapshot never applies across reports (see the clearSignal/
+  // selectedReportId effect below).
+  const [undoDraftText, setUndoDraftText] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState('');
   const [versions, setVersions] = useState<ReportContentVersionRecord[]>([]);
   const [sources, setSources] = useState<ReportSourceItemRecord[]>([]);
@@ -470,14 +478,32 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // saved baseline instead of an empty draft.
   const clearAiText = () => {
     if (!window.confirm('Discard the current draft text and revert to the last saved version?')) return;
-    setDraftText(currentVersion?.content_text || '');
+    setDraftTextWithUndo(currentVersion?.content_text || '');
+    setMessage(null);
+  };
+
+  // Snapshots the CURRENT draftText into the one-step undo slot before replacing it — used by
+  // every action that overwrites the whole draft (AI Summary, Group similar entries, Clear AI
+  // text) so "Undo" always restores exactly what was there a moment ago, whatever it was.
+  const setDraftTextWithUndo = (next: string) => {
+    setUndoDraftText(draftText);
+    setDraftText(next);
+  };
+
+  const undoLastAiChange = () => {
+    if (undoDraftText === null) return;
+    setDraftText(undoDraftText);
+    setUndoDraftText(null);
     setMessage(null);
   };
 
   useEffect(() => {
     // A previously-pulled preview is scoped to whichever report was open when it was fetched —
     // never carry it over to a different report (switching drafts, or opening a different filed
-    // report) where it would silently feed the wrong report's AI Summary/"save as new draft".
+    // report) where it would silently feed the wrong report's AI Summary/"save as new draft". The
+    // one-step undo snapshot is scoped the same way — never offer to "undo" into a different
+    // report's text.
+    setUndoDraftText(null);
     setPreviewManifest(null);
     if (!selectedReportId) {
       setVersions([]);
@@ -623,7 +649,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         setMessage(result.message);
         return;
       }
-      setDraftText(result.text);
+      setDraftTextWithUndo(result.text);
       setPreviewManifest(null);
       setMessage(
         result.partial
@@ -644,9 +670,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // UI never trusts a count the model merely states. A singleton (ungrouped) line is rendered
   // completely unchanged, in its own original wording — this action can only ever merge, never
   // reword, an untouched line. Sets previewManifest exactly like pullSourcesAgain does (so "Save
-  // as new draft with these sources" lights up if the source hash changed); "Cancel pull"/"Clear
-  // AI text" below already cover undoing this the same way they cover AI Summary, so there's no
-  // separate undo path here.
+  // as new draft with these sources" lights up if the source hash changed). Rebuilt from the
+  // original per-employee lines, so it CANNOT preserve a prior AI Summary rewrite's free-form
+  // prose — running this after AI Summary replaces that prose with the grouped work-log lines, by
+  // design, which is exactly what the one-step "Undo" button (setDraftTextWithUndo) is for.
   const groupSimilarEntries = async () => {
     if (!onGroupWorkItems || busy) return;
     if (hasUnsavedChanges && !window.confirm('Replace the current draft text with a grouped version of the fresh work logs? Your unsaved changes will be lost.')) return;
@@ -660,7 +687,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
       if (!logSources.length) {
         setPreviewManifest(manifest);
-        setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping));
+        setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping));
         setMessage('No work-log lines to group for this period.');
         return;
       }
@@ -677,7 +704,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         return;
       }
       setPreviewManifest(manifest);
-      setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping));
+      setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping));
       const mergedCount = result.result.groups.filter((group) => group.ids.length > 1).length;
       setMessage(
         mergedCount
@@ -831,7 +858,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             </div>
           )}
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{onGroupWorkItems && <button disabled={busy} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>}{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{onGroupWorkItems && <button disabled={busy} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>}{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}{undoDraftText !== null && <button disabled={busy} onClick={undoLastAiChange} title="Restore the draft text exactly as it was before the last Group similar entries action" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">↶ Undo</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}
 
@@ -871,6 +898,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           )}
           {hasUnsavedChanges && !selectedReport.archived_at && selectedReport.status !== 'final' && (
             <button disabled={busy} onClick={clearAiText} title="Discard the current draft text and revert to the last saved version" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Clear AI text</button>
+          )}
+          {undoDraftText !== null && !selectedReport.archived_at && selectedReport.status !== 'final' && (
+            <button disabled={busy} onClick={undoLastAiChange} title="Restore the draft text exactly as it was before the last AI Summary / Group similar entries / Clear AI text action" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">↶ Undo</button>
           )}
           {selectedReport.status !== 'final' && <button disabled={busy || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
           <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
