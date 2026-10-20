@@ -288,10 +288,30 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       setPreviewManifest(manifest);
       setMessage(
         selectedReport && manifest.source_hash === selectedReport.source_hash
-          ? `تم سحب لقطة جديدة لكنها مطابقة للمصادر المحفوظة حالياً (${manifest.source_count} مصدر). لا جديد لحفظه.`
-          : `تم سحب لقطة مصادر جديدة: ${manifest.source_count} مصدر معتمد. نص المسودة لم يتغيّر — استخدم AI Summary أو عدّل يدوياً، ثم "حفظ كمسودة جديدة بهذه المصادر" لحفظها (نسخة/تقرير جديد، أدلته الجديدة).`
+          ? `A fresh snapshot was pulled but it matches the currently saved sources (${manifest.source_count} source(s)). Nothing new to save.`
+          : `A new source snapshot was pulled: ${manifest.source_count} authorized source(s). The draft text has not changed — use AI Summary or edit it manually, then "Save as new draft with these sources" to save it (a new version/report, with its new evidence). Changed your mind? Use "Cancel pull" below to discard this snapshot.`
       );
     } finally { setBusy(false); }
+  };
+
+  // Discards a freshly-pulled snapshot (from pullSourcesAgain, or buildPreview's new-draft flow)
+  // and returns to exactly the state before that click — previewManifest is the only thing either
+  // of those set, so this is simply clearing it back out, plus restoring draftText for the
+  // new-draft flow (buildPreview is the only caller that touches draftText from a pull).
+  const cancelLastPull = (wasNewDraftFlow: boolean) => {
+    setPreviewManifest(null);
+    setMessage(null);
+    if (wasNewDraftFlow) setDraftText('');
+  };
+
+  // Lets the user discard whatever text is currently sitting in the editor (a stale or unwanted
+  // AI Summary result, or an in-progress manual edit) and fall back to the last explicitly saved
+  // version — NOT to blank — so "Clear AI text" then "AI Summary" reliably starts from a known,
+  // saved baseline instead of an empty draft.
+  const clearAiText = () => {
+    if (!window.confirm('Discard the current draft text and revert to the last saved version?')) return;
+    setDraftText(currentVersion?.content_text || '');
+    setMessage(null);
   };
 
   useEffect(() => {
@@ -594,7 +614,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             </div>
           )}
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">سحب المصادر من جديد</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}
 
@@ -604,10 +624,13 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           draftText by itself — see pullSourcesAgain's own comment. */}
       {selectedReport && (
         <div className="flex items-center gap-2 flex-wrap">
-          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={pullSourcesAgain} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">سحب المصادر من جديد</button>
+          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={pullSourcesAgain} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>
+          {previewManifest && (
+            <button disabled={busy} onClick={() => cancelLastPull(false)} title="Discard this pulled snapshot (the draft text is untouched either way)" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>
+          )}
           <span className="text-[11px] text-stone-400">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span>
           {canSaveAsNewDraftFromPulledSources && (
-            <button disabled={busy || !draftText.trim()} onClick={createDraft} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />حفظ كمسودة جديدة بهذه المصادر</button>
+            <button disabled={busy || !draftText.trim()} onClick={createDraft} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save as new draft with these sources</button>
           )}
         </div>
       )}
@@ -625,6 +648,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={saveVersion} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save version</button>
           {onRequestAiSummary && (
             <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={requestAiSummary} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Sparkles className="w-3.5 h-3.5 inline mr-1" />AI Summary</button>
+          )}
+          {hasUnsavedChanges && !selectedReport.archived_at && selectedReport.status !== 'final' && (
+            <button disabled={busy} onClick={clearAiText} title="Discard the current draft text and revert to the last saved version" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Clear AI text</button>
           )}
           {selectedReport.status !== 'final' && <button disabled={busy || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
           <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
