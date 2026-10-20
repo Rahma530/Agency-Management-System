@@ -21,7 +21,7 @@ import {
 import { downloadReportPdf } from '../../lib/pdfExport';
 import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
-import { CampaignSummaryWorkItem, formatPeriodLabel } from './ComparisonDisplay';
+import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
 // so the same values drive both this component's own Sources/Draft logic AND the Comparison
@@ -73,6 +73,14 @@ interface Props {
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
   ) => Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }>;
+  // "Group similar entries" — a separate, narrower AI action from AI Summary above. It never
+  // rewrites prose; it only decides which same-employee work-log lines repeat the exact same
+  // activity and merges them into one line with a count the server has independently verified
+  // (taskRegistry.ts's WORK_ITEM_GROUP never takes the model's count on its word — see
+  // groupSimilarEntries below). Optional for the same reason onRequestAiSummary is.
+  onGroupWorkItems?: (
+    items: { id: string; employee?: string; text: string }[]
+  ) => Promise<WorkItemGroupGenerationResult>;
   // Bumped by ReportsHub whenever the top-bar scope/period changes to a combination with no
   // matching draft — tells this workspace to confirm-discard (if needed) and reset to its empty,
   // new-draft state. A matching draft instead arrives via openReportId as usual.
@@ -118,22 +126,52 @@ function linkedTaskIdsOf(source: Pick<ReportSourceItemRecord, 'snapshot'>): stri
   return Array.isArray(source.snapshot.linked_task_ids) ? (source.snapshot.linked_task_ids as string[]) : [];
 }
 
+// workLogGroups (optional): the result of "Group similar entries" (onGroupWorkItems), keyed by
+// each log's own source_id. When present, it REPLACES the plain per-log line rendering below with
+// one line per group — a group of 2+ ids becomes one merged line (its already-server-verified
+// text), a group of 1 id renders exactly like an ungrouped log always has. Every log's source_id
+// must appear in exactly one group (groupSimilarEntries' caller guarantees this; see its own
+// comment), so nothing here needs its own "leftover" handling.
+function renderWorkLogSection(
+  logs: Array<Omit<ReportSourceItemRecord, 'id' | 'report_id'>>,
+  names: Map<string, string>,
+  attachmentLinksByTask: Map<string, string[]>,
+  workLogGroups?: WorkItemGroup[]
+): string {
+  const renderLine = (employeeName: string, text: string, attachmentLines: string[]): string =>
+    attachmentLines.length ? [`${employeeName}: ${text}`, ...attachmentLines].join('\n') : `${employeeName}: ${text}`;
+  if (!workLogGroups || !workLogGroups.length) {
+    return logs.map((source) => renderLine(
+      names.get(source.user_id) || 'Employee',
+      String(source.snapshot.summary_text || '').trim(),
+      linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || [])
+    )).join('\n');
+  }
+  const logsById = new Map(logs.map((source) => [source.source_id, source]));
+  return workLogGroups.map((group) => {
+    const first = logsById.get(group.ids[0]);
+    if (!first) return null; // a stale group referencing a log no longer in this manifest
+    const attachmentLines = group.ids.flatMap((id) => {
+      const source = logsById.get(id);
+      return source ? linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []) : [];
+    });
+    return renderLine(names.get(first.user_id) || 'Employee', group.text, attachmentLines);
+  }).filter((line): line is string => line !== null).join('\n');
+}
+
 function composeManifestContent(
   manifest: SourceManifest,
   creatorNote: string,
   names: Map<string, string>,
   creative: boolean,
-  attachmentLinksByTask: Map<string, string[]>
+  attachmentLinksByTask: Map<string, string[]>,
+  workLogGroups?: WorkItemGroup[]
 ): string {
   const logs = manifest.sources.filter((source) => source.source_kind === 'daily_log');
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
-  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => {
-    const line = `${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`;
-    const attachmentLines = linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []);
-    return attachmentLines.length ? [line, ...attachmentLines].join('\n') : line;
-  }).join('\n')}`);
+  if (logs.length) sections.push(`Work logs (primary source)\n${renderWorkLogSection(logs, names, attachmentLinksByTask, workLogGroups)}`);
   if (creative && tasks.length) {
     const count = (kind: string) => tasks.filter((source) => source.snapshot.work_kind === kind).length;
     sections.push(`Creative task evidence summary\nDesign tasks evidenced by linked work logs: ${count('design')}\nVideo tasks evidenced by linked work logs: ${count('video')}\nMixed or unclassified tasks requiring review: ${count('mixed') + count('unclassified')}`);
@@ -173,6 +211,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   periodEnd,
   onPeriodEndChange,
   onRequestAiSummary,
+  onGroupWorkItems,
   clearSignal,
 }) => {
   // scopeKind 'own' always resolves to the current user's own employee-overall-all-clients work
@@ -534,6 +573,60 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
   };
 
+  // "Group similar entries" (onGroupWorkItems): fetches a FRESH manifest (same "always fresh,
+  // never reused" rule as requestAiSummary/pullSourcesAgain above — never built from
+  // previewManifest or the current draftText), asks the AI to find same-employee lines that
+  // describe the exact same recurring activity, and re-renders the Work logs section with any
+  // confidently-merged groups collapsed into one line with a count. The count is always verified
+  // server-side against the real number of ids merged (taskRegistry.ts's WORK_ITEM_GROUP) — this
+  // UI never trusts a count the model merely states. A singleton (ungrouped) line is rendered
+  // completely unchanged, in its own original wording — this action can only ever merge, never
+  // reword, an untouched line. Sets previewManifest exactly like pullSourcesAgain does (so "Save
+  // as new draft with these sources" lights up if the source hash changed); "Cancel pull"/"Clear
+  // AI text" below already cover undoing this the same way they cover AI Summary, so there's no
+  // separate undo path here.
+  const groupSimilarEntries = async () => {
+    if (!onGroupWorkItems || busy) return;
+    if (hasUnsavedChanges && !window.confirm('Replace the current draft text with a grouped version of the fresh work logs? Your unsaved changes will be lost.')) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const manifest = await fetchSourceManifest();
+      if (!manifest) return;
+      const logSources = manifest.sources.filter((source) => source.source_kind === 'daily_log');
+      const attachmentLinksByTask = await fetchTaskAttachmentLinks(logSources.flatMap(linkedTaskIdsOf));
+      const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
+      if (!logSources.length) {
+        setPreviewManifest(manifest);
+        setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask));
+        setMessage('No work-log lines to group for this period.');
+        return;
+      }
+      const items = logSources
+        .map((source) => ({
+          id: source.source_id,
+          employee: names.get(source.user_id) || undefined,
+          text: String(source.snapshot.summary_text || '').trim(),
+        }))
+        .filter((item) => item.text);
+      const result = await onGroupWorkItems(items);
+      if (!result.ok) {
+        setMessage(result.message);
+        return;
+      }
+      setPreviewManifest(manifest);
+      setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups));
+      const mergedCount = result.result.groups.filter((group) => group.ids.length > 1).length;
+      setMessage(
+        mergedCount
+          ? `${mergedCount} group(s) of genuinely repeated work were merged (each count independently verified, never taken on the AI's word). Everything else is unchanged. Save a version to keep it.`
+          : 'No confidently repeated work was found to merge — the work logs are unchanged.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const applySuggestion = async () => {
     if (!suggestion || !selectedReport) return;
     setBusy(true);
@@ -674,7 +767,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             </div>
           )}
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{onGroupWorkItems && <button disabled={busy} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>}{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}
 
@@ -685,6 +778,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       {selectedReport && (
         <div className="flex items-center gap-2 flex-wrap">
           <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={pullSourcesAgain} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>
+          {onGroupWorkItems && (
+            <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>
+          )}
           {previewManifest && (
             <button disabled={busy} onClick={() => cancelLastPull(false)} title="Discard this pulled snapshot (the draft text is untouched either way)" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>
           )}

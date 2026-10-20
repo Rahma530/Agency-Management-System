@@ -61,6 +61,7 @@ import {
   CampaignSummaryPayload,
   CampaignSummaryGenerationResult,
   UnifiedReportGenerationResult,
+  WorkItemGroupGenerationResult,
 } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
@@ -1185,6 +1186,50 @@ export default function App() {
       const message = safeAiErrorMessage(
         err instanceof Error ? err.message : undefined,
         'Unified report unavailable — try again later.'
+      );
+      showNotification(message, 'info');
+      return { ok: false, message };
+    }
+  };
+
+  // Report Workspace's "Group similar entries" action (WORK_ITEM_GROUP). Same never-throws/
+  // timeout/sanitized-error convention as handleGenerateCampaignSummary above. Unlike that one,
+  // this task's result is never prose to trust at face value — it's a clustering decision whose
+  // one piece of "new" text per merged group (the count-bearing sentence) is already validated
+  // server-side (taskRegistry.ts's validateWorkItemGroupOutput) against an independently-counted
+  // group size before this ever sees it, so no further grounding check is needed here.
+  const handleGroupWorkItems = async (
+    items: { id: string; employee?: string; text: string }[]
+  ): Promise<WorkItemGroupGenerationResult> => {
+    try {
+      const { data, error } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: { task: 'WORK_ITEM_GROUP', language: 'ar', payload: { items } },
+        }),
+        AI_SUMMARY_TIMEOUT_MS,
+        `Grouping timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+      );
+      if (error) {
+        const context = error.context;
+        const status = context instanceof Response ? context.status : undefined;
+        console.error('WORK_ITEM_GROUP request failed:', { status, errorName: error.name, errorMessage: error.message });
+        throw new Error(status
+          ? `Grouping request failed (HTTP ${status}). Please try again.`
+          : 'Could not reach the grouping service. Please try again.');
+      }
+      if (!data?.ok) {
+        throw new Error(safeAiErrorMessage(data?.message, 'Grouping is currently unavailable.'));
+      }
+      const result = data.result;
+      if (!result || typeof result !== 'object' || !Array.isArray(result.groups)) {
+        throw new Error('Unexpected grouping response.');
+      }
+      return { ok: true, result } as WorkItemGroupGenerationResult;
+    } catch (err: unknown) {
+      console.error('WORK_ITEM_GROUP request failed:', err);
+      const message = safeAiErrorMessage(
+        err instanceof Error ? err.message : undefined,
+        'Grouping unavailable — try again later.'
       );
       showNotification(message, 'info');
       return { ok: false, message };
@@ -6463,6 +6508,7 @@ export default function App() {
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
+                  onGroupWorkItems={handleGroupWorkItems}
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
                   onReportChanged={(report) =>
