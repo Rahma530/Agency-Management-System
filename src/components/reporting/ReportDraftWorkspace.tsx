@@ -8,6 +8,7 @@ import {
   ReportContentVersionRecord,
   ReportRecord,
   ReportSourceItemRecord,
+  ServiceType,
   TaskAssigneeRecord,
   TaskAttachmentRecord,
   TaskRecord,
@@ -18,9 +19,11 @@ import { formatLocalCalendarDate, resolveReportPeriod } from '../../lib/reportPe
 import {
   collectClientReportSources, collectEmployeeReportSources, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
-import { downloadReportPdf } from '../../lib/pdfExport';
+import { downloadReportPdf, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
 import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
+import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
+import { classifyWorkLogService } from '../../lib/workLogServiceClassification';
 import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
@@ -126,37 +129,85 @@ function linkedTaskIdsOf(source: Pick<ReportSourceItemRecord, 'snapshot'>): stri
   return Array.isArray(source.snapshot.linked_task_ids) ? (source.snapshot.linked_task_ids as string[]) : [];
 }
 
+// Only meaningful for a CLIENT-scope report: "this client's subscribed services" has no single
+// meaning for an employee-scope report, which can span several clients at once. usersById is the
+// full roster (not just this manifest's authors) so a lookup never misses an active or deactivated
+// user. See classifyWorkLogService's own comment for the role->service mapping and its limits.
+interface WorkLogServiceGrouping {
+  client: ClientRecord;
+  usersById: Map<string, UserRecord>;
+}
+
 // workLogGroups (optional): the result of "Group similar entries" (onGroupWorkItems), keyed by
 // each log's own source_id. When present, it REPLACES the plain per-log line rendering below with
 // one line per group — a group of 2+ ids becomes one merged line (its already-server-verified
 // text), a group of 1 id renders exactly like an ungrouped log always has. Every log's source_id
 // must appear in exactly one group (groupSimilarEntries' caller guarantees this; see its own
 // comment), so nothing here needs its own "leftover" handling.
+//
+// serviceGrouping (optional): when present, the rendered lines are additionally bucketed by the
+// author's classified service (classifyWorkLogService) and emitted as one sub-section per service
+// — heading line, then its lines, blank line, next service — ordered by the client's own
+// subscribed-services order (CLIENT_SERVICES), with any classified service the client isn't
+// actually subscribed to still shown (never dropped) right after, and an "Other updates" bucket
+// for anything that couldn't be confidently classified always last. pdfExport.ts's
+// parseReportContentIntoParagraphs recovers this exact same structure back out of the saved
+// content_text at PDF-export time to give each service its own heading and a decorative divider —
+// see that function's own comment for the heading strings this must stay in sync with.
 function renderWorkLogSection(
   logs: Array<Omit<ReportSourceItemRecord, 'id' | 'report_id'>>,
   names: Map<string, string>,
   attachmentLinksByTask: Map<string, string[]>,
-  workLogGroups?: WorkItemGroup[]
+  workLogGroups?: WorkItemGroup[],
+  serviceGrouping?: WorkLogServiceGrouping
 ): string {
   const renderLine = (employeeName: string, text: string, attachmentLines: string[]): string =>
     attachmentLines.length ? [`${employeeName}: ${text}`, ...attachmentLines].join('\n') : `${employeeName}: ${text}`;
+
+  type RenderedLine = { userId: string; line: string };
+  let lines: RenderedLine[];
   if (!workLogGroups || !workLogGroups.length) {
-    return logs.map((source) => renderLine(
-      names.get(source.user_id) || 'Employee',
-      String(source.snapshot.summary_text || '').trim(),
-      linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || [])
-    )).join('\n');
+    lines = logs.map((source) => ({
+      userId: source.user_id,
+      line: renderLine(
+        names.get(source.user_id) || 'Employee',
+        String(source.snapshot.summary_text || '').trim(),
+        linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || [])
+      ),
+    }));
+  } else {
+    const logsById = new Map(logs.map((source) => [source.source_id, source]));
+    lines = workLogGroups
+      .map((group) => {
+        const first = logsById.get(group.ids[0]);
+        if (!first) return null; // a stale group referencing a log no longer in this manifest
+        const attachmentLines = group.ids.flatMap((id) => {
+          const source = logsById.get(id);
+          return source ? linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []) : [];
+        });
+        return { userId: first.user_id, line: renderLine(names.get(first.user_id) || 'Employee', group.text, attachmentLines) };
+      })
+      .filter((entry): entry is RenderedLine => entry !== null);
   }
-  const logsById = new Map(logs.map((source) => [source.source_id, source]));
-  return workLogGroups.map((group) => {
-    const first = logsById.get(group.ids[0]);
-    if (!first) return null; // a stale group referencing a log no longer in this manifest
-    const attachmentLines = group.ids.flatMap((id) => {
-      const source = logsById.get(id);
-      return source ? linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []) : [];
-    });
-    return renderLine(names.get(first.user_id) || 'Employee', group.text, attachmentLines);
-  }).filter((line): line is string => line !== null).join('\n');
+
+  if (!serviceGrouping) return lines.map((entry) => entry.line).join('\n');
+
+  type ServiceBucketKey = ServiceType | 'other';
+  const buckets = new Map<ServiceBucketKey, string[]>();
+  lines.forEach((entry) => {
+    const role = serviceGrouping.usersById.get(entry.userId)?.role;
+    const key: ServiceBucketKey = classifyWorkLogService(role) ?? 'other';
+    buckets.set(key, [...(buckets.get(key) || []), entry.line]);
+  });
+  const subscribedServices = getClientServices(serviceGrouping.client);
+  const orderedKeys: ServiceBucketKey[] = [
+    ...subscribedServices.filter((service) => buckets.has(service)),
+    ...CLIENT_SERVICES.filter((service) => !subscribedServices.includes(service) && buckets.has(service)),
+    ...(buckets.has('other') ? (['other'] as ServiceBucketKey[]) : []),
+  ];
+  return orderedKeys
+    .map((key) => `${key === 'other' ? OTHER_SERVICE_BUCKET_LABEL : SERVICE_LABELS[key]}\n${buckets.get(key)!.join('\n')}`)
+    .join('\n\n');
 }
 
 function composeManifestContent(
@@ -165,20 +216,21 @@ function composeManifestContent(
   names: Map<string, string>,
   creative: boolean,
   attachmentLinksByTask: Map<string, string[]>,
-  workLogGroups?: WorkItemGroup[]
+  workLogGroups?: WorkItemGroup[],
+  serviceGrouping?: WorkLogServiceGrouping
 ): string {
   const logs = manifest.sources.filter((source) => source.source_kind === 'daily_log');
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
-  if (logs.length) sections.push(`Work logs (primary source)\n${renderWorkLogSection(logs, names, attachmentLinksByTask, workLogGroups)}`);
+  if (logs.length) sections.push(`${REPORT_SECTION_HEADINGS.workLogs}\n${renderWorkLogSection(logs, names, attachmentLinksByTask, workLogGroups, serviceGrouping)}`);
   if (creative && tasks.length) {
     const count = (kind: string) => tasks.filter((source) => source.snapshot.work_kind === kind).length;
-    sections.push(`Creative task evidence summary\nDesign tasks evidenced by linked work logs: ${count('design')}\nVideo tasks evidenced by linked work logs: ${count('video')}\nMixed or unclassified tasks requiring review: ${count('mixed') + count('unclassified')}`);
+    sections.push(`${REPORT_SECTION_HEADINGS.creativeSummary}\nDesign tasks evidenced by linked work logs: ${count('design')}\nVideo tasks evidenced by linked work logs: ${count('video')}\nMixed or unclassified tasks requiring review: ${count('mixed') + count('unclassified')}`);
   }
-  if (tasks.length) sections.push(`Task evidence ledger (not additional work items)\n${tasks.map((source) => `${String(source.snapshot.title || 'Task')} — ${String(source.snapshot.work_kind || 'unclassified')} (content-inferred); status: ${String(source.snapshot.status || '')}; linked log dates: ${Array.isArray(source.snapshot.evidence_dates) ? source.snapshot.evidence_dates.join(', ') : source.source_date}`).join('\n')}`);
-  if (notes.length) sections.push(`Additional employee context\n${notes.map((source) => `${source.source_date} — ${String(source.snapshot.note_text || '').trim()}`).join('\n')}`);
-  if (creatorNote.trim()) sections.push(`Context and observations\n${creatorNote.trim()}`);
+  if (tasks.length) sections.push(`${REPORT_SECTION_HEADINGS.taskLedger}\n${tasks.map((source) => `${String(source.snapshot.title || 'Task')} — ${String(source.snapshot.work_kind || 'unclassified')} (content-inferred); status: ${String(source.snapshot.status || '')}; linked log dates: ${Array.isArray(source.snapshot.evidence_dates) ? source.snapshot.evidence_dates.join(', ') : source.source_date}`).join('\n')}`);
+  if (notes.length) sections.push(`${REPORT_SECTION_HEADINGS.employeeContext}\n${notes.map((source) => `${source.source_date} — ${String(source.snapshot.note_text || '').trim()}`).join('\n')}`);
+  if (creatorNote.trim()) sections.push(`${REPORT_SECTION_HEADINGS.creatorContext}\n${creatorNote.trim()}`);
   return sections.join('\n\n') || 'No eligible work records were found for this period.';
 }
 
@@ -241,6 +293,16 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     ? versions.find((version) => version.id === selectedReport.current_version_id) || versions[0] || null
     : null;
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.name])), [users]);
+  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+  // Drives the PDF-by-service grouping (renderWorkLogSection) — undefined for an employee-scope
+  // report (see WorkLogServiceGrouping's own comment for why) or if the picked client can't be
+  // found (e.g. a stale/deleted id), in which case the work-log section just renders flat, exactly
+  // as it always has.
+  const workLogServiceGrouping = useMemo(() => {
+    if (effectiveScopeType !== 'client') return undefined;
+    const client = clients.find((item) => item.id === clientId);
+    return client ? { client, usersById } : undefined;
+  }, [effectiveScopeType, clientId, clients, usersById]);
   // Point 2: "name — من X إلى Y" (not "{period} — {name}") so the Arabic subject name and the
   // period's two dates each keep their own reading order instead of garbling together — see
   // formatPeriodLabel's own comment (ComparisonDisplay.tsx) for why raw "start_end" labels read
@@ -362,7 +424,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const attachmentLinksByTask = await fetchTaskAttachmentLinks(
         manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
       );
-      setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject), attachmentLinksByTask));
+      setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject), attachmentLinksByTask, undefined, workLogServiceGrouping));
       creationKey.current = null;
       setMessage(`Preview built from ${manifest.source_count} authorized immutable source(s).`);
     } finally { setBusy(false); }
@@ -598,7 +660,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
       if (!logSources.length) {
         setPreviewManifest(manifest);
-        setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask));
+        setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping));
         setMessage('No work-log lines to group for this period.');
         return;
       }
@@ -615,7 +677,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         return;
       }
       setPreviewManifest(manifest);
-      setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups));
+      setDraftText(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping));
       const mergedCount = result.result.groups.filter((group) => group.ids.length > 1).length;
       setMessage(
         mergedCount
@@ -736,9 +798,11 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       subtitle: `${subjectName} — ${periodRange}`,
       // No "Report Details" block (scope/responsible/evidence count) — the header above already
       // carries everything this PDF is meant to show: client/employee name + period.
-      paragraphs: [
-        { heading: 'Final Report', body: currentVersion.content_text },
-      ],
+      // parseReportContentIntoParagraphs recovers composeManifestContent's own section structure
+      // (and, inside Work logs for a client-scope report, each subscribed service's own
+      // sub-section with a decorative divider) back out of the saved text — see its own comment
+      // for the conservative fallback when a report doesn't match that shape.
+      paragraphs: parseReportContentIntoParagraphs(currentVersion.content_text),
     });
   };
 
