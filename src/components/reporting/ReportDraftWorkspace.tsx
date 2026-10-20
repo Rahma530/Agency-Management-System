@@ -131,13 +131,13 @@ function composeManifestContent(
   const sections: string[] = [];
   // Each line is a genuinely distinct daily_log row (one per employee per day) — report_source_
   // manifest_v2 returns one row per real daily_logs record, never a join fanout, so this never
-  // duplicates a single log. But several real, separate days of work can carry the exact same
+  // duplicates a single log. Several real, separate days of work can carry the exact same
   // boilerplate text (a recurring task like "Post story" auto-logs identical wording each day it's
-  // completed), and without a date on the line those look like accidental duplicates. Sorting by
-  // date (the manifest's own order is source_kind/source_id, effectively random) and prefixing each
-  // line with its date makes clear these are distinct days' work, not the same source pulled twice.
-  if (logs.length) sections.push(`Work logs (primary source)\n${[...logs].sort((a, b) => a.source_date.localeCompare(b.source_date)).map((source) => {
-    const line = `${source.source_date} — ${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`;
+  // completed) and read as accidental duplicates; that's addressed separately by the "Group
+  // similar entries" merge feature, not by printing a date on every line (deliberately kept out of
+  // this plain list — a date on every line reads as clutter for a short weekly draft).
+  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => {
+    const line = `${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`;
     const attachmentLines = linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []);
     return attachmentLines.length ? [line, ...attachmentLines].join('\n') : line;
   }).join('\n')}`);
