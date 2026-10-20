@@ -79,7 +79,6 @@ import {
   ReportScope,
   detectClientAnomalies,
   clientHasService,
-  ensureComparisonForSummary as resolveOrGenerateComparison,
 } from '../lib/reportingEngine';
 import { PeriodSelector } from './reporting/PeriodSelector';
 import {
@@ -936,22 +935,28 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     }
   };
 
-  // UX-flow change: lets "Generate AI Summary" work before any client_comparisons row exists yet,
-  // for both modes. Binds reportingEngine.ts's shared ensureComparisonForSummary (also used by
-  // ReportsHub.tsx, whose scope can be client- or agent-based) to this dashboard's always-fixed
-  // client scope. `mode` is a parameter rather than always reading reportMode state because the
-  // Unified Report button always wants a 'comparison' row regardless of which toggle is currently
-  // selected above.
-  const ensureComparisonForSummary = (mode: ReportMode): Promise<ClientComparisonRecord | null> =>
-    resolveOrGenerateComparison({
-      scope: { type: 'client', clientId: client.id },
+  // AI Summary is intentionally a fresh generation, not an "ensure" lookup: its metrics must be
+  // recomputed from the current in-scope records rather than borrowing a same-period comparison
+  // saved by an earlier request — same reasoning as ReportsHub.tsx's own
+  // generateComparisonForSummary, just bound to this dashboard's always-fixed client scope.
+  // `mode` is a parameter rather than always reading reportMode state because the Unified Report
+  // button always wants a 'comparison' row regardless of which toggle is currently selected above.
+  const ensureComparisonForSummary = async (mode: ReportMode): Promise<ClientComparisonRecord | null> => {
+    if (!onGenerateComparison) return null;
+    if (reportGranularity === 'custom') {
+      const missingCurrent = !customCurrentRange.start || !customCurrentRange.end;
+      const missingPrevious = mode === 'comparison' && (!customPreviousRange.start || !customPreviousRange.end);
+      if (missingCurrent || missingPrevious) return null;
+    }
+    return onGenerateComparison(
+      { type: 'client', clientId: client.id },
       mode,
-      granularity: reportGranularity,
-      customCurrentRange,
-      customPreviousRange,
-      comparisons: clientComparisonsForClient,
-      onGenerateComparison,
-    });
+      reportGranularity,
+      reportGranularity === 'custom'
+        ? { currentRange: customCurrentRange, previousRange: mode === 'comparison' ? customPreviousRange : undefined }
+        : undefined
+    );
+  };
 
   const handleGenerateReport = async (comparison: ClientComparisonRecord) => {
     if (!onGenerateReport) return;

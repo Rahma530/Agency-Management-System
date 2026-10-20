@@ -239,6 +239,25 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
   };
 
+  // Keep AI input separate from both the editable report text and any saved AI output. This maps
+  // only original daily-log snapshots from a just-fetched, server-authorized manifest; it never
+  // reads draftText, report_content_versions, or a prior summary.
+  const workItemsFromOriginalSources = (
+    sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>>
+  ): CampaignSummaryWorkItem[] =>
+    sourceList
+      .filter((source) => source.source_kind === 'daily_log')
+      .map((source) => {
+        const { cleanText, links } = extractLinks(String(source.snapshot.summary_text || '').trim());
+        return {
+          id: source.source_id,
+          employee: names.get(source.user_id) || undefined,
+          text: cleanText,
+          ...(links.length ? { links } : {}),
+        };
+      })
+      .filter((item) => item.text);
+
   const buildPreview = async () => {
     setBusy(true);
     try {
@@ -258,8 +277,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // source_hash actually differs from the open report's, the only way to persist it is a NEW
   // report row (saveAsNewDraftFromPulledSources, via create_report_draft_v2 — confirmed allowed:
   // there is no unique constraint on (scope, period) in reports, only on (generated_by,
-  // creation_key)). The pulled manifest also becomes what AI Summary's work_items are built from
-  // (see workItemsForAiSummary below), so "يتيح AI Summary عليها" works without any extra step.
+  // creation_key)). Note: AI Summary no longer builds its work_items from this pulled preview —
+  // requestAiSummary below fetches its own fresh manifest on every click instead (see
+  // workItemsFromOriginalSources), so this preview is for display/"save as new draft" only.
   const pullSourcesAgain = async () => {
     setBusy(true);
     try {
@@ -406,40 +426,18 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearSignal]);
 
-  // Work-log source items AI Summary rephrases (never shortened/dropped) — from a freshly-pulled
-  // preview (previewManifest, "سحب المصادر من جديد") when one is present, so AI Summary works on
-  // the NEW snapshot right away without requiring "حفظ كمسودة جديدة" first; otherwise from the
-  // open report's own saved ledger (`sources`), as before. Sent to ReportsHub in batches of ~25
-  // (see runWorkItemBatches/buildWorkItemBatches in ComparisonDisplay.tsx), which this component
-  // has no need to know about — it only builds and hands over the full ordered list. Any URL
-  // inside a work log's text is pulled out here (extractLinks) into `links` BEFORE this item ever
-  // reaches AI Summary — ai-router only ever sees/rephrases `text`, never the link, and
-  // runWorkItemBatches reattaches `links` unchanged by id once the rephrased text comes back (see
-  // CampaignSummaryWorkItem's own comment).
-  const workItemsForAiSummary: CampaignSummaryWorkItem[] = useMemo(() => {
-    const sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>> =
-      previewManifest ? previewManifest.sources : sources;
-    return sourceList
-      .filter((source) => source.source_kind === 'daily_log')
-      .map((source) => {
-        const { cleanText, links } = extractLinks(String(source.snapshot.summary_text || '').trim());
-        return {
-          id: source.source_id,
-          employee: names.get(source.user_id) || undefined,
-          text: cleanText,
-          ...(links.length ? { links } : {}),
-        };
-      })
-      .filter((item) => item.text);
-  }, [previewManifest, sources, names]);
-
   const requestAiSummary = async () => {
     if (!onRequestAiSummary || busy) return;
     if (hasUnsavedChanges && !window.confirm('Replace the current draft text with the AI Summary? Your unsaved manual edits will be lost.')) return;
     setBusy(true);
     setMessage(null);
     try {
-      const result = await onRequestAiSummary(creatorNote, workItemsForAiSummary);
+      // Every click starts from the live original source records under the RPC's existing RLS
+      // checks. Do not reuse previewManifest/sources here: those are useful display and saved
+      // evidence snapshots, but are not a cache for a new AI request.
+      const manifest = await fetchSourceManifest();
+      if (!manifest) return;
+      const result = await onRequestAiSummary(creatorNote, workItemsFromOriginalSources(manifest.sources));
       if (!result.ok) {
         setMessage(result.message);
         return;
