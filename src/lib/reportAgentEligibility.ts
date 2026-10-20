@@ -28,11 +28,16 @@ export function isCreativeReportSubject(target: Pick<UserRecord, 'role'>): boole
 export function isEligibleReportSubject(target: UserRecord): boolean {
   if (!isActiveEmployee(target)) return false;
   if (GLOBAL_REPORT_AGENT_PICKER_ROLES.has(target.role)) return false;
-  if (Object.prototype.hasOwnProperty.call(TEAM_LEAD_TO_AGENT_ROLE, target.role)) return false;
   // Subject eligibility is not the same as module access. Creative employees are report subjects
   // for an already-authorized global viewer even though their own portals deliberately do not
   // expose Reports. This never grants the target access to Reports or widens the viewer's RLS.
   if (isCreativeReportSubject(target)) return true;
+  // Built-in team leads (am_team_lead/media_buying_team_lead/seo_team_lead/social_media_team_lead)
+  // are deliberately allowed here: a global viewer (executive/head_of_technical/ai_engineer) can
+  // pull a team lead's own report, same as any other reports-enabled role. This only widens who a
+  // GLOBAL viewer may pick; a team-lead VIEWER's own picker is governed separately below, in
+  // isSelectableReportAgent, and still only grants that team lead their fixed direct-report roles
+  // plus themselves.
   return isModuleAllowed(target.role, 'reports');
 }
 
@@ -45,6 +50,11 @@ export function isSelectableReportAgent(
 
   const directReportRoles = TEAM_LEAD_TO_AGENT_ROLE[viewer.role];
   if (directReportRoles) {
+    // A team lead may always pull their own report (self-selection), in addition to their
+    // existing, deliberately fixed direct-report mapping. This does not extend to a PEER team
+    // lead (another team lead is not in directReportRoles and does not match viewer.id) — that
+    // is a separate, not-yet-requested widening.
+    if (target.id === viewer.id) return true;
     // Preserve the current, deliberately fixed direct-report mapping for built-in team leads.
     // A custom role is not silently treated as their direct report merely because it can open
     // Reports; that relationship needs an explicit server-backed model before it can widen.
