@@ -578,7 +578,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             activeTab === 'report' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
           }`}
         >
-          التقرير
+          Report
         </button>
         {canSeeDailyActivityReport && (
           <button
@@ -587,7 +587,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               activeTab === 'activity' ? 'reports-filled-action filled-purple-action bg-purple-600 text-white shadow' : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
             }`}
           >
-            سجل النشاط ({dailyLogs.length})
+            Activity Log ({dailyLogs.length})
           </button>
         )}
       </div>
@@ -867,11 +867,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <ClipboardList className="w-4 h-4 text-amber-400" />
-              <span>سجل النشاط ({filteredDailyLogs.length})</span>
+              <span>Activity Log ({filteredDailyLogs.length})</span>
             </h3>
             <label className="flex items-center gap-1.5 text-[11px] text-stone-400">
               <input type="checkbox" checked={dailyLogAllDates} onChange={(e) => setDailyLogAllDates(e.target.checked)} />
-              كل التواريخ
+              All dates
             </label>
           </div>
 
@@ -881,7 +881,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               <input
                 value={dailyLogSearch}
                 onChange={(e) => setDailyLogSearch(e.target.value)}
-                placeholder="بحث باسم الموظف أو العميل أو النص..."
+                placeholder="Search by employee name, client, or text..."
                 className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500"
               />
             </div>
@@ -891,7 +891,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                 onChange={(e) => setDailyLogEmployeeFilter(e.target.value)}
                 className="px-2.5 py-1.5 rounded-lg text-[11px] bg-stone-900 border border-stone-800 text-white outline-none focus:border-purple-400"
               >
-                <option value="all" className="bg-stone-900">كل الموظفين</option>
+                <option value="all" className="bg-stone-900">All employees</option>
                 {employeesWithLogs.map((u) => (
                   <option key={u.id} value={u.id} className="bg-stone-900">{u.name}</option>
                 ))}
@@ -986,7 +986,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                     onClick={() => setDailyLogVisibleCount((n) => n + 50)}
                     className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white hover:bg-stone-700"
                   >
-                    عرض المزيد ({visibleDailyLogs.length} / {filteredDailyLogs.length})
+                    Show more ({visibleDailyLogs.length} / {filteredDailyLogs.length})
                   </button>
                 </div>
               )}

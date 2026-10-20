@@ -506,7 +506,7 @@ export const ComparisonCard: React.FC<{
           unconnectedServices?.includes('media_buying') ? (
             <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 space-y-2">
               <h5 className="text-xs font-bold text-white uppercase tracking-wide">Media Buying</h5>
-              <p className="text-xs text-stone-400">المنصة غير مربوطة بعد</p>
+              <p className="text-xs text-stone-400">Platform not connected yet</p>
             </div>
           ) : (
             <ServiceMetricsCard
@@ -523,7 +523,7 @@ export const ComparisonCard: React.FC<{
           unconnectedServices?.includes('social_media') ? (
             <div className="p-3 rounded-lg border border-purple-900/20 bg-purple-950/10 space-y-2">
               <h5 className="text-xs font-bold text-white uppercase tracking-wide">Social Media</h5>
-              <p className="text-xs text-stone-400">المنصة غير مربوطة بعد</p>
+              <p className="text-xs text-stone-400">Platform not connected yet</p>
             </div>
           ) : (
             <ServiceMetricsCard
