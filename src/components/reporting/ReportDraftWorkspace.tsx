@@ -288,8 +288,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       setPreviewManifest(manifest);
       setMessage(
         selectedReport && manifest.source_hash === selectedReport.source_hash
-          ? `تم سحب لقطة جديدة لكنها مطابقة للمصادر المحفوظة حالياً (${manifest.source_count} مصدر). لا جديد لحفظه.`
-          : `تم سحب لقطة مصادر جديدة: ${manifest.source_count} مصدر معتمد. نص المسودة لم يتغيّر — استخدم AI Summary أو عدّل يدوياً، ثم "حفظ كمسودة جديدة بهذه المصادر" لحفظها (نسخة/تقرير جديد، أدلته الجديدة).`
+          ? `A fresh snapshot was pulled but it matches the currently saved sources (${manifest.source_count} source(s)). Nothing new to save.`
+          : `A new source snapshot was pulled: ${manifest.source_count} authorized source(s). The draft text has not changed — use AI Summary or edit it manually, then "Save as new draft with these sources" to save it (a new version/report, with its new evidence).`
       );
     } finally { setBusy(false); }
   };
@@ -556,7 +556,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
       : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
     const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
-    const periodRange = periodTo ? `من ${periodFrom} إلى ${periodTo}` : (selectedReport.period || '');
+    const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
     await downloadReportPdf({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
       title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
@@ -594,7 +594,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             </div>
           )}
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">سحب المصادر من جديد</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button><span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}
 
@@ -604,10 +604,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           draftText by itself — see pullSourcesAgain's own comment. */}
       {selectedReport && (
         <div className="flex items-center gap-2 flex-wrap">
-          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={pullSourcesAgain} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">سحب المصادر من جديد</button>
+          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={pullSourcesAgain} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>
           <span className="text-[11px] text-stone-400">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span>
           {canSaveAsNewDraftFromPulledSources && (
-            <button disabled={busy || !draftText.trim()} onClick={createDraft} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />حفظ كمسودة جديدة بهذه المصادر</button>
+            <button disabled={busy || !draftText.trim()} onClick={createDraft} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save as new draft with these sources</button>
           )}
         </div>
       )}
