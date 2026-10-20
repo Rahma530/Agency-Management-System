@@ -200,6 +200,21 @@ export type AiGenerationResult<T> =
 export type CampaignSummaryGenerationResult = AiGenerationResult<CampaignSummaryDetailedResult>;
 export type UnifiedReportGenerationResult = AiGenerationResult<UnifiedClientReportResult>;
 
+// Report Workspace's "Group similar entries" action — matches ai-router's WORK_ITEM_GROUP task
+// output shape (taskRegistry.ts's validateWorkItemGroupOutput). Every input work-item id appears
+// in exactly one group's "ids": a group of 2+ is a server-verified merge (its "text" always
+// contains exactly one number, independently counted server-side as ids.length — never taken on
+// the model's word), and a group of 1 is simply that item left untouched, "text" equal to its own
+// original wording. There is no "ungrouped leftovers" concept — every id is accounted for.
+export interface WorkItemGroup {
+  ids: string[];
+  text: string;
+}
+export interface WorkItemGroupResult {
+  groups: WorkItemGroup[];
+}
+export type WorkItemGroupGenerationResult = AiGenerationResult<WorkItemGroupResult>;
+
 // Matches ai-router's own widened PERIOD_LABEL_RE (taskRegistry.ts) — monthly ("2026-03"),
 // quarterly ("2026-Q1"), yearly ("2026"), and custom range ("2026-01-01_2026-03-31"). Kept as its
 // own client-side copy (not imported — taskRegistry.ts is Deno Edge Function code) so the button

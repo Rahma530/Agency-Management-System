@@ -737,6 +737,142 @@ function buildReportRewritePrompt(language: SupportedLanguage): string {
 }
 
 // ----------------------------------------------------------------------------
+// WORK_ITEM_GROUP — merges genuinely repeated same-employee work-log lines into one line with a
+// count, for the Report Workspace's "Group similar entries" action. This is NOT a rewrite task:
+// the model's only real job is a CLUSTERING decision (which ids, by the same employee, describe
+// the same recurring activity) — exactly like REPORT_REWRITE/CAMPAIGN_SUMMARY's own grounding
+// rules, the model is never trusted to introduce any new fact. In particular, the merged-line
+// COUNT is never taken on the model's word: the server always counts the ids it actually, validly
+// included in a group itself, and only accepts the model's own phrase if the one number it
+// contains matches that independently-counted total exactly (reusing numericTokens below, the
+// same mechanism validateReportRewriteOutput already uses to keep REPORT_REWRITE from inventing a
+// number) — any mismatch, any cross-employee group, any unknown/duplicated id, or any phrase
+// containing more than that one number discards just that one group, falling back to its members
+// as untouched singletons (their own original text, completely unmerged) rather than failing the
+// whole request. A singleton (ungrouped) item is NEVER touched — its original wording is used
+// verbatim, so the only way wording changes at all is a validated multi-item merge.
+// ----------------------------------------------------------------------------
+const MAX_GROUP_ITEMS = 60;
+
+interface WorkItemGroupInput {
+  // Mirrors WorkItemInput's own id contract above — caller-assigned, stable, the only thing used
+  // to line a grouped/ungrouped output item back up with its input.
+  id: string;
+  employee?: string;
+  text: string;
+}
+
+export interface WorkItemGroupPayload {
+  items: WorkItemGroupInput[];
+}
+
+export function validateWorkItemGroupPayload(rawPayload: unknown): WorkItemGroupPayload {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    throw new Error('WORK_ITEM_GROUP payload must be a JSON object.');
+  }
+  const p = rawPayload as Record<string, unknown>;
+  const allowedTopKeys = new Set(['items']);
+  for (const key of Object.keys(p)) {
+    if (!allowedTopKeys.has(key)) throw new Error(`Unknown payload field "${key}".`);
+  }
+  if (!Array.isArray(p.items) || p.items.length === 0 || p.items.length > MAX_GROUP_ITEMS) {
+    throw new Error(`items must be a non-empty array of at most ${MAX_GROUP_ITEMS} entries.`);
+  }
+  const allowedItemKeys = new Set(['id', 'employee', 'text']);
+  const seenIds = new Set<string>();
+  const items: WorkItemGroupInput[] = p.items.map((entry, i) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`items[${i}] must be an object.`);
+    const e = entry as Record<string, unknown>;
+    for (const key of Object.keys(e)) {
+      if (!allowedItemKeys.has(key)) throw new Error(`Unknown field "${key}" in items[${i}].`);
+    }
+    if (typeof e.id !== 'string' || !e.id.trim()) throw new Error(`items[${i}].id must be a non-empty string.`);
+    if (seenIds.has(e.id)) throw new Error(`items[${i}].id "${e.id}" is duplicated — ids must be unique.`);
+    seenIds.add(e.id);
+    if (typeof e.text !== 'string' || !e.text.trim()) throw new Error(`items[${i}].text must be a non-empty string.`);
+    if (e.text.length > MAX_WORK_ITEM_TEXT_CHARS) throw new Error(`items[${i}].text exceeds ${MAX_WORK_ITEM_TEXT_CHARS} characters.`);
+    if (e.employee !== undefined && (typeof e.employee !== 'string' || e.employee.length > MAX_WORK_ITEM_LABEL_CHARS)) {
+      throw new Error(`items[${i}].employee must be a string of at most ${MAX_WORK_ITEM_LABEL_CHARS} characters.`);
+    }
+    return {
+      id: e.id,
+      text: e.text,
+      ...(e.employee !== undefined ? { employee: e.employee as string } : {}),
+    };
+  });
+  return { items };
+}
+
+function buildWorkItemGroupSystemPrompt(language: SupportedLanguage): string {
+  const languageName = LANGUAGE_NAMES[language];
+  return (
+    `You will receive a JSON object with an "items" array: each item has an "id", an optional ` +
+    `"employee", and "text" — one employee's own original work-log line for a reporting period, ` +
+    `in Arabic, English, or a mix of both.\n\n` +
+    `Your only job is to decide which items, by the SAME employee, clearly describe the exact ` +
+    `same recurring practical activity repeated on different days (e.g., several lines that each ` +
+    `just mean "posted a story" said by the same person on different days). Rules:\n` +
+    `- NEVER group items with different "employee" values together, even if the text looks similar.\n` +
+    `- NEVER group items that describe genuinely different activities, even by the same employee.\n` +
+    `- When uncertain whether two items really mean the same activity, do NOT group them — it is ` +
+    `always safe to leave an item out of every group.\n` +
+    `- An item may belong to at most one group.\n\n` +
+    `For every group of 2 or more items you form, write ONE short, natural sentence in ` +
+    `${languageName} describing the shared activity, and explicitly state the exact number of ` +
+    `times it happened. That number must equal precisely how many item ids you put in that ` +
+    `group's "ids" array — count them yourself and use that exact integer; never estimate, round, ` +
+    `or guess a different number. Your sentence must contain that one number and no other number.\n\n` +
+    `Respond with ONLY this JSON array — no markdown code fences, no explanation: ` +
+    `[{"ids": string[], "text": string}, ...]. Include an entry ONLY for a group of 2 or more ` +
+    `ids. Do not include an entry for an item you are leaving ungrouped — simply omit it entirely.`
+  );
+}
+
+// Never rejects the whole stage: every input id ends up in exactly one group either way, so this
+// always returns ok:true. A group the model proposed is kept only if every id in it is known,
+// unused so far, and shares one employee, AND the one number inside its phrase exactly equals the
+// real (server-counted) size of that group — see this section's header comment for why that
+// specific check is the whole safety net here. Any id left over after all proposed groups are
+// checked — never proposed, or dropped by a failed check above — becomes its own untouched
+// singleton group carrying its own original text, never the model's wording.
+function validateWorkItemGroupOutput(parsed: unknown, _detail: DetailLevel, stageInput?: unknown): StageValidationResult {
+  const input = (stageInput as WorkItemGroupPayload | undefined)?.items;
+  if (!input || input.length === 0) return { ok: false };
+  const byId = new Map(input.map((item) => [item.id, item]));
+  const used = new Set<string>();
+  const groups: { ids: string[]; text: string }[] = [];
+  if (Array.isArray(parsed)) {
+    for (const raw of parsed) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const g = raw as Record<string, unknown>;
+      const idsRaw = Array.isArray(g.ids) ? g.ids : [];
+      if (idsRaw.length < 2 || !isNonEmptyString(g.text)) continue;
+      let employee: string | undefined;
+      let sameEmployee = true;
+      const validIds: string[] = [];
+      for (const id of idsRaw) {
+        if (typeof id !== 'string' || used.has(id) || validIds.includes(id) || !byId.has(id)) { sameEmployee = false; break; }
+        const item = byId.get(id)!;
+        if (validIds.length === 0) employee = item.employee;
+        else if (employee !== item.employee) { sameEmployee = false; break; }
+        validIds.push(id);
+      }
+      if (!sameEmployee || validIds.length < 2) continue;
+      const text = cleanText(g.text);
+      const counted = String(validIds.length);
+      const numbers = numericTokens(text);
+      if (numbers.size !== 1 || !numbers.has(counted)) continue; // the only trusted number check
+      validIds.forEach((id) => used.add(id));
+      groups.push({ ids: validIds, text });
+    }
+  }
+  for (const item of input) {
+    if (!used.has(item.id)) groups.push({ ids: [item.id], text: item.text });
+  }
+  return { ok: true, value: { groups } };
+}
+
+// ----------------------------------------------------------------------------
 // The registry itself
 // ----------------------------------------------------------------------------
 export const TASK_REGISTRY: Record<string, TaskDefinition> = {
@@ -802,6 +938,23 @@ export const TASK_REGISTRY: Record<string, TaskDefinition> = {
         maxOutputTokens: () => 4000,
         outputFormat: 'json',
         validateOutput: validateReportRewriteOutput,
+      },
+    ],
+  },
+  WORK_ITEM_GROUP: {
+    name: 'WORK_ITEM_GROUP',
+    buildInitialInput: (rawPayload) => validateWorkItemGroupPayload(rawPayload),
+    stages: [
+      {
+        name: 'GROUP',
+        providers: () => ['groq', 'gemini', 'openrouter'],
+        systemPrompt: (language) => buildWorkItemGroupSystemPrompt(language),
+        // A pure clustering decision over short lines, never a rewrite of the period's full
+        // content — MAX_GROUP_ITEMS (60) lines of at most MAX_WORK_ITEM_TEXT_CHARS each comfortably
+        // fits well under this; generous headroom purely for the model's own JSON formatting.
+        maxOutputTokens: () => 2000,
+        outputFormat: 'json',
+        validateOutput: validateWorkItemGroupOutput,
       },
     ],
   },

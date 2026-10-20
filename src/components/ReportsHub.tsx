@@ -39,6 +39,7 @@ import {
   CampaignSummaryPayload,
   CampaignSummaryGenerationResult,
   CampaignSummaryWorkItem,
+  WorkItemGroupGenerationResult,
 } from './reporting/ComparisonDisplay';
 import { DailyLogEditModal } from './DailyLogEditModal';
 import { ReportDraftWorkspace, ReportScopeKind } from './reporting/ReportDraftWorkspace';
@@ -81,6 +82,13 @@ interface ReportsHubProps {
   // action on this page is bound to the selected scope/period controls below, both for the
   // Comparison section's own button and for "AI Summary" inside the Draft section.
   onGenerateAiSummary?: (payload: CampaignSummaryPayload) => Promise<CampaignSummaryGenerationResult>;
+  // Report Workspace's "Group similar entries" action (WORK_ITEM_GROUP) — a separate, narrower AI
+  // call from AI Summary above: it only ever decides which same-employee work-log items repeat
+  // the same activity and merges them with a server-verified count, never rewrites prose. Optional
+  // for the same reason onGenerateAiSummary is (a caller that hasn't wired AI yet still renders).
+  onGroupWorkItems?: (
+    items: { id: string; employee?: string; text: string }[]
+  ) => Promise<WorkItemGroupGenerationResult>;
   onUpdateDailyLog: (
     logId: string,
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
@@ -117,6 +125,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
+  onGroupWorkItems,
   onUpdateDailyLog,
   onDeleteDailyLog,
   onReportChanged,
@@ -778,6 +787,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         clearSignal={workspaceClearToken}
         onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
         onRequestAiSummary={onGenerateAiSummary ? requestDraftAiSummary : undefined}
+        onGroupWorkItems={onGroupWorkItems}
       />
 
       {/* Point 1: "نتائج المقارنة" — Calculate/Save-as-report/the saved-comparisons list, moved
