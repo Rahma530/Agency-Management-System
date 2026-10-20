@@ -55,6 +55,7 @@ import { jsPDF } from 'jspdf';
 import { installJsPdfShaper } from 'bidi-shaper/jspdf';
 import { ClientComparisonRecord } from '../types/database';
 import { extractLinks } from './textLinks';
+import { SERVICE_LABELS } from './clientServices';
 
 // Registers bidi-shaper's preProcessText hook once, globally, on jsPDF's shared API object — every
 // doc.text() call on every jsPDF instance created after this runs is shaped/reordered
@@ -138,6 +139,99 @@ export function loadArabicFontBundle(): Promise<ArabicFontBundle> {
 export interface PdfParagraph {
   heading: string; // English label (e.g. "Summary") — matches this app's all-English UI chrome
   body: string; // Arabic (or mixed Arabic/English) content
+  // Draws a decorative brand-colored rule above this paragraph's heading — used to visually
+  // separate one client service's work-log section from the next (see
+  // parseReportContentIntoParagraphs below). Ignored for whichever paragraph is drawn first on the
+  // page, so a divider never appears floating directly under the header with nothing above it.
+  divider?: boolean;
+}
+
+// The small, fixed set of section-heading strings composeManifestContent (ReportDraftWorkspace.tsx)
+// writes into a saved report's content_text, verbatim. Shared (not duplicated as string literals
+// on each side) so compose-time generation and export-time parsing can never silently drift apart.
+export const REPORT_SECTION_HEADINGS = {
+  workLogs: 'Work logs (primary source)',
+  creativeSummary: 'Creative task evidence summary',
+  taskLedger: 'Task evidence ledger (not additional work items)',
+  employeeContext: 'Additional employee context',
+  creatorContext: 'Context and observations',
+} as const;
+
+// The label for a client-scope report's work-log lines whose author's role has no reliable
+// service mapping (classifyWorkLogService, workLogServiceClassification.ts) — see that file's own
+// comment for why (the graphic_designer/video_editor shared creative pool, branding, AM/sales/
+// executive roles, custom roles, etc.).
+export const OTHER_SERVICE_BUCKET_LABEL = 'Other updates';
+
+const KNOWN_TOP_HEADINGS = new Set<string>(Object.values(REPORT_SECTION_HEADINGS));
+const KNOWN_SERVICE_SUBHEADINGS = new Set<string>([...Object.values(SERVICE_LABELS), OTHER_SERVICE_BUCKET_LABEL]);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Splits `text` into sections anchored on any of `headings` appearing EXACTLY as its own line,
+// starting either at the very beginning of `text` or right after a blank line — i.e. precisely
+// the shape composeManifestContent's own `sections.join('\n\n')` produces. A heading string that
+// shows up anywhere else (mid-line, or on its own line with no blank-line boundary before it) is
+// not treated as a boundary at all, so it stays ordinary content. Returns null — never a partial
+// or best-effort split — the moment `text` doesn't begin with one of these headings at position
+// 0, since a body that doesn't open with a recognized heading isn't this generated shape at all.
+function splitBySectionHeadings(text: string, headings: ReadonlySet<string>): { heading: string; body: string }[] | null {
+  if (!headings.size) return null;
+  const pattern = [...headings].map(escapeRegExp).join('|');
+  const re = new RegExp(`(?:^|\\n\\n)(${pattern})\\n`, 'g');
+  const matches = [...text.matchAll(re)];
+  if (!matches.length || matches[0].index !== 0) return null;
+  return matches.map((match, i) => {
+    const bodyStart = match.index! + match[0].length;
+    const bodyEnd = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+    return { heading: match[1], body: text.slice(bodyStart, bodyEnd).replace(/\n\n$/, '') };
+  });
+}
+
+// Recovers composeManifestContent's own section structure back out of a saved report's plain-text
+// content_text, so the exported PDF gives each section its own heading — and, inside the
+// work-logs section specifically, gives each client service its own sub-heading with a decorative
+// divider between services — instead of the single undifferentiated "Final Report" blob every
+// report got before this function existed.
+//
+// Deliberately conservative, at two independent levels: content_text is free text the user can
+// hand-edit in the draft textarea before saving, so this only recognizes the EXACT shape
+// composeManifestContent generates (sections separated by a blank line, each starting with one of
+// the small fixed set of heading strings above). If the TOP-level shape doesn't match at all — a
+// top heading reworded, sections merged by hand, a report rewritten as free prose with no blank
+// lines — the whole thing falls back to one plain "Final Report" paragraph, exactly like every
+// report exported before this change. If only the work-logs section's own per-service
+// sub-headings don't fully match (one renamed, one merged in by hand) the fallback is scoped to
+// just that section: it renders as one plain, unsplit paragraph with its original text fully
+// intact, while every other recognized top-level section still gets its own heading. Ordinary
+// wording edits within a line never affect any of this. Nothing here can corrupt or drop content,
+// it only ever falls back to a plainer layout when it isn't confident of the structure.
+export function parseReportContentIntoParagraphs(contentText: string): PdfParagraph[] {
+  const fallback: PdfParagraph[] = [{ heading: 'Final Report', body: contentText }];
+  const topSections = splitBySectionHeadings(contentText, KNOWN_TOP_HEADINGS);
+  if (!topSections) return fallback;
+
+  const paragraphs: PdfParagraph[] = [];
+  topSections.forEach(({ heading, body }) => {
+    if (heading !== REPORT_SECTION_HEADINGS.workLogs) {
+      if (body.trim()) paragraphs.push({ heading, body });
+      return;
+    }
+    const subSections = splitBySectionHeadings(body, KNOWN_SERVICE_SUBHEADINGS);
+    if (!subSections) {
+      if (body.trim()) paragraphs.push({ heading, body });
+      return;
+    }
+    let isFirstSub = true;
+    subSections.forEach((sub) => {
+      if (!sub.body.trim()) return;
+      paragraphs.push({ heading: sub.heading, body: sub.body, divider: !isFirstSub });
+      isFirstSub = false;
+    });
+  });
+  return paragraphs.length ? paragraphs : fallback;
 }
 
 export interface PdfBulletList {
@@ -242,6 +336,21 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
     doc.setTextColor(BRAND_PURPLE_DEEP);
     doc.text(text, PAGE_MARGIN, y);
     y += 16;
+  }
+
+  // A short brand-colored rule drawn between one client service's work-log section and the next
+  // (PdfParagraph.divider) — purely decorative. The caller never draws it before the very first
+  // paragraph in the whole document (a divider with nothing above it would look like a stray mark,
+  // not a separator); it may still land right under a header if a page break happens to fall
+  // exactly there, an acceptable rare cosmetic case rather than something worth special-casing.
+  function drawDivider(): void {
+    ensureSpace(14);
+    const ruleWidth = Math.min(120, contentWidth);
+    doc.setDrawColor(BRAND_PURPLE);
+    doc.setLineWidth(1.5);
+    doc.line(pageWidth - PAGE_MARGIN - ruleWidth, y, pageWidth - PAGE_MARGIN, y);
+    doc.setLineWidth(0.2);
+    y += 14;
   }
 
   // Arabic (or mixed Arabic/English) paragraph — right-aligned, Noto Naskh Arabic font, bidi-shaper handles
@@ -390,7 +499,8 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
   }
 
   drawHeader();
-  options.paragraphs.forEach((section) => {
+  options.paragraphs.forEach((section, index) => {
+    if (section.divider && index > 0) drawDivider();
     drawHeading(section.heading);
     drawArabicParagraph(section.body);
   });
