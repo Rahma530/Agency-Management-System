@@ -9,10 +9,11 @@ import {
   ReportRecord,
   ReportSourceItemRecord,
   TaskAssigneeRecord,
+  TaskAttachmentRecord,
   TaskRecord,
   UserRecord,
 } from '../../types/database';
-import { supabaseRaw } from '../../lib/supabase';
+import { supabase, supabaseRaw } from '../../lib/supabase';
 import { formatLocalCalendarDate, resolveReportPeriod } from '../../lib/reportPeriods';
 import {
   collectClientReportSources, collectEmployeeReportSources, EmployeeClientScopeMode,
@@ -82,12 +83,57 @@ const today = () => formatLocalCalendarDate(new Date());
 
 interface SourceManifest { source_hash: string; source_count: number; sources: Array<Omit<ReportSourceItemRecord, 'id' | 'report_id'>> }
 
-function composeManifestContent(manifest: SourceManifest, creatorNote: string, names: Map<string, string>, creative: boolean): string {
+// Task attachments (images/files uploaded via a task's own attachment panel) are never copied
+// anywhere — not onto the daily_logs row the task-completion trigger auto-creates, and not into
+// report_source_items' immutable snapshot. They stay the single source of truth in
+// task_attachments/storage, and this just resolves them, live, for whichever tasks a daily log's
+// own linked_task_ids happen to point at, every time a report is built/regenerated. Both the
+// metadata read and the signed-URL grant are still governed by task_attachments'/storage.objects'
+// own RLS (task_visible_v2) — a viewer who cannot see a task at all simply gets no attachments for
+// it here either, the same authorized-scope narrowing as everywhere else in this file.
+//
+// A private bucket has no permanent public link, so any URL embedded in a generated report/PDF
+// necessarily expires eventually — 30 days is chosen so it still works for the realistic window a
+// report is actually opened and reviewed in, not as a promise it works forever. This is a known,
+// accepted limitation (documented in the PR), not something to chase further here.
+const ATTACHMENT_LINK_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+async function fetchTaskAttachmentLinks(taskIds: string[]): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  const ids = [...new Set(taskIds.filter(Boolean))];
+  if (!ids.length) return result;
+  const { data, error } = await supabaseRaw.from('task_attachments').select('*').in('task_id', ids);
+  if (error || !data) return result;
+  await Promise.all((data as TaskAttachmentRecord[]).map(async (attachment) => {
+    const { data: signed } = await supabase.storage
+      .from('task-attachments')
+      .createSignedUrl(attachment.storage_path, ATTACHMENT_LINK_TTL_SECONDS);
+    if (!signed?.signedUrl) return;
+    result.set(attachment.task_id, [...(result.get(attachment.task_id) || []), signed.signedUrl]);
+  }));
+  return result;
+}
+
+function linkedTaskIdsOf(source: Pick<ReportSourceItemRecord, 'snapshot'>): string[] {
+  return Array.isArray(source.snapshot.linked_task_ids) ? (source.snapshot.linked_task_ids as string[]) : [];
+}
+
+function composeManifestContent(
+  manifest: SourceManifest,
+  creatorNote: string,
+  names: Map<string, string>,
+  creative: boolean,
+  attachmentLinksByTask: Map<string, string[]>
+): string {
   const logs = manifest.sources.filter((source) => source.source_kind === 'daily_log');
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
-  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => `${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`).join('\n')}`);
+  if (logs.length) sections.push(`Work logs (primary source)\n${logs.map((source) => {
+    const line = `${names.get(source.user_id) || 'Employee'}: ${String(source.snapshot.summary_text || '').trim()}`;
+    const attachmentLines = linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []);
+    return attachmentLines.length ? [line, ...attachmentLines].join('\n') : line;
+  }).join('\n')}`);
   if (creative && tasks.length) {
     const count = (kind: string) => tasks.filter((source) => source.snapshot.work_kind === kind).length;
     sections.push(`Creative task evidence summary\nDesign tasks evidenced by linked work logs: ${count('design')}\nVideo tasks evidenced by linked work logs: ${count('video')}\nMixed or unclassified tasks requiring review: ${count('mixed') + count('unclassified')}`);
@@ -241,22 +287,32 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
 
   // Keep AI input separate from both the editable report text and any saved AI output. This maps
   // only original daily-log snapshots from a just-fetched, server-authorized manifest; it never
-  // reads draftText, report_content_versions, or a prior summary.
-  const workItemsFromOriginalSources = (
+  // reads draftText, report_content_versions, or a prior summary. Also resolves each log's linked
+  // task(s)' own attachments (see fetchTaskAttachmentLinks above) and folds them into the same
+  // `links` array a manually-typed URL in the log text already uses — AI rewrite strips/reattaches
+  // that array unchanged (ComparisonDisplay.tsx's own comment on CampaignSummaryWorkItem), so an
+  // attachment link survives an AI Summary exactly like a manual one already does, with no further
+  // change needed downstream (PDF export already turns every `links` entry into its own clickable
+  // annotation).
+  const workItemsFromOriginalSources = async (
     sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>>
-  ): CampaignSummaryWorkItem[] =>
-    sourceList
-      .filter((source) => source.source_kind === 'daily_log')
+  ): Promise<CampaignSummaryWorkItem[]> => {
+    const logSources = sourceList.filter((source) => source.source_kind === 'daily_log');
+    const attachmentLinksByTask = await fetchTaskAttachmentLinks(logSources.flatMap(linkedTaskIdsOf));
+    return logSources
       .map((source) => {
         const { cleanText, links } = extractLinks(String(source.snapshot.summary_text || '').trim());
+        const attachmentLinks = linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []);
+        const allLinks = [...links, ...attachmentLinks];
         return {
           id: source.source_id,
           employee: names.get(source.user_id) || undefined,
           text: cleanText,
-          ...(links.length ? { links } : {}),
+          ...(allLinks.length ? { links: allLinks } : {}),
         };
       })
       .filter((item) => item.text);
+  };
 
   const buildPreview = async () => {
     setBusy(true);
@@ -264,7 +320,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const manifest = await fetchSourceManifest();
       if (!manifest) return;
       setPreviewManifest(manifest);
-      setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject)));
+      const attachmentLinksByTask = await fetchTaskAttachmentLinks(
+        manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
+      );
+      setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject), attachmentLinksByTask));
       creationKey.current = null;
       setMessage(`Preview built from ${manifest.source_count} authorized immutable source(s).`);
     } finally { setBusy(false); }
@@ -437,7 +496,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       // evidence snapshots, but are not a cache for a new AI request.
       const manifest = await fetchSourceManifest();
       if (!manifest) return;
-      const result = await onRequestAiSummary(creatorNote, workItemsFromOriginalSources(manifest.sources));
+      const workItems = await workItemsFromOriginalSources(manifest.sources);
+      const result = await onRequestAiSummary(creatorNote, workItems);
       if (!result.ok) {
         setMessage(result.message);
         return;
