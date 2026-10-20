@@ -576,7 +576,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
       : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
     const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
-    const periodRange = periodTo ? `من ${periodFrom} إلى ${periodTo}` : (selectedReport.period || '');
+    const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
     await downloadReportPdf({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
       title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
