@@ -119,6 +119,10 @@ import {
   StagedTaskAttachment,
   TaskAttachmentMetadataError,
   addTaskAttachmentForCopies,
+  archiveTask,
+  mutateTask,
+  removeUserFromOpenTasks,
+  transitionTask,
   createTaskCopies,
   deleteTaskAttachmentReference,
   fetchTaskAssignees,
@@ -282,6 +286,7 @@ export default function App() {
   // supabase/migrations/20261031900000_task_types.sql.
   const [taskTypes, setTaskTypes] = useState<TaskTypeRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [archivedTasks, setArchivedTasks] = useState<TaskRecord[]>([]);
   const [taskAssignees, setTaskAssignees] = useState<TaskAssigneeRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
@@ -1556,7 +1561,33 @@ export default function App() {
           console.error('Failed to load tasks from Supabase:', taskErr);
           showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
         } else {
-          setTasks((taskData as TaskRecord[]) || []);
+          const taskRows = (taskData as TaskRecord[]) || [];
+          const [{ data: completionData, error: completionError }, { data: revocationData, error: revocationError }] = await Promise.all([
+            supabaseRaw.from('task_completion_events').select('id,task_id,user_id,task_cycle'),
+            supabaseRaw.from('task_completion_revocations').select('completion_event_id'),
+          ]);
+          if (completionError || revocationError) {
+            throw new Error(`Unable to load task completion evidence: ${completionError?.message || revocationError?.message}`);
+          }
+          const revoked = new Set(((revocationData as Array<{ completion_event_id: string }> | null) || [])
+            .map((row) => row.completion_event_id));
+          const completionUsersByTask = new Map<string, Set<string>>();
+          ((completionData as Array<{ id: string; task_id: string; user_id: string; task_cycle: number }> | null) || [])
+            .filter((event) => !revoked.has(event.id))
+            .forEach((event) => {
+              const task = taskRows.find((row) => row.id === event.task_id);
+              if (!task || event.task_cycle !== (task.lifecycle_cycle ?? 1)) return;
+              const users = completionUsersByTask.get(event.task_id) || new Set<string>();
+              users.add(event.user_id);
+              completionUsersByTask.set(event.task_id, users);
+            });
+          setTasks(taskRows.map((task) => ({
+            ...task,
+            completion_user_ids: [...(completionUsersByTask.get(task.id) || [])],
+          })));
+          const { data: archivedTaskData, error: archivedTaskError } = await supabaseRaw.rpc('list_archived_tasks_v2');
+          if (archivedTaskError) throw new Error(`Unable to load archived tasks: ${archivedTaskError.message}`);
+          setArchivedTasks((archivedTaskData as TaskRecord[] | null) || []);
         }
 
         // Multi-assignee membership is independent from tasks.assigned_to. The latter remains a
@@ -3684,11 +3715,9 @@ export default function App() {
         throw new Error('This employee is outside your department — you do not have permission to deactivate them.');
       }
 
-      const { error } = await supabaseRaw.from('tasks').update({ assigned_to: null }).eq('assigned_to', userId);
-      if (error) {
-        console.error('Supabase error unassigning tasks after deactivation:', error);
-        throw error;
-      }
+      await removeUserFromOpenTasks(userId, {
+        impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+      });
     }
 
     setTasks((prev) => prev.map((t) => (t.assigned_to === userId ? { ...t, assigned_to: null } : t)));
@@ -3797,39 +3826,55 @@ export default function App() {
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
     const existingTask = tasks.find((t) => t.id === taskId);
-    // completed_at is the only reliable signal for "completed today" (the Daily Work Log's
-    // auto-suggestion) and for every completion-rate/performance metric in reportingEngine.ts —
-    // status alone carries no timing information. Set once when the task first becomes done
-    // ('completed' or 'closed'), preserved across a later completed -> closed confirmation
-    // (never overwritten or cleared by that transition), and cleared only by a real regression
-    // back to a not-done status.
-    const completedAt = isTaskDone(newStatus) ? existingTask?.completed_at || new Date().toISOString() : null;
-    const updates = { status: newStatus, completed_at: completedAt };
-
-    // Was previously `supabase` (the client-side RLS-emulation proxy) — for the 'tasks' table
-    // that proxy's update branch never forwards to the real database at all; it just mutates a
-    // disconnected in-memory demo array and reports fabricated success. `supabaseRaw` is the
-    // real, RLS-enforced client every other task mutation (handleCreateTask/handleUpdateTask)
-    // already uses. On a real failure, this throws BEFORE any local state changes below, so the
-    // card is never moved into the new column in the first place — callers (CrossTeamTaskBoard's
-    // handleMoveStatus, DailyOperationsModule's/MyWorkHub's status handlers) already catch this
-    // and show their own error toast.
-    if (supabaseActive) {
-      const { error } = await supabaseRaw.from('tasks').update(updates).eq('id', taskId);
-      if (error) {
-        console.error('Supabase task update error:', error);
-        throw error;
-      }
+    if (!existingTask) throw new Error('Task not found. Refresh before changing its status.');
+    if (!supabaseActive) throw new Error('Supabase is not configured; the task was not updated.');
+    const context = { impersonationSessionId: impersonationHandoff?.sessionId ?? null };
+    let action = 'set_status';
+    let payload: Record<string, unknown> = { status: newStatus };
+    if (newStatus === 'completed') {
+      action = 'record_completion';
+      payload = {};
+    } else if (newStatus === 'closed') {
+      action = 'close';
+      payload = {};
+    } else if (isTaskDone(existingTask.status)) {
+      action = 'reopen';
+      payload = { status: newStatus, reason: 'Task reopened from the task board.' };
+    } else if (newStatus === 'blocked') {
+      payload = { status: newStatus, reason: 'Task moved to blocked from the task board.' };
     }
-
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
-    );
+    const persistedTask = await transitionTask(existingTask, action, payload, context);
+    if (action === 'record_completion') {
+      persistedTask.completion_user_ids = [...new Set([...(existingTask.completion_user_ids || []), currentUser.id])];
+    } else if (action === 'reopen') {
+      persistedTask.completion_user_ids = [];
+    }
+    setTasks((prev) => prev.map((task) => (task.id === taskId ? persistedTask : task)));
 
     const taskTitle = existingTask?.title || 'Task';
     await logActivity('status_change', 'task', taskId, taskTitle, `Status updated to ${newStatus}`);
 
     showNotification('Task status moved and the shared board updated.');
+  };
+
+  const handleArchiveTask = async (taskId: string, reason: string) => {
+    const task = tasks.find((row) => row.id === taskId);
+    if (!task) throw new Error('Task not found. Refresh before archiving it.');
+    const archived = await archiveTask(task, false, reason, {
+      impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+    });
+    setTasks((current) => current.filter((row) => row.id !== taskId));
+    setArchivedTasks((current) => [archived, ...current.filter((row) => row.id !== taskId)]);
+  };
+
+  const handleRestoreTask = async (taskId: string) => {
+    const task = archivedTasks.find((row) => row.id === taskId);
+    if (!task) throw new Error('Archived task not found. Refresh before restoring it.');
+    const restored = await archiveTask(task, true, null, {
+      impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+    });
+    setArchivedTasks((current) => current.filter((row) => row.id !== taskId));
+    setTasks((current) => [restored, ...current.filter((row) => row.id !== taskId)]);
   };
 
   const assertRealTaskClient = async (clientId: string) => {
@@ -3851,14 +3896,11 @@ export default function App() {
     stagedAttachments: StagedTaskAttachment[] = []
   ) => {
     const existingTask = tasks.find((t) => t.id === taskId);
-    // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
-    // actually touches status — editing title/description/done_link alone shouldn't disturb it.
+    if (!existingTask) throw new Error('Task not found. Refresh before editing it.');
     const finalUpdates: Partial<TaskRecord> = { ...updates };
-    if ('status' in updates) {
-      finalUpdates.completed_at = isTaskDone(updates.status as TaskStatus)
-        ? existingTask?.completed_at || new Date().toISOString()
-        : null;
-    }
+    const requestedStatus = 'status' in finalUpdates ? finalUpdates.status : undefined;
+    delete finalUpdates.status;
+    delete finalUpdates.completed_at;
     // Assignee membership is persisted only through set_task_assignees. Keep compatibility with
     // any older caller that still passes assigned_to, but never write that mirror column directly.
     const requestedAssigneeIds = assigneeIds ?? (
@@ -3872,25 +3914,36 @@ export default function App() {
     let persistedTask: TaskRecord;
     let persistedAnyChange = false;
     try {
-      if (Object.keys(finalUpdates).length > 0) {
-        const { data, error } = await supabaseRaw
-          .from('tasks')
-          .update(finalUpdates)
-          .eq('id', taskId)
-          .select('*')
-          .single();
-        if (error) throw error;
-        if (!data) throw new Error('Task update returned no persisted row.');
-        persistedTask = data as TaskRecord;
+      persistedTask = existingTask;
+      if (requestedStatus && requestedStatus !== existingTask.status) {
+        let action = 'set_status';
+        let payload: Record<string, unknown> = { status: requestedStatus };
+        if (requestedStatus === 'completed') { action = 'record_completion'; payload = {}; }
+        else if (requestedStatus === 'closed') { action = 'close'; payload = {}; }
+        else if (isTaskDone(existingTask.status)) {
+          action = 'reopen';
+          payload = { status: requestedStatus, reason: 'Task reopened while editing.' };
+        } else if (requestedStatus === 'blocked') {
+          payload = { status: requestedStatus, reason: 'Task blocked while editing.' };
+        }
+        persistedTask = await transitionTask(persistedTask, action, payload, {
+          impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+        });
+        if (action === 'record_completion') persistedTask.completion_user_ids = [currentUser.id];
+        if (action === 'reopen') persistedTask.completion_user_ids = [];
         persistedAnyChange = true;
-      } else if (existingTask) {
-        persistedTask = existingTask;
-      } else {
-        throw new Error('Task not found.');
+      }
+      if (Object.keys(finalUpdates).length > 0) {
+        persistedTask = await mutateTask(persistedTask, finalUpdates as Record<string, unknown>, {
+          impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+        });
+        persistedAnyChange = true;
       }
 
       if (requestedAssigneeIds) {
-        await persistTaskAssignees(taskId, requestedAssigneeIds);
+        persistedTask = await persistTaskAssignees(persistedTask, requestedAssigneeIds, {
+          impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+        });
         persistedAnyChange = true;
         setTaskAssignees(await fetchTaskAssignees());
         const { data: refreshedTask, error: refreshError } = await supabaseRaw
@@ -3986,7 +4039,9 @@ export default function App() {
       throw new Error('This batch payload differs from the locked recovery record. Resume the original operation or explicitly discard it before starting a different task.');
     }
 
-    const batchResult = await createTaskCopies(taskData);
+    const batchResult = await createTaskCopies(taskData, {
+      impersonationSessionId: impersonationHandoff?.sessionId ?? null,
+    });
     const persistedTasks = batchResult.tasks;
     if (persistedTasks.length > 0) {
       setTasks((previous) => [
@@ -4210,6 +4265,9 @@ export default function App() {
     linked_task_ids: string[];
     client_id?: string | null;
   }) => {
+    if (logData.user_id !== currentUser.id) {
+      throw new Error('Daily Activity can only be submitted for the effective signed-in employee.');
+    }
     const newLogPayload: DailyLogRecord = {
       // Date.now() alone collides when the multi-client create form fires several inserts in the
       // same Promise.allSettled batch (DailyOperationsModule.tsx/MyWorkHub.tsx) — those calls
@@ -4225,12 +4283,23 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      const { data, error } = await supabaseRaw.from('daily_logs').insert([newLogPayload]).select();
+      const { data, error } = await supabaseRaw.rpc('submit_daily_activity_v2', {
+        p_request_key: crypto.randomUUID(),
+        p_report_date: logData.date,
+        p_entries: [{
+          client_id: logData.client_id ?? null,
+          summary_text: logData.summary_text,
+          task_ids: [...new Set(logData.linked_task_ids.filter(Boolean))],
+        }],
+        p_impersonation_session_id: impersonationHandoff?.sessionId ?? null,
+      });
       if (error) {
         console.error('Supabase daily_logs insert error:', error);
         throw error;
       }
-      setDailyLogs((prev) => [(data?.[0] as DailyLogRecord) || newLogPayload, ...prev]);
+      const persisted = (Array.isArray(data) ? data[0] : data) as DailyLogRecord | undefined;
+      if (!persisted) throw new Error('Daily Activity submission returned no saved row.');
+      setDailyLogs((prev) => [persisted, ...prev]);
     } else {
       setDailyLogs((prev) => [newLogPayload, ...prev]);
     }
@@ -4247,6 +4316,10 @@ export default function App() {
     logId: string,
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
   ) => {
+    const existingLog = dailyLogs.find((log) => log.id === logId);
+    if (!existingLog || existingLog.row_version == null) {
+      throw new Error('Refresh this Daily Activity entry before editing it.');
+    }
     const payload = {
       date: updates.date,
       summary_text: updates.summary_text,
@@ -4255,7 +4328,16 @@ export default function App() {
     };
 
     if (supabaseActive) {
-      const { data, error } = await supabaseRaw.from('daily_logs').update(payload).eq('id', logId).select();
+      const { data, error } = await supabaseRaw.rpc('update_daily_activity_v2', {
+        p_request_key: crypto.randomUUID(),
+        p_log_id: logId,
+        p_expected_row_version: existingLog.row_version,
+        p_report_date: payload.date,
+        p_client_id: payload.client_id,
+        p_summary_text: payload.summary_text,
+        p_task_ids: [...new Set(payload.linked_task_ids.filter(Boolean))],
+        p_impersonation_session_id: impersonationHandoff?.sessionId ?? null,
+      });
       if (error) {
         console.error('Supabase daily_logs update error:', error);
         throw error;
@@ -4263,12 +4345,12 @@ export default function App() {
       // RLS silently filters out a row the caller isn't allowed to touch — a stale or
       // someone-else's/past-the-window log UPDATE affects zero rows with no error at all. Only
       // ever reflect what the database actually changed, never an optimistic local guess.
-      if (!data || data.length === 0) {
+      const updated = (Array.isArray(data) ? data[0] : data) as DailyLogRecord | undefined;
+      if (!updated) {
         throw new Error(
           'This log could not be updated. The 7-day edit window may have passed, or you are not its author.'
         );
       }
-      const updated = data[0] as DailyLogRecord;
       setDailyLogs((prev) => prev.map((l) => (l.id === logId ? updated : l)));
     } else {
       setDailyLogs((prev) => prev.map((l) => (l.id === logId ? { ...l, ...payload } : l)));
@@ -4278,15 +4360,24 @@ export default function App() {
   // Delete own daily_logs row — same author-only, 7-day window as the update above
   // (daily_logs_delete_own_rls).
   const handleDeleteDailyLog = async (logId: string) => {
+    const existingLog = dailyLogs.find((log) => log.id === logId);
+    if (!existingLog || existingLog.row_version == null) {
+      throw new Error('Refresh this Daily Activity entry before deleting it.');
+    }
     if (supabaseActive) {
-      const { data, error } = await supabaseRaw.from('daily_logs').delete().eq('id', logId).select();
+      const { data, error } = await supabaseRaw.rpc('delete_daily_activity_v2', {
+        p_request_key: crypto.randomUUID(),
+        p_log_id: logId,
+        p_expected_row_version: existingLog.row_version,
+        p_impersonation_session_id: impersonationHandoff?.sessionId ?? null,
+      });
       if (error) {
         console.error('Supabase daily_logs delete error:', error);
         throw error;
       }
       // Same RLS-silently-filtered-zero-rows case as the update above — a DELETE outside the
       // window or by a non-author matches nothing, succeeds with no error, and returns no rows.
-      if (!data || data.length === 0) {
+      if (data !== true) {
         throw new Error(
           'This log could not be deleted. The 7-day window may have passed, or you are not its author.'
         );
@@ -5782,6 +5873,7 @@ export default function App() {
                   clients={clients}
                   campaigns={campaigns}
                   tasks={tasks}
+                  archivedTasks={archivedTasks}
                   taskAssignees={taskAssignees}
                   socialInsights={socialInsights}
                   seoInsights={seoInsights}
@@ -5983,6 +6075,8 @@ export default function App() {
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onCreateTask={handleCreateTask}
                   onUpdateTask={handleUpdateTask}
+                  onArchiveTask={handleArchiveTask}
+                  onRestoreTask={handleRestoreTask}
                   taskTypes={taskTypes}
                   onCreateTaskType={handleCreateTaskType}
                   onUpdateTaskType={handleUpdateTaskType}
@@ -6085,6 +6179,9 @@ export default function App() {
                   extraNotes={extraNotes}
                   tasks={tasks}
                   taskAssignees={taskAssignees}
+                  taskComments={taskComments}
+                  taskAttachments={taskAttachments}
+                  onOpenTaskBoard={() => handleNavigateToModule('tasks')}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}

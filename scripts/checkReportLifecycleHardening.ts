@@ -1,7 +1,14 @@
 import fs from 'node:fs';
+import { strict as assert } from 'node:assert';
+import {
+  isCurrentReportDetailsRequest,
+  isReportDetailsReady,
+  isReportVersionForSelection,
+} from '../src/lib/reportWorkspaceState';
 
 const migration = fs.readFileSync('supabase/migrations/20261107300000_report_workspace_lifecycle_hardening.sql', 'utf8');
 const lockdown = fs.readFileSync('supabase/migrations/20261107400000_report_workspace_direct_write_lockdown.sql', 'utf8');
+const optionalArchiveReason = fs.readFileSync('supabase/migrations/20261107500000_report_archive_reason_optional.sql', 'utf8');
 const workspace = fs.readFileSync('src/components/reporting/ReportDraftWorkspace.tsx', 'utf8');
 const reportsHub = fs.readFileSync('src/components/ReportsHub.tsx', 'utf8');
 const comparisonDisplay = fs.readFileSync('src/components/reporting/ComparisonDisplay.tsx', 'utf8');
@@ -52,6 +59,30 @@ if (!router.includes("from('report_source_items')") || !router.includes('are alw
 if (!workspace.includes("rpc('save_report_version_v2'") || !workspace.includes("rpc('archive_report_v2'")
   || !workspace.includes("rpc('approve_report_v2'") || !workspace.includes('draftText !== currentVersion.content_text')) {
   throw new Error('Workspace does not enforce concurrency RPCs or saved-version-only actions.');
+}
+if (!workspace.includes("setWorkspaceMode('view')") || !workspace.includes("rpc('report_row_editable'")
+  || !workspace.includes('Opening this view does not create a version') || !workspace.includes('downloadReportPdf')) {
+  throw new Error('Saved reports do not default to an authorized read-only view with PDF export.');
+}
+for (const fragment of [
+  'setVersions([])', 'setSources([])', 'setSuggestion(null)', "setDraftText('')",
+  'detailsRequestToken.current', 'isCurrentReportDetailsRequest',
+  'currentVersionMatchesSelection', 'reportActionsDisabled',
+]) {
+  if (!workspace.includes(fragment)) throw new Error(`Report switch stale-state guard is missing: ${fragment}`);
+}
+assert.equal(isCurrentReportDetailsRequest('report-a', 'report-b', 1, 2), false, 'a delayed previous-report response must be ignored');
+assert.equal(isCurrentReportDetailsRequest('report-b', 'report-b', 2, 2), true, 'the current request must be accepted');
+assert.equal(isReportDetailsReady('report-b', null, true, null), false, 'actions must remain disabled while loading');
+assert.equal(isReportDetailsReady('report-b', null, false, 'load failed'), false, 'actions must remain disabled after a failed load');
+assert.equal(isReportDetailsReady('report-b', 'report-b', false, null), true, 'actions may resume only after the selected report loads');
+assert.equal(isReportVersionForSelection({ report_id: 'report-a' }, 'report-b'), false, 'PDF export must reject a stale report version');
+assert.equal(isReportVersionForSelection({ report_id: 'report-b' }, 'report-b'), true, 'PDF export may use the selected report version');
+for (const fragment of ['report_row_editable(p_report_id)', 'for update', 'current_version_id is distinct from p_expected_version_id', "archive_reason = v_reason", "jsonb_strip_nulls"]) {
+  if (!optionalArchiveReason.includes(fragment)) throw new Error(`Optional archive-reason migration lost a lifecycle safeguard: ${fragment}`);
+}
+if (optionalArchiveReason.includes('Archive reason is required') || workspace.includes('Reason for archiving')) {
+  throw new Error('Archive still requires a user-entered reason.');
 }
 for (const label of ['Create Report', 'Saved Reports', 'Archived Reports', 'Activity Sources']) {
   if (!reportsHub.includes(label)) throw new Error(`Reports UI section is missing: ${label}`);

@@ -425,6 +425,16 @@ export interface TaskRecord {
   // multiple clients" flow will produce. Nothing reads this yet — it has no effect on capacity,
   // KPI, or any report aggregation.
   batch_id?: string | null;
+  updated_at?: string;
+  row_version?: number;
+  lifecycle_cycle?: number;
+  source_task_id?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  archive_reason?: string | null;
+  blocked_from_status?: TaskStatus | null;
+  // Runtime projection populated from current-cycle, non-revoked completion evidence.
+  completion_user_ids?: string[];
 }
 
 // 6a. task_assignees — "task assignees" project, PR 1 foundation (database only, not yet read by
@@ -727,6 +737,8 @@ export interface DailyLogRecord {
   // spanning multiple clients is already handled today by writing multiple log rows.
   client_id?: string | null;
   created_at?: string;
+  updated_at?: string;
+  row_version?: number;
 }
 
 export interface KpiRecord {

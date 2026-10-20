@@ -19,6 +19,11 @@ import {
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf } from '../../lib/pdfExport';
 import { isCreativeReportSubject, isEligibleReportSubject } from '../../lib/reportAgentEligibility';
+import {
+  isCurrentReportDetailsRequest,
+  isReportDetailsReady,
+  isReportVersionForSelection,
+} from '../../lib/reportWorkspaceState';
 
 interface Props {
   currentUser: UserRecord;
@@ -85,6 +90,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [creatorNote, setCreatorNote] = useState('');
   const [draftText, setDraftText] = useState('');
   const [selectedReportId, setSelectedReportId] = useState('');
+  const [workspaceMode, setWorkspaceMode] = useState<'view' | 'edit'>('edit');
+  const [canEditSelectedReport, setCanEditSelectedReport] = useState(false);
   const [versions, setVersions] = useState<ReportContentVersionRecord[]>([]);
   const [sources, setSources] = useState<ReportSourceItemRecord[]>([]);
   const [suggestion, setSuggestion] = useState<ReportAiSuggestionRecord | null>(null);
@@ -92,15 +99,22 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [message, setMessage] = useState<string | null>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [loadedReportId, setLoadedReportId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [previewManifest, setPreviewManifest] = useState<SourceManifest | null>(null);
   const creationKey = useRef<string | null>(null);
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const detailsRequestToken = useRef(0);
 
   const selectedReport = reports.find((report) => report.id === selectedReportId) || null;
   const currentVersion = selectedReport
-    ? versions.find((version) => version.id === selectedReport.current_version_id) || versions[0] || null
+    ? versions.find((version) => version.report_id === selectedReport.id && version.id === selectedReport.current_version_id)
+      || versions.find((version) => version.report_id === selectedReport.id)
+      || null
     : null;
+  const reportDetailsReady = isReportDetailsReady(selectedReportId, loadedReportId, isLoadingDetails, detailsError);
+  const currentVersionMatchesSelection = isReportVersionForSelection(currentVersion, selectedReportId);
+  const reportActionsDisabled = busy || !reportDetailsReady;
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.name])), [users]);
   const reportLabel = selectedReport
     ? `${selectedReport.period} — ${selectedReport.scope_type === 'employee'
@@ -149,6 +163,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
     setShowArchived(!!report.archived_at);
     setSelectedReportId(report.id);
+    setWorkspaceMode('view');
     setMessage(null);
     workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     onOpenReportHandled?.();
@@ -182,10 +197,15 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   useEffect(() => {
+    const requestToken = ++detailsRequestToken.current;
+    const requestReportId = selectedReportId;
+    setVersions([]);
+    setSources([]);
+    setSuggestion(null);
+    setDraftText('');
+    setLoadedReportId(null);
+    setCanEditSelectedReport(false);
     if (!selectedReportId) {
-      setVersions([]);
-      setSources([]);
-      setSuggestion(null);
       setIsLoadingDetails(false);
       setDetailsError(null);
       return;
@@ -194,26 +214,32 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     setIsLoadingDetails(true);
     setDetailsError(null);
     (async () => {
-      const [versionResult, sourceResult, suggestionResult] = await Promise.all([
-        supabaseRaw.from('report_content_versions').select('*').eq('report_id', selectedReportId).order('version_no', { ascending: false }),
-        supabaseRaw.from('report_source_items').select('*').eq('report_id', selectedReportId).order('source_date'),
-        supabaseRaw.from('report_ai_suggestions').select('*').eq('report_id', selectedReportId).eq('status', 'pending').order('created_at', { ascending: false }).limit(1),
-      ]);
-      if (cancelled) return;
-      const error = versionResult.error || sourceResult.error || suggestionResult.error;
-      if (error) {
+      try {
+        const [versionResult, sourceResult, suggestionResult, editableResult] = await Promise.all([
+          supabaseRaw.from('report_content_versions').select('*').eq('report_id', requestReportId).order('version_no', { ascending: false }),
+          supabaseRaw.from('report_source_items').select('*').eq('report_id', requestReportId).order('source_date'),
+          supabaseRaw.from('report_ai_suggestions').select('*').eq('report_id', requestReportId).eq('status', 'pending').order('created_at', { ascending: false }).limit(1),
+          supabaseRaw.rpc('report_row_editable', { p_report_id: requestReportId }),
+        ]);
+        if (cancelled || !isCurrentReportDetailsRequest(requestReportId, selectedReportId, requestToken, detailsRequestToken.current)) return;
+        const error = versionResult.error || sourceResult.error || suggestionResult.error;
+        if (error) throw error;
+        const loadedVersions = (versionResult.data || []) as ReportContentVersionRecord[];
+        setVersions(loadedVersions);
+        setSources((sourceResult.data || []) as ReportSourceItemRecord[]);
+        setSuggestion(((suggestionResult.data || [])[0] as ReportAiSuggestionRecord) || null);
+        setCanEditSelectedReport(!editableResult.error && editableResult.data === true);
+        const report = reports.find((item) => item.id === requestReportId);
+        const version = loadedVersions.find((item) => item.report_id === requestReportId && item.id === report?.current_version_id)
+          || loadedVersions.find((item) => item.report_id === requestReportId);
+        setDraftText(version?.content_text || '');
+        setLoadedReportId(requestReportId);
+        setIsLoadingDetails(false);
+      } catch {
+        if (cancelled || !isCurrentReportDetailsRequest(requestReportId, selectedReportId, requestToken, detailsRequestToken.current)) return;
         setDetailsError('Unable to load this report\'s saved content, versions, or source ledger.');
         setIsLoadingDetails(false);
-        return;
       }
-      const loadedVersions = (versionResult.data || []) as ReportContentVersionRecord[];
-      setVersions(loadedVersions);
-      setSources((sourceResult.data || []) as ReportSourceItemRecord[]);
-      setSuggestion(((suggestionResult.data || [])[0] as ReportAiSuggestionRecord) || null);
-      const report = reports.find((item) => item.id === selectedReportId);
-      const version = loadedVersions.find((item) => item.id === report?.current_version_id) || loadedVersions[0];
-      setDraftText(version?.content_text || '');
-      setIsLoadingDetails(false);
     })();
     return () => { cancelled = true; };
   }, [selectedReportId, reports]);
@@ -243,6 +269,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const report = data as unknown as ReportRecord;
       onReportChanged(report);
       setSelectedReportId(report.id);
+      setWorkspaceMode('edit');
       creationKey.current = null;
       setMessage('Draft saved with an immutable source snapshot.');
     } catch {
@@ -253,7 +280,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const saveVersion = async () => {
-    if (!selectedReport || !draftText.trim()) return;
+    if (!selectedReport || !reportDetailsReady || !draftText.trim()) return;
     setBusy(true);
     try {
       const { data, error } = await supabaseRaw.rpc('save_report_version_v2', {
@@ -276,7 +303,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const requestRewrite = async () => {
-    if (!selectedReport || !currentVersion || !draftText.trim()) return;
+    if (!selectedReport || !reportDetailsReady || !currentVersionMatchesSelection || !currentVersion || !draftText.trim()) return;
     if (draftText !== currentVersion.content_text) {
       setMessage('Save the current editor text before requesting an AI rewrite.');
       return;
@@ -316,7 +343,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const applySuggestion = async () => {
-    if (!suggestion || !selectedReport) return;
+    if (!suggestion || !selectedReport || !reportDetailsReady) return;
     setBusy(true);
     try {
       const { data, error } = await supabaseRaw.rpc('apply_report_ai_suggestion', { p_suggestion_id: suggestion.id });
@@ -335,12 +362,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const archiveSelected = async () => {
-    if (!selectedReport || busy) return;
-    const reason = window.prompt(`Reason for archiving "${reportLabel}":`) ?? '';
-    if (!reason.trim()) return;
+    if (!selectedReport || reportActionsDisabled) return;
     setBusy(true);
     try {
-      const { data, error } = await supabaseRaw.rpc('archive_report_v2', { p_report_id: selectedReport.id, p_reason: reason, p_restore: false, p_expected_version_id: currentVersion?.id || null });
+      const { data, error } = await supabaseRaw.rpc('archive_report_v2', { p_report_id: selectedReport.id, p_reason: '', p_restore: false, p_expected_version_id: currentVersion?.id || null });
       if (error) throw error;
       onReportChanged(data as unknown as ReportRecord);
       setMessage('Report archived. Its versions and audit history were preserved.');
@@ -352,7 +377,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const restoreSelected = async () => {
-    if (!selectedReport?.archived_at || busy) return;
+    if (!selectedReport?.archived_at || reportActionsDisabled) return;
     setBusy(true);
     try {
       const { data, error } = await supabaseRaw.rpc('archive_report_v2', {
@@ -372,7 +397,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const deleteSelected = async () => {
-    if (!selectedReport?.archived_at || busy || !['executive', 'head_of_technical'].includes(currentUser.role)) return;
+    if (!selectedReport?.archived_at || reportActionsDisabled || !['executive', 'head_of_technical'].includes(currentUser.role)) return;
     const reason = window.prompt(`Permanent deletion reason for "${reportLabel}":`) ?? '';
     if (!reason.trim() || !window.confirm(`Permanently delete "${reportLabel}"? Its report content, versions, source snapshots, and report audit events will be removed. Original tasks, activity logs, campaigns, and client data are not deleted. A deletion tombstone remains, but the report cannot be restored.`)) return;
     setBusy(true);
@@ -389,7 +414,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const approveSelected = async () => {
-    if (!selectedReport || selectedReport.status === 'final') return;
+    if (!selectedReport || !reportDetailsReady || selectedReport.status === 'final') return;
     if (!currentVersion || draftText !== currentVersion.content_text) {
       setMessage('Save the current text as a version before approving the report.');
       return;
@@ -408,7 +433,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   const exportPdf = async () => {
-    if (!selectedReport || !currentVersion?.content_text.trim()) return;
+    if (!selectedReport || !reportDetailsReady || !currentVersionMatchesSelection || !currentVersion?.content_text.trim()) {
+      setMessage('Wait for the selected report to finish loading before exporting its PDF.');
+      return;
+    }
     if (draftText !== currentVersion.content_text) {
       setMessage('Save the current text as a version before exporting the PDF.');
       return;
@@ -434,7 +462,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         <h3 className="text-sm font-bold text-white flex items-center gap-2"><FilePenLine className="w-4 h-4 text-purple-400" />Versioned Report Workspace</h3>
         <div className="flex gap-2">
         <button onClick={() => { if (confirmDiscard()) { setShowArchived((value) => !value); setSelectedReportId(''); setDraftText(''); } }} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-200">{showArchived ? 'Active reports' : 'Archived reports'}</button>
-        <select value={selectedReportId} onChange={(event) => { if (confirmDiscard()) setSelectedReportId(event.target.value); }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white">
+        <select value={selectedReportId} onChange={(event) => { if (confirmDiscard()) { setSelectedReportId(event.target.value); setWorkspaceMode(event.target.value ? 'view' : 'edit'); } }} className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white">
           <option value="">Create a new draft</option>
           {workspaceReports.map((report) => <option key={report.id} value={report.id}>{report.period} — {report.scope_type}{report.archived_at ? ' (archived)' : ''}</option>)}
         </select>
@@ -442,9 +470,9 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         </div>
       </div>
 
-      <p className="text-[11px] text-stone-400">
-        Build a server-authorized source snapshot, edit the draft, then save a version. AI creates a reviewable proposal only; it never replaces saved text until you explicitly apply it as a new version.
-      </p>
+      <p className="text-[11px] text-stone-400">{selectedReport && workspaceMode === 'view'
+        ? 'Read-only saved report view. Opening this view does not create a version or change report content.'
+        : 'Build a server-authorized source snapshot, edit the draft, then save a version. AI creates a reviewable proposal only; it never replaces saved text until you explicitly apply it as a new version.'}</p>
 
       {!selectedReport && (
         <div className="space-y-3">
@@ -487,26 +515,35 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         <div className="min-h-56 rounded-xl border border-purple-900/50 bg-[#100c1c] flex items-center justify-center text-xs text-stone-400">Loading saved report content…</div>
       ) : detailsError ? (
         <div className="min-h-32 rounded-xl border border-red-900/50 bg-red-950/20 flex items-center justify-center text-xs text-red-200 px-4 text-center">{detailsError}</div>
+      ) : selectedReport && workspaceMode === 'view' ? (
+        <article className="min-h-56 rounded-xl border border-purple-900/50 bg-[#100c1c] px-4 py-4">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div><h4 className="text-base font-bold text-white">{selectedReport.type === 'client' ? 'Client Report' : 'Employee Report'}</h4><p className="text-xs text-stone-400">{reportLabel}</p></div>
+            {reportDetailsReady && canEditSelectedReport && !selectedReport.archived_at && selectedReport.status !== 'final' && <button type="button" onClick={() => setWorkspaceMode('edit')} className="px-3 py-2 rounded-lg text-xs font-bold bg-purple-600 text-white"><FilePenLine className="w-3.5 h-3.5 inline mr-1" />Edit</button>}
+          </div>
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-7 text-stone-200">{currentVersion?.content_text || 'No saved version content is available for this report.'}</pre>
+        </article>
       ) : (
         <textarea readOnly={selectedReport?.status === 'final' || !!selectedReport?.archived_at} value={draftText} onChange={(event) => setDraftText(event.target.value)} placeholder="Build a preview or select a saved report" className="w-full min-h-56 px-3 py-3 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white read-only:text-stone-200 read-only:cursor-default" />
       )}
 
       <div className="flex flex-wrap gap-2">
         {!selectedReport ? <button disabled={busy || !draftText.trim() || !previewManifest} onClick={createDraft} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save draft</button> : <>
-          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={saveVersion} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save version</button>
-          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={requestRewrite} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Bot className="w-3.5 h-3.5 inline mr-1" />Suggest rewrite</button>
-          {selectedReport.status !== 'final' && <button disabled={busy || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
-          <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
+          {workspaceMode === 'edit' && <><button disabled={reportActionsDisabled || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={saveVersion} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save version</button>
+          <button disabled={reportActionsDisabled || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={requestRewrite} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Bot className="w-3.5 h-3.5 inline mr-1" />Suggest rewrite</button>
+          {selectedReport.status !== 'final' && <button disabled={reportActionsDisabled || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
+          <button type="button" disabled={reportActionsDisabled} onClick={() => { if (confirmDiscard()) { setDraftText(currentVersion?.content_text || ''); setWorkspaceMode('view'); } }} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300 disabled:opacity-50">Cancel editing</button></>}
+          <button disabled={reportActionsDisabled || !currentVersionMatchesSelection} onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
           {selectedReport.archived_at
-            ? <><button disabled={busy} onClick={restoreSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Restore</button>{['executive', 'head_of_technical'].includes(currentUser.role) && <button disabled={busy} onClick={deleteSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-red-950/50 text-red-200 disabled:opacity-50"><Trash2 className="w-3.5 h-3.5 inline mr-1" />Delete permanently</button>}</>
-            : <button disabled={busy} onClick={archiveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-amber-950/50 text-amber-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Archive</button>}
+            ? <><button disabled={reportActionsDisabled} onClick={restoreSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Restore</button>{['executive', 'head_of_technical'].includes(currentUser.role) && <button disabled={reportActionsDisabled} onClick={deleteSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-red-950/50 text-red-200 disabled:opacity-50"><Trash2 className="w-3.5 h-3.5 inline mr-1" />Delete permanently</button>}</>
+            : <button disabled={reportActionsDisabled} onClick={archiveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-amber-950/50 text-amber-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Archive</button>}
         </>}
       </div>
 
-      {suggestion && selectedReport?.status !== 'final' && !selectedReport?.archived_at && (
+      {workspaceMode === 'edit' && reportDetailsReady && suggestion && selectedReport?.status !== 'final' && !selectedReport?.archived_at && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3 rounded-xl border border-indigo-800/40 bg-indigo-950/20">
           <div><p className="text-xs font-bold text-stone-300 mb-2">Current text</p><pre className="whitespace-pre-wrap text-xs text-stone-300">{draftText}</pre></div>
-          <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre className="whitespace-pre-wrap text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={busy} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300">Keep current</button></div></div>
+          <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre className="whitespace-pre-wrap text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={reportActionsDisabled} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white disabled:opacity-50"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button disabled={reportActionsDisabled} onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300 disabled:opacity-50">Keep current</button></div></div>
         </div>
       )}
       {selectedReport && !isLoadingDetails && !detailsError && (

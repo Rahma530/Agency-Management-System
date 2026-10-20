@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { X, AlertCircle } from 'lucide-react';
-import { ClientRecord, DailyLogRecord, TaskRecord, TaskStatus } from '../types/database';
+import { ClientRecord, DailyLogRecord, TaskAssigneeRecord, TaskRecord, TaskStatus } from '../types/database';
+import {
+  buildDailyActivitySubmissions,
+  getEligibleCompletedTasks,
+  validateDailyActivityTaskLinks,
+} from '../lib/dailyActivity';
 
 interface DailyLogEditModalProps {
   log: DailyLogRecord;
@@ -8,6 +13,8 @@ interface DailyLogEditModalProps {
   // Full tasks list — filtered internally to the log author's own tasks, same as each host's own
   // linked-tasks checklist.
   tasks: TaskRecord[];
+  taskAssignees?: TaskAssigneeRecord[];
+  dailyLogs?: DailyLogRecord[];
   onSave: (updates: {
     date: string;
     summary_text: string;
@@ -32,7 +39,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 // DailyLogClientPicker's multi-select checklist. The caller (onSave) is responsible for actually
 // calling onUpdateDailyLog and for the 7-day-own-log eligibility check (lib/dailyLogs.ts) that
 // decides whether this modal is ever opened at all.
-export const DailyLogEditModal: React.FC<DailyLogEditModalProps> = ({ log, clients, tasks, onSave, onClose }) => {
+export const DailyLogEditModal: React.FC<DailyLogEditModalProps> = ({ log, clients, tasks, taskAssignees = [], dailyLogs = [], onSave, onClose }) => {
   const [date, setDate] = useState(log.date);
   const [clientId, setClientId] = useState(log.client_id || '');
   const [summaryText, setSummaryText] = useState(log.summary_text);
@@ -40,17 +47,42 @@ export const DailyLogEditModal: React.FC<DailyLogEditModalProps> = ({ log, clien
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ownTasks = tasks.filter((t) => t.assigned_to === log.user_id);
+  const eligibleTasks = getEligibleCompletedTasks(tasks, taskAssignees, dailyLogs, log.user_id, date, log.id);
+  const eligibleIds = new Set(eligibleTasks.map((task) => task.id));
+  const currentIds = new Set(log.linked_task_ids || []);
+  const ownTasks = tasks.filter((task) => currentIds.has(task.id) || (eligibleIds.has(task.id) && (!clientId || task.client_id === clientId)));
+  const linkValidation = validateDailyActivityTaskLinks(
+    tasks,
+    taskAssignees,
+    dailyLogs,
+    linkedTaskIds,
+    log.user_id,
+    date,
+    clientId || null,
+    log.id,
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!summaryText.trim()) return;
+    if (!summaryText.trim() && linkedTaskIds.length === 0) return;
+    if (linkValidation.issues.length > 0) {
+      setError(`Remove invalid task links before saving: ${linkValidation.issues.map((issue) => `${issue.taskTitle} (${issue.message})`).join('; ')}.`);
+      return;
+    }
+    const selectedTasks = ownTasks.filter((task) => linkedTaskIds.includes(task.id));
+    const generatedSummary = buildDailyActivitySubmissions(selectedTasks, linkedTaskIds, [], '')
+      .map((submission) => submission.summaryText)
+      .join('\n\n');
+    if (!summaryText.trim() && !generatedSummary) {
+      setError('Add context before saving because the linked task details are not available in your authorized task data.');
+      return;
+    }
     setIsSaving(true);
     try {
       await onSave({
         date,
-        summary_text: summaryText.trim(),
+        summary_text: summaryText.trim() || generatedSummary,
         linked_task_ids: linkedTaskIds,
         client_id: clientId || null,
       });
@@ -120,16 +152,16 @@ export const DailyLogEditModal: React.FC<DailyLogEditModalProps> = ({ log, clien
             </label>
             <textarea
               rows={4}
-              required
               value={summaryText}
               onChange={(e) => setSummaryText(e.target.value)}
+              placeholder="Optional when linked completed tasks fully describe the work"
               className="w-full p-3 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-500"
             />
           </div>
 
           {ownTasks.length > 0 && (
             <div>
-              <label className="text-xs font-semibold text-stone-300 block mb-1.5">Linked tasks:</label>
+              <label className="text-xs font-semibold text-stone-300 block mb-1.5">Linked completed tasks:</label>
               <div className="max-h-36 overflow-y-auto p-2.5 rounded-xl bg-stone-900/90 border border-stone-800 space-y-1.5">
                 {ownTasks.map((t) => {
                   const isChecked = linkedTaskIds.includes(t.id);
@@ -159,6 +191,24 @@ export const DailyLogEditModal: React.FC<DailyLogEditModalProps> = ({ log, clien
             </div>
           )}
 
+          {linkValidation.issues.length > 0 && (
+            <div className="p-3 rounded-xl text-xs bg-amber-950/30 border border-amber-800/60 text-amber-100 space-y-2">
+              <p className="font-semibold">Some linked tasks no longer match this employee, report date, or client:</p>
+              <ul className="list-disc pl-5 space-y-1">
+                {linkValidation.issues.map((issue) => (
+                  <li key={`${issue.taskId}:${issue.code}`}>{issue.taskTitle}: {issue.message}</li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => setLinkedTaskIds(linkValidation.validTaskIds)}
+                className="px-3 py-1.5 rounded-lg font-bold bg-amber-900/60 text-amber-50 hover:bg-amber-900"
+              >
+                Remove invalid links
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
             <button
               type="button"
@@ -169,7 +219,7 @@ export const DailyLogEditModal: React.FC<DailyLogEditModalProps> = ({ log, clien
             </button>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || linkValidation.issues.length > 0 || (!summaryText.trim() && linkedTaskIds.length === 0)}
               className="px-5 py-2 rounded-xl text-xs font-bold text-white transition-all shadow-lg hover:opacity-90 disabled:opacity-50"
               style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
             >

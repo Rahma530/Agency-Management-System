@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2, X } from 'lucide-react';
+import { BarChart3, TrendingUp, FileText, Users, AlertTriangle, ClipboardList, Search, Edit2, Trash2, X, ExternalLink } from 'lucide-react';
 import {
   ClientRecord,
   UserRecord,
@@ -11,6 +11,8 @@ import {
   ServiceType,
   TaskRecord,
   TaskAssigneeRecord,
+  TaskAttachmentRecord,
+  TaskCommentRecord,
 } from '../types/database';
 import {
   ComparisonGranularity,
@@ -25,6 +27,7 @@ import {
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { getTodayStr } from '../lib/employeeWork';
+import { resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { canSelectAnyReportAgent, isSelectableReportAgent } from '../lib/reportAgentEligibility';
 import { PeriodSelector } from './reporting/PeriodSelector';
@@ -55,6 +58,9 @@ interface ReportsHubProps {
   // — never used for scoping/filtering anything else in this hub.
   tasks?: TaskRecord[];
   taskAssignees?: TaskAssigneeRecord[];
+  taskComments?: TaskCommentRecord[];
+  taskAttachments?: TaskAttachmentRecord[];
+  onOpenTaskBoard?: () => void;
   onGenerateComparison: (
     scope: ReportScope,
     mode: ReportMode,
@@ -92,6 +98,9 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   extraNotes = [],
   tasks = [],
   taskAssignees = [],
+  taskComments = [],
+  taskAttachments = [],
+  onOpenTaskBoard,
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
@@ -766,6 +775,8 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           log={editingDailyLog}
           clients={clients}
           tasks={tasks}
+          taskAssignees={taskAssignees}
+          dailyLogs={dailyLogs}
           onSave={handleSaveEditedDailyLog}
           onClose={() => setEditingDailyLog(null)}
         />
@@ -798,13 +809,26 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
               </div>
               <div className="space-y-2">
                 <h4 className="text-xs font-bold text-white">Explicitly linked tasks ({linkedIds.size})</h4>
-                {linkedIds.size === 0 ? <p className="text-[11px] text-stone-500">This activity did not save any task links. No relationship is inferred from matching text or dates.</p> : linkedTasks.length === 0 ? <p className="text-[11px] text-amber-300">The saved task references are not available in your current authorized task data.</p> : linkedTasks.map((task) => (
-                  <div key={task.id} className="rounded-xl border border-stone-800 bg-stone-950/30 p-3 text-[11px]">
+                {linkedIds.size === 0 ? <p className="text-[11px] text-stone-500">This activity did not save any task links. No relationship is inferred from matching text or dates.</p> : linkedTasks.length === 0 ? <p className="text-[11px] text-amber-300">The saved task references are not available in your current authorized task data.</p> : linkedTasks.map((task) => {
+                  const taskClient = clients.find((client) => client.id === task.client_id);
+                  const assigneeNames = resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to).map((userId) => users.find((user) => user.id === userId)?.name).filter(Boolean);
+                  const comments = taskComments.filter((comment) => comment.task_id === task.id && !comment.deleted_at);
+                  const attachments = taskAttachments.filter((attachment) => attachment.task_id === task.id);
+                  return <div key={task.id} className="rounded-xl border border-stone-800 bg-stone-950/30 p-3 text-[11px] space-y-1.5">
                     <div className="flex items-center justify-between gap-2"><span className="font-bold text-white">{task.title}</span><span className="uppercase text-purple-300">{task.status.replace('_', ' ')}</span></div>
-                    <p className="text-stone-400 mt-1">Due {task.due_date || 'not set'} · {task.priority} priority{task.completed_at ? ` · completed ${new Date(task.completed_at).toLocaleString()}` : ''}</p>
-                    {task.done_link && <a href={task.done_link} target="_blank" rel="noreferrer" className="text-purple-300 hover:text-purple-200 mt-1 inline-block">Open submitted work</a>}
-                  </div>
-                ))}
+                    <p className="text-stone-300 whitespace-pre-wrap break-words">{task.description || 'No task description saved.'}</p>
+                    <p className="text-stone-500">Task ID: <span className="font-mono">{task.id}</span> · {taskClient?.name || 'No client'}{task.team ? ` · ${task.team}` : ''}{task.task_type_other ? ` · ${task.task_type_other}` : ''}</p>
+                    <p className="text-stone-400">Due {task.due_date || 'not set'} · {task.priority} priority{task.completed_at ? ` · completed ${new Date(task.completed_at).toLocaleString()}` : ''}</p>
+                    {assigneeNames.length > 0 && <p className="text-stone-500">Assignees: {assigneeNames.join(', ')}</p>}
+                    {comments.length > 0 && <details><summary className="cursor-pointer text-stone-400">Comments ({comments.length})</summary><div className="mt-1 space-y-1">{comments.map((comment) => <p key={comment.id} className="rounded bg-stone-900 p-1.5 whitespace-pre-wrap">{comment.body}</p>)}</div></details>}
+                    {attachments.length > 0 && <p className="text-stone-500">Attachments: {attachments.map((attachment) => attachment.filename).join(', ')} (open from Task Board)</p>}
+                    <div className="flex flex-wrap gap-3">
+                      {task.drive_link && <a href={task.drive_link} target="_blank" rel="noreferrer" className="text-purple-300 hover:text-purple-200">Open task reference</a>}
+                      {task.done_link && <a href={task.done_link} target="_blank" rel="noreferrer" className="text-purple-300 hover:text-purple-200">Open submitted work</a>}
+                      {onOpenTaskBoard && <button type="button" onClick={() => { setSelectedDailyLog(null); onOpenTaskBoard(); }} className="text-purple-300 hover:text-purple-200 inline-flex items-center gap-1">Task Board <ExternalLink className="w-3 h-3" /></button>}
+                    </div>
+                  </div>;
+                })}
                 {missingTaskCount > 0 && linkedTasks.length > 0 && <p className="text-[11px] text-amber-300">{missingTaskCount} saved task reference(s) are outside the currently visible task set.</p>}
               </div>
             </div>

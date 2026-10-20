@@ -1,5 +1,5 @@
-import { TaskRecord, TaskPriority } from '../types/database';
-import { isTaskDone } from './taskLifecycle';
+import { TaskAssigneeRecord, TaskRecord, TaskPriority } from '../types/database';
+import { isTaskDone, resolveTaskAssigneeIds } from './taskLifecycle';
 
 // Shared by DailyOperationsModule.tsx and MyWorkHub.tsx so both compute
 // "overdue"/"due today"/priority order identically instead of drifting.
@@ -50,5 +50,10 @@ export const sortTasksByPriorityThenDueDate = (tasks: TaskRecord[]): TaskRecord[
   });
 };
 
-export const getSortedEmployeeTasks = (tasks: TaskRecord[], employeeId: string): TaskRecord[] =>
-  sortTasksByPriorityThenDueDate(tasks.filter((t) => t.assigned_to === employeeId));
+export const getSortedEmployeeTasks = (
+  tasks: TaskRecord[],
+  employeeId: string,
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id'>[] = [],
+): TaskRecord[] => sortTasksByPriorityThenDueDate(
+  tasks.filter((task) => resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to).includes(employeeId)),
+);

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Calendar,
   Clock,
@@ -54,6 +54,7 @@ import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, r
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
+import { buildDailyActivitySubmissions, getEligibleCompletedTasks, getTaskCompletionDate } from '../lib/dailyActivity';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
@@ -213,37 +214,29 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // selected (not hardcoded to literal-today, so retroactively logging a
   // past day still gets the right suggestion). Drives both the "Link tasks"
   // checklist highlight/pre-check and the auto-suggested summary draft.
-  const tasksCompletedOnLogDate = useMemo(() => {
-    return employeeTasks.filter(
-      (t) => isTaskDone(t.status) && t.completed_at?.split('T')[0] === logDate
-    );
-  }, [employeeTasks, logDate]);
+  const tasksCompletedOnLogDate = useMemo(() => getEligibleCompletedTasks(
+    employeeTasks, taskAssignees, dailyLogs, effectiveEmployee.id, logDate,
+  ), [employeeTasks, taskAssignees, dailyLogs, effectiveEmployee.id, logDate]);
 
   // Checklist display order for the Daily Log modal: today's (well,
   // logDate's) completions surfaced first, everything else keeps its usual
   // priority/due-date order below. Does not affect sortedEmployeeTasks
   // itself, which several other views (My Tasks, KPI counts) rely on.
-  const dailyLogChecklistTasks = useMemo(() => {
-    const completedIds = new Set(tasksCompletedOnLogDate.map((t) => t.id));
-    return [...sortedEmployeeTasks].sort((a, b) => {
-      const aCompleted = completedIds.has(a.id) ? 1 : 0;
-      const bCompleted = completedIds.has(b.id) ? 1 : 0;
-      return bCompleted - aCompleted;
-    });
-  }, [sortedEmployeeTasks, tasksCompletedOnLogDate]);
+  const dailyLogChecklistTasks = tasksCompletedOnLogDate;
 
   // Auto-suggestion: pre-check logDate's completions and draft a starting
   // summary sentence — but only while the form is still untouched, so a
   // preserved draft (Cancel/X don't reset this modal's state) is never
   // clobbered.
+  const autoSelectedLogDate = useRef<string | null>(null);
   useEffect(() => {
-    if (!isLoggingDailyActivity) return;
-    if (dailySummary.trim() || selectedLinkedTasks.length > 0) return;
-    if (tasksCompletedOnLogDate.length === 0) return;
-
-    setSelectedLinkedTasks(tasksCompletedOnLogDate.map((t) => t.id));
-    setDailySummary(`Completed: ${tasksCompletedOnLogDate.map((t) => t.title).join(', ')}.`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!isLoggingDailyActivity) {
+      autoSelectedLogDate.current = null;
+      return;
+    }
+    if (autoSelectedLogDate.current === logDate) return;
+    autoSelectedLogDate.current = logDate;
+    setSelectedLinkedTasks(tasksCompletedOnLogDate.map((task) => task.id));
   }, [isLoggingDailyActivity, logDate, tasksCompletedOnLogDate]);
 
   // Filtered employee tasks based on search & filters
@@ -540,23 +533,29 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const handleSubmitDailyLog = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateLogError(null);
-    if (!dailySummary.trim()) return;
+    const eligibleIds = new Set(tasksCompletedOnLogDate.map((task) => task.id));
+    const submissions = buildDailyActivitySubmissions(
+      tasksCompletedOnLogDate,
+      selectedLinkedTasks.filter((taskId) => eligibleIds.has(taskId)),
+      selectedLogClientIds,
+      dailySummary,
+    );
+    if (!submissions.length) return;
 
     setIsSubmittingLog(true);
     try {
-      const targets: (string | null)[] = selectedLogClientIds.length > 0 ? selectedLogClientIds : [null];
       const results = await Promise.allSettled(
-        targets.map((clientId) =>
+        submissions.map((submission) =>
           onCreateDailyLog({
             user_id: effectiveEmployee.id,
             date: logDate,
-            summary_text: dailySummary.trim(),
-            linked_task_ids: selectedLinkedTasks,
-            client_id: clientId,
+            summary_text: submission.summaryText,
+            linked_task_ids: submission.taskIds,
+            client_id: submission.clientId,
           })
         )
       );
-      const failed = targets.filter((_, i) => results[i].status === 'rejected');
+      const failed = submissions.filter((_, i) => results[i].status === 'rejected');
 
       if (failed.length === 0) {
         setDailySummary('');
@@ -564,20 +563,20 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         setSelectedLogClientIds([]);
         setIsLoggingDailyActivity(false);
         showNotification(
-          targets.length > 1
-            ? `Daily activity log saved for ${targets.length} clients.`
+          submissions.length > 1
+            ? `Daily activity saved as ${submissions.length} source-linked entries.`
             : 'Daily activity log saved successfully.'
         );
       } else {
-        const failedClientNames = failed
-          .filter((id): id is string => !!id)
-          .map((id) => clients.find((c) => c.id === id)?.name || id);
+        const failedClientNames = failed.map((submission) => submission.clientId
+          ? clients.find((client) => client.id === submission.clientId)?.name || submission.clientId
+          : 'No client');
         setCreateLogError(
-          failedClientNames.length > 0
-            ? `Saved for ${targets.length - failed.length} of ${targets.length} client(s). Failed to save for: ${failedClientNames.join(', ')}. Fix and try again.`
-            : 'Unable to save the daily activity. Try again.'
+          `Saved ${submissions.length - failed.length} of ${submissions.length} entries. Failed: ${failedClientNames.join(', ')}. Only failed entries remain selected.`,
         );
-        setSelectedLogClientIds(failed.filter((id): id is string => !!id));
+        setSelectedLinkedTasks(failed.flatMap((submission) => submission.taskIds));
+        setSelectedLogClientIds(failed.filter((submission) => submission.kind === 'employee_note' && submission.clientId).map((submission) => submission.clientId as string));
+        if (!failed.some((submission) => submission.kind === 'employee_note')) setDailySummary('');
       }
     } catch (err: any) {
       setCreateLogError(err?.message || 'Unable to save the daily activity.');
@@ -2242,14 +2241,13 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
               <div>
                 <label className="text-xs font-semibold text-stone-300 block mb-1.5">
-                  Summary of today's work and next steps:
+                  Additional context, next steps, or blockers (optional):
                 </label>
                 <textarea
                   rows={4}
-                  required
                   value={dailySummary}
                   onChange={(e) => setDailySummary(e.target.value)}
-                  placeholder="Write a summary of the tasks you worked on today, deliverables, and challenges..."
+                  placeholder="Only add work not already represented by the completed tasks below."
                   className="w-full p-3 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-500"
                 />
               </div>
@@ -2257,15 +2255,19 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               {/* Linked Tasks Checkboxes */}
               <div>
                 <label className="text-xs font-semibold text-stone-300 block mb-1.5">
-                  Link tasks you worked on:
+                  Completed Task Board work for this date:
                 </label>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <p className="text-[10px] text-stone-500">Saved links use stable task IDs and are grouped by the task's client.</p>
+                  <button type="button" onClick={() => setSelectedLinkedTasks(tasksCompletedOnLogDate.map((task) => task.id))} className="text-[10px] font-bold text-purple-300 hover:text-purple-200">Refresh completed tasks</button>
+                </div>
                 <div className="max-h-36 overflow-y-auto p-2.5 rounded-xl bg-stone-900/90 border border-stone-800 space-y-1.5">
                   {dailyLogChecklistTasks.length === 0 ? (
-                    <p className="text-xs text-stone-500">No tasks assigned to this employee.</p>
+                    <p className="text-xs text-stone-500">No unreported assigned tasks were completed on this date.</p>
                   ) : (
                     dailyLogChecklistTasks.map((t) => {
                       const isChecked = selectedLinkedTasks.includes(t.id);
-                      const completedOnLogDate = t.completed_at?.split('T')[0] === logDate;
+                      const completedOnLogDate = getTaskCompletionDate(t) === logDate;
 
                       return (
                         <label
@@ -2286,7 +2288,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                             }}
                             className="rounded border-stone-700 text-purple-600 focus:ring-0"
                           />
-                          <span className="font-semibold text-white">{t.title}</span>
+                          <span className="min-w-0"><span className="font-semibold text-white block">{t.title}</span>{t.description && <span className="text-[10px] text-stone-500 line-clamp-2">{t.description}</span>}</span>
                           <span className="text-[10px] text-stone-500 mr-auto">({getStatusLabel(t.status)})</span>
                           {completedOnLogDate && (
                             <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold uppercase bg-emerald-900/60 text-emerald-300 shrink-0">
@@ -2330,6 +2332,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           log={editingDailyLog}
           clients={clients}
           tasks={tasks}
+          taskAssignees={taskAssignees}
+          dailyLogs={dailyLogs}
           onSave={handleSaveEditedDailyLog}
           onClose={() => setEditingDailyLog(null)}
         />

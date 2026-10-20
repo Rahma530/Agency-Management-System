@@ -89,6 +89,7 @@ import { TaskTypeInlineManager } from './TaskTypeInlineManager';
 
 interface CrossTeamTaskBoardProps {
   tasks: TaskRecord[];
+  archivedTasks: TaskRecord[];
   taskAssignees: TaskAssigneeRecord[];
   users: UserRecord[];
   // Merged users + task_directory() entries — see App.tsx's fetchTaskDirectory. Used only where a
@@ -107,6 +108,8 @@ interface CrossTeamTaskBoardProps {
     assigneeIds?: string[],
     attachments?: StagedTaskAttachment[]
   ) => Promise<void>;
+  onArchiveTask: (taskId: string, reason: string) => Promise<void>;
+  onRestoreTask: (taskId: string) => Promise<void>;
   // Admin-managed Task Type reference list (task_types table) — includes inactive rows so an
   // existing task's type can still be resolved/shown after it's deactivated. The admin screen
   // (TaskTypeManager) that creates/renames/reorders/deactivates these is gated to
@@ -136,6 +139,7 @@ export type TaskViewMode = 'kanban' | 'table' | 'timeline';
 
 export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   tasks,
+  archivedTasks,
   taskAssignees = [],
   users,
   taskDirectoryUsers,
@@ -145,6 +149,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onUpdateTaskStatus,
   onCreateTask,
   onUpdateTask,
+  onArchiveTask,
+  onRestoreTask,
   taskTypes,
   onCreateTaskType,
   onUpdateTaskType,
@@ -161,6 +167,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
+  const [archiveActionError, setArchiveActionError] = useState<string | null>(null);
+  const [archiveActionTaskId, setArchiveActionTaskId] = useState<string | null>(null);
 
   // Filters
   const [quickFilter, setQuickFilter] = useState<QuickTaskFilter>('all');
@@ -285,6 +293,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newClientIds, setNewClientIds] = useState<string[]>(clients[0]?.id ? [clients[0].id] : []);
+  const [newAllClients, setNewAllClients] = useState(false);
   useEffect(() => {
     if (!addSubtaskParent) {
       setNewClientIds((current) => {
@@ -797,7 +806,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError(null);
-    if (!newTitle.trim() || newClientIds.length === 0 || !newDescription.trim() || !newDueDate) {
+    if (!newTitle.trim() || (!newAllClients && newClientIds.length === 0) || !newDescription.trim() || !newDueDate) {
       setCreateError('Title, at least one client, description, and due date are required to create a task.');
       return;
     }
@@ -805,7 +814,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setIsSubmitting(true);
     try {
       const currentInput: CreateTaskFormInput = {
-        clientIds: addSubtaskParent ? [addSubtaskParent.client_id] : newClientIds,
+        clientIds: addSubtaskParent ? [addSubtaskParent.client_id] : (newAllClients ? [] : newClientIds),
+        allClients: !addSubtaskParent && newAllClients,
         assigneeIds: newAssigneeIds,
         title: newTitle.trim(),
         description: newDescription.trim(),
@@ -866,6 +876,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setNewDescription('');
       setNewEstimatedHours(8);
       setNewAssigneeIds([]);
+      setNewAllClients(false);
       setNewAttachments([]);
       setNewBatchId(crypto.randomUUID());
       setNewTaskType('');
@@ -873,7 +884,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setNotification({
         text: addSubtaskParent
           ? 'Subtask created successfully.'
-          : `${newClientIds.length} task ${newClientIds.length === 1 ? 'copy was' : 'copies were'} created successfully.`,
+          : newAllClients
+            ? 'The All Clients batch was processed for every eligible active client.'
+            : `${newClientIds.length} task ${newClientIds.length === 1 ? 'copy was' : 'copies were'} created successfully.`,
         type: 'success',
       });
       setTimeout(() => setNotification(null), 3500);
@@ -893,6 +906,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setActiveRecovery(recovery);
     setNewBatchId(recovery.batchId);
     setNewClientIds(recovery.input.clientIds);
+    setNewAllClients(Boolean(recovery.input.allClients));
     setNewAssigneeIds(recovery.input.assigneeIds);
     setNewTitle(recovery.input.title);
     setNewDescription(recovery.input.description);
@@ -1645,6 +1659,39 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
       </div>
 
+      {archivedTasks.length > 0 && (
+        <details className="rounded-2xl border border-stone-800 bg-stone-950/60 p-3">
+          <summary className="cursor-pointer text-xs font-bold text-stone-300">
+            Archived tasks ({archivedTasks.length})
+          </summary>
+          <div className="mt-3 space-y-2">
+            {archivedTasks.map((task) => (
+              <div key={task.id} className="flex items-center justify-between gap-3 rounded-xl border border-stone-800 bg-stone-900/60 p-2">
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-white">{task.title}</p>
+                  <p className="text-[10px] text-stone-500">{task.archive_reason || 'Archived'} · {task.archived_at?.slice(0, 10)}</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={archiveActionTaskId === task.id}
+                  onClick={async () => {
+                    setArchiveActionError(null);
+                    setArchiveActionTaskId(task.id);
+                    try { await onRestoreTask(task.id); }
+                    catch (error) { setArchiveActionError(error instanceof Error ? error.message : 'Unable to restore task.'); }
+                    finally { setArchiveActionTaskId(null); }
+                  }}
+                  className="rounded-lg border border-emerald-700/50 px-2 py-1 text-[11px] font-bold text-emerald-300 disabled:opacity-50"
+                >
+                  Restore
+                </button>
+              </div>
+            ))}
+            {archiveActionError && <p className="text-xs text-red-400">{archiveActionError}</p>}
+          </div>
+        </details>
+      )}
+
       {/* VIEW 1: KANBAN BOARD */}
       {viewMode === 'kanban' && (
         <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
@@ -2191,6 +2238,31 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
+              <div className="border-t border-stone-800 pt-3">
+                <button
+                  type="button"
+                  disabled={archiveActionTaskId === selectedTaskDetails.id}
+                  onClick={async () => {
+                    const reason = window.prompt('Archive reason (required):')?.trim();
+                    if (!reason) return;
+                    setArchiveActionError(null);
+                    setArchiveActionTaskId(selectedTaskDetails.id);
+                    try {
+                      await onArchiveTask(selectedTaskDetails.id, reason);
+                      setSelectedTaskDetails(null);
+                    } catch (error) {
+                      setArchiveActionError(error instanceof Error ? error.message : 'Unable to archive task.');
+                    } finally {
+                      setArchiveActionTaskId(null);
+                    }
+                  }}
+                  className="rounded-lg border border-red-800/50 px-3 py-1.5 text-xs font-bold text-red-300 disabled:opacity-50"
+                >
+                  Archive Task
+                </button>
+                {archiveActionError && <p className="mt-1 text-xs text-red-400">{archiveActionError}</p>}
+              </div>
+
               {/* Subtask completion nudge — never automatic, just a one-click suggestion */}
               {(() => {
                 const directSubtasks = tasks.filter((t) => t.parent_task_id === selectedTaskDetails.id);
@@ -2371,15 +2443,28 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     {clients.find((client) => client.id === addSubtaskParent.client_id)?.name || addSubtaskParent.client_id}
                   </div>
                 ) : (
-                  <SearchableMultiSelect
-                    options={clients.map((client) => ({ id: client.id, label: client.name, sublabel: client.industry || 'Client' }))}
-                    selectedIds={newClientIds}
-                    onChange={setNewClientIds}
-                    disabled={!!activeRecovery}
-                    placeholder="Select clients…"
-                    searchPlaceholder="Search clients…"
-                    emptyMessage="No clients available."
-                  />
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-stone-300">
+                      <input
+                        type="checkbox"
+                        checked={newAllClients}
+                        disabled={!!activeRecovery}
+                        onChange={(event) => setNewAllClients(event.target.checked)}
+                      />
+                      All active clients I am authorized to use
+                    </label>
+                    {!newAllClients && (
+                      <SearchableMultiSelect
+                        options={clients.map((client) => ({ id: client.id, label: client.name, sublabel: client.industry || 'Client' }))}
+                        selectedIds={newClientIds}
+                        onChange={setNewClientIds}
+                        disabled={!!activeRecovery}
+                        placeholder="Select clients…"
+                        searchPlaceholder="Search clients…"
+                        emptyMessage="No clients available."
+                      />
+                    )}
+                  </div>
                 )}
               </div>
 

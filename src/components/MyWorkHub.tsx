@@ -42,6 +42,7 @@ import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { EmployeePerformancePage } from './EmployeePerformancePage';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
+import { buildDailyActivitySubmissions, getEligibleCompletedTasks } from '../lib/dailyActivity';
 
 interface MyWorkHubProps {
   currentUser: UserRecord;
@@ -163,6 +164,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
 
   const [isLoggingDailyActivity, setIsLoggingDailyActivity] = useState(false);
   const [dailySummary, setDailySummary] = useState('');
+  const [selectedLinkedTasks, setSelectedLinkedTasks] = useState<string[]>([]);
   const [logDate, setLogDate] = useState(() => getTodayStr());
   // Multi-client create form — same pattern as DailyOperationsModule.tsx: one daily_logs row per
   // selected client, empty selection keeps the "not specific to one client" behavior.
@@ -300,8 +302,8 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   // ---------------------------------------------------------------------
   const showTasks = hasTasksSection(currentUser.role);
   const sortedTasks = useMemo(
-    () => (showTasks ? getSortedEmployeeTasks(tasks, currentUser.id) : []),
-    [showTasks, tasks, currentUser.id]
+    () => (showTasks ? getSortedEmployeeTasks(tasks, currentUser.id, taskAssignees) : []),
+    [showTasks, tasks, currentUser.id, taskAssignees]
   );
   const overdueTasks = useMemo(() => sortedTasks.filter((t) => isTaskOverdue(t, todayStr)), [sortedTasks, todayStr]);
   const dueTodayTasks = useMemo(() => sortedTasks.filter((t) => isTaskDueToday(t, todayStr)), [sortedTasks, todayStr]);
@@ -371,48 +373,67 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
     [extraNotes, currentUser.id]
   );
 
+  const completedTasksForLogDate = useMemo(() => getEligibleCompletedTasks(
+    tasks, taskAssignees, dailyLogs, currentUser.id, logDate,
+  ), [tasks, taskAssignees, dailyLogs, currentUser.id, logDate]);
+  const autoSelectedLogDate = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!isLoggingDailyActivity) {
+      autoSelectedLogDate.current = null;
+      return;
+    }
+    if (autoSelectedLogDate.current === logDate) return;
+    autoSelectedLogDate.current = logDate;
+    setSelectedLinkedTasks(completedTasksForLogDate.map((task) => task.id));
+  }, [isLoggingDailyActivity, logDate, completedTasksForLogDate]);
+
   // Writes one daily_logs row per selected client (or a single client_id: null row when none are
   // selected) — same multi-insert-with-partial-failure pattern as
   // DailyOperationsModule.tsx's handleSubmitDailyLog.
   const handleSubmitDailyLog = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateLogError(null);
-    if (!dailySummary.trim()) return;
+    const eligibleIds = new Set(completedTasksForLogDate.map((task) => task.id));
+    const submissions = buildDailyActivitySubmissions(
+      completedTasksForLogDate,
+      selectedLinkedTasks.filter((taskId) => eligibleIds.has(taskId)),
+      selectedLogClientIds,
+      dailySummary,
+    );
+    if (!submissions.length) return;
     setIsSubmittingLog(true);
     try {
-      const targets: (string | null)[] = selectedLogClientIds.length > 0 ? selectedLogClientIds : [null];
       const results = await Promise.allSettled(
-        targets.map((clientId) =>
+        submissions.map((submission) =>
           onCreateDailyLog({
             user_id: currentUser.id,
             date: logDate,
-            summary_text: dailySummary.trim(),
-            linked_task_ids: [],
-            client_id: clientId,
+            summary_text: submission.summaryText,
+            linked_task_ids: submission.taskIds,
+            client_id: submission.clientId,
           })
         )
       );
-      const failed = targets.filter((_, i) => results[i].status === 'rejected');
+      const failed = submissions.filter((_, i) => results[i].status === 'rejected');
 
       if (failed.length === 0) {
         setDailySummary('');
+        setSelectedLinkedTasks([]);
         setSelectedLogClientIds([]);
         setIsLoggingDailyActivity(false);
         showNotification(
-          targets.length > 1
-            ? `Daily activity log saved for ${targets.length} clients.`
+          submissions.length > 1
+            ? `Daily activity saved as ${submissions.length} source-linked entries.`
             : 'Daily activity log saved successfully.'
         );
       } else {
-        const failedClientNames = failed
-          .filter((id): id is string => !!id)
-          .map((id) => clients.find((c) => c.id === id)?.name || id);
-        setCreateLogError(
-          failedClientNames.length > 0
-            ? `Saved for ${targets.length - failed.length} of ${targets.length} client(s). Failed to save for: ${failedClientNames.join(', ')}. Fix and try again.`
-            : 'Unable to save the daily activity. Try again.'
-        );
-        setSelectedLogClientIds(failed.filter((id): id is string => !!id));
+        const failedClientNames = failed.map((submission) => submission.clientId
+          ? clients.find((client) => client.id === submission.clientId)?.name || submission.clientId
+          : 'No client');
+        setCreateLogError(`Saved ${submissions.length - failed.length} of ${submissions.length} entries. Failed: ${failedClientNames.join(', ')}. Only failed entries remain selected.`);
+        setSelectedLinkedTasks(failed.flatMap((submission) => submission.taskIds));
+        setSelectedLogClientIds(failed.filter((submission) => submission.kind === 'employee_note' && submission.clientId).map((submission) => submission.clientId as string));
+        if (!failed.some((submission) => submission.kind === 'employee_note')) setDailySummary('');
       }
     } catch (err: any) {
       setCreateLogError(err?.message || 'Unable to save the daily activity.');
@@ -745,11 +766,24 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
           <textarea
             value={dailySummary}
             onChange={(e) => setDailySummary(e.target.value)}
-            placeholder="What did you work on today?"
+            placeholder="Additional context, next steps, or blockers not covered by completed tasks (optional)"
             rows={3}
             className="w-full px-3 py-2 rounded-lg text-xs bg-black/30 border border-stone-800 text-white outline-none focus:border-purple-400"
             autoFocus
           />
+
+          <div className="rounded-xl border border-stone-800 bg-black/20 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div><p className="text-[11px] font-semibold text-stone-300">Completed Task Board work</p><p className="text-[10px] text-stone-500">Unreported assigned tasks completed on the selected UTC report date.</p></div>
+              <button type="button" onClick={() => setSelectedLinkedTasks(completedTasksForLogDate.map((task) => task.id))} className="text-[10px] font-bold text-purple-300 hover:text-purple-200">Refresh</button>
+            </div>
+            {completedTasksForLogDate.length === 0 ? <p className="text-[11px] text-stone-500">No eligible completed tasks.</p> : completedTasksForLogDate.map((task) => (
+              <label key={task.id} className="flex items-start gap-2 rounded-lg p-2 bg-stone-900/60 text-[11px]">
+                <input type="checkbox" checked={selectedLinkedTasks.includes(task.id)} onChange={(event) => setSelectedLinkedTasks((current) => event.target.checked ? [...new Set([...current, task.id])] : current.filter((id) => id !== task.id))} />
+                <span className="min-w-0"><span className="font-semibold text-white block">{task.title}</span><span className="text-stone-500 line-clamp-2">{task.description}</span></span>
+              </label>
+            ))}
+          </div>
 
           <div>
             <label className="text-[11px] font-semibold text-stone-400 block mb-1">Report Date:</label>
@@ -777,6 +811,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
               onClick={() => {
                 setIsLoggingDailyActivity(false);
                 setDailySummary('');
+                setSelectedLinkedTasks([]);
                 setCreateLogError(null);
               }}
               className="px-3 py-1.5 rounded-lg text-xs font-medium text-stone-400 hover:text-white"
@@ -785,7 +820,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmittingLog || !dailySummary.trim()}
+              disabled={isSubmittingLog || (!dailySummary.trim() && selectedLinkedTasks.length === 0)}
               className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 transition-all"
             >
               {isSubmittingLog ? 'Saving...' : 'Save Log'}
@@ -849,6 +884,8 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
           log={editingDailyLog}
           clients={clients}
           tasks={tasks}
+          taskAssignees={taskAssignees}
+          dailyLogs={dailyLogs}
           onSave={handleSaveEditedDailyLog}
           onClose={() => setEditingDailyLog(null)}
         />

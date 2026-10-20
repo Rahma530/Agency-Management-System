@@ -23,6 +23,7 @@ export class TaskAttachmentMetadataError extends Error {
 
 export interface CreateTaskCopiesInput {
   clientIds: string[];
+  allClients?: boolean;
   assigneeIds: string[];
   title: string;
   description: string;
@@ -61,90 +62,158 @@ const asTaskRow = (data: unknown): TaskRecord | null => {
   return (data as TaskRecord | null) || null;
 };
 
+export interface TaskMutationContext {
+  impersonationSessionId?: string | null;
+}
+
+const requestKey = () => crypto.randomUUID();
+
+export const transitionTask = async (
+  task: TaskRecord,
+  action: string,
+  payload: Record<string, unknown> = {},
+  context: TaskMutationContext = {}
+): Promise<TaskRecord> => {
+  if (task.row_version == null) throw new Error('Refresh this task before changing its status.');
+  const { data, error } = await supabaseRaw.rpc('transition_task_v2', {
+    p_task_id: task.id,
+    p_action: action,
+    p_payload: payload,
+    p_expected_row_version: task.row_version,
+    p_request_key: requestKey(),
+    p_impersonation_session_id: context.impersonationSessionId ?? null,
+  });
+  throwIfError(error, 'Unable to change task status.');
+  const row = asTaskRow(data);
+  if (!row) throw new Error('Task status change returned no row.');
+  return row;
+};
+
+export const mutateTask = async (
+  task: TaskRecord,
+  changes: Record<string, unknown>,
+  context: TaskMutationContext = {}
+): Promise<TaskRecord> => {
+  if (task.row_version == null) throw new Error('Refresh this task before editing it.');
+  const { data, error } = await supabaseRaw.rpc('mutate_task_v2', {
+    p_task_id: task.id,
+    p_expected_row_version: task.row_version,
+    p_changes: changes,
+    p_request_key: requestKey(),
+    p_impersonation_session_id: context.impersonationSessionId ?? null,
+  });
+  throwIfError(error, 'Unable to update task.');
+  const row = asTaskRow(data);
+  if (!row) throw new Error('Task update returned no row.');
+  return row;
+};
+
+export const archiveTask = async (
+  task: TaskRecord,
+  restore: boolean,
+  reason: string | null,
+  context: TaskMutationContext = {}
+): Promise<TaskRecord> => {
+  if (task.row_version == null) throw new Error('Refresh this task before changing its archive state.');
+  const { data, error } = await supabaseRaw.rpc('archive_task_v2', {
+    p_task_id: task.id,
+    p_restore: restore,
+    p_reason: reason,
+    p_expected_row_version: task.row_version,
+    p_request_key: requestKey(),
+    p_impersonation_session_id: context.impersonationSessionId ?? null,
+  });
+  throwIfError(error, restore ? 'Unable to restore task.' : 'Unable to archive task.');
+  const row = asTaskRow(data);
+  if (!row) throw new Error('Archive operation returned no task row.');
+  return row;
+};
+
+export const removeUserFromOpenTasks = async (
+  userId: string,
+  context: TaskMutationContext = {}
+): Promise<number> => {
+  const { data, error } = await supabaseRaw.rpc('remove_user_from_open_tasks_v2', {
+    p_user_id: userId,
+    p_request_key: requestKey(),
+    p_impersonation_session_id: context.impersonationSessionId ?? null,
+  });
+  throwIfError(error, 'Unable to remove the deactivated employee from open tasks.');
+  const row = Array.isArray(data) ? data[0] : data;
+  return Number((row as { affected_count?: number } | null)?.affected_count ?? 0);
+};
+
 export const fetchTaskAssignees = async (): Promise<TaskAssigneeRecord[]> => {
   const { data, error } = await supabaseRaw.from('task_assignees').select('*');
   throwIfError(error, 'Unable to load task assignees.');
   return (data as TaskAssigneeRecord[] | null) || [];
 };
 
-export const setTaskAssignees = async (taskId: string, userIds: string[]): Promise<void> => {
-  const { error } = await supabaseRaw.rpc('set_task_assignees', {
-    p_task_id: taskId,
+export const setTaskAssignees = async (
+  task: TaskRecord,
+  userIds: string[],
+  context: TaskMutationContext = {}
+): Promise<TaskRecord> => {
+  if (task.row_version == null) throw new Error('Refresh this task before changing assignees.');
+  const { data, error } = await supabaseRaw.rpc('set_task_assignees_v2', {
+    p_task_id: task.id,
     p_user_ids: [...new Set(userIds.filter(Boolean))],
+    p_expected_row_version: task.row_version,
+    p_request_key: requestKey(),
+    p_impersonation_session_id: context.impersonationSessionId ?? null,
   });
   throwIfError(error, 'Unable to update task assignees.');
+  const row = asTaskRow(data);
+  if (!row) throw new Error('Assignment update returned no task row.');
+  return row;
 };
 
-export const createTaskCopies = async (input: CreateTaskCopiesInput): Promise<CreateTaskCopiesResult> => {
-  const clientIds = [...new Set(input.clientIds.filter(Boolean))];
-  if (clientIds.length === 0) throw new Error('Select at least one client.');
+export const createTaskCopies = async (
+  input: CreateTaskCopiesInput,
+  context: TaskMutationContext = {}
+): Promise<CreateTaskCopiesResult> => {
+  const clientIds = input.clientIds.filter(Boolean);
+  if (!input.allClients && clientIds.length === 0) throw new Error('Select at least one client.');
+  if (!input.batchId) throw new Error('A stable batch ID is required for safe retries.');
 
-  const tasks: TaskRecord[] = [];
-  const successfulClientIds: string[] = [];
-  const failures: TaskCopyFailure[] = [];
-  for (const clientId of clientIds) {
-    const { data, error } = await supabaseRaw.rpc('create_task_copy', {
-      p_client_id: clientId,
-      p_title: input.title,
-      p_description: input.description,
-      p_team: input.team,
-      p_due_date: input.dueDate,
-      p_priority: input.priority,
-      p_estimated_hours: input.estimatedHours ?? null,
-      p_task_type: input.taskType ?? null,
-      p_task_type_other: input.taskTypeOther ?? null,
-      p_parent_task_id: input.parentTaskId ?? null,
-      p_batch_id: input.batchId ?? null,
-      p_assignee_ids: input.assigneeIds,
-    });
-    if (error) {
-      failures.push({
-        clientId,
-        message: error.message || `Unable to create the task copy for client ${clientId}.`,
-      });
-      continue;
-    }
-    const task = asTaskRow(data);
-    if (!task) {
-      failures.push({ clientId, message: `Task creation returned no row for client ${clientId}.` });
-      continue;
-    }
-    // create_task_copy returns an existing row before its internal set_task_assignees call on an
-    // idempotent batch retry. Re-applying the form's requested set here makes both new and
-    // existing copies converge. For a fresh copy this is a no-op, so the RPC emits no duplicate
-    // notifications.
-    try {
-      await setTaskAssignees(task.id, input.assigneeIds);
-    } catch (assigneeError) {
-      tasks.push(task);
-      failures.push({
-        clientId,
-        task,
-        message: `The task copy was saved, but assignee synchronization was not confirmed: ${assigneeError instanceof Error ? assigneeError.message : 'Unknown Supabase error.'}`,
-      });
-      continue;
-    }
-
-    try {
-      const { data: refreshedTask, error: refreshError } = await supabaseRaw
-        .from('tasks')
-        .select('*')
-        .eq('id', task.id)
-        .single();
-      if (refreshError || !refreshedTask) {
-        throw new Error(`Assignees were synchronized, but the refreshed task row could not be loaded: ${refreshError?.message || 'No task row returned.'}`);
-      }
-      tasks.push(refreshedTask as TaskRecord);
-      successfulClientIds.push(clientId);
-    } catch (refreshError) {
-      tasks.push(task);
-      failures.push({
-        clientId,
-        task,
-        message: `Assignees were synchronized, but the authoritative task row could not be refreshed: ${refreshError instanceof Error ? refreshError.message : 'Unknown Supabase error.'}`,
-      });
-    }
+  const { data, error } = await supabaseRaw.rpc('create_task_bulk_v2', {
+    p_request_key: input.batchId,
+    p_selection_mode: input.allClients ? 'all_clients' : 'explicit',
+    p_client_ids: input.allClients ? null : clientIds,
+    p_payload: {
+      title: input.title,
+      description: input.description,
+      team: input.team,
+      due_date: input.dueDate,
+      priority: input.priority,
+      estimated_hours: input.estimatedHours ?? null,
+      task_type: input.taskType ?? null,
+      task_type_other: input.taskTypeOther ?? null,
+      parent_task_id: input.parentTaskId ?? null,
+      assignee_ids: [...new Set(input.assigneeIds.filter(Boolean))],
+    },
+    p_impersonation_session_id: context.impersonationSessionId ?? null,
+  });
+  throwIfError(error, 'Unable to create task copies.');
+  const rows = (data as Array<{
+    requested_client_id: string;
+    success: boolean;
+    task_id: string | null;
+    error_message: string | null;
+  }> | null) || [];
+  const successfulRows = rows.filter((row) => row.success && row.task_id);
+  const successfulClientIds = successfulRows.map((row) => row.requested_client_id);
+  const taskIds = successfulRows.map((row) => row.task_id as string);
+  let tasks: TaskRecord[] = [];
+  if (taskIds.length > 0) {
+    const { data: taskRows, error: taskError } = await supabaseRaw.from('tasks').select('*').in('id', taskIds);
+    throwIfError(taskError, 'Task copies were created but could not be refreshed.');
+    tasks = (taskRows as TaskRecord[] | null) || [];
   }
+  const failures = rows.filter((row) => !row.success).map((row) => ({
+    clientId: row.requested_client_id,
+    message: row.error_message || 'This task copy was not created.',
+  }));
   return { tasks, successfulClientIds, failures };
 };
 
