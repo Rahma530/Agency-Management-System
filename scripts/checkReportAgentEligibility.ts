@@ -105,15 +105,23 @@ function main(): void {
   assertEqual(isSelectableReportAgent(executive, user({ role: creativeCustomRole.id })), true, 'shared Creative custom-role subject');
   assertEqual(isSelectableReportAgent(executive, user({ role: 'executive' })), false, 'Executive target');
   assertEqual(isSelectableReportAgent(executive, user({ role: 'head_of_technical' })), false, 'leadership target');
-  assertEqual(isSelectableReportAgent(executive, user({ role: 'am_team_lead' })), false, 'team-lead target');
+  assertEqual(isSelectableReportAgent(executive, user({ role: 'am_team_lead' })), true, 'global viewer can select a team-lead target');
+  assertEqual(isSelectableReportAgent(executive, user({ role: 'seo_team_lead' })), true, 'global viewer can select any team-lead target');
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'am_agent' })), true, 'team lead direct report');
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'seo_agent' })), false, 'team lead cross-team agent');
   assertEqual(isSelectableReportAgent(amLead, user({ role: 'graphic_designer' })), false, 'team lead picker is not widened to Creative');
   assertEqual(isSelectableReportAgent(amLead, user({ role: reportRole.id })), false, 'team lead custom role not inferred as direct report');
+  assertEqual(isSelectableReportAgent(amLead, { ...amLead }), true, 'team lead can self-select');
+  assertEqual(
+    isSelectableReportAgent(amLead, user({ id: 'viewer-seo-lead', role: 'seo_team_lead' })),
+    false,
+    'team lead cannot select a PEER team lead (self-select only)'
+  );
   assertEqual(isEligibleReportSubject(user({ role: 'am_agent' })), true, 'ordinary agent subject');
   assertEqual(isEligibleReportSubject(user({ role: reportRole.id })), true, 'custom Reports subject');
   assertEqual(isEligibleReportSubject(user({ role: creativeCustomRole.id })), true, 'custom Creative subject without Reports module');
   assertEqual(isEligibleReportSubject(user({ role: 'executive' })), false, 'Executive is not an employee-report subject');
+  assertEqual(isEligibleReportSubject(user({ role: 'am_team_lead' })), true, 'built-in team lead is an eligible subject for a global viewer');
 
   resetCustomRoleDataForTesting();
   if (failures.length) {
