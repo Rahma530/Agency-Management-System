@@ -496,7 +496,10 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const requestDraftAiSummary = async (
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
-  ): Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }> => {
+  ): Promise<
+    | { ok: true; text: string; partial?: boolean; items?: { id: string; text: string }[] }
+    | { ok: false; message: string }
+  > => {
     if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
     const comparison = await generateComparisonForSummary(reportMode);
     // onGenerateComparison (handleGenerateComparison in App.tsx) returns null for several distinct
@@ -529,7 +532,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       ...items.map((item) => item.text),
     ];
     if (sections.length === 0) return { ok: false, message: 'The AI Summary could not be generated for any batch.' };
-    return { ok: true, text: sections.join('\n\n'), partial: anyBatchFellBack };
+    // items: the same {id, text} pairs used to build `sections` above, kept structured (not just
+    // flattened into the joined string) so the Draft workspace can carry each rephrased line's
+    // wording forward onto whatever work-log grouping was active — see
+    // ReportDraftWorkspace.tsx's requestAiSummary/activeWorkLogGroups for why.
+    return { ok: true, text: sections.join('\n\n'), partial: anyBatchFellBack, items };
   };
 
   const visibleReports = useMemo(
