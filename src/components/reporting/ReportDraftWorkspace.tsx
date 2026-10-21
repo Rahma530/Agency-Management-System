@@ -20,6 +20,7 @@ import {
   collectClientReportSources, collectEmployeeReportSources, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
+import { buildIndividualReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
@@ -855,6 +856,30 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     });
   };
 
+  // Second export format, requested directly: a self-contained HTML page (branded cards, embedded
+  // screenshots) alongside the existing PDF — see reportHtmlExport.ts's own header comment for why
+  // this exists as a separate format rather than replacing the PDF. Same save-before-export gate
+  // as exportPdf (never exports text that hasn't been saved as a version yet), and reads from the
+  // exact same saved `currentVersion.content_text` — no separate live-data path.
+  const exportHtml = async () => {
+    if (!selectedReport || !currentVersion?.content_text.trim()) return;
+    if (draftText !== currentVersion.content_text) {
+      setMessage('Save the current text as a version before exporting the HTML report.');
+      return;
+    }
+    const subjectName = selectedReport.scope_type === 'employee'
+      ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
+      : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
+    const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
+    const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
+    const html = await buildIndividualReportHtml({
+      title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
+      subtitle: `${subjectName} — ${periodRange}`,
+      contentText: currentVersion.content_text,
+    });
+    downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
+  };
+
   return (
     <section ref={workspaceRef} className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4 scroll-mt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -926,6 +951,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           )}
           {selectedReport.status !== 'final' && <button disabled={busy || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
           <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
+          <button onClick={exportHtml} title="Branded HTML report (cards, embedded screenshots) — a second format alongside PDF" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />HTML</button>
           {selectedReport.archived_at
             ? <><button disabled={busy} onClick={restoreSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Restore</button>{['executive', 'head_of_technical'].includes(currentUser.role) && <button disabled={busy} onClick={deleteSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-red-950/50 text-red-200 disabled:opacity-50"><Trash2 className="w-3.5 h-3.5 inline mr-1" />Delete permanently</button>}</>
             : <button disabled={busy} onClick={archiveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-amber-950/50 text-amber-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Archive</button>}

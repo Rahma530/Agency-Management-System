@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, Sparkles, Download } from 'luc
 import { ClientComparisonRecord, ClientRecord, ReportRecord, ServiceType, UserRecord } from '../../types/database';
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
 import { downloadReportPdf, buildUnifiedReportMetricsTable, PdfParagraph, PdfBulletList } from '../../lib/pdfExport';
+import { buildUnifiedReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
 import { reattachLinks } from '../../lib/textLinks';
 
 // ----------------------------------------------------------------------------
@@ -763,6 +764,36 @@ export const UnifiedReportPanel: React.FC<{
     }
   };
 
+  const [isDownloadingHtml, setIsDownloadingHtml] = useState(false);
+  const [htmlError, setHtmlError] = useState<string | null>(null);
+
+  // Second export format, requested directly — a branded HTML page alongside the PDF above (see
+  // reportHtmlExport.ts's own header comment). Deliberately partial for now: no per-campaign
+  // breakdown and no screenshots, since this panel's data (pdfSourceComparison's aggregated
+  // metrics, the AI narrative/recommendations) has no route to either today — not stubbed with
+  // placeholder data, simply omitted until that data exists (a separate, later change).
+  const handleDownloadHtml = async () => {
+    if (!pdfSourceComparison || !result) return;
+    setIsDownloadingHtml(true);
+    setHtmlError(null);
+    try {
+      const html = await buildUnifiedReportHtml({
+        title: 'Unified Client Report',
+        subtitle:
+          pdfSourceComparison.period_current + (pdfSourceComparison.period_previous ? ` vs ${pdfSourceComparison.period_previous}` : ''),
+        narrative: result.narrative,
+        recommendations: result.recommendations,
+        comparison: pdfSourceComparison,
+      });
+      downloadHtmlReport(html, `unified-client-report-${pdfSourceComparison.period_current}.html`);
+    } catch (err) {
+      console.error('HTML export failed:', err);
+      setHtmlError('Could not generate the HTML report — try again.');
+    } finally {
+      setIsDownloadingHtml(false);
+    }
+  };
+
   return (
     <div className="p-4 rounded-xl border border-amber-900/30 bg-amber-950/10 space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -829,7 +860,17 @@ export const UnifiedReportPanel: React.FC<{
               <Download className="w-3 h-3" />
               {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
             </button>
+            <button
+              onClick={handleDownloadHtml}
+              disabled={isDownloadingHtml}
+              title="Branded HTML report (cards, KPIs) — a second format alongside PDF; no per-campaign breakdown or screenshots yet"
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-stone-200 bg-stone-800/60 hover:bg-stone-700/60 hover:text-white border border-stone-600/40 transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              <Download className="w-3 h-3" />
+              {isDownloadingHtml ? 'Preparing HTML...' : 'Download HTML'}
+            </button>
             {pdfError && <span className="text-[11px] text-red-300">{pdfError}</span>}
+            {htmlError && <span className="text-[11px] text-red-300">{htmlError}</span>}
           </div>
         </div>
       )}
