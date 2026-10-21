@@ -343,6 +343,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [previewManifest, setPreviewManifest] = useState<SourceManifest | null>(null);
   const creationKey = useRef<string | null>(null);
   const workspaceRef = useRef<HTMLElement | null>(null);
+  // Mirrors `reports` on every render WITHOUT being a reactive dependency anywhere below. `reports`
+  // is the whole app's global report list (App.tsx), replaced with a brand-new array reference on
+  // every unrelated mutation anywhere in the app (another bulk task action, another report being
+  // saved, a background refetch) — not only when this specific report's own content actually
+  // changes. The report-switch effect below used to depend on `reports` directly, so any of those
+  // unrelated refreshes silently re-ran it mid-session: it re-read `content_text` from the (still
+  // correct, but now a different object) version record and wiped the in-progress
+  // activeWorkLogGroups/undoSnapshot/previewManifest, reproducing exactly the "Group similar
+  // entries, then AI Summary un-merges it again, with no refresh involved" symptom. Reading
+  // `reportsRef.current` instead keeps the lookup correct (always the latest data) while only
+  // *reacting* to an actual `selectedReportId` change, matching this effect's own stated intent of
+  // "never carry [draft state] over to a different report".
+  const reportsRef = useRef(reports);
+  reportsRef.current = reports;
 
   const selectedReport = reports.find((report) => report.id === selectedReportId) || null;
   const currentVersion = selectedReport
@@ -622,13 +636,16 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       setVersions(loadedVersions);
       setSources((sourceResult.data || []) as ReportSourceItemRecord[]);
       setSuggestion(((suggestionResult.data || [])[0] as ReportAiSuggestionRecord) || null);
-      const report = reports.find((item) => item.id === selectedReportId);
+      const report = reportsRef.current.find((item) => item.id === selectedReportId);
       const version = loadedVersions.find((item) => item.id === report?.current_version_id) || loadedVersions[0];
       setDraftText(version?.content_text || '');
       setIsLoadingDetails(false);
     })();
     return () => { cancelled = true; };
-  }, [selectedReportId, reports]);
+    // reportsRef (not `reports`) is intentional — see its declaration above. This effect must only
+    // re-run when the OPEN report actually changes, never on an unrelated global `reports` refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedReportId]);
 
   const createDraft = async () => {
     if (!period || !previewManifest || !draftText.trim() || (effectiveScopeType === 'client' ? !clientId : !effectiveSubjectUserId || !effectiveEmployeeScopeMode)) return;
