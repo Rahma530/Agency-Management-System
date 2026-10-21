@@ -499,7 +499,20 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   ): Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }> => {
     if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
     const comparison = await generateComparisonForSummary(reportMode);
-    if (!comparison) return { ok: false, message: 'Could not generate a comparison for this scope/period yet.' };
+    // onGenerateComparison (handleGenerateComparison in App.tsx) returns null for several distinct
+    // reasons and already shows its own specific toast notification for each one (e.g. "No clients
+    // found for this scope — nothing to report on." when the subject's role has no client-facing
+    // service to compute metrics for — true by design for every internal/non-client role such as
+    // ai_engineer or am_team_lead's own department-admin work; also shown on a data-fetch error or
+    // a save failure). This inline message can't know which of those happened, so instead of a
+    // bare dead-end it points back at that notification rather than repeating a guess.
+    if (!comparison) {
+      return {
+        ok: false,
+        message:
+          'Could not generate an AI summary for this scope/period — see the notification above for the specific reason (a common one: this role has no client-tracked work to compare for this period).',
+      };
+    }
 
     if (!workItems || workItems.length === 0) {
       const result = await onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter, creatorNote));
