@@ -159,11 +159,17 @@ export function composeInitialReportContent(
   employeeNames: Map<string, string>,
   isCreativeSubject: boolean
 ): string {
-  // No date prefix: the composed narrative reads as plain "Employee: text" lines. log.date (and
-  // every log's full row) stays exactly as stored — this only changes what's displayed/drafted,
-  // never report_source_items (the audit ledger, which still orders by and keeps source_date).
-  const workLines = dailyLogs.map(
-    (log) => `${employeeNames.get(log.user_id) || 'Employee'}: ${log.summary_text.trim()}`
+  // No date prefix: the composed narrative reads as plain lines. log.date (and every log's full
+  // row) stays exactly as stored — this only changes what's displayed/drafted, never
+  // report_source_items (the audit ledger, which still orders by and keeps source_date).
+  //
+  // Employee-scope reports cover a single subject whose name is already shown in the report
+  // header/subtitle, so repeating it on every line is redundant — those lines read as plain text.
+  // Client-scope reports can span several employees at once, so the "Employee: text" prefix stays
+  // there; it's the only way to tell whose line is whose.
+  const workLines = dailyLogs.map((log) => scope === 'employee'
+    ? log.summary_text.trim()
+    : `${employeeNames.get(log.user_id) || 'Employee'}: ${log.summary_text.trim()}`
   );
   const noteLines = scope === 'employee'
     ? extraNotes.map((note) => `${note.date} — ${note.note_text.trim()}`)
@@ -185,17 +191,14 @@ export function composeInitialReportContent(
         `Mixed or unclassified tasks requiring review: ${unresolved}`,
       ].join('\n'));
     }
-    // These are traceability references for work already narrated by the linked logs, not extra
-    // work lines. Omitting the task description avoids counting the same work twice.
-    const taskLines = taskSources.map((source) => {
-      const evidenceDates = [...new Set(source.evidenceLogs.map((log) => log.date))].join(', ');
-      const classification = source.workKind === 'unclassified'
-        ? 'unclassified'
-        : `${source.workKind} (content-inferred)`;
-      const completion = source.completionInPeriod ? 'confirmed completed in period' : `status: ${source.task.status}`;
-      return `${source.task.title} — ${classification}; ${completion}; linked log dates: ${evidenceDates}`;
-    });
-    sections.push(`Task evidence ledger (not additional work items)\n${taskLines.join('\n')}`);
+    // Newly composed reports no longer include a "Task evidence ledger" section — it read as
+    // confusing, unexplained extra content to the report's audience. The underlying task-evidence
+    // data these lines would have shown is still fully preserved in report_source_items (the audit
+    // ledger) and still available to anything that reads the raw sources; this only stops it from
+    // being composed into the narrative text going forward. REPORT_SECTION_HEADINGS.taskLedger and
+    // its parsing/rendering (pdfExport.ts, reportHtmlExport.ts) are deliberately left untouched so
+    // any already-saved report that still has this section in its stored content_text keeps
+    // rendering exactly as before.
   }
 
   if (noteLines.length) sections.push(`Additional employee context\n${noteLines.join('\n')}`);
