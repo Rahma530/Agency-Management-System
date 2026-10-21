@@ -1,9 +1,13 @@
 // TEMPORARY TRANSITION FEATURE — intended for removal once every employee has adopted their own
 // real, self-set password (distributed via scripts/provisionAuthUsers.ts). This function lets an
-// active Head of Technical or AI Engineer log into any other employee's account — with no
-// exclusions, including each other, executive, and any team lead — via a Supabase Auth magic
-// link, without ever seeing or resetting that employee's real password — a bridge for the window
-// until the team has fully transitioned off shared/admin-known credentials.
+// active Executive, Head of Technical, or AI Engineer log into any other employee's account — with
+// no exclusions, including each other and any team lead — via a Supabase Auth magic link, without
+// ever seeing or resetting that employee's real password — a bridge for the window until the team
+// has fully transitioned off shared/admin-known credentials. Executive was added (and ai_engineer's
+// own access was deliberately kept, as the one explicit exception) as part of a broader pass that
+// otherwise removed ai_engineer's special/admin-equivalent access everywhere else in the app — see
+// src/lib/permissions.ts's canImpersonateEmployees and its header comment for the client-side half
+// of this same change.
 // Do not build new permanent features on top of this; when leadership decides the transition is
 // done, this function (and its impersonation_sessions table / EmployeeImpersonation.tsx UI) should
 // be deleted outright, not folded into something else.
@@ -23,9 +27,9 @@ const supportedOrigins = new Set([
 const allowedOrigins = new Set((Deno.env.get('EMPLOYEE_IMPERSONATION_ALLOWED_ORIGIN') || 'http://localhost:3000')
   .split(',').map((origin) => origin.trim()).filter((origin) => supportedOrigins.has(origin)));
 
-// No target-role or protected-account exclusion here (confirmed, final): head_of_technical/
-// ai_engineer can impersonate any active, non-deactivated employee, including each other,
-// executive, and any team lead — every account now receives a real password-setup link like
+// No target-role or protected-account exclusion here (confirmed, final): executive/
+// head_of_technical/ai_engineer can impersonate any active, non-deactivated employee, including
+// each other and any team lead — every account now receives a real password-setup link like
 // anyone else, so there is no remaining reason to exclude any of them here. The only eligibility
 // check left is the employee/auth-account validity checks further below.
 const cors = {
@@ -64,8 +68,8 @@ Deno.serve(async (req) => {
   const { data: tester, error: testerError } = await admin.from('users')
     .select('id, role, deactivated_at').eq('auth_id', caller.id).maybeSingle();
   if (testerError || !tester || tester.deactivated_at
-    || !['head_of_technical', 'ai_engineer'].includes(tester.role)) {
-    return response({ error: 'Only active Head of Technical or AI Engineer users may impersonate an employee.' }, 403);
+    || !['executive', 'head_of_technical', 'ai_engineer'].includes(tester.role)) {
+    return response({ error: 'Only active Executive, Head of Technical, or AI Engineer users may impersonate an employee.' }, 403);
   }
 
   let input: { action?: string; employeeId?: string };

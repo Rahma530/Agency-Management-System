@@ -9,10 +9,13 @@ import { isEmployeeAccessibleUnderRLS } from './supabase';
 // candidates. Keeping this separate from report-module eligibility is intentional: having the
 // Reports module says what the TARGET can use, while this set says which VIEWERS have the existing
 // organization-wide picker. Neither check grants database access; RLS remains authoritative.
+// ai_engineer was removed from this set at the owner's explicit request (part of the broader
+// ai_engineer de-privileging pass — see permissions.ts's header comment): it is now an ordinary
+// report SUBJECT like any other reports-enabled agent (governed by isEligibleReportSubject below),
+// not a global viewer with its own agent picker.
 export const GLOBAL_REPORT_AGENT_PICKER_ROLES = new Set<UserRole>([
   'executive',
   'head_of_technical',
-  'ai_engineer',
 ]);
 
 export function canSelectAnyReportAgent(role: UserRole): boolean {
@@ -33,7 +36,7 @@ export function isEligibleReportSubject(target: UserRecord): boolean {
   // expose Reports. This never grants the target access to Reports or widens the viewer's RLS.
   if (isCreativeReportSubject(target)) return true;
   // Built-in team leads (am_team_lead/media_buying_team_lead/seo_team_lead/social_media_team_lead)
-  // are deliberately allowed here: a global viewer (executive/head_of_technical/ai_engineer) can
+  // are deliberately allowed here: a global viewer (executive/head_of_technical) can
   // pull a team lead's own report, same as any other reports-enabled role. This only widens who a
   // GLOBAL viewer may pick; a team-lead VIEWER's own picker is governed separately below, in
   // isSelectableReportAgent, and still only grants that team lead their fixed direct-report roles

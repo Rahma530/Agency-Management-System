@@ -335,15 +335,21 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     department: 'AI & Automation',
     badgeBg: 'var(--role-ai-engineer-tint)',
     badgeText: 'var(--role-ai-engineer-ink)',
-    // Application authorization intentionally mirrors head_of_technical, with one addition:
-    // my_work, since unlike head_of_technical this role does hands-on, personally-assigned work
-    // (see description below) and needs the same personal task/daily-log hub every other
-    // hands-on role gets. defaultModule stays 'dashboard', matching head_of_technical's landing.
-    defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    // De-privileged at the owner's explicit request (part of the broader ai_engineer
+    // de-privileging pass — see permissions.ts's header comment): this role no longer mirrors
+    // head_of_technical's application authorization. It is now an ordinary, hands-on agent role,
+    // same shape as video_editor/ui_ux_designer (personal task/daily-log hub + Reports, since
+    // this role still does cross-team technical-support work and the owner specifically wants it
+    // to remain a normal, selectable Reports agent). No admin-tier modules (capacity, employees,
+    // campaigns, brief_templates) and no admin-tier dashboard landing. canManageCapacity/
+    // canAssignAM both dropped to false to match every other non-managerial role. The one thing
+    // NOT removed anywhere in this pass is employee impersonation (see canImpersonateEmployees in
+    // permissions.ts) — the owner's one explicit exception.
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'onboarding', 'tasks', 'daily_operations', 'reports'],
     canCreateCampaign: false,
-    canManageCapacity: true,
-    canAssignAM: true,
+    canManageCapacity: false,
+    canAssignAM: false,
     description: 'AI-assisted automation, internal tooling, and technical support across cross-team task delivery.',
   },
   // NOT a team lead of graphic_designer/video_editor — that shared pool keeps its existing
