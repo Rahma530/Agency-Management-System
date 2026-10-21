@@ -102,6 +102,41 @@ const workItems = [
   }
 }
 
+// 6) Per-item number fidelity: a rephrase must never silently drop, alter, or invent a number
+// that was (or wasn't) already in that item's own original text — reported bug: a merged "Group
+// similar entries" line like "تم نشر 5 ستوري" (count verified server-side — see
+// validateWorkItemGroupOutput above) coming back from AI Summary's rephrase as a generic sentence
+// with the "5" silently gone. Checked per item, independent of every other item in the batch.
+{
+  const items = [
+    { id: 'dropped', text: 'تم نشر 5 ستوري.' },
+    { id: 'invented', text: 'أنهى العمل على الحملة.' },
+    { id: 'reworded-kept', text: 'تم نشر 5 ستوري.' },
+    { id: 'no-numbers', text: 'راجع المحتوى مع العميل.' },
+  ];
+  const result = validateCampaignSummaryPayload({ ...basePayload, work_items: items });
+  const input = buildAnalyzeInput(result);
+  const validation = validateAnalyzeOutput(
+    {
+      findings: [], recommendations: [],
+      work_items: [
+        { id: 'dropped', text: 'تم نشر ستوري.' }, // the "5" vanished — must fall back to original
+        { id: 'invented', text: 'أنهى العمل على 3 حملات.' }, // "3" invented, wasn't in the original — must fall back
+        { id: 'reworded-kept', text: 'نشرت 5 ستوريز على مدار الفترة.' }, // same number, different wording around it — must be kept
+        { id: 'no-numbers', text: 'تمت مراجعة المحتوى مع العميل.' }, // no numbers either side — must be kept
+      ],
+    },
+    'brief',
+    input
+  );
+  if (!validation.ok) throw new Error('A work_items batch exercising the number-fidelity check was wrongly rejected outright.');
+  const byId = new Map((validation.value as { work_items: { id: string; text: string }[] }).work_items.map((w) => [w.id, w.text]));
+  if (byId.get('dropped') !== 'تم نشر 5 ستوري.') throw new Error('A rephrase that dropped the original count must fall back to the original text.');
+  if (byId.get('invented') !== 'أنهى العمل على الحملة.') throw new Error('A rephrase that invented a number absent from the original must fall back to the original text.');
+  if (byId.get('reworded-kept') !== 'نشرت 5 ستوريز على مدار الفترة.') throw new Error('A rephrase that kept the exact same number, just reworded around it, must be kept as rephrased.');
+  if (byId.get('no-numbers') !== 'تمت مراجعة المحتوى مع العميل.') throw new Error('A rephrase with no numbers on either side must be kept as rephrased.');
+}
+
 // Payload-level validation regressions: cap, shape, and uniqueness.
 {
   let rejected = false;
@@ -129,4 +164,4 @@ const workItems = [
   if (!rejected) throw new Error('An unknown field inside a work_items entry was accepted.');
 }
 
-console.log('OK: CAMPAIGN_SUMMARY work_items are capped per batch, passed through verbatim, and reconciled id-complete and in original order, with missing ids falling back to their exact original text.');
+console.log('OK: CAMPAIGN_SUMMARY work_items are capped per batch, passed through verbatim, reconciled id-complete and in original order (missing ids falling back to their exact original text), and a rephrase that drops/invents a number falls back to the original too.');

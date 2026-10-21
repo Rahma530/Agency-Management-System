@@ -508,6 +508,17 @@ function isStringArray(value: unknown): value is string[] {
 // renamed, or garbled is filled in with that item's own ORIGINAL text (never left out, never
 // left blank) rather than failing the whole stage over one bad item. Returns undefined when the
 // input had no work_items at all (existing metrics-only callers see no change in output shape).
+//
+// Per-item number fidelity: the model may reword a work-log line freely, but must never invent,
+// drop, or alter a number that was already in that item's own original text — e.g. a merged line
+// like "تم نشر 5 ستوري" (Group similar entries' own output — see numericTokens' use in
+// validateWorkItemGroupOutput above) rephrased into a flowing sentence that silently drops the "5"
+// is exactly the kind of fact this project never trusts a model to invent/estimate/drop, same
+// principle numericTokens already enforces for REPORT_REWRITE below. Checked per item (its own
+// numbers against its own original text), not pooled across the whole batch, since each work item
+// describes its own independent fact. A rephrase that fails this check falls back to that item's
+// own original, untouched text — the same safe-degrade path already used for a dropped/garbled id,
+// just triggered by a content-fidelity failure instead of a missing one.
 function reconcileWorkItems(rawOutput: unknown, inputItems: WorkItemInput[] | undefined): WorkItemOutput[] | undefined {
   if (!inputItems || inputItems.length === 0) return undefined;
   const byId = new Map<string, string>();
@@ -518,7 +529,15 @@ function reconcileWorkItems(rawOutput: unknown, inputItems: WorkItemInput[] | un
       if (typeof e.id === 'string' && isNonEmptyString(e.text)) byId.set(e.id, cleanText(e.text));
     }
   }
-  return inputItems.map((item) => ({ id: item.id, text: byId.get(item.id) ?? item.text }));
+  return inputItems.map((item) => {
+    const rephrased = byId.get(item.id);
+    if (rephrased === undefined) return { id: item.id, text: item.text };
+    const originalNumbers = numericTokens(item.text);
+    const rephrasedNumbers = numericTokens(rephrased);
+    const numbersPreserved = originalNumbers.size === rephrasedNumbers.size
+      && [...originalNumbers].every((token) => rephrasedNumbers.has(token));
+    return { id: item.id, text: numbersPreserved ? rephrased : item.text };
+  });
 }
 
 function inputWorkItems(stageInput: unknown): WorkItemInput[] | undefined {
