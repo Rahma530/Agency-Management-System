@@ -150,39 +150,12 @@ export function loadArabicFontBundle(): Promise<ArabicFontBundle> {
 // simply the (MAX_EMBEDDED_IMAGES + 1)th image in one report — falls back to EXACTLY today's
 // plain clickable link line. Nothing here can turn a working export into a broken one: every
 // failure is caught and scoped to that one link.
-const EMBEDDABLE_IMAGE_FORMATS: Record<string, 'JPEG' | 'PNG' | 'WEBP'> = {
-  'image/jpeg': 'JPEG',
-  'image/jpg': 'JPEG',
-  'image/png': 'PNG',
-  'image/webp': 'WEBP',
-};
-const MAX_EMBEDDED_IMAGES = 30; // a generous ceiling against a pathologically image-heavy report
-const MAX_EMBEDDED_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB — a photo this large still falls back to a link
-
-export interface EmbeddedImageAsset {
-  format: 'JPEG' | 'PNG' | 'WEBP';
-  dataUrl: string;
-  widthPx: number;
-  heightPx: number;
-}
-
-function readBlobAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
-function loadImagePixelSize(dataUrl: string): Promise<{ width: number; height: number } | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? { width: img.naturalWidth, height: img.naturalHeight } : null);
-    img.onerror = () => resolve(null);
-    img.src = dataUrl;
-  });
-}
+// The actual fetch/Content-Type-sniff/size-cap/base64 logic now lives in embeddableImages.ts,
+// shared with the new HTML report exporter (reportHtmlExport.ts) so both formats embed images
+// under the exact same rules instead of two copies that could drift. Re-exported here unchanged
+// so every existing import of `EmbeddedImageAsset` from this file keeps working.
+export type { EmbeddedImageAsset } from './embeddableImages';
+import { resolveEmbeddableImages, type EmbeddedImageAsset } from './embeddableImages';
 
 // Collects every link already present in `options` (the same extractLinks this file already uses
 // for link lines — paragraph bodies and bullet-list items; the metrics table is numbers/English
@@ -194,27 +167,7 @@ export async function loadEmbeddableImages(options: ReportPdfOptions): Promise<M
   const allLinks = new Set<string>();
   options.paragraphs.forEach((paragraph) => extractLinks(paragraph.body).links.forEach((link) => allLinks.add(link)));
   (options.bulletLists || []).forEach((list) => list.items.forEach((item) => extractLinks(item).links.forEach((link) => allLinks.add(link))));
-
-  const assets = new Map<string, EmbeddedImageAsset>();
-  const candidates = [...allLinks].slice(0, MAX_EMBEDDED_IMAGES);
-  await Promise.all(candidates.map(async (url) => {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-      const format = EMBEDDABLE_IMAGE_FORMATS[contentType];
-      if (!format) return;
-      const blob = await res.blob();
-      if (blob.size > MAX_EMBEDDED_IMAGE_BYTES) return;
-      const dataUrl = await readBlobAsDataUrl(blob);
-      const size = await loadImagePixelSize(dataUrl);
-      if (!size) return;
-      assets.set(url, { format, dataUrl, widthPx: size.width, heightPx: size.height });
-    } catch (err) {
-      console.error(`Could not embed image from ${url}, leaving it as a plain link:`, err);
-    }
-  }));
-  return assets;
+  return resolveEmbeddableImages(allLinks);
 }
 
 export interface PdfParagraph {
