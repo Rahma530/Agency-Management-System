@@ -31,13 +31,17 @@ if (engine.includes('export async function ensureComparisonForSummary')) {
 }
 
 // AI Summary must fetch the server-authorized original manifest on every click and build work
-// items solely from that result, never from draft text, a saved source ledger, or an old preview.
+// items solely from that result (plus, now, whatever grouping/rephrase state this same session
+// already produced from an earlier fresh fetch — activeWorkLogGroups is never fed from draft
+// text, a saved source ledger, or an old preview; see workItemsFromOriginalSources/
+// requestAiSummary's own comments), never directly from draft text, a saved source ledger, or an
+// old preview.
 const requestStart = workspace.indexOf('const requestAiSummary = async () =>');
 const requestEnd = workspace.indexOf('\n  const applySuggestion', requestStart);
 const requestBody = workspace.slice(requestStart, requestEnd);
 if (requestStart < 0 || requestEnd < 0
   || !requestBody.includes('const manifest = await fetchSourceManifest();')
-  || !requestBody.includes('workItemsFromOriginalSources(manifest.sources)')
+  || !requestBody.includes('workItemsFromOriginalSources(manifest.sources, activeWorkLogGroups)')
   || requestBody.indexOf('fetchSourceManifest()') > requestBody.indexOf('onRequestAiSummary(')
   || workspace.includes('const workItemsForAiSummary')
   || workspace.includes('previewManifest ? previewManifest.sources : sources')) {

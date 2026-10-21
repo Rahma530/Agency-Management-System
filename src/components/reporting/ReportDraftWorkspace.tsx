@@ -83,7 +83,10 @@ interface Props {
   onRequestAiSummary?: (
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
-  ) => Promise<{ ok: true; text: string; partial?: boolean } | { ok: false; message: string }>;
+  ) => Promise<
+    | { ok: true; text: string; partial?: boolean; items?: { id: string; text: string }[] }
+    | { ok: false; message: string }
+  >;
   // "Group similar entries" — a separate, narrower AI action from AI Summary above. It never
   // rewrites prose; it only decides which same-employee work-log lines repeat the exact same
   // activity and merges them into one line with a count the server has independently verified
@@ -305,14 +308,30 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [clientSearch, setClientSearch] = useState('');
   const [creatorNote, setCreatorNote] = useState('');
   const [draftText, setDraftText] = useState('');
-  // One-step undo for whatever draftText held right before AI Summary, Group similar entries, or
-  // Clear AI text last overwrote it — so an accidental or unwanted overwrite (e.g. running Group
-  // similar entries after AI Summary, which rebuilds the Work logs section from the original
-  // per-employee lines and so cannot preserve an AI Summary's free-form rewrite) can be undone
-  // with one click instead of a full page refresh. Reset to null whenever a different report (or
-  // no report) is opened, so a snapshot never applies across reports (see the clearSignal/
-  // selectedReportId effect below).
-  const [undoDraftText, setUndoDraftText] = useState<string | null>(null);
+  // The currently-active per-log "grouping" state for the work-log lines in the editor: which
+  // source_ids are merged together (same shape WorkItemGroup already uses for "Group similar
+  // entries"), and what text currently represents each group — raw original wording for an
+  // untouched log, the merged "posted X times"-style wording for a server-verified merge, or the
+  // latest AI Summary rephrase, whichever happened most recently. undefined means "no grouping/
+  // rephrase history yet — use each log's raw original text, one line per log", the same as before
+  // this state existed.
+  //
+  // Both AI Summary (requestAiSummary) and Group similar entries (groupSimilarEntries) read this
+  // before building their own request, and both write an updated version back after a successful
+  // run — so running one after the other carries the other's result forward instead of silently
+  // discarding it (requested fix: grouping used to vanish the moment AI Summary ran again, since it
+  // always rebuilt one item per raw log row from scratch; Group now also passes along whatever
+  // wording AI Summary last gave each line, instead of always reverting to the raw original text).
+  // Reset to undefined wherever previewManifest is reset for a reason that invalidates it too (a
+  // different report opened, a fresh "Pull sources again"/new draft, "Clear AI text", or a
+  // scope/period change) — see the selectedReportId effect, buildPreview, and clearAiText below.
+  const [activeWorkLogGroups, setActiveWorkLogGroups] = useState<WorkItemGroup[] | undefined>(undefined);
+  // One-step undo for whatever draftText (and activeWorkLogGroups) held right before AI Summary,
+  // Group similar entries, or Clear AI text last overwrote them — so an accidental or unwanted
+  // overwrite can be undone with one click instead of a full page refresh. Reset to null whenever a
+  // different report (or no report) is opened, so a snapshot never applies across reports (see the
+  // clearSignal/selectedReportId effect below).
+  const [undoSnapshot, setUndoSnapshot] = useState<{ text: string; groups: WorkItemGroup[] | undefined } | null>(null);
   const [selectedReportId, setSelectedReportId] = useState('');
   const [versions, setVersions] = useState<ReportContentVersionRecord[]>([]);
   const [sources, setSources] = useState<ReportSourceItemRecord[]>([]);
@@ -440,24 +459,48 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // attachment link survives an AI Summary exactly like a manual one already does, with no further
   // change needed downstream (PDF export already turns every `links` entry into its own clickable
   // annotation).
+  // groups (optional): the currently-active work-log grouping (activeWorkLogGroups) — when given,
+  // builds exactly ONE work item PER GROUP (using the group's already-merged/rephrased text)
+  // instead of one item per raw log row, so a prior "Group similar entries" merge survives an AI
+  // Summary rephrase instead of being silently exploded back into individual lines. Any id in a
+  // group that's no longer present in this fresh manifest (a stale group from a since-changed
+  // source set) is dropped from that group; a group left with no valid ids is skipped entirely —
+  // the same staleness handling renderWorkLogSection already applies to workLogGroups. Also
+  // returns the effective groups actually used (aligned 1:1 with the returned items by id), so the
+  // caller can later zip the AI's rephrased text for each id back onto the right group.
   const workItemsFromOriginalSources = async (
-    sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>>
-  ): Promise<CampaignSummaryWorkItem[]> => {
+    sourceList: Array<Pick<ReportSourceItemRecord, 'source_kind' | 'source_id' | 'user_id' | 'snapshot'>>,
+    groups?: WorkItemGroup[]
+  ): Promise<{ items: CampaignSummaryWorkItem[]; groups: WorkItemGroup[] }> => {
     const logSources = sourceList.filter((source) => source.source_kind === 'daily_log');
     const attachmentLinksByTask = await fetchTaskAttachmentLinks(logSources.flatMap(linkedTaskIdsOf));
-    return logSources
-      .map((source) => {
-        const { cleanText, links } = extractLinks(String(source.snapshot.summary_text || '').trim());
-        const attachmentLinks = linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []);
+    const logsById = new Map(logSources.map((source) => [source.source_id, source]));
+
+    const effectiveGroups: WorkItemGroup[] = groups && groups.length
+      ? groups
+          .map((group) => ({ ...group, ids: group.ids.filter((id) => logsById.has(id)) }))
+          .filter((group) => group.ids.length > 0)
+      : logSources.map((source) => ({ ids: [source.source_id], text: String(source.snapshot.summary_text || '').trim() }));
+
+    const items = effectiveGroups
+      .map((group): CampaignSummaryWorkItem | null => {
+        const first = logsById.get(group.ids[0]);
+        if (!first) return null;
+        const { cleanText, links } = extractLinks(group.text.trim());
+        const attachmentLinks = group.ids.flatMap((id) => {
+          const source = logsById.get(id);
+          return source ? linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []) : [];
+        });
         const allLinks = [...links, ...attachmentLinks];
         return {
-          id: source.source_id,
-          employee: names.get(source.user_id) || undefined,
+          id: group.ids[0],
+          employee: names.get(first.user_id) || undefined,
           text: cleanText,
           ...(allLinks.length ? { links: allLinks } : {}),
         };
       })
-      .filter((item) => item.text);
+      .filter((item): item is CampaignSummaryWorkItem => item !== null && !!item.text);
+    return { items, groups: effectiveGroups };
   };
 
   const buildPreview = async () => {
@@ -470,6 +513,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
       );
       setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject), attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'));
+      setActiveWorkLogGroups(undefined);
       creationKey.current = null;
       setMessage(`Preview built from ${manifest.source_count} authorized immutable source(s).`);
     } finally { setBusy(false); }
@@ -515,22 +559,28 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // saved baseline instead of an empty draft.
   const clearAiText = () => {
     if (!window.confirm('Discard the current draft text and revert to the last saved version?')) return;
-    setDraftTextWithUndo(currentVersion?.content_text || '');
+    // Reverting to the last saved version also clears any active grouping/rephrase tracking — the
+    // saved text has no known association with it (it may predate "Group similar entries"
+    // entirely, or reflect a different combination of merges than whatever was just active).
+    setDraftTextWithUndo(currentVersion?.content_text || '', undefined);
     setMessage(null);
   };
 
-  // Snapshots the CURRENT draftText into the one-step undo slot before replacing it — used by
-  // every action that overwrites the whole draft (AI Summary, Group similar entries, Clear AI
-  // text) so "Undo" always restores exactly what was there a moment ago, whatever it was.
-  const setDraftTextWithUndo = (next: string) => {
-    setUndoDraftText(draftText);
+  // Snapshots the CURRENT draftText and activeWorkLogGroups into the one-step undo slot before
+  // replacing them — used by every action that overwrites the whole draft (AI Summary, Group
+  // similar entries, Clear AI text) so "Undo" always restores exactly what was there a moment ago,
+  // whatever it was, including which lines were merged/rephrased at the time.
+  const setDraftTextWithUndo = (next: string, nextGroups: WorkItemGroup[] | undefined) => {
+    setUndoSnapshot({ text: draftText, groups: activeWorkLogGroups });
     setDraftText(next);
+    setActiveWorkLogGroups(nextGroups);
   };
 
   const undoLastAiChange = () => {
-    if (undoDraftText === null) return;
-    setDraftText(undoDraftText);
-    setUndoDraftText(null);
+    if (undoSnapshot === null) return;
+    setDraftText(undoSnapshot.text);
+    setActiveWorkLogGroups(undoSnapshot.groups);
+    setUndoSnapshot(null);
     setMessage(null);
   };
 
@@ -539,8 +589,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // never carry it over to a different report (switching drafts, or opening a different filed
     // report) where it would silently feed the wrong report's AI Summary/"save as new draft". The
     // one-step undo snapshot is scoped the same way — never offer to "undo" into a different
-    // report's text.
-    setUndoDraftText(null);
+    // report's text. Likewise the active grouping/rephrase tracking is scoped to whichever
+    // report's sources it was built from.
+    setUndoSnapshot(null);
+    setActiveWorkLogGroups(undefined);
     setPreviewManifest(null);
     if (!selectedReportId) {
       setVersions([]);
@@ -681,13 +733,23 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       // evidence snapshots, but are not a cache for a new AI request.
       const manifest = await fetchSourceManifest();
       if (!manifest) return;
-      const workItems = await workItemsFromOriginalSources(manifest.sources);
+      // Build work items from whatever grouping is currently active (undefined the first time —
+      // one item per raw log row, same as before this existed) so an earlier "Group similar
+      // entries" merge is rephrased as ONE item, not exploded back into its original individual
+      // lines.
+      const { items: workItems, groups: effectiveGroups } = await workItemsFromOriginalSources(manifest.sources, activeWorkLogGroups);
       const result = await onRequestAiSummary(creatorNote, workItems);
       if (!result.ok) {
         setMessage(result.message);
         return;
       }
-      setDraftTextWithUndo(result.text);
+      // Carry the rephrase forward onto the SAME groups (same ids/merges), just with each group's
+      // text updated to its freshly rephrased wording — so a later "Group similar entries" groups
+      // from this rephrased wording instead of reverting to the raw original log text, and a later
+      // AI Summary click still sees (and keeps) this same merge.
+      const rephrasedById = new Map<string, string>((result.items || []).map((item) => [item.id, item.text]));
+      const nextGroups = effectiveGroups.map((group) => ({ ids: group.ids, text: rephrasedById.get(group.ids[0]) ?? group.text }));
+      setDraftTextWithUndo(result.text, nextGroups);
       setPreviewManifest(null);
       setMessage(
         result.partial
@@ -708,10 +770,14 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // UI never trusts a count the model merely states. A singleton (ungrouped) line is rendered
   // completely unchanged, in its own original wording — this action can only ever merge, never
   // reword, an untouched line. Sets previewManifest exactly like pullSourcesAgain does (so "Save
-  // as new draft with these sources" lights up if the source hash changed). Rebuilt from the
-  // original per-employee lines, so it CANNOT preserve a prior AI Summary rewrite's free-form
-  // prose — running this after AI Summary replaces that prose with the grouped work-log lines, by
-  // design, which is exactly what the one-step "Undo" button (setDraftTextWithUndo) is for.
+  // as new draft with these sources" lights up if the source hash changed).
+  //
+  // Groups from whatever text is currently active for each log (activeWorkLogGroups — a prior AI
+  // Summary's rephrase, if one is still active for that exact log, else its raw original wording),
+  // not always the raw original: this is what lets grouping run AFTER an AI Summary without
+  // reverting every line back to its unrephrased wording. A log that's part of an already-merged,
+  // multi-id group has no single well-defined "current text" to hand back per individual id, so
+  // that edge case still falls back to each log's raw original text, same as before this existed.
   const groupSimilarEntries = async () => {
     if (!onGroupWorkItems || busy) return;
     if (hasUnsavedChanges && !window.confirm('Replace the current draft text with a grouped version of the fresh work logs? Your unsaved changes will be lost.')) return;
@@ -725,15 +791,19 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
       if (!logSources.length) {
         setPreviewManifest(manifest);
-        setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'));
+        setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'), undefined);
         setMessage('No work-log lines to group for this period.');
         return;
       }
+      const activeTextById = new Map<string, string>();
+      (activeWorkLogGroups || []).forEach((group) => {
+        if (group.ids.length === 1) activeTextById.set(group.ids[0], group.text);
+      });
       const items = logSources
         .map((source) => ({
           id: source.source_id,
           employee: names.get(source.user_id) || undefined,
-          text: String(source.snapshot.summary_text || '').trim(),
+          text: activeTextById.get(source.source_id) ?? String(source.snapshot.summary_text || '').trim(),
         }))
         .filter((item) => item.text);
       const result = await onGroupWorkItems(items);
@@ -742,13 +812,45 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         return;
       }
       setPreviewManifest(manifest);
-      setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping, effectiveScopeType === 'employee'));
+      setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping, effectiveScopeType === 'employee'), result.result.groups);
       const mergedCount = result.result.groups.filter((group) => group.ids.length > 1).length;
       setMessage(
         mergedCount
           ? `${mergedCount} group(s) of genuinely repeated work were merged (each count independently verified, never taken on the AI's word). Everything else is unchanged. Save a version to keep it.`
           : 'No confidently repeated work was found to merge — the work logs are unchanged.'
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // "Revert to original sources" (already-open report only): rebuilds the draft text from a
+  // FRESH, server-authorized source manifest with NO grouping and NO AI rephrase — i.e. discards
+  // whatever "Group similar entries"/"AI Summary" currently has active and gets back to the exact
+  // shape a brand-new draft would start from. Unlike "Pull sources again"/pullSourcesAgain (which
+  // deliberately never touches draftText — see its own comment, just above), this is the one
+  // explicit action for an already-open report that DOES overwrite it, so it gets the same confirm
+  // + one-step Undo guard as AI Summary/Group similar entries, and clears activeWorkLogGroups so a
+  // later Group/AI Summary click starts clean rather than reusing stale grouping state. Does NOT
+  // touch previewManifest/"Save as new draft with these sources" — this action is scoped to the
+  // editor text only, never to adopting a new source ledger (use "Pull sources again" for that).
+  const revertToOriginalSources = async () => {
+    if (busy) return;
+    if (hasUnsavedChanges && !window.confirm('Replace the current draft text with the original sources, undoing any grouping or AI rephrasing? Your unsaved changes will be lost.')) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const manifest = await fetchSourceManifest();
+      if (!manifest) return;
+      const attachmentLinksByTask = await fetchTaskAttachmentLinks(
+        manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
+      );
+      const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
+      setDraftTextWithUndo(
+        composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'),
+        undefined
+      );
+      setMessage('Draft text reverted to the original sources — any grouping or AI rephrasing was discarded. Save a version to keep it.');
     } finally {
       setBusy(false);
     }
@@ -910,17 +1012,17 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         <div className="space-y-3">
           {scopeKind === 'employee' && (
             <div className="space-y-3">
-              <select value={employeeScopeMode} onChange={(event) => { if (confirmDiscard()) { onEmployeeScopeModeChange(event.target.value as EmployeeClientScopeMode | ''); onSelectedClientIdsChange([]); setDraftText(''); setPreviewManifest(null); } }} className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white"><option value="">Select client scope (required)</option><option value="all_clients">All Clients</option><option value="selected_clients">Selected Clients</option><option value="employee_overall">Employee Overall</option></select>
+              <select value={employeeScopeMode} onChange={(event) => { if (confirmDiscard()) { onEmployeeScopeModeChange(event.target.value as EmployeeClientScopeMode | ''); onSelectedClientIdsChange([]); setDraftText(''); setPreviewManifest(null); setActiveWorkLogGroups(undefined); } }} className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white"><option value="">Select client scope (required)</option><option value="all_clients">All Clients</option><option value="selected_clients">Selected Clients</option><option value="employee_overall">Employee Overall</option></select>
               {employeeScopeMode === 'selected_clients' && <div className="p-3 rounded-xl border border-purple-900/40 space-y-2">
                 <input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Search clients" className="w-full px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-                <div className="flex gap-2"><button onClick={() => { onSelectedClientIdsChange(clients.map((client) => client.id)); setPreviewManifest(null); }} className="text-xs text-purple-300">Select All</button><button onClick={() => { onSelectedClientIdsChange([]); setPreviewManifest(null); }} className="text-xs text-stone-400">Clear All</button></div>
+                <div className="flex gap-2"><button onClick={() => { onSelectedClientIdsChange(clients.map((client) => client.id)); setPreviewManifest(null); setActiveWorkLogGroups(undefined); }} className="text-xs text-purple-300">Select All</button><button onClick={() => { onSelectedClientIdsChange([]); setPreviewManifest(null); setActiveWorkLogGroups(undefined); }} className="text-xs text-stone-400">Clear All</button></div>
                 <div className="max-h-40 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1">{clients.filter((client) => client.name.toLowerCase().includes(clientSearch.toLowerCase())).map((client) => <label key={client.id} className="flex items-center gap-2 text-xs text-stone-300"><input type="checkbox" checked={selectedClientIds.includes(client.id)} onChange={(event) => { onSelectedClientIdsChange(event.target.checked ? [...new Set([...selectedClientIds, client.id])] : selectedClientIds.filter((id) => id !== client.id)); setPreviewManifest(null); }} />{client.name}</label>)}</div>
               </div>}
               {employeeScopeMode && <p className="text-[11px] text-stone-400">Scope: {employeeScopeMode === 'all_clients' ? 'all authorized client-associated work' : employeeScopeMode === 'employee_overall' ? 'all eligible employee work, including non-client records' : `${selectedClientIds.length} selected client(s)`}</p>}
             </div>
           )}
           <textarea value={creatorNote} onChange={(event) => { setCreatorNote(event.target.value); setPreviewManifest(null); }} placeholder="Editorial guidance for AI Summary — focus, tone, or ordering only (never adds numbers or facts). Saved with this draft." className="w-full min-h-20 px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
-          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{onGroupWorkItems && <button disabled={busy} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>}{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}{undoDraftText !== null && <button disabled={busy} onClick={undoLastAiChange} title="Restore the draft text exactly as it was before the last Group similar entries action" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">↶ Undo</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
+          <div className="flex gap-2 items-center flex-wrap"><button disabled={busy} onClick={buildPreview} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50">Pull sources again</button>{onGroupWorkItems && <button disabled={busy} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>}{previewManifest && <button disabled={busy} onClick={() => cancelLastPull(true)} title="Discard this pulled snapshot and clear the draft" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>}{undoSnapshot !== null && <button disabled={busy} onClick={undoLastAiChange} title="Restore the draft text exactly as it was before the last Group similar entries action" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">↶ Undo</button>}<span className="text-[11px] text-stone-400 self-center">{preview.dailyLogs.length} visible work logs · {preview.tasks.length} evidenced tasks · {preview.extraNotes.length} employee notes · Fridays excluded</span></div>
         </div>
       )}
 
@@ -934,6 +1036,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           {onGroupWorkItems && (
             <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>
           )}
+          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={revertToOriginalSources} title="Rebuild the draft text from the original sources, discarding any grouping or AI rephrasing currently applied" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-200 border border-stone-700 disabled:opacity-50">Revert to original sources</button>
           {previewManifest && (
             <button disabled={busy} onClick={() => cancelLastPull(false)} title="Discard this pulled snapshot (the draft text is untouched either way)" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>
           )}
@@ -961,7 +1064,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           {hasUnsavedChanges && !selectedReport.archived_at && selectedReport.status !== 'final' && (
             <button disabled={busy} onClick={clearAiText} title="Discard the current draft text and revert to the last saved version" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Clear AI text</button>
           )}
-          {undoDraftText !== null && !selectedReport.archived_at && selectedReport.status !== 'final' && (
+          {undoSnapshot !== null && !selectedReport.archived_at && selectedReport.status !== 'final' && (
             <button disabled={busy} onClick={undoLastAiChange} title="Restore the draft text exactly as it was before the last AI Summary / Group similar entries / Clear AI text action" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">↶ Undo</button>
           )}
           {selectedReport.status !== 'final' && <button disabled={busy || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
