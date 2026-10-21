@@ -136,6 +136,87 @@ export function loadArabicFontBundle(): Promise<ArabicFontBundle> {
   return arabicFontBundlePromise;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Inline image embedding — task-attachment pictures shown IN the PDF, not just linked
+// ---------------------------------------------------------------------------------------------
+// A work-log line's attachments (ReportDraftWorkspace.tsx's fetchTaskAttachmentLinks) are already
+// plain URLs sitting in the body text (extracted and drawn as clickable link lines by
+// drawLinkLines below — that part is unchanged). This section additionally fetches whichever of
+// those URLs are a raster image jsPDF can actually embed (JPEG/PNG/WEBP — decided by the
+// response's real Content-Type, never guessed from the URL's file extension, since a signed
+// Storage URL's path is not a reliable content-type signal) and renders the picture itself above
+// its own link line. Everything else — a PDF/.docx attachment, a link that fails to fetch, an
+// image format jsPDF can't embed (GIF, SVG, BMP), one bigger than MAX_EMBEDDED_IMAGE_BYTES, or
+// simply the (MAX_EMBEDDED_IMAGES + 1)th image in one report — falls back to EXACTLY today's
+// plain clickable link line. Nothing here can turn a working export into a broken one: every
+// failure is caught and scoped to that one link.
+const EMBEDDABLE_IMAGE_FORMATS: Record<string, 'JPEG' | 'PNG' | 'WEBP'> = {
+  'image/jpeg': 'JPEG',
+  'image/jpg': 'JPEG',
+  'image/png': 'PNG',
+  'image/webp': 'WEBP',
+};
+const MAX_EMBEDDED_IMAGES = 30; // a generous ceiling against a pathologically image-heavy report
+const MAX_EMBEDDED_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB — a photo this large still falls back to a link
+
+export interface EmbeddedImageAsset {
+  format: 'JPEG' | 'PNG' | 'WEBP';
+  dataUrl: string;
+  widthPx: number;
+  heightPx: number;
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function loadImagePixelSize(dataUrl: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? { width: img.naturalWidth, height: img.naturalHeight } : null);
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+// Collects every link already present in `options` (the same extractLinks this file already uses
+// for link lines — paragraph bodies and bullet-list items; the metrics table is numbers/English
+// labels only and never carries an attachment link) and resolves whichever ones turn out to be an
+// embeddable image, keyed by that exact URL so buildReportDoc's drawLinkLines can look each one up
+// by the same string it already has. Called once, before buildReportDoc, so buildReportDoc itself
+// stays synchronous — same division of labor as loadArabicFontBundle/buildReportDoc already have.
+export async function loadEmbeddableImages(options: ReportPdfOptions): Promise<Map<string, EmbeddedImageAsset>> {
+  const allLinks = new Set<string>();
+  options.paragraphs.forEach((paragraph) => extractLinks(paragraph.body).links.forEach((link) => allLinks.add(link)));
+  (options.bulletLists || []).forEach((list) => list.items.forEach((item) => extractLinks(item).links.forEach((link) => allLinks.add(link))));
+
+  const assets = new Map<string, EmbeddedImageAsset>();
+  const candidates = [...allLinks].slice(0, MAX_EMBEDDED_IMAGES);
+  await Promise.all(candidates.map(async (url) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      const format = EMBEDDABLE_IMAGE_FORMATS[contentType];
+      if (!format) return;
+      const blob = await res.blob();
+      if (blob.size > MAX_EMBEDDED_IMAGE_BYTES) return;
+      const dataUrl = await readBlobAsDataUrl(blob);
+      const size = await loadImagePixelSize(dataUrl);
+      if (!size) return;
+      assets.set(url, { format, dataUrl, widthPx: size.width, heightPx: size.height });
+    } catch (err) {
+      console.error(`Could not embed image from ${url}, leaving it as a plain link:`, err);
+    }
+  }));
+  return assets;
+}
+
 export interface PdfParagraph {
   heading: string; // English label (e.g. "Summary") — matches this app's all-English UI chrome
   body: string; // Arabic (or mixed Arabic/English) content
@@ -258,7 +339,7 @@ const PAGE_MARGIN = 48;
 // Pure given an already-loaded font bundle — kept separate from downloadReportPdf so it can be
 // exercised directly (e.g. from a Node script reading the font off disk) without a browser's
 // fetch().
-export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfOptions): jsPDF {
+export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfOptions, imageAssets?: Map<string, EmbeddedImageAsset>): jsPDF {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const fontFamily = fontBundle.name;
   doc.addFileToVFS(`${fontFamily}-Regular.ttf`, fontBundle.normal);
@@ -383,9 +464,28 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
   // real clickable annotation (doc.textWithLink) — never embedded back into the Arabic body.
   // Deliberately NOT given isOutputVisual/bidi-shaper treatment: this is already plain ASCII with
   // nothing to reorder or shape, the same assumption drawTable's English cells already rely on.
+  //
+  // If `imageAssets` (loadEmbeddableImages, above) resolved this exact link to an embeddable
+  // image, the picture itself is drawn first — the link line underneath is kept either way, so
+  // "open the original" still works even once the picture is visible on the page.
+  function drawEmbeddedImage(asset: EmbeddedImageAsset, indent: number): void {
+    const maxWidth = contentWidth - indent;
+    const maxHeight = 220; // generous but bounded, so one photo can never eat a whole page
+    const scale = Math.min(maxWidth / asset.widthPx, maxHeight / asset.heightPx, 1); // never upscale
+    const drawWidth = asset.widthPx * scale;
+    const drawHeight = asset.heightPx * scale;
+    ensureSpace(drawHeight + 6);
+    // Flush with the paragraph's own right margin — an image has no reading direction of its own,
+    // so it lines up with the RTL body text above it rather than the LTR link line below it.
+    doc.addImage(asset.dataUrl, asset.format, pageWidth - PAGE_MARGIN - indent - drawWidth, y, drawWidth, drawHeight);
+    y += drawHeight + 6;
+  }
+
   function drawLinkLines(links: string[], indent = 0): void {
     const lineHeight = 14;
     links.forEach((link) => {
+      const asset = imageAssets?.get(link);
+      if (asset) drawEmbeddedImage(asset, indent);
       doc.setFont(fontFamily, 'normal');
       doc.setFontSize(10);
       const subLines: string[] = doc.splitTextToSize(link, contentWidth - indent);
@@ -518,8 +618,10 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
 }
 
 export async function downloadReportPdf(options: ReportPdfOptions): Promise<void> {
-  const fontBundle = await loadArabicFontBundle();
-  const doc = buildReportDoc(fontBundle, options);
+  // Independent of each other (one fetches static font files, the other fetches whatever
+  // attachment links happen to be in THIS report's own content), so they run in parallel.
+  const [fontBundle, imageAssets] = await Promise.all([loadArabicFontBundle(), loadEmbeddableImages(options)]);
+  const doc = buildReportDoc(fontBundle, options, imageAssets);
   doc.save(options.filename);
 }
 
