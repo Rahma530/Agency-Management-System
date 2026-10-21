@@ -410,13 +410,28 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
     }
   }
 
+  // Right-aligned to match the RTL title/body/bullets/table around it — this used to be the one
+  // left-anchored element (`doc.text(text, PAGE_MARGIN, y)`, no align option) in an otherwise
+  // right-aligned document, which read as visually inconsistent (flagged directly by a real
+  // report reader). Also now carries its own breathing room — space before, a thin rule after —
+  // instead of a bare 16pt gap, so each section reads as its own block rather than running
+  // straight into whatever came before it. The heading STRING itself is untouched (still exactly
+  // REPORT_SECTION_HEADINGS' values): splitBySectionHeadings above matches these strings literally
+  // against already-saved reports' content_text, so only how a heading is drawn changes here,
+  // never what it says.
   function drawHeading(text: string): void {
-    ensureSpace(20);
+    ensureSpace(34);
+    y += 10;
     doc.setFont(fontFamily, 'bold');
-    doc.setFontSize(11);
+    doc.setFontSize(12);
     doc.setTextColor(BRAND_PURPLE_DEEP);
-    doc.text(text, PAGE_MARGIN, y);
-    y += 16;
+    doc.text(text, pageWidth - PAGE_MARGIN, y, { align: 'right', maxWidth: contentWidth });
+    y += 8;
+    doc.setDrawColor(BRAND_PURPLE_DEEP);
+    doc.setLineWidth(0.75);
+    doc.line(PAGE_MARGIN, y, pageWidth - PAGE_MARGIN, y);
+    doc.setLineWidth(0.2);
+    y += 12;
   }
 
   // A short brand-colored rule drawn between one client service's work-log section and the next
