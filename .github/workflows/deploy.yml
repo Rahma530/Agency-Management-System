@@ -1,10 +1,17 @@
 name: Deploy to Hostinger
 
 # Builds the app and syncs dist/ to Hostinger over FTP whenever a push/merge lands on main.
+# Also runnable manually (workflow_dispatch) from the Actions tab — GitHub occasionally fails to
+# fire the push-triggered run for a given merge commit (confirmed: PR #166's merge to main on
+# 2026-10-21 produced no run at all, while every other merge before and after it did), with no
+# visible error and nothing to "re-run" since no run was ever created. Manual dispatch always
+# targets whatever main currently is, so it's the direct way to recover from that without needing
+# a throwaway commit.
 on:
   push:
     branches:
       - main
+  workflow_dispatch: {}
 
 jobs:
   build-and-deploy:
