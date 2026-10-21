@@ -1,9 +1,41 @@
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { isModuleAllowed } from '../data/roles';
 import { isSharedResourceCustomRole } from '../data/customRoles';
-import { UserRecord, UserRole } from '../types/database';
+import { ServiceType, UserRecord, UserRole } from '../types/database';
 import { isActiveEmployee } from './permissions';
 import { isEmployeeAccessibleUnderRLS } from './supabase';
+import { classifyWorkLogService } from './workLogServiceClassification';
+
+// Client-side mirror of the server's report_caller_client_service_lock() (see
+// 20261125000000_report_client_service_filter.sql). Purely a UI-gating helper — the server always
+// recomputes and enforces this itself, so this can never widen access, only decide what the
+// Reports screen shows a given role:
+//   - 'choice'   -> the role may pick one specific service or "All services" (today's behavior).
+//   - a ServiceType -> the role is locked to that one service; the UI should show it as fixed,
+//     not offer a picker.
+//   - 'own_entries' -> the role has no classifiable service (creative/tech or a custom role) and
+//     is locked to just its own work-log entries.
+export type ReportClientServiceLock = 'choice' | ServiceType | 'own_entries';
+
+// Gets the SAME choice as AM: pick one service, or "All services". Confirmed explicitly with the
+// product owner — department team leads and executive/head_of_technical are NOT locked to their
+// own department, they get the full picker like am_team_lead/am_agent.
+const REPORT_CLIENT_SERVICE_CHOICE_ROLES = new Set<UserRole>([
+  'executive',
+  'head_of_technical',
+  'am_team_lead',
+  'am_agent',
+  'seo_team_lead',
+  'media_buying_team_lead',
+  'social_media_team_lead',
+]);
+
+export function getReportClientServiceLock(role: UserRole | undefined): ReportClientServiceLock {
+  if (!role) return 'own_entries';
+  if (REPORT_CLIENT_SERVICE_CHOICE_ROLES.has(role)) return 'choice';
+  const classified = classifyWorkLogService(role);
+  return classified || 'own_entries';
+}
 
 // Organization-wide report viewers may choose an agent, but they are not themselves agent
 // candidates. Keeping this separate from report-module eligibility is intentional: having the
