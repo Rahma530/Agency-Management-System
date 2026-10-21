@@ -87,15 +87,26 @@ const creativeContent = composeInitialReportContent('employee', employee.dailyLo
 if (!creativeContent.includes('Design tasks evidenced by linked work logs: 1') || !creativeContent.includes('Video tasks evidenced by linked work logs: 1')) {
   throw new Error('Creative design/video counts are missing.');
 }
-if ((creativeContent.match(/Homepage banner design/g) || []).length !== 1) {
-  throw new Error('Linked task was duplicated in the composed report.');
+// Newly composed reports no longer include a "Task evidence ledger" section at all (removed by
+// request — its purpose wasn't landing for the report's audience). The underlying dedupe
+// invariant this used to also exercise (a task linked twice in one log's linked_task_ids must
+// still only be evidenced once) is already covered above by the employee.tasks assertion.
+if (creativeContent.includes('Task evidence ledger') || creativeContent.includes('Homepage banner design')) {
+  throw new Error('Task evidence ledger must no longer be composed into new reports.');
 }
 
 // Work log lines must read as "Employee: text", never prefixed with the log's own date — the
 // date stays on the stored row (daily_logs.date / report_source_items.source_date), it just no
-// longer appears inside the composed narrative text.
+// longer appears inside the composed narrative text. Client-scope reports can span several
+// employees at once, so the name prefix stays there.
 if (!clientContent.includes('One: Saturday design work') || clientContent.includes('2026-10-10 —')) {
-  throw new Error('Work log lines must read "Employee: text" without a leading date.');
+  throw new Error('Client-scope work log lines must read "Employee: text" without a leading date.');
+}
+
+// Employee-scope reports cover a single subject already named in the report header, so the
+// per-line "Employee: " prefix is dropped there — it would just repeat the same name on every line.
+if (!creativeContent.includes('Saturday design work') || creativeContent.includes('One: Saturday design work')) {
+  throw new Error('Employee-scope work log lines must not repeat the subject\'s name on every line.');
 }
 
 console.log('OK: report draft sources enforce scope, Friday exclusion, linked-task evidence, Creative counts, and stable dedupe.');

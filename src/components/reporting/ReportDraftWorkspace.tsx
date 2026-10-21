@@ -167,10 +167,18 @@ function renderWorkLogSection(
   names: Map<string, string>,
   attachmentLinksByTask: Map<string, string[]>,
   workLogGroups?: WorkItemGroup[],
-  serviceGrouping?: WorkLogServiceGrouping
+  serviceGrouping?: WorkLogServiceGrouping,
+  // Employee-scope reports cover a single subject whose name the report header/subtitle already
+  // shows, so repeating it on every work-log line is redundant — pass true there to drop the
+  // prefix. Client-scope reports (the only ones that can ever have serviceGrouping) span several
+  // employees at once, so they always keep it; this flag is never true at the same time as a
+  // serviceGrouping being present.
+  omitAuthorPrefix?: boolean
 ): string {
-  const renderLine = (employeeName: string, text: string, attachmentLines: string[]): string =>
-    attachmentLines.length ? [`${employeeName}: ${text}`, ...attachmentLines].join('\n') : `${employeeName}: ${text}`;
+  const renderLine = (employeeName: string, text: string, attachmentLines: string[]): string => {
+    const firstLine = omitAuthorPrefix ? text : `${employeeName}: ${text}`;
+    return attachmentLines.length ? [firstLine, ...attachmentLines].join('\n') : firstLine;
+  };
 
   type RenderedLine = { userId: string; line: string };
   let lines: RenderedLine[];
@@ -225,18 +233,25 @@ function composeManifestContent(
   creative: boolean,
   attachmentLinksByTask: Map<string, string[]>,
   workLogGroups?: WorkItemGroup[],
-  serviceGrouping?: WorkLogServiceGrouping
+  serviceGrouping?: WorkLogServiceGrouping,
+  // See renderWorkLogSection's own comment: true for employee-scope reports, so the subject's name
+  // (already shown in the report header) isn't repeated on every work-log line.
+  omitAuthorPrefix?: boolean
 ): string {
   const logs = manifest.sources.filter((source) => source.source_kind === 'daily_log');
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
-  if (logs.length) sections.push(`${REPORT_SECTION_HEADINGS.workLogs}\n${renderWorkLogSection(logs, names, attachmentLinksByTask, workLogGroups, serviceGrouping)}`);
+  if (logs.length) sections.push(`${REPORT_SECTION_HEADINGS.workLogs}\n${renderWorkLogSection(logs, names, attachmentLinksByTask, workLogGroups, serviceGrouping, omitAuthorPrefix)}`);
   if (creative && tasks.length) {
     const count = (kind: string) => tasks.filter((source) => source.snapshot.work_kind === kind).length;
     sections.push(`${REPORT_SECTION_HEADINGS.creativeSummary}\nDesign tasks evidenced by linked work logs: ${count('design')}\nVideo tasks evidenced by linked work logs: ${count('video')}\nMixed or unclassified tasks requiring review: ${count('mixed') + count('unclassified')}`);
   }
-  if (tasks.length) sections.push(`${REPORT_SECTION_HEADINGS.taskLedger}\n${tasks.map((source) => `${String(source.snapshot.title || 'Task')} — ${String(source.snapshot.work_kind || 'unclassified')} (content-inferred); status: ${String(source.snapshot.status || '')}; linked log dates: ${Array.isArray(source.snapshot.evidence_dates) ? source.snapshot.evidence_dates.join(', ') : source.source_date}`).join('\n')}`);
+  // Newly composed reports no longer include a "Task evidence ledger" section (see
+  // composeInitialReportContent's matching comment in reportDraftSources.ts) — the task rows
+  // themselves are still fully preserved in manifest.sources/report_source_items either way.
+  // REPORT_SECTION_HEADINGS.taskLedger and its parsing/rendering stay untouched so an
+  // already-saved report that has this section in its stored content_text keeps rendering as-is.
   if (notes.length) sections.push(`${REPORT_SECTION_HEADINGS.employeeContext}\n${notes.map((source) => `${source.source_date} — ${String(source.snapshot.note_text || '').trim()}`).join('\n')}`);
   if (creatorNote.trim()) sections.push(`${REPORT_SECTION_HEADINGS.creatorContext}\n${creatorNote.trim()}`);
   return sections.join('\n\n') || 'No eligible work records were found for this period.';
@@ -454,7 +469,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const attachmentLinksByTask = await fetchTaskAttachmentLinks(
         manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
       );
-      setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject), attachmentLinksByTask, undefined, workLogServiceGrouping));
+      setDraftText(composeManifestContent(manifest, creatorNote, names, !!selectedSubject && isCreativeReportSubject(selectedSubject), attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'));
       creationKey.current = null;
       setMessage(`Preview built from ${manifest.source_count} authorized immutable source(s).`);
     } finally { setBusy(false); }
@@ -710,7 +725,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
       if (!logSources.length) {
         setPreviewManifest(manifest);
-        setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping));
+        setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'));
         setMessage('No work-log lines to group for this period.');
         return;
       }
@@ -727,7 +742,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         return;
       }
       setPreviewManifest(manifest);
-      setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping));
+      setDraftTextWithUndo(composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, result.result.groups, workLogServiceGrouping, effectiveScopeType === 'employee'));
       const mergedCount = result.result.groups.filter((group) => group.ids.length > 1).length;
       setMessage(
         mergedCount
