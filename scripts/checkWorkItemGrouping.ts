@@ -97,6 +97,33 @@ const input = validateWorkItemGroupPayload({ items });
   }
 }
 
+// 7) The model's stated count is correct, but it still used the banned trailing-count shape
+// ("posted a story 5 times" / "... 5 مرات") instead of putting the count next to the noun. The
+// system prompt already tells it never to do this — this is the deterministic backstop for when
+// it does anyway: the whole group is discarded, same fallback as every other failed check above.
+{
+  const modelOutput = [{ ids: ['a', 'b', 'c'], text: 'نشرت ستوري 3 مرات' }]; // correct count, banned shape
+  const validation = validateOutput(modelOutput, 'brief', input);
+  if (!validation.ok) throw new Error('validateOutput must never reject the whole stage.');
+  const groups = (validation.value as { groups: { ids: string[]; text: string }[] }).groups;
+  if (groups.some((g) => g.ids.length > 1)) throw new Error('A group phrased with a trailing "مرات" clause must be discarded, even with a correct count.');
+}
+{
+  const modelOutput = [{ ids: ['a', 'b', 'c'], text: 'posted a story 3 times' }]; // English equivalent
+  const validation = validateOutput(modelOutput, 'brief', input);
+  if (!validation.ok) throw new Error('validateOutput must never reject the whole stage.');
+  const groups = (validation.value as { groups: { ids: string[]; text: string }[] }).groups;
+  if (groups.some((g) => g.ids.length > 1)) throw new Error('A group phrased with a trailing "times" clause must be discarded, even with a correct count.');
+}
+{
+  // The correct shape (count placed next to the noun, no "مرات"/"times") must still be accepted.
+  const modelOutput = [{ ids: ['a', 'b', 'c'], text: 'نشرت 3 ستوري' }];
+  const validation = validateOutput(modelOutput, 'brief', input);
+  if (!validation.ok) throw new Error('A valid, correctly-counted group was rejected.');
+  const groups = (validation.value as { groups: { ids: string[]; text: string }[] }).groups;
+  if (!groups.some((g) => g.ids.length === 3)) throw new Error('A correctly-phrased group (count before the noun, no banned words) must be accepted.');
+}
+
 // Payload-level validation: cap, shape, and uniqueness (mirrors CAMPAIGN_SUMMARY's own work_items
 // regressions in checkCampaignSummaryWorkItems.ts).
 {

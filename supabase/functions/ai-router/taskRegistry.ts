@@ -754,6 +754,12 @@ function buildReportRewritePrompt(language: SupportedLanguage): string {
 // ----------------------------------------------------------------------------
 const MAX_GROUP_ITEMS = 60;
 
+// Catches the exact malformed shape the system prompt tells the model never to use: a trailing
+// "X times"/"N مرة"/"N مرات" clause instead of the count placed directly next to the counted noun.
+// No \b around the Arabic words — JS's \b is ASCII-word-aware only, so it never matches a boundary
+// around Arabic letters; a plain substring/regex test is the correct, simpler check here.
+const BANNED_TRAILING_COUNT_PATTERN = /مرات|مرة|\btimes\b/i;
+
 interface WorkItemGroupInput {
   // Mirrors WorkItemInput's own id contract above — caller-assigned, stable, the only thing used
   // to line a grouped/ungrouped output item back up with its input.
@@ -811,20 +817,32 @@ function buildWorkItemGroupSystemPrompt(language: SupportedLanguage): string {
     `in Arabic, English, or a mix of both.\n\n` +
     `Your only job is to decide which items, by the SAME employee, clearly describe the exact ` +
     `same recurring practical activity repeated on different days (e.g., several lines that each ` +
-    `just mean "posted a story" said by the same person on different days). Rules:\n` +
+    `just mean "posted a story" said by the same person on different days) — including when one ` +
+    `line names a specific sub-type or qualifier of that same general activity (e.g. "posted an ` +
+    `interactive story" and "posted a story" are still the same general activity, posting a ` +
+    `story, and should be grouped together; fold the qualifier into the merged sentence if you ` +
+    `want, e.g. "posted 5 stories, including an interactive one", but do not keep it out of the ` +
+    `group just because its wording differs slightly). Rules:\n` +
     `- NEVER group items with different "employee" values together, even if the text looks similar.\n` +
-    `- NEVER group items that describe genuinely different activities, even by the same employee.\n` +
-    `- When uncertain whether two items really mean the same activity, do NOT group them — it is ` +
-    `always safe to leave an item out of every group.\n` +
+    `- NEVER group items that describe genuinely DIFFERENT kinds of activity (e.g. posting a story ` +
+    `vs. writing an ad caption vs. replying to comments), even by the same employee.\n` +
+    `- A qualifier or sub-type of the SAME general activity (interactive story vs. plain story, a ` +
+    `reel vs. a short reel, etc.) is NOT a different activity — group these together.\n` +
+    `- When genuinely uncertain whether two items mean the same general activity at all, do NOT ` +
+    `group them — it is always safe to leave an item out of every group.\n` +
     `- An item may belong to at most one group.\n\n` +
     `For every group of 2 or more items you form, write ONE short, natural sentence in ` +
     `${languageName} describing the shared activity, with the count placed directly before what ` +
     `was repeated (e.g. "posted 5 stories", NOT "posted a story 5 times" — put the number next to ` +
-    `the thing being counted, not after the action as a trailing "X times"). In Arabic, this means ` +
-    `a pattern like "تم نشر 5 ستوريز" or "نشرت 5 ستوريز", NOT "تم نشر ستوري 5 مرات". The number must ` +
+    `the thing being counted, never after the action as a trailing "X times"/"مرات" clause). Keep ` +
+    `the original noun exactly as the input items wrote it — do not invent a plural form of a ` +
+    `borrowed/foreign word. In Arabic this means a pattern like "تم نشر 5 ستوري" (reusing the ` +
+    `input's own "ستوري", unchanged), NEVER "تم نشر ستوري 5 مرات" and NEVER a made-up plural like ` +
+    `"ستوريز" unless the input items themselves already used that exact word. The number must ` +
     `equal precisely how many item ids you put in that group's "ids" array — count them yourself ` +
     `and use that exact integer; never estimate, round, or guess a different number. Your sentence ` +
-    `must contain that one number and no other number.\n\n` +
+    `must contain that one number and no other number, and must never contain the word "مرات" or ` +
+    `the word "times".\n\n` +
     `Respond with ONLY this JSON array — no markdown code fences, no explanation: ` +
     `[{"ids": string[], "text": string}, ...]. Include an entry ONLY for a group of 2 or more ` +
     `ids. Do not include an entry for an item you are leaving ungrouped — simply omit it entirely.`
@@ -865,6 +883,13 @@ function validateWorkItemGroupOutput(parsed: unknown, _detail: DetailLevel, stag
       const counted = String(validIds.length);
       const numbers = numericTokens(text);
       if (numbers.size !== 1 || !numbers.has(counted)) continue; // the only trusted number check
+      // Deterministic backstop for the exact malformed shape the system prompt already tells the
+      // model to avoid ("posted a story 5 times" / "تم نشر ستوري 5 مرات"): a trailing count clause
+      // instead of the count placed next to the counted noun. Never trust the model's stylistic
+      // compliance alone — if it still produces this shape, drop the whole group rather than
+      // surface the bad phrasing; its members fall back to their own untouched original text below,
+      // same as any other failed group check in this function.
+      if (BANNED_TRAILING_COUNT_PATTERN.test(text)) continue;
       validIds.forEach((id) => used.add(id));
       groups.push({ ids: validIds, text });
     }
