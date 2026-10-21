@@ -486,9 +486,17 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
     links.forEach((link) => {
       const asset = imageAssets?.get(link);
       if (asset) drawEmbeddedImage(asset, indent);
+      // Printing the raw signed URL (often 150+ chars, with an embedded JWT token) as visible
+      // text was confirmed confusing in practice (flagged directly by a real report reader) and
+      // added nothing — the line was never meant to be read, only clicked. A short, fixed label
+      // keeps the exact same real clickable annotation (doc.textWithLink still targets the full
+      // `link`) while the printed text shrinks from a multi-line wall of characters to one short
+      // word. Label differs only to tell an embedded picture's link apart from a plain
+      // attachment's (e.g. a PDF/.docx) when both appear in the same report.
+      const label = asset ? 'View image' : 'View attachment';
       doc.setFont(fontFamily, 'normal');
       doc.setFontSize(10);
-      const subLines: string[] = doc.splitTextToSize(link, contentWidth - indent);
+      const subLines: string[] = doc.splitTextToSize(label, contentWidth - indent);
       ensureSpace(subLines.length * lineHeight);
       doc.setTextColor(LINK_COLOR);
       subLines.forEach((subLine, i) => {
