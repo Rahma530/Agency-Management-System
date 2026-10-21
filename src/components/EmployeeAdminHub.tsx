@@ -151,11 +151,12 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   onConfirmPortalEntry,
   onCustomRolesDataChanged,
 }) => {
-  // Add Employee (single + bulk) stays executive/head_of_technical/ai_engineer only — matches
-  // users_insert_admin_rls's with_check, which allows the same three roles (both were aligned by
-  // 20261018000000_align_ai_engineer_with_head_of_technical.sql). Manage Employees (edit/deactivate)
-  // below is the newly-broadened section: exec/HoT + all 5 team leads.
-  const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
+  // Add Employee (single + bulk) is executive/head_of_technical only (ai_engineer de-privileged
+  // at the owner's explicit request — see permissions.ts's header comment; a matching DB-side
+  // migration undoing users_insert_admin_rls's with_check for ai_engineer is authored for manual
+  // application, not applied from this session). Manage Employees (edit/deactivate) below is the
+  // newly-broadened section: exec/HoT + all 5 team leads.
+  const canAddEmployees = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
   const canManageEmployees = canManageEmployeesOrClients(currentUser.role);
 
   // Roles/Departments admin: executive and head_of_technical ONLY (not ai_engineer, unlike
@@ -174,7 +175,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   // enough on its own to let custom roles appear in the role selects below: assignableRolesFor
   // only ever hands a team lead their own department's fixed agent-role list regardless of what
   // this contains, and canAddEmployees above already restricts the "Add Employee" role select to
-  // executive/head_of_technical/ai_engineer — so custom roles never reach a team lead's picker.
+  // executive/head_of_technical — so custom roles never reach a team lead's picker.
   const VALID_ROLES = [...BUILT_IN_ROLES, ...getAllActiveCustomRoleIds()] as UserRole[];
   const isValidRole = (val: string): val is UserRole => (VALID_ROLES as string[]).includes(val);
 
@@ -272,7 +273,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const managerCandidates = useMemo(
     () =>
       users.filter(
-        (u) => u.role === 'executive' || u.role === 'head_of_technical' || u.role === 'ai_engineer' || (u.role.includes('team_lead') && u.team === team)
+        (u) => u.role === 'executive' || u.role === 'head_of_technical' || (u.role.includes('team_lead') && u.team === team)
       ),
     [users, team]
   );
@@ -511,7 +512,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
   const manageableEmployees = useMemo(() => {
     const active = users.filter(isActiveEmployee);
     const scoped =
-      currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer'
+      currentUser.role === 'executive' || currentUser.role === 'head_of_technical'
         ? active
         : active.filter((u) => u.team === currentUser.team || u.manager_id === currentUser.id || u.id === currentUser.id);
     return scoped;

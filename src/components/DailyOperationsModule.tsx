@@ -206,7 +206,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     const managerRoles: UserRole[] = [
       'executive',
       'head_of_technical',
-      'ai_engineer',
       'marketing_manager',
       ...TEAM_LEAD_ROLES,
     ];
@@ -342,7 +341,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Team members accessible under current user's RLS scope
   const teamMembers = useMemo(() => {
     let result: UserRecord[];
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
+    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') {
       result = users.filter((u) => u.role !== 'client');
     } else if (currentUser.role === 'am_team_lead') {
       result = users.filter(
@@ -379,10 +378,11 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     }
     // Executive and Head of Technical never receive task assignments, so they
     // never belong in this workload/team-member list — even when the viewer
-    // is one of them. Pending and deactivated employees are excluded too —
-    // neither can ever be the logged-in currentUser, so this never filters out
-    // "yourself".
-    return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && u.role !== 'ai_engineer' && isActiveEmployee(u));
+    // is one of them. ai_engineer is a real, task-assigned operational role
+    // (see departmentStaffing.ts) and is deliberately NOT excluded here.
+    // Pending and deactivated employees are excluded too — neither can ever be
+    // the logged-in currentUser, so this never filters out "yourself".
+    return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
   }, [users, currentUser]);
 
   // All blockers across visible tasks for Blockers Hub — a blocked task with ANY real assignee

@@ -157,8 +157,8 @@ interface ClientDashboardProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
-  // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical/
-  // ai_engineer only, gated below via canMergeClients(currentUser.role). allClients is the full
+  // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical
+  // only, gated below via canMergeClients(currentUser.role). allClients is the full
   // roster (not just this one `client`) — needed so the shared MergeClientsModal can search for
   // a "keep" client across everyone. Optional: whichever of the 4 parents that render
   // ClientDashboard don't pass these, this button simply never renders.
@@ -558,14 +558,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
-    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
   const canEditAM =
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'executive' ||
-    currentUser.role === 'head_of_technical' ||
-    currentUser.role === 'ai_engineer';
+    currentUser.role === 'head_of_technical';
 
   const showContractValue = canSeeContractValue(currentUser.role, client.sales_owner_id === currentUser.id);
 
@@ -577,10 +575,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
-    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
   const canEditPaymentTracking =
-    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead' || currentUser.role === 'ai_engineer';
+    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
 
   // Shared gate for the Client Dates inline editor AND the "Edit Client" button/modal below.
   // Deliberately canEditClient (lib/permissions.ts), not canManageLifecycle above — none of this
@@ -591,8 +588,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // + setup type, and payment card details, collected during the Brief phase (rendered as a
   // selectable section alongside the per-service brief buttons in the Service Briefs tab below,
   // not a separate top-level dashboard tab). Both visibility (whether the selector even appears)
-  // AND edit rights are the single shared canAccessClientSensitiveInfo() check — all five roles
-  // (executive/head_of_technical/am_team_lead/am_agent/ai_engineer) can both view and edit; every
+  // AND edit rights are the single shared canAccessClientSensitiveInfo() check — all four roles
+  // (executive/head_of_technical/am_team_lead/am_agent) can both view and edit; every
   // field is independently optional and never blocks saving. Unlike Payment Tracking above,
   // am_agent's write path here goes through the update_client_access() RPC (App.tsx's
   // handleUpdateClientAccess), not a direct table update — that RPC scopes am_agent's write to
@@ -649,7 +646,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
-    currentUser.role === 'ai_engineer' ||
     currentUser.role === 'seo_team_lead' ||
     currentUser.role === 'seo_agent' ||
     currentUser.role === 'store_manager' ||
@@ -675,7 +671,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
-    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
   // Combined-scope item C: widens ONLY the Reports & Comparisons tab (viewing/generating a
@@ -702,16 +697,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // Weekly manual-entry write gate for social_insights — mirrors social_insights_write_rls /
   // social_insights_update_rls in 20261025000000_social_insights_weekly_manual_entry.sql exactly
   // (same roles, same client_has_service/agent_assigned checks), so the UI never offers an action
-  // the database would reject. The head_of_technical/ai_engineer branch is a TEMPORARY TRANSITION
-  // FEATURE — see that migration and src/App.tsx's Employee Impersonation comments for the
-  // convention — intended for removal once real social_media_agent/social_media_team_lead users are
-  // entering their own weekly numbers.
+  // the database would reject. The head_of_technical branch is a TEMPORARY TRANSITION FEATURE —
+  // see that migration and src/App.tsx's Employee Impersonation comments for the convention —
+  // intended for removal once real social_media_agent/social_media_team_lead users are entering
+  // their own weekly numbers. ai_engineer was dropped from this bridge at the owner's explicit
+  // request (part of the broader ai_engineer de-privileging pass — see permissions.ts's header
+  // comment): it is now an ordinary agent role with no special write access to client metrics.
   const canLogSocialMetrics =
     clientHasService(client, 'social_media') &&
     ((currentUser.role === 'social_media_agent' && isAssignedToService('social_media')) ||
       (currentUser.role === 'social_media_team_lead' && clientHasService(client, 'social_media')) ||
-      currentUser.role === 'head_of_technical' ||
-      currentUser.role === 'ai_engineer');
+      currentUser.role === 'head_of_technical');
 
   // Weekly manual-entry write gate for seo_insights — mirrors seo_insights_write_rls/
   // seo_insights_update_rls in 20261028000000_seo_insights.sql exactly (same roles, same
@@ -1033,8 +1029,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
   const canManageServiceAssignments =
     currentUser.role === 'executive' ||
-    currentUser.role === 'head_of_technical' ||
-    currentUser.role === 'ai_engineer';
+    currentUser.role === 'head_of_technical';
 
   const renderServiceAssignmentCard = ({
     serviceType,
@@ -1123,7 +1118,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'am_team_lead' ||
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
-    currentUser.role === 'ai_engineer' ||
     (currentUser.role === 'am_agent' && client.am_agent_id === currentUser.id);
 
   const handleTransition = async (

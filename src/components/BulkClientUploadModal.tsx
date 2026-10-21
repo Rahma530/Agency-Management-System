@@ -165,7 +165,7 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
   // am_team_lead_name is optional for every role now (see the auto-assign-or-reject logic below);
   // am_agent_name stays management-only — Sales/AM Agent uploads never pick an Account Manager.
   const isSalesUpload = currentUser.role === 'sales';
-  const isLeadershipUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
+  const isLeadershipUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
   const isManagementUpload = isLeadershipUpload || currentUser.role === 'am_team_lead';
 
   const amTeamLeads = useMemo(

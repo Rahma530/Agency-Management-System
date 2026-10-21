@@ -3,8 +3,10 @@
 // function tasks_update_rls's own server-side closing check calls
 // (20261104100000_task_visibility_cutover.sql): the creator, ANY current assignee (every row in
 // task_assignees, not only the legacy single assigned_to column), or an admin role
-// (executive/head_of_technical/ai_engineer) may close a task. Everyone else — including a role
-// that can see or even edit a task through some other door (sales, marketing_manager) — may not.
+// (executive/head_of_technical) may close a task. Everyone else — including a role that can see
+// or even edit a task through some other door (sales, marketing_manager, and now ai_engineer,
+// de-privileged to an ordinary agent role at the owner's explicit request — see permissions.ts's
+// header comment) — may not unless they're the creator or a current assignee like anyone else.
 //
 // Run via `npm run lint` (chained after tsc --noEmit) or directly:
 // `npx tsx scripts/checkCanCloseTask.ts`.
@@ -42,12 +44,12 @@ function main(): void {
   assertEqual(canCloseTask(task, user('creator1', 'seo_agent'), taskAssignees), true, 'creator');
   assertEqual(canCloseTask(task, user('exec1', 'executive'), taskAssignees), true, 'executive (admin role, unrelated to the task)');
   assertEqual(canCloseTask(task, user('hot1', 'head_of_technical'), taskAssignees), true, 'head_of_technical (admin role, unrelated to the task)');
-  assertEqual(canCloseTask(task, user('ai1', 'ai_engineer'), taskAssignees), true, 'ai_engineer (admin role, unrelated to the task)');
 
   // Expected false.
   assertEqual(canCloseTask(task, user('bystander1', 'seo_agent'), taskAssignees), false, 'unrelated employee');
   assertEqual(canCloseTask(task, user('sales1', 'sales'), taskAssignees), false, 'sales, unrelated to the task');
   assertEqual(canCloseTask(task, user('mm1', 'marketing_manager'), taskAssignees), false, 'marketing_manager, unrelated to the task');
+  assertEqual(canCloseTask(task, user('ai1', 'ai_engineer'), taskAssignees), false, 'ai_engineer, unrelated to the task (de-privileged to an ordinary agent role)');
   assertEqual(canCloseTask(task, user('removed1', 'seo_agent'), taskAssignees), false, 'removed assignee (no current task_assignees row)');
 
   if (failures.length) {

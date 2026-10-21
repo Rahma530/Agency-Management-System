@@ -10,7 +10,7 @@ interface PlatformManagerProps {
 }
 
 /**
- * Admin screen (executive/head_of_technical/ai_engineer only — enforced server-side by
+ * Admin screen (executive/head_of_technical only — enforced server-side by
  * platforms_write_rls/platforms_update_rls) for managing the selectable Platform list used on
  * CrossTeamTaskBoard's create/edit forms, chips, and filter. Unlike TaskTypeManager (the
  * structural model this mirrors), platforms aren't scoped to a team or role, so this is a single

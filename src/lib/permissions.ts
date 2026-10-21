@@ -1,12 +1,24 @@
 import { BriefRecord, ClientRecord, ServiceType, UserRecord, UserRole } from '../types/database';
 
+// ai_engineer was removed from this file's admin-equivalent grants (CLIENT_REGISTRATION_ROLES,
+// canHardDeleteTasks, canMergeClients, CLIENT_SENSITIVE_INFO_ROLES, canManageEmployeesOrClients,
+// assignableRolesFor, CLIENT_ONBOARDING_ROLES, canEditServiceBrief, canEditClient,
+// canManageClientsFromCapacity, canManageEmployeesFromCapacity, BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES,
+// canEditBriefFieldSchema below) at the owner's explicit request: ai_engineer is now an ordinary
+// agent role with no special executive/head_of_technical-equivalent reach anywhere in this file.
+// The one deliberate exception is canImpersonateEmployees/canUseEmployeeTestingMode further down —
+// the owner asked for that "login as another employee" capability to stay, and separately asked
+// for executive to gain it too (it previously had neither). See the real DB-level RLS/grant
+// migration this mirrors (supabase/migrations/20261019000000_ai_engineer_full_application_
+// authorization.sql and 20261018000000_align_ai_engineer_with_head_of_technical.sql) for the
+// matching backend change — a new migration undoing those, authored for manual application, not
+// applied from this session.
 const CLIENT_REGISTRATION_ROLES: UserRole[] = [
   'executive',
   'head_of_technical',
   'sales',
   'am_team_lead',
   'am_agent',
-  'ai_engineer',
 ];
 
 export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
@@ -16,14 +28,14 @@ export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATIO
 // capacity/employee management for their own department elsewhere in this app, team leads are
 // NOT trusted with permanently destroying tasks (owner decision).
 export const canHardDeleteTasks = (role: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
+  role === 'executive' || role === 'head_of_technical';
 
 // Client merge (merge_clients() RPC, 20261114000000_merge_clients.sql) — same role set as
 // canHardDeleteTasks today, tracked as its own function since it is a conceptually distinct
 // action (merges + deletes a client, not a task) and the two role sets are not guaranteed to stay
 // identical going forward.
 export const canMergeClients = (role: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
+  role === 'executive' || role === 'head_of_technical';
 
 // users.daily_task_target role-level gate (20261115000000_daily_task_target.sql) — mirrors
 // users_update_daily_task_target_rls exactly: executive/head_of_technical (deliberately NOT
@@ -50,13 +62,15 @@ export const canUseEmployeeTestingMode = (role: UserRole): boolean =>
 
 // TEMPORARY TRANSITION FEATURE (EmployeeImpersonation.tsx / supabase/functions/
 // employee-impersonation) — intended for removal once every employee has adopted their own real,
-// self-set password. Currently the same two roles as canUseEmployeeTestingMode above, but tracked
-// as its own function rather than reused directly: impersonation needs no password knowledge at
-// all (a magic link, not a real login), a materially different and more sensitive capability than
-// Testing Mode's real-credentials flow, so the two role sets are free to diverge later without
-// entangling one decision with the other.
+// self-set password. Tracked as its own function rather than reusing canUseEmployeeTestingMode
+// directly: impersonation needs no password knowledge at all (a magic link, not a real login), a
+// materially different and more sensitive capability than Testing Mode's real-credentials flow, so
+// the two role sets are free to diverge. Role set updated at the owner's explicit request as part
+// of the broader ai_engineer de-privileging pass: ai_engineer keeps this one capability on purpose
+// (the sole deliberate exception to that pass), and executive — previously excluded from
+// impersonation entirely — is now added alongside head_of_technical/ai_engineer.
 export const canImpersonateEmployees = (role: UserRole): boolean =>
-  role === 'head_of_technical' || role === 'ai_engineer';
+  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
 
 // Impersonation targets: confirmed no role-based exclusion — head_of_technical/ai_engineer can
 // impersonate any active, non-deactivated employee, including each other, executive, and any
@@ -75,7 +89,7 @@ export const canImpersonateEmployees = (role: UserRole): boolean =>
 // department team lead/agent and (for all of the above except contract_value/Signed Contract,
 // which have their own sales-owns-it exception in canSeeContractValue below) Sales too. One
 // shared list/check so every consumer of this role set can't drift apart.
-const CLIENT_SENSITIVE_INFO_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent', 'ai_engineer'];
+const CLIENT_SENSITIVE_INFO_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
 
 export const canAccessClientSensitiveInfo = (role: UserRole): boolean =>
   CLIENT_SENSITIVE_INFO_ROLES.includes(role);
@@ -131,7 +145,7 @@ export const DEPARTMENT_TEAM_LEAD_ROLES: UserRole[] = [
 // or a team lead acting on their own department (RLS's employee_visible()/client visibility rules
 // narrow a team lead's actual reach further — this is just the role-level gate).
 export const canManageEmployeesOrClients = (role: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
+  role === 'executive' || role === 'head_of_technical' || DEPARTMENT_TEAM_LEAD_ROLES.includes(role);
 
 // Each team lead's own department's manageable roles (its own team-lead role included, per the
 // server-side rule below) — mirrors public.employee_manageable(target_id, target_role)
@@ -180,20 +194,20 @@ const TEAM_LEAD_ASSIGNABLE_AGENT_ROLES: Partial<Record<UserRole, UserRole[]>> = 
 };
 
 // The role VALUES a given caller may set on someone else's row, per users_update_guard_trigger's
-// rule 4 — executive/head_of_technical/ai_engineer may set any role (allRoles, passed in since
-// that full list lives in data/roles.ts's AGENCY_ROLES, which this file doesn't otherwise need);
-// each team lead is restricted to their own department's agent-level set above; anyone else gets
-// none (and never reaches the Edit Employee form at all — canManageEmployeesOrClients gates that
-// higher up). currentRoleOnRow is always included even when it falls outside the caller's own set,
-// so a team lead editing a row they can only VIEW but not role-change (employee_visible() can show
-// more than it lets them edit) still has their existing value selectable as a no-op — the trigger,
-// not this list, is what actually blocks a real change away from it.
+// rule 4 — executive/head_of_technical may set any role (allRoles, passed in since that full list
+// lives in data/roles.ts's AGENCY_ROLES, which this file doesn't otherwise need); each team lead is
+// restricted to their own department's agent-level set above; anyone else gets none (and never
+// reaches the Edit Employee form at all — canManageEmployeesOrClients gates that higher up).
+// currentRoleOnRow is always included even when it falls outside the caller's own set, so a team
+// lead editing a row they can only VIEW but not role-change (employee_visible() can show more than
+// it lets them edit) still has their existing value selectable as a no-op — the trigger, not this
+// list, is what actually blocks a real change away from it.
 export const assignableRolesFor = (
   callerRole: UserRole,
   currentRoleOnRow: UserRole,
   allRoles: UserRole[]
 ): UserRole[] => {
-  if (callerRole === 'executive' || callerRole === 'head_of_technical' || callerRole === 'ai_engineer') {
+  if (callerRole === 'executive' || callerRole === 'head_of_technical') {
     return allRoles;
   }
   const deptRoles = TEAM_LEAD_ASSIGNABLE_AGENT_ROLES[callerRole] || [];
@@ -213,7 +227,6 @@ const CLIENT_ONBOARDING_ROLES: UserRole[] = [
   'sales',
   'am_team_lead',
   'am_agent',
-  'ai_engineer',
 ];
 
 export const canAccessClientOnboarding = (role?: UserRole): boolean =>
@@ -234,7 +247,7 @@ export const canEditServiceBrief = (
   userId: string,
   client: Pick<ClientRecord, 'am_agent_id'>
 ): boolean => {
-  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'ai_engineer') return true;
+  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead') return true;
   if (role === 'am_agent') return client.am_agent_id === userId;
   return false;
 };
@@ -244,7 +257,7 @@ export const canEditServiceBrief = (
 // contact info, services, sales_brief, contract/payment figures). Deliberately its own function,
 // not ClientDashboard.tsx's local canManageLifecycle — none of this is a status transition or an
 // AM/Team Lead assignment change, and the two gates are free to diverge. Executive/
-// head_of_technical/am_team_lead/ai_engineer may edit any client; am_agent only their own assigned
+// head_of_technical/am_team_lead may edit any client; am_agent only their own assigned
 // client (am_agent_id === them); sales only their own registered client (sales_owner_id === them).
 // NOTE: the DB-level counterpart for both consumers — update_client_dates() and
 // update_client_details() (20261030800000_update_client_dates_rpc.sql,
@@ -258,7 +271,7 @@ export const canEditClient = (
   user: Pick<UserRecord, 'id' | 'role'>,
   client: Pick<ClientRecord, 'am_agent_id' | 'sales_owner_id'>
 ): boolean => {
-  if (user.role === 'executive' || user.role === 'head_of_technical' || user.role === 'am_team_lead' || user.role === 'ai_engineer') return true;
+  if (user.role === 'executive' || user.role === 'head_of_technical' || user.role === 'am_team_lead') return true;
   if (user.role === 'am_agent') return client.am_agent_id === user.id;
   if (user.role === 'sales') return client.sales_owner_id === user.id;
   return false;
@@ -274,10 +287,10 @@ export const canEditClient = (
 // a real client/employee write path (a separate, already-flagged incomplete-feature gap, not
 // something either of these functions needs to account for).
 export const canManageClientsFromCapacity = (role?: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'ai_engineer';
+  role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead';
 
 export const canManageEmployeesFromCapacity = (role?: UserRole): boolean =>
-  role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer';
+  role === 'executive' || role === 'head_of_technical';
 
 // Whether `role` may see a SPECIFIC brief's actual field content — distinct from whether the
 // Service Briefs tab/screen is reachable at all (that's hasBriefViewAccess in ClientDashboard.tsx
@@ -290,7 +303,7 @@ export const canManageEmployeesFromCapacity = (role?: UserRole): boolean =>
 // empty-state rendering. Deliberately NOT scoped by the viewer's own department/service: a
 // submitted brief stays visible to every role hasBriefViewAccess already allows onto the tab,
 // exactly as broad as before this change — only the WHEN changed, not the WHICH.
-const BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent', 'ai_engineer'];
+const BRIEF_CONTENT_ALWAYS_VISIBLE_ROLES: UserRole[] = ['executive', 'head_of_technical', 'am_team_lead', 'am_agent'];
 
 export const canViewBriefContent = (
   role: UserRole,
@@ -305,7 +318,7 @@ export const canViewBriefContent = (
 // service team lead), plus each department team lead scoped to only their own
 // service_type.
 export const canEditBriefFieldSchema = (role: UserRole, serviceType: ServiceType): boolean => {
-  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'am_agent' || role === 'ai_engineer') {
+  if (role === 'executive' || role === 'head_of_technical' || role === 'am_team_lead' || role === 'am_agent') {
     return true;
   }
   if (role === 'seo_team_lead') return serviceType === 'seo';

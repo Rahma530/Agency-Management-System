@@ -233,7 +233,7 @@ export const canTrustCapacityFor = (
 ): boolean => {
   if (!viewer) return false;
   if (viewer.id === candidate.id) return true;
-  if (viewer.role === 'executive' || viewer.role === 'head_of_technical' || viewer.role === 'ai_engineer') {
+  if (viewer.role === 'executive' || viewer.role === 'head_of_technical') {
     return true;
   }
   if (isTeamLeadRole(viewer.role)) {

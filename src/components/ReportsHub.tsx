@@ -152,7 +152,6 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     currentUser.role === 'executive' ||
     currentUser.role === 'head_of_technical' ||
     currentUser.role === 'am_team_lead' ||
-    currentUser.role === 'ai_engineer' ||
     currentUser.role === 'am_agent';
   const viewerServiceFilter: ServiceType[] | undefined = seesAllServices
     ? undefined
@@ -170,7 +169,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   // same scope MyWorkHub/DailyOperationsModule already operate under. This is a client filter
   // over already-visible rows, not a new access grant.
   const canSeeDailyActivityReport =
-    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || isTeamLead;
+    currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || isTeamLead;
   const [dailyLogClientFilter, setDailyLogClientFilter] = useState('all');
   const [dailyLogEmployeeFilter, setDailyLogEmployeeFilter] = useState('all');
   const [dailyLogSearch, setDailyLogSearch] = useState('');

@@ -392,7 +392,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
 
   const canEdit = (campaign: CampaignRecord): boolean => {
     // Executive and Head of Technical are view-only
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
+    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') {
       return false;
     }
     // Media Buying Team Lead has full management permissions across all campaigns
@@ -427,7 +427,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       return [];
     }
     // 2. Executive & Head of Technical: see all campaigns (view-only)
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
+    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical') {
       return campaigns;
     }
     // 3. Media Buying Lead: see all campaigns
@@ -460,7 +460,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
 
   // Clients accessible to current user for campaign linking
   const accessibleClients = useMemo(() => {
-    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || currentUser.role === 'media_buying_team_lead') {
+    if (currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'media_buying_team_lead') {
       return clients;
     }
     if (currentUser.role === 'media_buying_agent') {
