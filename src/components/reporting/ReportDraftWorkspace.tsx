@@ -824,6 +824,38 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
   };
 
+  // "Revert to original sources" (already-open report only): rebuilds the draft text from a
+  // FRESH, server-authorized source manifest with NO grouping and NO AI rephrase — i.e. discards
+  // whatever "Group similar entries"/"AI Summary" currently has active and gets back to the exact
+  // shape a brand-new draft would start from. Unlike "Pull sources again"/pullSourcesAgain (which
+  // deliberately never touches draftText — see its own comment, just above), this is the one
+  // explicit action for an already-open report that DOES overwrite it, so it gets the same confirm
+  // + one-step Undo guard as AI Summary/Group similar entries, and clears activeWorkLogGroups so a
+  // later Group/AI Summary click starts clean rather than reusing stale grouping state. Does NOT
+  // touch previewManifest/"Save as new draft with these sources" — this action is scoped to the
+  // editor text only, never to adopting a new source ledger (use "Pull sources again" for that).
+  const revertToOriginalSources = async () => {
+    if (busy) return;
+    if (hasUnsavedChanges && !window.confirm('Replace the current draft text with the original sources, undoing any grouping or AI rephrasing? Your unsaved changes will be lost.')) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const manifest = await fetchSourceManifest();
+      if (!manifest) return;
+      const attachmentLinksByTask = await fetchTaskAttachmentLinks(
+        manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
+      );
+      const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
+      setDraftTextWithUndo(
+        composeManifestContent(manifest, creatorNote, names, creativeSubject, attachmentLinksByTask, undefined, workLogServiceGrouping, effectiveScopeType === 'employee'),
+        undefined
+      );
+      setMessage('Draft text reverted to the original sources — any grouping or AI rephrasing was discarded. Save a version to keep it.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const applySuggestion = async () => {
     if (!suggestion || !selectedReport) return;
     setBusy(true);
@@ -1004,6 +1036,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           {onGroupWorkItems && (
             <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={groupSimilarEntries} title="Merge genuinely repeated same-employee work-log lines into one line with a verified count" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50">Group similar entries</button>
           )}
+          <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={revertToOriginalSources} title="Rebuild the draft text from the original sources, discarding any grouping or AI rephrasing currently applied" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-200 border border-stone-700 disabled:opacity-50">Revert to original sources</button>
           {previewManifest && (
             <button disabled={busy} onClick={() => cancelLastPull(false)} title="Discard this pulled snapshot (the draft text is untouched either way)" className="px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Cancel pull</button>
           )}
