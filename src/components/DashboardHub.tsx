@@ -17,9 +17,12 @@ import { TeamLeadDashboard } from './dashboards/TeamLeadDashboard';
 import { ClientKpiOverview } from './dashboards/ClientKpiOverview';
 import { resolveClientsForSubject } from '../lib/reportingEngine';
 
-// Role router for Module 5's dashboards. Executive, Head of Technical, AI Engineer, AM Team Lead,
-// and AM Agent receive the shared client KPI overview over their resolver-scoped client set;
-// existing department comparison and team-lead operational content remains role-specific.
+// Role router for Module 5's dashboards. Executive, AM Team Lead, and AM Agent receive the shared
+// client KPI overview over their resolver-scoped client set; existing department comparison and
+// team-lead operational content remains role-specific. AI Engineer was de-privileged out of its
+// former head_of_technical-equivalent dashboard landing at the owner's explicit request (see
+// permissions.ts's header comment) — it no longer has 'dashboard' in its allowedModules at all
+// (data/roles.ts), so this component is unreachable for it in practice.
 interface DashboardHubProps {
   currentUser: UserRecord;
   users: UserRecord[];
@@ -68,7 +71,7 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
     );
   }
 
-  if (currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer') {
+  if (currentUser.role === 'head_of_technical') {
     return (
       <HeadOfTechnicalDashboard
         clients={scopedClients}

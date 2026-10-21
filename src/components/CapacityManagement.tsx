@@ -136,7 +136,6 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     const allowedRoles: UserRole[] = [
       'executive',
       'head_of_technical',
-      'ai_engineer',
       'am_team_lead',
       'media_buying_team_lead',
       'seo_team_lead',
@@ -231,7 +230,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   // department-scoped picker used elsewhere — New Task, campaign assignment), while
   // executive/head_of_technical still see every active employee company-wide.
   const logCapacityEmployees = useMemo(() => {
-    if (currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical' || currentUser?.role === 'ai_engineer') {
+    if (currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical') {
       return users.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && u.role !== 'ai_engineer' && isActiveEmployee(u));
     }
     return getEmployeesByDepartment(users, currentUser?.team);

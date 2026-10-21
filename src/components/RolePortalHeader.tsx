@@ -94,7 +94,7 @@ export const RolePortalHeader: React.FC<RolePortalHeaderProps> = ({
             </div>
           )}
 
-          {['executive', 'head_of_technical', 'ai_engineer'].includes(role) && (
+          {['executive', 'head_of_technical'].includes(role) && (
             <div className="flex items-center gap-2">
               <div className="px-3.5 py-2 rounded-xl border text-left" data-accent="success" style={{ background: 'var(--surface)', borderColor: 'var(--surface-border)' }}>
                 <div className="text-[10px]" style={{ color: 'var(--ink-soft)' }}>Active Clients</div>

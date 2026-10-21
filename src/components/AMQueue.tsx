@@ -160,8 +160,8 @@ interface AMQueueProps {
   onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
-  // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical/
-  // ai_engineer only, gated below via canMergeClients(currentRole). Both optional: absent
+  // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical
+  // only, gated below via canMergeClients(currentRole). Both optional: absent
   // entirely, the Client Portfolio table's checkbox column and "Merge selected" button, and
   // ClientDashboard's own single-client entry point below, simply never render.
   onPreviewMergeClients?: (keepId: string, duplicateId: string) => Promise<Record<string, { moved?: number; deleted_duplicates?: number; count?: number }>>;
@@ -238,9 +238,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const currentRole = resolvedUser?.role || 'am_agent';
   const isAMTeamLead = currentRole === 'am_team_lead';
   const isAMAgent = currentRole === 'am_agent';
-  // Only referenced by handleAssign's guard below — safe to add ai_engineer here directly without
-  // touching any of isAMTeamLead's separate cosmetic label branches elsewhere in this file.
-  const isExecutive = currentRole === 'executive' || currentRole === 'head_of_technical' || currentRole === 'ai_engineer';
+  // Only referenced by handleAssign's guard below.
+  const isExecutive = currentRole === 'executive' || currentRole === 'head_of_technical';
 
   // Role Security Check — same canAccessClientOnboarding() check that gates the "Client
   // Onboarding" sidebar nav item in App.tsx, so the two can never drift out of sync.

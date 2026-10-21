@@ -151,7 +151,7 @@ interface CrossTeamTaskBoardProps {
   onUpdateTaskType: (id: string, updates: Partial<TaskTypeRecord>) => Promise<void>;
   // Admin-managed Platform reference list (platforms table) + its task links (task_platform_links
   // table) — same "includes inactive rows" posture as taskTypes above. The admin screen
-  // (PlatformManager) is gated to executive/head_of_technical/ai_engineer below, matching
+  // (PlatformManager) is gated to executive/head_of_technical below, matching
   // platforms_write_rls/platforms_update_rls. Also required (not optional) and enforced at the
   // one render site by scripts/checkTaskTypeManagerProps.ts, for the same reason as taskTypes.
   platforms: PlatformRecord[];
@@ -182,7 +182,7 @@ interface CrossTeamTaskBoardProps {
   // not appear (never falls back to a client-guessed date).
   onGetServerToday?: () => Promise<string>;
   onMarkTaskViewed?: (taskId: string) => Promise<void>;
-  // Task hard delete (delete_tasks() RPC) — executive/head_of_technical/ai_engineer only, gated
+  // Task hard delete (delete_tasks() RPC) — executive/head_of_technical only, gated
   // locally below via canHardDeleteTasks(currentUser.role) (lib/permissions.ts), same pattern as
   // canManageTaskTypes/canManagePlatforms above. Optional: absent entirely (e.g. no currentUser),
   // the delete controls simply never render.
@@ -284,7 +284,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [isTaskTypeManagerOpen, setIsTaskTypeManagerOpen] = useState(false);
   const canManageTaskTypes = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
   const [isPlatformManagerOpen, setIsPlatformManagerOpen] = useState(false);
-  const canManagePlatforms = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical' || currentUser?.role === 'ai_engineer';
+  const canManagePlatforms = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
   const isUiUxDesigner = currentUser?.role === 'ui_ux_designer';
   const canDeleteTasks = !!onHardDeleteTasks && !!currentUser && canHardDeleteTasks(currentUser.role);
   // Who even SEES the Table view's checkbox column / bulk-action toolbar at all — isUiUxDesigner
@@ -1039,7 +1039,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const noTeamSelectedFallbackRoles: string[] = useMemo(() => {
     const role = currentUser?.role;
     if (!role) return [];
-    if (role === 'executive' || role === 'head_of_technical' || role === 'ai_engineer') {
+    if (role === 'executive' || role === 'head_of_technical') {
       return getAllowedEmployeeRolesUnderRLS(role);
     }
     if (role === 'marketing_manager') {
@@ -1059,7 +1059,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // must pick a real department before the Employee filter offers anything (marketing_manager's
   // 'Creative' counts as "picked", so it's excluded from this check too).
   const employeeFilterDisabled =
-    selectedTeam === 'all' && currentUser?.role !== 'executive' && currentUser?.role !== 'head_of_technical' && currentUser?.role !== 'ai_engineer';
+    selectedTeam === 'all' && currentUser?.role !== 'executive' && currentUser?.role !== 'head_of_technical';
 
   // The Employee filter's actual rendered option list: a real department's fetched roster, or the
   // no-team-selected fallback for 'all'/'Creative'. UserRecord and AssignableEmployee both carry
@@ -1977,7 +1977,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             </button>
           )}
 
-          {/* Platforms admin entry point — executive/head_of_technical/ai_engineer only, matching
+          {/* Platforms admin entry point — executive/head_of_technical only, matching
               platforms_write_rls/platforms_update_rls server-side. */}
           {canManagePlatforms && (
             <button

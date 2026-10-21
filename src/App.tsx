@@ -1882,7 +1882,7 @@ export default function App() {
       // events only (no public.activities row at all), mapped onto the same ActivityRecord shape
       // so LiveActivityFeed.tsx can render either source unchanged. Any other role fetches
       // nothing, same as before.
-      if (['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role)) {
+      if (['executive', 'head_of_technical'].includes(currentUser.role)) {
         try {
           const { data: activityData, error: activityErr } = await supabaseRaw
             .from('activities')
@@ -1977,7 +1977,6 @@ export default function App() {
           return (
             u.role === 'executive' ||
             u.role === 'head_of_technical' ||
-            u.role === 'ai_engineer' ||
             u.id === client.am_team_lead_id ||
             u.id === client.am_agent_id ||
             activeServiceLeadRoles.includes(u.role)
@@ -2250,7 +2249,7 @@ export default function App() {
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
-    if (!['executive', 'head_of_technical', 'ai_engineer'].includes(currentUser.role)) return;
+    if (!['executive', 'head_of_technical'].includes(currentUser.role)) return;
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
@@ -2691,7 +2690,7 @@ export default function App() {
   }, contractFile: File | null) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
-    const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || currentUser.role === 'am_team_lead';
+    const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
     if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
     // Every role submits an auto-resolved id (or none) from ClientRegistrationModal's
     // soleActiveAmTeamLeadId logic now — no role picks an AM Team Lead manually anymore. Still
@@ -2801,7 +2800,7 @@ export default function App() {
   }) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmUpload = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
-    const isManagementUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer' || currentUser.role === 'am_team_lead';
+    const isManagementUpload = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
     if (!supabaseActive) throw new Error('Supabase is not configured; the client was not created.');
     const leadId = isManagementUpload
       ? await validateClientAssignment(clientData.am_team_lead_id, ['am_team_lead'], 'AM Team Leader')
@@ -2954,7 +2953,7 @@ export default function App() {
 
   // 2. Assign the client to an Account Manager (AM Agent)
   const handleAssignAMTeamLead = async (clientId: string, leadId: string) => {
-    if (!['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead'].includes(currentUser.role)) {
+    if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
       throw new Error('You do not have permission to assign an AM Team Leader.');
     }
     const validatedId = await validateClientAssignment(leadId, ['am_team_lead'], 'AM Team Leader');
@@ -2963,7 +2962,7 @@ export default function App() {
   };
 
   const handleAssignAMAgent = async (clientId: string, agentId: string) => {
-    if (!['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead'].includes(currentUser.role)) {
+    if (!['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)) {
       throw new Error('You do not have permission to assign an AM Agent.');
     }
     const validatedId = await validateClientAssignment(agentId, ['am_team_lead', 'am_agent'], 'Account Manager');
@@ -3168,8 +3167,8 @@ export default function App() {
 
   // 2a-3. "Client Access": general email, store platform login, social media login, ad account
   // login + setup type, and payment card details — collected during the Brief phase, rendered in
-  // ClientDashboard.tsx's Service Briefs tab. All five roles gated by canAccessClientSensitiveInfo
-  // (executive/head_of_technical/am_team_lead/am_agent/ai_engineer) can edit — routed through the
+  // ClientDashboard.tsx's Service Briefs tab. All four roles gated by canAccessClientSensitiveInfo
+  // (executive/head_of_technical/am_team_lead/am_agent) can edit — routed through the
   // update_client_access() RPC rather than a direct table update, since
   // clients_update_am_assignment_rls (the only general UPDATE policy on clients) doesn't cover
   // am_agent at all. The RPC re-checks the same role/own-client rule server-side and scopes the
@@ -3691,7 +3690,7 @@ export default function App() {
     showNotification('Task type updated.');
   };
 
-  // 3a-4. Platform CRUD (admin screen, executive/head_of_technical/ai_engineer only — enforced by
+  // 3a-4. Platform CRUD (admin screen, executive/head_of_technical only — enforced by
   // platforms_write_rls/platforms_update_rls). No delete handler: there is no DELETE policy on
   // platforms, so retiring one is always handleUpdatePlatform(id, { active: false }). Uses
   // supabaseRaw (not the mock proxy) for every write, unlike handleCreateTaskType/
@@ -4425,7 +4424,7 @@ export default function App() {
   };
 
   // Task hard delete (delete_tasks() RPC, 20261113000000_task_hard_delete.sql) — executive/
-  // head_of_technical/ai_engineer only, gated in CrossTeamTaskBoard.tsx via canHardDeleteTasks
+  // head_of_technical only, gated in CrossTeamTaskBoard.tsx via canHardDeleteTasks
   // (lib/permissions.ts); the RPC re-checks the same role gate server-side regardless. Deletes
   // the given task ids AND their full subtree (descendants via parent_task_id) — logActivity
   // fires once per id the caller actually requested (not per descendant pulled in), using each
@@ -4513,7 +4512,7 @@ export default function App() {
   };
 
   // Client merge (merge_clients() RPC, 20261114000000_merge_clients.sql) — executive/
-  // head_of_technical/ai_engineer only, gated in CrossTeamTaskBoard.tsx via canMergeClients
+  // head_of_technical only, gated in CrossTeamTaskBoard.tsx via canMergeClients
   // (lib/permissions.ts); the RPC re-checks the same role gate server-side regardless. The RPC
   // discovers and repoints every table with a foreign key to clients at runtime — far more state
   // than this component tracks individually (tasks, assignments, contracts, insights, reports,
@@ -5709,7 +5708,7 @@ export default function App() {
                 Also shown to the four team-lead roles, who get their own team-scoped feed (task
                 events only, via team_task_activity_feed()) instead of the admin activities read —
                 see the activities/team-feed fetch effect above. */}
-            {['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role) && (
+            {['executive', 'head_of_technical', 'am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role) && (
               <button
                 onClick={() => setIsActivityFeedOpen(!isActivityFeedOpen)}
                 className="hidden md:flex text-xs px-4 py-2 rounded-xl font-bold items-center gap-2 transition-all shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 active:translate-y-0 text-white"
@@ -6110,7 +6109,7 @@ export default function App() {
             {/* Live Activity Feed — mobile only; desktop keeps its own header button
                 (hidden md:flex above) instead of duplicating it here. Same role set as the
                 desktop button — see its own comment above. */}
-            {['executive', 'head_of_technical', 'ai_engineer', 'am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role) && (
+            {['executive', 'head_of_technical', 'am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead'].includes(currentUser.role) && (
               <div className="md:hidden mt-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
                 <button
                   onClick={() => {

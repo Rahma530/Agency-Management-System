@@ -16,7 +16,7 @@ export const isTaskDone = (status: TaskStatus): boolean => status === 'completed
 // Who may transition a task INTO 'closed': its creator, ANY current assignee (every row in
 // task_assignees, not only the legacy single assigned_to column — the person who did the work
 // can also close it themselves, whether or not they're the primary/oldest assignee), or an admin
-// role (executive, head_of_technical, ai_engineer) — byte-identical in shape to task_closable()
+// role (executive, head_of_technical) — byte-identical in shape to task_closable()
 // in supabase/migrations/20261104000000_task_visibility_functions.sql, the function
 // tasks_update_rls's own closing gate calls server-side (20261104100000_task_visibility_cutover.sql).
 // Deliberately narrower than every other status transition in this app, which has no
@@ -32,7 +32,6 @@ export const canCloseTask = (
 ): boolean =>
   user.role === 'executive' ||
   user.role === 'head_of_technical' ||
-  user.role === 'ai_engineer' ||
   task.created_by === user.id ||
   resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to).includes(user.id);
 
@@ -108,7 +107,7 @@ export const canEditTaskAssignees = (
   if (currentUser.role === 'sales' || currentUser.role === 'ui_ux_designer') return false;
 
   const assigneeIds = resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to);
-  const isAdmin = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
+  const isAdmin = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
   const isCreator = task.created_by === currentUser.id;
   const isCurrentAssignee = assigneeIds.includes(currentUser.id);
   if (isAdmin || isCreator || isCurrentAssignee) return true;
