@@ -6423,6 +6423,7 @@ export default function App() {
                 <DailyOperationsModule
                   tasks={tasks}
                   taskAssignees={taskAssignees}
+                  taskAttachments={taskAttachments}
                   users={users}
                   taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}

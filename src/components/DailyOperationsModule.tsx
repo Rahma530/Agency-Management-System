@@ -44,6 +44,7 @@ import {
   TaskStatus,
   TaskPriority,
   TaskAssigneeRecord,
+  TaskAttachmentRecord,
   UserRole,
 } from '../types/database';
 import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate, countDeliveredToday } from '../lib/employeeWork';
@@ -54,6 +55,7 @@ import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, c
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
+import { DailyLogAttachmentsPreview } from './DailyLogAttachmentsPreview';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
@@ -61,6 +63,9 @@ interface DailyOperationsModuleProps {
   // employee's" filter below must go through it, never tasks.assigned_to alone (visibility
   // audit finding: a co-assignee added after the first was invisible to every filter here).
   taskAssignees?: TaskAssigneeRecord[];
+  // Already RLS-scoped (App.tsx's global state, loaded once via loadData()) — handed straight to
+  // DailyLogAttachmentsPreview per log, never re-fetched here.
+  taskAttachments?: TaskAttachmentRecord[];
   users: UserRecord[];
   taskDirectoryUsers: UserRecord[];
   clients: ClientRecord[];
@@ -102,6 +107,7 @@ export type OperationSubTab = 'daily_view' | 'my_tasks' | 'blockers' | 'daily_ac
 export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   tasks,
   taskAssignees = [],
+  taskAttachments = [],
   users,
   taskDirectoryUsers,
   clients,
@@ -1793,6 +1799,11 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         </div>
                       </div>
                     )}
+
+                    <DailyLogAttachmentsPreview
+                      taskIds={linkedTasksList.map((lt) => lt.id)}
+                      taskAttachments={taskAttachments}
+                    />
                   </div>
                 );
               })}
