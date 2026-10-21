@@ -712,6 +712,13 @@ export interface ReportRecord {
   employee_scope_mode?: 'all_clients' | 'selected_clients' | 'employee_overall' | null;
   employee_scope_client_ids?: string[] | null;
   creation_key?: string | null;
+  // Which service a CLIENT-scope report's sources were filtered to: null means "All services"
+  // (the only behavior before this column existed). 'own_entries' means the caller had no
+  // classifiable service (a creative/tech or custom role) and was locked to just their own
+  // daily_log rows. Always the server-computed EFFECTIVE filter (after the caller's own lock),
+  // never necessarily what the UI requested. See report_caller_client_service_lock() /
+  // report_source_manifest_v2() in 20261125000000_report_client_service_filter.sql.
+  client_service_filter?: ServiceType | 'own_entries' | null;
   archived_at?: string | null;
   archived_by?: string | null;
   archive_reason?: string | null;

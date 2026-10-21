@@ -27,8 +27,9 @@ import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { getTodayStr } from '../lib/employeeWork';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
-import { canSelectAnyReportAgent, isSelectableReportAgent } from '../lib/reportAgentEligibility';
+import { canSelectAnyReportAgent, getReportClientServiceLock, isSelectableReportAgent } from '../lib/reportAgentEligibility';
 import { EmployeeClientScopeMode } from '../lib/reportDraftSources';
+import { getClientServices, SERVICE_LABELS } from '../lib/clientServices';
 import {
   ComparisonCard,
   FiledReportsList,
@@ -273,6 +274,23 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   const [subjectUserId, setSubjectUserId] = useState('');
   const [employeeScopeMode, setEmployeeScopeMode] = useState<EmployeeClientScopeMode | ''>('');
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  // Per-service CLIENT-scope report filter: null = "All services" (unchanged default behavior).
+  // Only meaningful for scopeKind === 'client'; the server is the actual enforcer (a Locked role's
+  // selection here, if any were ever sent, would be silently overridden) — this state only drives
+  // what the "Choice" role picker shows and sends. See getReportClientServiceLock().
+  const [clientServiceFilter, setClientServiceFilter] = useState<ServiceType | null>(null);
+  const reportClientServiceLock = useMemo(() => getReportClientServiceLock(currentUser.role), [currentUser.role]);
+  const selectedReportClient = useMemo(() => myClients.find((c) => c.id === clientId) || null, [myClients, clientId]);
+  const reportClientServiceOptions = useMemo(() => {
+    if (!selectedReportClient) return [];
+    const classifiable: ServiceType[] = ['seo', 'media_buying', 'social_media', 'interface', 'creation'];
+    return getClientServices(selectedReportClient).filter((service) => classifiable.includes(service));
+  }, [selectedReportClient]);
+  // Reset the filter whenever the client or scope changes, so a stale "SEO only" selection never
+  // silently carries over onto a different client/scope.
+  useEffect(() => {
+    setClientServiceFilter(null);
+  }, [clientId, scopeKind]);
   const todayIso = useMemo(() => getTodayStr(), []);
   const [periodStart, setPeriodStart] = useState(`${todayIso.slice(0, 8)}01`);
   const [periodEnd, setPeriodEnd] = useState(todayIso);
@@ -337,15 +355,17 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           (r.scope_type === 'client' || r.scope_type === 'employee') &&
           !r.archived_at &&
           r.period === periodKey &&
-          (topBarEffectiveScopeType === 'client' ? r.client_id === clientId : r.subject_user_id === topBarEffectiveSubjectUserId)
+          (topBarEffectiveScopeType === 'client'
+            ? r.client_id === clientId && (r.client_service_filter || null) === clientServiceFilter
+            : r.subject_user_id === topBarEffectiveSubjectUserId)
       )
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
     return candidates[0]?.id || null;
-  }, [reports, topBarEffectiveScopeType, clientId, topBarEffectiveSubjectUserId, periodStart, periodEnd]);
+  }, [reports, topBarEffectiveScopeType, clientId, clientServiceFilter, topBarEffectiveSubjectUserId, periodStart, periodEnd]);
 
   const lastSyncedScopeKey = useRef('');
   useEffect(() => {
-    const scopeKey = `${topBarEffectiveScopeType}:${clientId}:${topBarEffectiveSubjectUserId}:${periodStart}:${periodEnd}`;
+    const scopeKey = `${topBarEffectiveScopeType}:${clientId}:${clientServiceFilter || ''}:${topBarEffectiveSubjectUserId}:${periodStart}:${periodEnd}`;
     if (lastSyncedScopeKey.current === scopeKey) return;
     lastSyncedScopeKey.current = scopeKey;
     if (matchingWorkspaceReportId) {
@@ -353,7 +373,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     } else {
       setWorkspaceClearToken((n) => n + 1);
     }
-  }, [matchingWorkspaceReportId, topBarEffectiveScopeType, clientId, topBarEffectiveSubjectUserId, periodStart, periodEnd]);
+  }, [matchingWorkspaceReportId, topBarEffectiveScopeType, clientId, clientServiceFilter, topBarEffectiveSubjectUserId, periodStart, periodEnd]);
 
   // ======================================================================
   // Comparison — same resolvedScope as Setup, its own two independently editable periods (A =
@@ -727,6 +747,40 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                 </option>
               ))}
             </select>
+            {/* Per-service choice: only "Choice" roles (AM, team leads, executive, head_of_technical)
+                get this picker. Locked agent roles (seo_agent/media_buying_agent/social_media_agent
+                and the rest) are silently restricted server-side to their own service/entries
+                regardless of UI, so no picker is shown to them — nothing here would change what
+                they actually get. */}
+            {clientId && reportClientServiceLock === 'choice' && reportClientServiceOptions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setClientServiceFilter(null)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] border transition ${
+                    clientServiceFilter === null
+                      ? 'bg-purple-600 text-white border-purple-500 shadow'
+                      : 'bg-stone-900/60 text-stone-400 border-stone-800 hover:text-white'
+                  }`}
+                >
+                  All Services
+                </button>
+                {reportClientServiceOptions.map((service) => (
+                  <button
+                    key={service}
+                    type="button"
+                    onClick={() => setClientServiceFilter(service)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] border transition ${
+                      clientServiceFilter === service
+                        ? 'bg-purple-600 text-white border-purple-500 shadow'
+                        : 'bg-stone-900/60 text-stone-400 border-stone-800 hover:text-white'
+                    }`}
+                  >
+                    {SERVICE_LABELS[service]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -780,6 +834,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         subjectUserId={subjectUserId} onSubjectUserIdChange={setSubjectUserId}
         employeeScopeMode={employeeScopeMode} onEmployeeScopeModeChange={setEmployeeScopeMode}
         selectedClientIds={selectedClientIds} onSelectedClientIdsChange={setSelectedClientIds}
+        clientServiceFilter={clientServiceFilter}
         periodStart={periodStart} onPeriodStartChange={setPeriodStart}
         periodEnd={periodEnd} onPeriodEndChange={setPeriodEnd}
         openReportId={workspaceReportId} onOpenReportHandled={() => setWorkspaceReportId(null)}

@@ -20,7 +20,7 @@ import {
   collectClientReportSources, collectEmployeeReportSources, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
-import { isCreativeReportSubject } from '../../lib/reportAgentEligibility';
+import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
 import { classifyWorkLogService } from '../../lib/workLogServiceClassification';
@@ -60,6 +60,13 @@ interface Props {
   onEmployeeScopeModeChange: (mode: EmployeeClientScopeMode | '') => void;
   selectedClientIds: string[];
   onSelectedClientIdsChange: (ids: string[]) => void;
+  // Per-service CLIENT-scope filter (null = "All services"). Owned by ReportsHub's top bar, same
+  // controlled-prop pattern as clientId/employeeScopeMode. Only sent to the server when
+  // effectiveScopeType === 'client' — the server recomputes and enforces its own effective filter
+  // regardless (see report_caller_client_service_lock() /
+  // 20261125000000_report_client_service_filter.sql), so this can only narrow what a "Choice" role
+  // asks for, never widen a Locked role's access.
+  clientServiceFilter: ServiceType | null;
   periodStart: string;
   onPeriodStartChange: (value: string) => void;
   periodEnd: string;
@@ -258,6 +265,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   onEmployeeScopeModeChange,
   selectedClientIds,
   onSelectedClientIdsChange,
+  clientServiceFilter,
   periodStart,
   onPeriodStartChange,
   periodEnd,
@@ -272,6 +280,11 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const effectiveScopeType: 'client' | 'employee' = scopeKind === 'client' ? 'client' : 'employee';
   const effectiveSubjectUserId = scopeKind === 'own' ? currentUser.id : subjectUserId;
   const effectiveEmployeeScopeMode: EmployeeClientScopeMode | '' = scopeKind === 'own' ? 'all_clients' : employeeScopeMode;
+  // Client-side mirror of the server's own-lock resolution, for the preview count below only — the
+  // server (report_caller_client_service_lock()) is the real enforcer regardless of what this
+  // computes or what clientServiceFilter holds.
+  const reportClientServiceLock = useMemo(() => getReportClientServiceLock(currentUser.role), [currentUser.role]);
+  const effectiveClientServiceFilter = reportClientServiceLock === 'choice' ? clientServiceFilter : reportClientServiceLock;
 
   const [clientSearch, setClientSearch] = useState('');
   const [creatorNote, setCreatorNote] = useState('');
@@ -339,13 +352,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     if (!period) return { dailyLogs: [] as DailyLogRecord[], extraNotes: [] as ExtraNoteRecord[], tasks: [] };
     if (effectiveScopeType === 'client') {
       const result = collectClientReportSources(dailyLogs, clientId, period);
-      return { dailyLogs: result.dailyLogs, extraNotes: [] as ExtraNoteRecord[], tasks: [] };
+      const filteredLogs = !effectiveClientServiceFilter
+        ? result.dailyLogs
+        : effectiveClientServiceFilter === 'own_entries'
+        ? result.dailyLogs.filter((log) => log.user_id === currentUser.id)
+        : result.dailyLogs.filter(
+            (log) => classifyWorkLogService(users.find((user) => user.id === log.user_id)?.role) === effectiveClientServiceFilter
+          );
+      return { dailyLogs: filteredLogs, extraNotes: [] as ExtraNoteRecord[], tasks: [] };
     }
     return collectEmployeeReportSources(dailyLogs, extraNotes, tasks, taskAssignees, effectiveSubjectUserId, period, {
       mode: effectiveEmployeeScopeMode || 'employee_overall',
       clientIds: effectiveEmployeeScopeMode === 'selected_clients' ? selectedClientIds : clients.map((client) => client.id),
     });
-  }, [period, effectiveScopeType, clientId, effectiveSubjectUserId, effectiveEmployeeScopeMode, selectedClientIds, clients, dailyLogs, extraNotes, tasks, taskAssignees]);
+  }, [period, effectiveScopeType, clientId, effectiveClientServiceFilter, currentUser.id, users, effectiveSubjectUserId, effectiveEmployeeScopeMode, selectedClientIds, clients, dailyLogs, extraNotes, tasks, taskAssignees]);
 
   useEffect(() => {
     if (!openReportId) return;
@@ -385,6 +405,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         p_employee_scope_mode: effectiveScopeType === 'employee' ? effectiveEmployeeScopeMode : null,
         p_employee_client_ids: effectiveScopeType === 'employee' && effectiveEmployeeScopeMode === 'selected_clients' ? selectedClientIds : [],
         p_period_start: period.startInclusive, p_period_end_exclusive: period.endExclusive,
+        p_service_filter: effectiveScopeType === 'client' ? clientServiceFilter : null,
       });
       if (error) throw error;
       return data as unknown as SourceManifest;
@@ -561,6 +582,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         p_content_text: draftText,
         p_expected_source_hash: previewManifest.source_hash,
         p_creation_key: creationKey.current,
+        p_service_filter: effectiveScopeType === 'client' ? clientServiceFilter : null,
       });
       if (error) throw error;
       const report = data as unknown as ReportRecord;
