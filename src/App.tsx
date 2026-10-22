@@ -6203,6 +6203,8 @@ export default function App() {
                   assignments={assignments}
                   tasks={tasks}
                   taskAssignees={taskAssignees}
+                  taskComments={taskComments}
+                  taskAttachments={taskAttachments}
                   dailyLogs={dailyLogs}
                   extraNotes={extraNotes}
                   capacityLogs={capacityLogs}
@@ -6213,6 +6215,7 @@ export default function App() {
                   onCreateExtraNote={handleCreateExtraNote}
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
+                  onHardDeleteTasks={handleHardDeleteTasks}
                 />
               </div>
             )}
@@ -6423,6 +6426,7 @@ export default function App() {
                   tasks={tasks}
                   taskAssignees={taskAssignees}
                   taskAttachments={taskAttachments}
+                  taskComments={taskComments}
                   users={users}
                   taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}
@@ -6437,6 +6441,7 @@ export default function App() {
                   onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
                   onGetServerToday={getServerToday}
+                  onHardDeleteTasks={handleHardDeleteTasks}
                 />
               </div>
             )}

@@ -45,17 +45,20 @@ import {
   TaskPriority,
   TaskAssigneeRecord,
   TaskAttachmentRecord,
+  TaskCommentRecord,
   UserRole,
 } from '../types/database';
 import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate, countDeliveredToday } from '../lib/employeeWork';
-import { isActiveEmployee } from '../lib/permissions';
+import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
+import { computeTaskDeletionPreview } from '../lib/taskOperations';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
 import { DailyLogAttachmentsPreview } from './DailyLogAttachmentsPreview';
+import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal';
 
 interface DailyOperationsModuleProps {
   tasks: TaskRecord[];
@@ -66,6 +69,9 @@ interface DailyOperationsModuleProps {
   // Already RLS-scoped (App.tsx's global state, loaded once via loadData()) — handed straight to
   // DailyLogAttachmentsPreview per log, never re-fetched here.
   taskAttachments?: TaskAttachmentRecord[];
+  // Only read for computeTaskDeletionPreview's own count below (Task Delete confirm modal) —
+  // same already-RLS-scoped App.tsx state CrossTeamTaskBoard.tsx uses for the exact same purpose.
+  taskComments?: TaskCommentRecord[];
   users: UserRecord[];
   taskDirectoryUsers: UserRecord[];
   clients: ClientRecord[];
@@ -100,6 +106,12 @@ interface DailyOperationsModuleProps {
   // suggester's own stricter posture (never shows without it), this card always has something to
   // show.
   onGetServerToday?: () => Promise<string>;
+  // Task hard delete (delete_tasks() RPC) — same handler App.tsx already passes into
+  // CrossTeamTaskBoard.tsx, wired in here too so executive/head_of_technical can delete a task
+  // without having to leave this screen (e.g. the Blockers tab below). Optional and
+  // role-re-checked below via canHardDeleteTasks: absent or wrong role, the delete affordance
+  // simply never renders — never a silent no-op button.
+  onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
 }
 
 export type OperationSubTab = 'daily_view' | 'my_tasks' | 'blockers' | 'daily_activity' | 'manager_view';
@@ -108,6 +120,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   tasks,
   taskAssignees = [],
   taskAttachments = [],
+  taskComments = [],
   users,
   taskDirectoryUsers,
   clients,
@@ -122,6 +135,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   onDeleteDailyLog,
   onCreateExtraNote,
   onGetServerToday,
+  onHardDeleteTasks,
 }) => {
   // Navigation between sub views
   const [activeSubTab, setActiveSubTab] = useState<OperationSubTab>('daily_view');
@@ -155,6 +169,29 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Modals state
   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
   const [blockerModalTask, setBlockerModalTask] = useState<TaskRecord | null>(null);
+
+  // Task hard delete — same confirm-modal pattern as CrossTeamTaskBoard.tsx's own single-task
+  // delete button, reusing its exact TaskDeleteConfirmModal/computeTaskDeletionPreview.
+  const canDeleteTasks = !!onHardDeleteTasks && canHardDeleteTasks(currentUser.role);
+  const [deleteModalTaskIds, setDeleteModalTaskIds] = useState<string[] | null>(null);
+  const [isDeletingTasks, setIsDeletingTasks] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const handleConfirmDeleteTasks = async () => {
+    if (!deleteModalTaskIds || !onHardDeleteTasks) return;
+    setIsDeletingTasks(true);
+    setDeleteError(null);
+    try {
+      await onHardDeleteTasks(deleteModalTaskIds);
+      if (selectedTaskDetails && deleteModalTaskIds.includes(selectedTaskDetails.id)) {
+        setSelectedTaskDetails(null);
+      }
+      setDeleteModalTaskIds(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Unable to delete the selected task(s).');
+    } finally {
+      setIsDeletingTasks(false);
+    }
+  };
   // Done Link draft, synced whenever a different task's details open — same pattern as
   // CrossTeamTaskBoard.tsx's own Drive/Done Link drafts.
   const [doneLinkDraft, setDoneLinkDraft] = useState('');
@@ -1519,6 +1556,16 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                               >
                                 <Clock className="w-3.5 h-3.5" />
                               </button>
+
+                              {canDeleteTasks && (
+                                <button
+                                  onClick={() => setDeleteModalTaskIds([task.id])}
+                                  className="p-1 rounded text-red-400 hover:text-red-300 hover:bg-red-950/40"
+                                  title="Delete Task"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1633,6 +1680,16 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         <Check className="w-3.5 h-3.5" />
                         <span>Resolve & Resume</span>
                       </button>
+
+                      {canDeleteTasks && (
+                        <button
+                          onClick={() => setDeleteModalTaskIds([task.id])}
+                          className="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/40 transition-colors"
+                          title="Delete Task"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -2586,6 +2643,26 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           </div>
         </div>
       )}
+
+      {deleteModalTaskIds && (() => {
+        const preview = computeTaskDeletionPreview(deleteModalTaskIds, tasks, taskComments, taskAttachments);
+        const taskNames = deleteModalTaskIds.map((id) => tasks.find((t) => t.id === id)?.title || id);
+        return (
+          <TaskDeleteConfirmModal
+            taskNames={taskNames}
+            subtaskCount={preview.subtaskCount}
+            commentCount={preview.commentCount}
+            attachmentCount={preview.attachmentCount}
+            isDeleting={isDeletingTasks}
+            error={deleteError}
+            onConfirm={handleConfirmDeleteTasks}
+            onClose={() => {
+              setDeleteModalTaskIds(null);
+              setDeleteError(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };
