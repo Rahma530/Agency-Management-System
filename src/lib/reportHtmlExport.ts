@@ -238,9 +238,13 @@ async function renderWorkLogsSection(sections: PdfParagraph[]): Promise<string> 
     })
     .join('');
 
-  return `<section class="kesra-section"><div class="sec-head"><div class="kesra-badge">01</div><h2>${escapeHtml(
-    REPORT_SECTION_HEADINGS.workLogs
-  )}</h2></div>${cardsHtml}</section>`;
+  // No visible section heading here, by request: "Work logs (primary source)" is an internal
+  // parsing marker (REPORT_SECTION_HEADINGS/parseReportContentIntoParagraphs), never meant for the
+  // report's reader. A client-scope report already never showed it (its per-service sub-headings —
+  // see the `<h3>` check above — render instead), but this top-level `<h2>` used to print it
+  // unconditionally for every scope, including employee-scope (no service sub-split). Dropped
+  // entirely rather than replaced, so neither scope shows it.
+  return `<section class="kesra-section">${cardsHtml}</section>`;
 }
 
 function renderCreativeSummarySection(body: string): string {
