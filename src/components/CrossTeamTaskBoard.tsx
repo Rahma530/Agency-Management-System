@@ -161,6 +161,12 @@ interface CrossTeamTaskBoardProps {
   // Pre-fills the search box (matches by assignee name) when arriving here via
   // the "Assign via Task Board" link from CapacityManagement's employee cards.
   initialAssigneeFilter?: string;
+  // Opens this task's Details modal on arrival — set when a notification's link_url is
+  // 'task:<id>' (see App.tsx's handleNotificationClick) so clicking a task notification jumps
+  // straight to that task instead of just landing on the Tasks module. A fresh id (even the same
+  // one re-clicked) re-opens the modal; see this prop's own effect below for why a changed `tasks`
+  // array must never do that on its own.
+  initialOpenTaskId?: string | null;
   taskComments?: TaskCommentRecord[];
   onAddTaskComment?: (taskId: string, body: string, parentCommentId?: string | null) => Promise<void>;
   onEditTaskComment?: (commentId: string, body: string) => Promise<void>;
@@ -215,6 +221,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onCreatePlatform,
   onUpdatePlatform,
   initialAssigneeFilter,
+  initialOpenTaskId,
   taskComments = [],
   onAddTaskComment,
   onEditTaskComment,
@@ -413,6 +420,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     // Mark once when a different task is opened; callback identity must not retrigger the write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTaskDetails?.id]);
+
+  // initialOpenTaskId's own effect — reads tasks via a ref mirror (updated every render, below)
+  // rather than depending on `tasks` directly, so an unrelated task-list update elsewhere never
+  // re-fires this and silently reopens a modal the person already closed. Mirrors the exact
+  // reference-churn-safe pattern used for ReportDraftWorkspace.tsx's report-switch effect.
+  const tasksRef = React.useRef(tasks);
+  tasksRef.current = tasks;
+  useEffect(() => {
+    if (!initialOpenTaskId) return;
+    const target = tasksRef.current.find((t) => t.id === initialOpenTaskId);
+    if (target) setSelectedTaskDetails(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOpenTaskId]);
   // Done Link draft, synced whenever a different task's details open — the one general-purpose
   // task link field (owner decision; Drive Link has been removed, see canShowDoneLink()).
   const [doneLinkDraft, setDoneLinkDraft] = useState('');
