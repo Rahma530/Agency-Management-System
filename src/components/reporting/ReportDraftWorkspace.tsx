@@ -353,6 +353,13 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [previewManifest, setPreviewManifest] = useState<SourceManifest | null>(null);
+  // Optional, per-report, NOT persisted: lets a client-scope report show a different name in the
+  // exported PDF/HTML than the client's own stored name (e.g. an English name for a client
+  // registered with an Arabic name in the system) — requested as something to fill in fresh each
+  // time, not a standing per-client setting, so deliberately kept as throwaway local state (reset
+  // on report switch above) rather than a new column/migration. Empty means "use the real name" —
+  // see exportPdf/exportHtml below for where it's applied, and the input next to those buttons.
+  const [clientDisplayNameOverride, setClientDisplayNameOverride] = useState('');
   const creationKey = useRef<string | null>(null);
   const workspaceRef = useRef<HTMLElement | null>(null);
   // Mirrors `reports` on every render WITHOUT being a reactive dependency anywhere below. `reports`
@@ -616,10 +623,12 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // report) where it would silently feed the wrong report's AI Summary/"save as new draft". The
     // one-step undo snapshot is scoped the same way — never offer to "undo" into a different
     // report's text. Likewise the active grouping/rephrase tracking is scoped to whichever
-    // report's sources it was built from.
+    // report's sources it was built from. clientDisplayNameOverride is the same kind of per-report,
+    // not-persisted, deliberately throwaway state (see its own declaration below) — reset here too.
     setUndoSnapshot(null);
     setActiveWorkLogGroups(undefined);
     setPreviewManifest(null);
+    setClientDisplayNameOverride('');
     if (!selectedReportId) {
       setVersions([]);
       setSources([]);
@@ -985,7 +994,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
     const subjectName = selectedReport.scope_type === 'employee'
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
-      : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
+      : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
     const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
     const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
     await downloadReportPdf({
@@ -1015,7 +1024,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     }
     const subjectName = selectedReport.scope_type === 'employee'
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
-      : (clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
+      : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
     const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
     const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
     const html = await buildIndividualReportHtml({
@@ -1097,6 +1106,16 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
             <button disabled={busy} onClick={undoLastAiChange} title="Restore the draft text exactly as it was before the last AI Summary / Group similar entries / Clear AI text action" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">↶ Undo</button>
           )}
           {selectedReport.status !== 'final' && <button disabled={busy || !!selectedReport.archived_at} onClick={approveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Approve final</button>}
+          {selectedReport.scope_type === 'client' && (
+            <input
+              type="text"
+              value={clientDisplayNameOverride}
+              onChange={(e) => setClientDisplayNameOverride(e.target.value)}
+              placeholder={`Name in PDF/HTML (optional) — default: ${clients.find((c) => c.id === selectedReport.client_id)?.name || 'Client'}`}
+              title="Overrides only how the client's name appears in the exported PDF/HTML — not saved, type it again next time"
+              className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500 w-64 focus:outline-none focus:border-purple-400"
+            />
+          )}
           <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
           <button onClick={exportHtml} title="Branded HTML report (cards, embedded screenshots) — a second format alongside PDF" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />HTML</button>
           {selectedReport.archived_at
