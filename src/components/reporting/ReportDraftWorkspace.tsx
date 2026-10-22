@@ -17,7 +17,7 @@ import {
 import { supabase, supabaseRaw } from '../../lib/supabase';
 import { formatLocalCalendarDate, resolveReportPeriod } from '../../lib/reportPeriods';
 import {
-  collectClientReportSources, collectEmployeeReportSources, EmployeeClientScopeMode,
+  collectClientReportSources, collectEmployeeReportSources, dedupeIdenticalWorkLogs, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
 import { buildIndividualReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
@@ -244,7 +244,16 @@ function composeManifestContent(
   // (already shown in the report header) isn't repeated on every work-log line.
   omitAuthorPrefix?: boolean
 ): string {
-  const logs = manifest.sources.filter((source) => source.source_kind === 'daily_log');
+  // dedupeIdenticalWorkLogs: see its own comment in reportDraftSources.ts — collapses a daily_log
+  // row auto-created from a delivered task's own title/description (source='auto_task') with a
+  // same-day manual entry an employee also wrote for that same task, when the two read as byte-
+  // identical text. Applied here (not only in the brand-new-draft collectors) so Pull sources
+  // again/Group similar entries/AI Summary/Revert to original sources on an ALREADY-OPEN report
+  // all see the same deduped set too, since they all route through this composer.
+  const logs = dedupeIdenticalWorkLogs(
+    manifest.sources.filter((source) => source.source_kind === 'daily_log'),
+    (source) => `${source.user_id}|${source.client_id ?? ''}|${source.source_date}|${String(source.snapshot.summary_text || '').trim()}`
+  );
   const notes = manifest.sources.filter((source) => source.source_kind === 'extra_note');
   const tasks = manifest.sources.filter((source) => source.source_kind === 'task');
   const sections: string[] = [];
