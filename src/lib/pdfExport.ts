@@ -577,7 +577,13 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
   drawHeader();
   options.paragraphs.forEach((section, index) => {
     if (section.divider && index > 0) drawDivider();
-    drawHeading(section.heading);
+    // The top-level "Work logs (primary source)" heading is an internal parsing marker (see
+    // REPORT_SECTION_HEADINGS/parseReportContentIntoParagraphs above), never meant to be read by
+    // the report's audience — a client-scope report already never shows it (its own per-service
+    // sub-headings like "Social Media" are drawn instead), but an employee-scope report (which has
+    // no service sub-split) used to draw this literal internal label as a visible section title.
+    // Skipped here too, so neither scope ever shows it.
+    if (section.heading !== REPORT_SECTION_HEADINGS.workLogs) drawHeading(section.heading);
     drawArabicParagraph(section.body);
   });
   (options.bulletLists || []).forEach((list) => {

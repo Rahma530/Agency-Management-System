@@ -24,9 +24,17 @@ async function checkIndividualReport() {
 
   if (!html.startsWith('<!doctype html>')) throw new Error('Individual report HTML must be a complete standalone document.');
   if (!html.includes(BRAND_PURPLE_HEX)) throw new Error('Individual report HTML must use the Kesra brand purple token.');
-  Object.values(REPORT_SECTION_HEADINGS).forEach((heading) => {
+  // workLogs is the one exception: it's an internal parsing marker never meant for the report's
+  // reader (same as it already never showed for a client-scope report's per-service sub-headings),
+  // so it's checked separately below as explicitly ABSENT rather than included in this loop.
+  Object.entries(REPORT_SECTION_HEADINGS).forEach(([key, heading]) => {
+    if (key === 'workLogs') return;
     if (!html.includes(heading)) throw new Error(`Individual report HTML is missing the "${heading}" section.`);
   });
+  if (html.includes(REPORT_SECTION_HEADINGS.workLogs)) {
+    throw new Error('Individual report HTML must never show the internal "Work logs (primary source)" marker as a visible heading.');
+  }
+  if (!html.includes('رفعت التصميم')) throw new Error('Work-log entry text did not survive into the HTML report even without its section heading.');
   if (!html.includes('Fix homepage banner')) throw new Error('Task evidence ledger content did not survive into the HTML report.');
   console.log('OK (1/2): buildIndividualReportHtml renders every known section from a saved content_text, with the brand palette applied.');
 }
