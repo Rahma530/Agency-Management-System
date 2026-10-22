@@ -38,6 +38,31 @@ function byDateThenId<T extends { date: string; id: string }>(a: T, b: T): numbe
   return a.date.localeCompare(b.date) || a.id.localeCompare(b.id);
 }
 
+// Collapses rows that are genuine, DIFFERENT database rows (different ids — dedupeReportSourceKey
+// above only ever catches the SAME id appearing twice) but describe the exact same piece of work:
+// same author, same client, same day, byte-identical text once trimmed. Confirmed cause: a task's
+// delivery auto-creates its own daily_logs row (source='auto_task', using the task's own title/
+// description as the summary — see 20261120000000_auto_daily_log_from_delivered_task.sql), and if
+// the same employee ALSO logs that same task manually on the same day, both rows are individually
+// legitimate, but showing both reads as the exact same line repeated in the report. Only an EXACT
+// match collapses — a close-but-not-identical wording is left alone, since this project never
+// silently merges two entries that might carry genuinely different details. Keeps whichever one
+// comes first in the caller's own ordering (deterministic, but arbitrary as to manual vs
+// auto_task — the frontend has no way to tell those apart today, since report_source_manifest_v2's
+// snapshot never includes the `source` column, only `date/user_id/client_id/summary_text/
+// linked_task_ids`).
+export function dedupeIdenticalWorkLogs<T>(items: T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
 function taskClassificationFields(task: TaskRecord): Array<[string, string]> {
   return [
     ['task_type', task.task_type || ''],
@@ -76,7 +101,13 @@ export function collectClientReportSources(
       .filter((log) => log.client_id === clientId && isDateInReportPeriod(log.date, period))
       .map((log) => ({ sourceKind: 'daily_log' as const, sourceId: log.id, row: log }))
   );
-  return { dailyLogs: references.map((item) => item.row).sort(byDateThenId) };
+  const sorted = references.map((item) => item.row).sort(byDateThenId);
+  return {
+    dailyLogs: dedupeIdenticalWorkLogs(
+      sorted,
+      (log) => `${log.user_id}|${log.client_id ?? ''}|${log.date}|${log.summary_text.trim()}`
+    ),
+  };
 }
 
 export function collectEmployeeReportSources(
@@ -99,7 +130,10 @@ export function collectEmployeeReportSources(
       .filter((log) => log.user_id === userId && matchesClientScope(log.client_id) && isDateInReportPeriod(log.date, period))
       .map((log) => ({ sourceKind: 'daily_log' as const, sourceId: log.id, row: log }))
   );
-  const eligibleLogs = work.map((item) => item.row).sort(byDateThenId);
+  const eligibleLogs = dedupeIdenticalWorkLogs(
+    work.map((item) => item.row).sort(byDateThenId),
+    (log) => `${log.user_id}|${log.client_id ?? ''}|${log.date}|${log.summary_text.trim()}`
+  );
   const notes = dedupeReportSourceReferences(
     (clientScope.mode === 'employee_overall' ? extraNotes : [])
       .filter((note) => note.user_id === userId && isDateInReportPeriod(note.date, period))

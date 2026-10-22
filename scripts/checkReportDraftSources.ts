@@ -2,6 +2,7 @@ import {
   collectClientReportSources,
   collectEmployeeReportSources,
   composeInitialReportContent,
+  dedupeIdenticalWorkLogs,
 } from '../src/lib/reportDraftSources';
 import { DailyLogRecord, ExtraNoteRecord, TaskAssigneeRecord, TaskRecord } from '../src/types/database';
 
@@ -111,4 +112,34 @@ if (!creativeContent.includes('Saturday design work') || creativeContent.include
   throw new Error('Employee-scope work log lines must not repeat the subject\'s name on every line.');
 }
 
-console.log('OK: report draft sources enforce scope, Friday exclusion, linked-task evidence, Creative counts, and stable dedupe.');
+// Exact-content dedupe: two DIFFERENT ids (never caught by dedupeReportSourceReferences, which
+// only collapses the SAME id appearing twice), same user/client/day, byte-identical text once
+// trimmed — the known case being a task's auto_task daily_log plus a same-day manual entry for
+// that same task. Only an exact match collapses; a merely-similar line stays untouched.
+{
+  const exactDupeLogs: DailyLogRecord[] = [
+    { id: 'manual1', user_id: 'u1', client_id: 'c1', date: '2026-10-11', summary_text: 'نشر استوري انستجرام', linked_task_ids: [] },
+    { id: 'auto1', user_id: 'u1', client_id: 'c1', date: '2026-10-11', summary_text: '  نشر استوري انستجرام  ', linked_task_ids: ['t1'] }, // exact dupe, only whitespace differs — must collapse
+    { id: 'similar1', user_id: 'u1', client_id: 'c1', date: '2026-10-11', summary_text: 'نشر استوري انستجرام ثاني', linked_task_ids: [] }, // merely similar — must stay
+    { id: 'other-day', user_id: 'u1', client_id: 'c1', date: '2026-10-12', summary_text: 'نشر استوري انستجرام', linked_task_ids: [] }, // same text, different day — must stay
+  ];
+  const clientResult = collectClientReportSources(exactDupeLogs, 'c1', period);
+  const ids = clientResult.dailyLogs.map((row) => row.id);
+  if (ids.length !== 3 || !ids.includes('similar1') || !ids.includes('other-day') || (ids.includes('manual1') === ids.includes('auto1'))) {
+    throw new Error(
+      `Exact-content dedupe failed: expected exactly one of manual1/auto1 plus similar1 and other-day untouched, got [${ids.join(',')}].`
+    );
+  }
+
+  // Direct unit coverage of the generic helper itself, independent of collectClientReportSources'
+  // own scope/period filtering.
+  const deduped = dedupeIdenticalWorkLogs(
+    [{ k: 'a', v: 1 }, { k: 'a', v: 2 }, { k: 'b', v: 3 }],
+    (item) => item.k
+  );
+  if (deduped.length !== 2 || deduped[0].v !== 1 || deduped[1].v !== 3) {
+    throw new Error('dedupeIdenticalWorkLogs must keep only the first occurrence per key, in order.');
+  }
+}
+
+console.log('OK: report draft sources enforce scope, Friday exclusion, linked-task evidence, Creative counts, stable dedupe, and exact-content work-log dedupe (auto_task + same-day manual duplicate).');
