@@ -171,15 +171,18 @@ function renderWorkLogSection(
   attachmentLinksByTask: Map<string, string[]>,
   workLogGroups?: WorkItemGroup[],
   serviceGrouping?: WorkLogServiceGrouping,
-  // Employee-scope reports cover a single subject whose name the report header/subtitle already
-  // shows, so repeating it on every work-log line is redundant — pass true there to drop the
-  // prefix. Client-scope reports (the only ones that can ever have serviceGrouping) span several
-  // employees at once, so they always keep it; this flag is never true at the same time as a
-  // serviceGrouping being present.
+  // Previously true only for employee-scope reports (whose single subject's name the report
+  // header/subtitle already shows) — client-scope reports (which can span several employees) used
+  // to always keep an "Employee: text" prefix as the only way to tell whose line is whose. Dropped
+  // per request for both scopes: it cluttered the pulled draft and had to be manually deleted line
+  // by line. `names`/`omitAuthorPrefix` are kept as parameters (every call site still passes them)
+  // even though renderLine no longer reads either — `names` is still used below to resolve
+  // employee roles into serviceGrouping's per-service buckets, which has nothing to do with
+  // whether a name is PRINTED on the line.
   omitAuthorPrefix?: boolean
 ): string {
-  const renderLine = (employeeName: string, text: string, attachmentLines: string[]): string => {
-    const firstLine = omitAuthorPrefix ? text : `${employeeName}: ${text}`;
+  const renderLine = (_employeeName: string, text: string, attachmentLines: string[]): string => {
+    const firstLine = text;
     return attachmentLines.length ? [firstLine, ...attachmentLines].join('\n') : firstLine;
   };
 

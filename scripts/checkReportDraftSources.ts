@@ -95,16 +95,18 @@ if (creativeContent.includes('Task evidence ledger') || creativeContent.includes
   throw new Error('Task evidence ledger must no longer be composed into new reports.');
 }
 
-// Work log lines must read as "Employee: text", never prefixed with the log's own date — the
-// date stays on the stored row (daily_logs.date / report_source_items.source_date), it just no
-// longer appears inside the composed narrative text. Client-scope reports can span several
-// employees at once, so the name prefix stays there.
-if (!clientContent.includes('One: Saturday design work') || clientContent.includes('2026-10-10 —')) {
-  throw new Error('Client-scope work log lines must read "Employee: text" without a leading date.');
+// Work log lines must read as plain text, never prefixed with the log's own date OR the
+// employee's name — the date stays on the stored row (daily_logs.date /
+// report_source_items.source_date), it just no longer appears inside the composed narrative text.
+// Client-scope reports can span several employees at once, but the "Employee: " name prefix was
+// dropped there too per request: it cluttered every pulled draft and had to be deleted by hand.
+if (!clientContent.includes('Saturday design work') || clientContent.includes('One: Saturday design work') || clientContent.includes('2026-10-10 —')) {
+  throw new Error('Client-scope work log lines must read as plain text, with no date prefix and no employee-name prefix.');
 }
 
 // Employee-scope reports cover a single subject already named in the report header, so the
-// per-line "Employee: " prefix is dropped there — it would just repeat the same name on every line.
+// per-line "Employee: " prefix was already dropped there before client-scope's own prefix was
+// dropped too — this just confirms that earlier behavior is unchanged.
 if (!creativeContent.includes('Saturday design work') || creativeContent.includes('One: Saturday design work')) {
   throw new Error('Employee-scope work log lines must not repeat the subject\'s name on every line.');
 }

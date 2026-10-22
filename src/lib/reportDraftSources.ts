@@ -164,13 +164,13 @@ export function composeInitialReportContent(
   // report_source_items (the audit ledger, which still orders by and keeps source_date).
   //
   // Employee-scope reports cover a single subject whose name is already shown in the report
-  // header/subtitle, so repeating it on every line is redundant — those lines read as plain text.
-  // Client-scope reports can span several employees at once, so the "Employee: text" prefix stays
-  // there; it's the only way to tell whose line is whose.
-  const workLines = dailyLogs.map((log) => scope === 'employee'
-    ? log.summary_text.trim()
-    : `${employeeNames.get(log.user_id) || 'Employee'}: ${log.summary_text.trim()}`
-  );
+  // header/subtitle, so repeating it on every line was always redundant. Client-scope reports can
+  // span several employees at once, and used to keep an "Employee: text" prefix as the only way to
+  // tell whose line is whose — dropped per request: it cluttered the pulled draft and had to be
+  // manually deleted line by line before every report. `employeeNames`/`scope` are kept as
+  // parameters (other call sites still pass them, and `scope` still gates the sections below) even
+  // though work lines themselves no longer read either.
+  const workLines = dailyLogs.map((log) => log.summary_text.trim());
   const noteLines = scope === 'employee'
     ? extraNotes.map((note) => `${note.date} — ${note.note_text.trim()}`)
     : [];
