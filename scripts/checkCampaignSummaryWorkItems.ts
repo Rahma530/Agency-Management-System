@@ -137,6 +137,40 @@ const workItems = [
   if (byId.get('no-numbers') !== 'تمت مراجعة المحتوى مع العميل.') throw new Error('A rephrase with no numbers on either side must be kept as rephrased.');
 }
 
+// 7) Banned trailing-count phrasing ("5 مرات"/"times") surviving the number-fidelity check alone:
+// a merged "Group similar entries" line like "تم نشر 5 ستوري" rephrased by THIS stage into
+// "تم نشر ستوري 5 مرات" keeps the exact same numeric-token set ({5} on both sides), so test #6's
+// check alone would accept it — reported recurrence of the already-banned "مرات" wording coming
+// back through AI Summary's own rephrase pass, even after WORK_ITEM_GROUP's own output (which
+// never contains it) was merged correctly. Must still fall back to the original text.
+{
+  const items = [
+    { id: 'banned-reintroduced', text: 'تم نشر 5 ستوري.' },
+    { id: 'banned-already-present', text: 'تم نشر ستوري 5 مرات.' }, // already banned going in — rephrase just keeps it; no regression to guard, still must not crash
+    { id: 'clean-rephrase-kept', text: 'تم نشر 5 ستوري.' },
+  ];
+  const result = validateCampaignSummaryPayload({ ...basePayload, work_items: items });
+  const input = buildAnalyzeInput(result);
+  const validation = validateAnalyzeOutput(
+    {
+      findings: [], recommendations: [],
+      work_items: [
+        { id: 'banned-reintroduced', text: 'تم نشر ستوري 5 مرات.' }, // same number, but reintroduces the banned phrasing — must fall back
+        { id: 'banned-already-present', text: 'نشر ستوري 5 مرات في الفترة.' }, // banned phrasing was already in the original too — not a NEW regression, so this one may be kept
+        { id: 'clean-rephrase-kept', text: 'نشرت 5 ستوريز بنجاح.' }, // same number, no banned phrasing — must be kept
+      ],
+    },
+    'brief',
+    input
+  );
+  if (!validation.ok) throw new Error('A work_items batch exercising the banned-phrasing check was wrongly rejected outright.');
+  const byId = new Map((validation.value as { work_items: { id: string; text: string }[] }).work_items.map((w) => [w.id, w.text]));
+  if (byId.get('banned-reintroduced') !== 'تم نشر 5 ستوري.') {
+    throw new Error('A rephrase that reintroduces the banned "مرات"/"times" trailing-count phrasing must fall back to the original text, even when its number is unchanged.');
+  }
+  if (byId.get('clean-rephrase-kept') !== 'نشرت 5 ستوريز بنجاح.') throw new Error('A clean rephrase with the same number and no banned phrasing must be kept.');
+}
+
 // Payload-level validation regressions: cap, shape, and uniqueness.
 {
   let rejected = false;
@@ -164,4 +198,4 @@ const workItems = [
   if (!rejected) throw new Error('An unknown field inside a work_items entry was accepted.');
 }
 
-console.log('OK: CAMPAIGN_SUMMARY work_items are capped per batch, passed through verbatim, reconciled id-complete and in original order (missing ids falling back to their exact original text), and a rephrase that drops/invents a number falls back to the original too.');
+console.log('OK: CAMPAIGN_SUMMARY work_items are capped per batch, passed through verbatim, reconciled id-complete and in original order (missing ids falling back to their exact original text), a rephrase that drops/invents a number falls back to the original, and a rephrase that reintroduces the banned "مرات"/"times" trailing-count phrasing falls back too even when its number is unchanged.');
