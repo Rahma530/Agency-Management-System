@@ -297,7 +297,41 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   // Any manual date edit (top bar A, or Comparison's own A/B below) flips this to 'custom' — see
   // the onChange handlers on those date inputs and applyPeriodShortcut below.
   const [periodShortcut, setPeriodShortcut] = useState<ComparisonGranularity | 'custom'>('custom');
+  // Client combobox (Report scope: client): one field that both searches AND shows the current
+  // selection, replacing the old two-control layout (a search box filtering a SEPARATE <select>
+  // the user had to open to see/pick a result) — requested as smoother: type, see matches drop
+  // down right under the field, click one, done. clientSearchQuery is still the single source of
+  // truth for the input's text; it doubles as the search filter while typing and as the selected
+  // client's displayed name once something is picked.
   const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [clientComboboxOpen, setClientComboboxOpen] = useState(false);
+  const clientComboboxRef = useRef<HTMLDivElement | null>(null);
+  // Only re-syncs the input's text to the selected client's name when clientId itself actually
+  // changes (a fresh pick, or a report opened programmatically via openFiledReport) — never on an
+  // unrelated `myClients` reference change (a background refetch elsewhere), which would otherwise
+  // silently overwrite whatever the user is mid-typing for a NEW search while a client is already
+  // selected. Same reference-churn pitfall as the reports-list reset bug fixed separately.
+  const lastSyncedClientIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (clientId && clientId !== lastSyncedClientIdRef.current) {
+      const client = myClients.find((c) => c.id === clientId);
+      if (client) setClientSearchQuery(client.name);
+      lastSyncedClientIdRef.current = clientId;
+    } else if (!clientId) {
+      lastSyncedClientIdRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+  useEffect(() => {
+    if (!clientComboboxOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (clientComboboxRef.current && !clientComboboxRef.current.contains(event.target as Node)) {
+        setClientComboboxOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [clientComboboxOpen]);
 
   // Activity tab's own filters — sorted by the log's own `date` (newest first), then by
   // `created_at` as a tiebreaker for logs sharing the same date, so a backdated or future-dated
@@ -745,28 +779,64 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
 
         {scopeKind === 'client' && (
           <div className="space-y-2">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <div className="relative" ref={clientComboboxRef}>
+              <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={clientSearchQuery}
-                onChange={(e) => setClientSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setClientSearchQuery(e.target.value);
+                  setClientComboboxOpen(true);
+                  if (clientId) setClientId('');
+                }}
+                onFocus={(e) => {
+                  setClientComboboxOpen(true);
+                  e.target.select();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setClientComboboxOpen(false);
+                }}
                 placeholder="Search name or phone..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400"
+                className="w-full pl-9 pr-8 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400"
               />
+              {clientSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => { setClientSearchQuery(''); setClientId(''); setClientComboboxOpen(true); }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
+                  aria-label="Clear client"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {clientComboboxOpen && (
+                <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-xl bg-[#100c1c] border border-purple-900/50 shadow-xl">
+                  {searchedClients.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-stone-500">No matching clients.</div>
+                  ) : (
+                    searchedClients.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        // onMouseDown (not onClick) fires before the input's onBlur/the outside-click
+                        // listener can close the dropdown out from under this click.
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setClientId(c.id);
+                          setClientSearchQuery(c.name);
+                          setClientComboboxOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs hover:bg-purple-900/40 ${
+                          c.id === clientId ? 'bg-purple-900/30 text-white' : 'text-stone-300'
+                        }`}
+                      >
+                        {c.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
-            <select
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
-            >
-              <option value="">-- Select a client --</option>
-              {searchedClients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
             {/* Per-service choice: only "Choice" roles (AM, team leads, executive, head_of_technical)
                 get this picker. Locked agent roles (seo_agent/media_buying_agent/social_media_agent
                 and the rest) are silently restricted server-side to their own service/entries
