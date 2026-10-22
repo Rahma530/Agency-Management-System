@@ -6371,7 +6371,6 @@ export default function App() {
                   currentUser={currentUser}
                   onUpdateUserCapacity={handleUpdateUserCapacity}
                   onLogCapacity={handleLogCapacity}
-                  onNavigateToModule={handleNavigateToModule}
                   extraNotes={extraNotes}
                   onUpdateUserDailyTaskTarget={handleUpdateUserDailyTaskTarget}
                 />

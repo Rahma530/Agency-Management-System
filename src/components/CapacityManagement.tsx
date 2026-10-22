@@ -37,11 +37,12 @@ import {
   ExtraNoteRecord,
   UserRole,
 } from '../types/database';
-import { getRoleInfo, isBuiltInRole, AppModuleId } from '../data/roles';
+import { getRoleInfo, isBuiltInRole } from '../data/roles';
 import { getActiveCustomRole } from '../data/customRoles';
 import { isActiveEmployee, canManageClientsFromCapacity, canManageEmployeesFromCapacity, canManageEmployee, canSetDailyTaskTarget } from '../lib/permissions';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { isTeamLeadRole, isCreativeCapacityRole, resolveCapacityLimit, getUserCapacityData as getSharedUserCapacityData } from '../lib/capacity';
+import { isTaskDone, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { getEmployeesByDepartment } from '../lib/departmentStaffing';
 import { getTodayStr } from '../lib/employeeWork';
 import { ImportDataModal } from './ImportDataModal';
@@ -58,7 +59,6 @@ interface CapacityManagementProps {
   currentUser?: UserRecord;
   onUpdateUserCapacity: (userId: string, newLimit: number) => Promise<void>;
   onLogCapacity?: (agentId: string, date: string, count: number) => Promise<void>;
-  onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   extraNotes?: ExtraNoteRecord[];
   // users.daily_task_target (20261115000000_daily_task_target.sql) — gated below via
   // canSetDailyTaskTarget(role) + canManageEmployee() + an explicit self-id check (no self-edit,
@@ -71,15 +71,6 @@ interface CapacityManagementProps {
 export type CapacityStatus = 'all' | 'available' | 'near_capacity' | 'over_capacity' | 'target_reached';
 export type ViewMode = 'cards' | 'matrix' | 'logs';
 
-// Reverse link (point 4): always points to the Tasks module, prefilled with
-// this employee's name — the one place their assigned work is visible
-// regardless of role, without guessing at a per-role destination.
-const getAssignmentLink = (
-  user: UserRecord
-): { moduleId: AppModuleId; prefill?: string; label: string } | null => {
-  return { moduleId: 'tasks', prefill: user.name, label: `View ${user.name}'s assigned tasks` };
-};
-
 export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   users,
   clients,
@@ -90,7 +81,6 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   currentUser,
   onUpdateUserCapacity,
   onLogCapacity,
-  onNavigateToModule,
   extraNotes = [],
   onUpdateUserDailyTaskTarget,
 }) => {
@@ -113,6 +103,13 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   // Editing daily task target state — mirrors the capacity-limit editing state above, kept
   // separate since they're two independent fields with independent permission gates.
   const [editingDailyTargetUserId, setEditingDailyTargetUserId] = useState<string | null>(null);
+
+  // Employee Dashboard drilldown (the Capacity card's "View X's Dashboard" button): opens in a
+  // modal over this same screen rather than navigating to the Tasks module, so a TL never loses
+  // their current filters/scroll position. Holds just the user id — the modal recomputes that
+  // user's own capacity data fresh (via getUserCapacityData below) rather than trusting a
+  // possibly-stale captured item, so it still reflects live data while open.
+  const [drilldownUserId, setDrilldownUserId] = useState<string | null>(null);
   const [tempDailyTarget, setTempDailyTarget] = useState('');
   const [isSavingDailyTarget, setIsSavingDailyTarget] = useState(false);
 
@@ -504,6 +501,21 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
     };
   };
 
+  // Employee Dashboard drilldown content: recomputed fresh from the raw props (not read off a
+  // captured card item) so the modal always reflects the live users/tasks/clients lists even if
+  // they change while it's open. Delivered tasks (isTaskDone: completed/closed) is new here —
+  // every other field (assignedClients, activeTasks = workload-open) already exists on
+  // getUserCapacityData's own return shape and is reused as-is.
+  const drilldownUser = drilldownUserId ? users.find((u) => u.id === drilldownUserId) || null : null;
+  const drilldownData = useMemo(() => {
+    if (!drilldownUser) return null;
+    const capacity = getSharedUserCapacityData(drilldownUser, clients, tasks, taskAssignees, assignments);
+    const deliveredTasks = tasks.filter(
+      (t) => isTaskDone(t.status) && resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(drilldownUser.id)
+    );
+    return { ...capacity, deliveredTasks };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drilldownUser, clients, tasks, taskAssignees, assignments]);
 
   return (
     <div className="capacity-management space-y-6">
@@ -1200,20 +1212,16 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                       </div>
                     </div>
 
-                    {/* Reverse link (point 4): jump to where this employee is assigned work */}
-                    {(() => {
-                      const assignLink = getAssignmentLink(item.user);
-                      if (!assignLink) return null;
-                      return (
-                        <button
-                          onClick={() => onNavigateToModule?.(assignLink.moduleId, assignLink.prefill)}
-                          className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-purple-200 bg-purple-900/30 hover:bg-purple-800/50 hover:text-white border border-purple-700/40 transition-all"
-                        >
-                          <span>{assignLink.label}</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </button>
-                      );
-                    })()}
+                    {/* Opens the Employee Dashboard modal below — in place, over this same
+                        screen, rather than navigating away to the Tasks module (see
+                        drilldownUserId's own comment for why). */}
+                    <button
+                      onClick={() => setDrilldownUserId(item.user.id)}
+                      className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-purple-200 bg-purple-900/30 hover:bg-purple-800/50 hover:text-white border border-purple-700/40 transition-all"
+                    >
+                      <span>View {item.user.name}'s Dashboard</span>
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </button>
 
                   </div>
                 );
@@ -1615,6 +1623,120 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Employee Dashboard drilldown — opened from a Capacity card's "View X's Dashboard"
+          button. Shows assigned clients (every non-creative role: AM and every technical-team
+          role alike, since getUserCapacityData already resolves active clients the same way for
+          all of them) and task delivery (delivered = completed/closed, active = workload-open),
+          in place, without leaving this screen. */}
+      {drilldownUser && drilldownData && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(10, 6, 16, 0.75)' }}
+          onClick={() => setDrilldownUserId(null)}
+        >
+          <div
+            className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-[20px] p-5"
+            style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
+                  style={{ background: 'var(--gradient-badge)' }}
+                >
+                  {drilldownUser.name.charAt(0)}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">{drilldownUser.name}'s Dashboard</h3>
+                  <span
+                    className="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                    style={{ background: getRoleBadge(drilldownUser.role).bg, color: getRoleBadge(drilldownUser.role).text }}
+                  >
+                    {getRoleBadge(drilldownUser.role).label}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setDrilldownUserId(null)}
+                className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800/60 transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {!isCreativeCapacityRole(drilldownUser.role) && (
+              <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-soft)' }}>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-300 mb-2">
+                  <Building2 className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Clients ({drilldownData.assignedClients.length})</span>
+                </div>
+                {drilldownData.assignedClients.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {drilldownData.assignedClients.map((client) => (
+                      <span
+                        key={client.id}
+                        className="px-2 py-1 rounded-md text-[11px] bg-stone-900/90 text-stone-300 border border-stone-800"
+                      >
+                        {client.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-500 italic">No clients currently assigned.</p>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-soft)' }}>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-300 mb-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[var(--roas-good)]" />
+                  <span>Delivered ({drilldownData.deliveredTasks.length})</span>
+                </div>
+                {drilldownData.deliveredTasks.length > 0 ? (
+                  <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5">
+                    {drilldownData.deliveredTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="text-[11px] p-1.5 rounded bg-stone-900/80 text-stone-300 truncate border border-stone-800/80"
+                        title={task.title}
+                      >
+                        • {task.title}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-500 italic">No delivered tasks yet.</p>
+                )}
+              </div>
+
+              <div className="p-3 rounded-xl" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-soft)' }}>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-300 mb-2">
+                  <CheckSquare className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Active ({drilldownData.activeTasks.length})</span>
+                </div>
+                {drilldownData.activeTasks.length > 0 ? (
+                  <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5">
+                    {drilldownData.activeTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="text-[11px] p-1.5 rounded bg-stone-900/80 text-stone-300 truncate border border-stone-800/80"
+                        title={task.title}
+                      >
+                        • {task.title}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-500 italic">No active tasks right now.</p>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
