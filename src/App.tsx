@@ -315,6 +315,11 @@ export default function App() {
   const [clientContracts, setClientContracts] = useState<ClientContractRecord[]>([]);
   const [platformConnections, setPlatformConnections] = useState<PlatformConnectionRecord[]>([]);
   const [taskBoardAssigneePrefill, setTaskBoardAssigneePrefill] = useState<string | null>(null);
+  // Set by handleNotificationClick when a task notification's link_url ('task:<id>') is clicked —
+  // tells CrossTeamTaskBoard to open that task's Details modal on arrival (see its own
+  // initialOpenTaskId prop/effect). Reset to null on every ordinary tab change the same way
+  // taskBoardAssigneePrefill is, so a later visit to Tasks never reopens a stale notification's task.
+  const [taskBoardOpenTaskId, setTaskBoardOpenTaskId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([
     {
       id: 'notif-1',
@@ -532,11 +537,35 @@ export default function App() {
     }
   };
 
-  // Notification click-through: link_url uses a 'chat:<senderId>' scheme (set by the
-  // notify_new_chat_message() trigger) — parse it and hand the target user id to MiniChat via
-  // chatOpenRequest. Any other/missing link_url is a no-op for now (only chat notifications
-  // link anywhere today).
+  // Notification click-through: link_url uses either a 'chat:<senderId>' scheme (set by the
+  // notify_new_chat_message() trigger) — parsed below to hand the target user id to MiniChat via
+  // chatOpenRequest — or a 'task:<taskId>' scheme (set by notify_key_task_status_changes()/
+  // set_task_assignees(), see those migrations) — parsed here to jump straight to that task's
+  // Details modal on the Tasks board, via taskBoardOpenTaskId/CrossTeamTaskBoard's own
+  // initialOpenTaskId prop. A bare 'module:tasks' (an older notification, or one from a future
+  // code path that hasn't been given a task id) still just lands on the Tasks module with nothing
+  // pre-opened. Any other/missing link_url is a no-op.
   const handleNotificationClick = (notification: NotificationRecord) => {
+    if (notification.link_url?.startsWith('task:')) {
+      const taskId = notification.link_url.slice('task:'.length);
+      if (taskId) {
+        handleTabChange('tasks');
+        setTaskBoardOpenTaskId(taskId);
+      }
+      return;
+    }
+    // A bare 'module:<name>' link (several existing notification types already use this —
+    // onboarding/service_briefs/tasks) previously went nowhere: this function only ever handled
+    // 'chat:'. Now it actually navigates there too, same validModules allow-list the hash router
+    // itself uses, so a stale/unrecognized module name is simply ignored rather than crashing.
+    if (notification.link_url?.startsWith('module:')) {
+      const moduleName = notification.link_url.slice('module:'.length) as AppModuleId;
+      const validModules: AppModuleId[] = ['onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'dashboard', 'my_work', 'employees', 'brief_templates'];
+      if (validModules.includes(moduleName)) {
+        handleTabChange(moduleName);
+      }
+      return;
+    }
     if (notification.link_url?.startsWith('chat:')) {
       const otherUserId = notification.link_url.slice('chat:'.length);
       if (otherUserId) {
@@ -901,6 +930,9 @@ export default function App() {
     // Clears any stale prefill from a previous Capacity-button visit on a
     // plain nav-bar click (no second argument), not just when setting a new one.
     setTaskBoardAssigneePrefill(prefillAssigneeName ?? null);
+    // Same reset-by-default rule as the prefill above — a task notification's handleNotificationClick
+    // sets this itself, right after calling handleTabChange, so its own setter wins the same batch.
+    setTaskBoardOpenTaskId(null);
     const mySlug = getPortalSlug(authenticatedUser.role);
     window.location.hash = `#/portal/${mySlug}/${newTab}`;
     setActiveTab(newTab);
@@ -6402,6 +6434,7 @@ export default function App() {
                   onCreatePlatform={handleCreatePlatform}
                   onUpdatePlatform={handleUpdatePlatform}
                   initialAssigneeFilter={taskBoardAssigneePrefill}
+                  initialOpenTaskId={taskBoardOpenTaskId}
                   taskComments={taskComments}
                   onAddTaskComment={handleAddTaskComment}
                   onEditTaskComment={handleEditTaskComment}
