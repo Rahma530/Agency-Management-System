@@ -24,6 +24,8 @@ import {
   AssignmentRecord,
   TaskRecord,
   TaskAssigneeRecord,
+  TaskCommentRecord,
+  TaskAttachmentRecord,
   DailyLogRecord,
   ExtraNoteRecord,
   CapacityLogRecord,
@@ -35,13 +37,15 @@ import { getRoleInfo, AppModuleId } from '../data/roles';
 import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, getSortedEmployeeTasks } from '../lib/employeeWork';
 import { TASK_STATUS_ORDER, isTaskDone, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
-import { canSeeContractValue, canAccessClientOnboarding } from '../lib/permissions';
+import { canSeeContractValue, canAccessClientOnboarding, canHardDeleteTasks } from '../lib/permissions';
+import { computeTaskDeletionPreview } from '../lib/taskOperations';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { EmployeePerformancePage } from './EmployeePerformancePage';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
+import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal';
 
 interface MyWorkHubProps {
   currentUser: UserRecord;
@@ -52,6 +56,10 @@ interface MyWorkHubProps {
   // task-derived "my clients"/"unviewed" filters below previously read only the legacy single
   // assigned_to column, missing a co-assignee added after the first.
   taskAssignees?: TaskAssigneeRecord[];
+  // Only read for computeTaskDeletionPreview's own count below (Task Delete confirm modal) —
+  // same already-RLS-scoped App.tsx state CrossTeamTaskBoard.tsx uses for the exact same purpose.
+  taskComments?: TaskCommentRecord[];
+  taskAttachments?: TaskAttachmentRecord[];
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
   capacityLogs: CapacityLogRecord[];
@@ -76,6 +84,11 @@ interface MyWorkHubProps {
   }) => Promise<void>;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   onMarkTaskViewed?: (taskId: string) => Promise<void> | void;
+  // Task hard delete (delete_tasks() RPC) — same handler App.tsx already passes into
+  // CrossTeamTaskBoard.tsx, wired in here too so executive/head_of_technical can delete a task
+  // without leaving this screen. Optional and role-re-checked below via canHardDeleteTasks: absent
+  // or wrong role, the delete affordance simply never renders — never a silent no-op button.
+  onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
 }
 
 // Ordering only, not section presence: am_agent/am_team_lead/sales lead with
@@ -136,6 +149,8 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   assignments,
   tasks,
   taskAssignees = [],
+  taskComments = [],
+  taskAttachments = [],
   dailyLogs,
   extraNotes,
   capacityLogs,
@@ -146,12 +161,33 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   onCreateExtraNote,
   onNavigateToModule,
   onMarkTaskViewed,
+  onHardDeleteTasks,
 }) => {
   const roleInfo = getRoleInfo(currentUser.role);
   const layout: 'client-first' | 'task-first' = CLIENT_FIRST_LAYOUT_ROLES.includes(currentUser.role)
     ? 'client-first'
     : 'task-first';
   const showClients = hasClientsSection(currentUser.role);
+
+  // Task hard delete — same confirm-modal pattern as CrossTeamTaskBoard.tsx's own single-task
+  // delete button, reusing its exact TaskDeleteConfirmModal/computeTaskDeletionPreview.
+  const canDeleteTasks = !!onHardDeleteTasks && canHardDeleteTasks(currentUser.role);
+  const [deleteModalTaskIds, setDeleteModalTaskIds] = useState<string[] | null>(null);
+  const [isDeletingTasks, setIsDeletingTasks] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const handleConfirmDeleteTasks = async () => {
+    if (!deleteModalTaskIds || !onHardDeleteTasks) return;
+    setIsDeletingTasks(true);
+    setDeleteError(null);
+    try {
+      await onHardDeleteTasks(deleteModalTaskIds);
+      setDeleteModalTaskIds(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Unable to delete the selected task(s).');
+    } finally {
+      setIsDeletingTasks(false);
+    }
+  };
 
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const showNotification = (text: string, type: 'success' | 'error' = 'success') => {
@@ -652,14 +688,25 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                     </span>
                   </div>
                 </div>
-                {!isTaskDone(task.status) && task.status !== 'blocked' && (
-                  <button
-                    onClick={() => handleAdvanceStatus(task)}
-                    className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 transition-colors"
-                  >
-                    Advance
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!isTaskDone(task.status) && task.status !== 'blocked' && (
+                    <button
+                      onClick={() => handleAdvanceStatus(task)}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 transition-colors"
+                    >
+                      Advance
+                    </button>
+                  )}
+                  {canDeleteTasks && (
+                    <button
+                      onClick={() => setDeleteModalTaskIds([task.id])}
+                      className="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/40 transition-colors"
+                      title="Delete Task"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1003,6 +1050,26 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
           onClose={() => setIsPerformanceOpen(false)}
         />
       )}
+
+      {deleteModalTaskIds && (() => {
+        const preview = computeTaskDeletionPreview(deleteModalTaskIds, tasks, taskComments, taskAttachments);
+        const taskNames = deleteModalTaskIds.map((id) => tasks.find((t) => t.id === id)?.title || id);
+        return (
+          <TaskDeleteConfirmModal
+            taskNames={taskNames}
+            subtaskCount={preview.subtaskCount}
+            commentCount={preview.commentCount}
+            attachmentCount={preview.attachmentCount}
+            isDeleting={isDeletingTasks}
+            error={deleteError}
+            onConfirm={handleConfirmDeleteTasks}
+            onClose={() => {
+              setDeleteModalTaskIds(null);
+              setDeleteError(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };
