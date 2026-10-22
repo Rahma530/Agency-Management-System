@@ -2336,7 +2336,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       {isLoggingDailyActivity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div
-            className="w-full max-w-xl rounded-[20px] p-6 space-y-4 border shadow-2xl relative"
+            className="w-full max-w-xl rounded-[20px] p-6 space-y-4 border shadow-2xl relative max-h-[90vh] overflow-y-auto"
             style={{ background: 'var(--surface-dark)', borderColor: 'var(--border-strong)' }}
           >
             <div className="flex items-start justify-between pb-3 border-b border-stone-800">
