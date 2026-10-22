@@ -87,7 +87,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-am-team-lead-tint)',
     badgeText: 'var(--role-am-team-lead-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'campaigns', 'reports', 'employees'],
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
