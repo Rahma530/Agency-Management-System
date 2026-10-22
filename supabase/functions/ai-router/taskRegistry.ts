@@ -519,6 +519,14 @@ function isStringArray(value: unknown): value is string[] {
 // describes its own independent fact. A rephrase that fails this check falls back to that item's
 // own original, untouched text — the same safe-degrade path already used for a dropped/garbled id,
 // just triggered by a content-fidelity failure instead of a missing one.
+//
+// Banned trailing-count phrasing ("5 مرات"/"خمس مرات"/"5 times"): the SAME banned pattern
+// WORK_ITEM_GROUP's own validateWorkItemGroupOutput already rejects (BANNED_TRAILING_COUNT_PATTERN,
+// defined further below) can be reintroduced right here even when the number itself survives
+// intact — e.g. a merged "تم نشر 5 ستوري" (which already passed WORK_ITEM_GROUP's check) rephrased
+// by THIS stage into "تم نشر ستوري 5 مرات": the numeric-token set is still exactly {5} on both
+// sides, so the number-fidelity check above alone would accept it, letting the banned wording back
+// in through this second rephrase pass. Checked after the number check, on the same per-item basis.
 function reconcileWorkItems(rawOutput: unknown, inputItems: WorkItemInput[] | undefined): WorkItemOutput[] | undefined {
   if (!inputItems || inputItems.length === 0) return undefined;
   const byId = new Map<string, string>();
@@ -536,7 +544,9 @@ function reconcileWorkItems(rawOutput: unknown, inputItems: WorkItemInput[] | un
     const rephrasedNumbers = numericTokens(rephrased);
     const numbersPreserved = originalNumbers.size === rephrasedNumbers.size
       && [...originalNumbers].every((token) => rephrasedNumbers.has(token));
-    return { id: item.id, text: numbersPreserved ? rephrased : item.text };
+    const bannedPhrasingReintroduced = BANNED_TRAILING_COUNT_PATTERN.test(rephrased)
+      && !BANNED_TRAILING_COUNT_PATTERN.test(item.text);
+    return { id: item.id, text: numbersPreserved && !bannedPhrasingReintroduced ? rephrased : item.text };
   });
 }
 
