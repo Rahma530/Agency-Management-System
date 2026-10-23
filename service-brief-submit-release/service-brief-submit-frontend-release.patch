@@ -1,0 +1,417 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index b25e93a..667016a 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -3401,14 +3401,23 @@ export default function App() {
+   // later edit to the brief (handleSaveBrief never clears it) — submitting is one-way.
+   const handleSubmitBrief = async (briefId: string) => {
+     const brief = briefs.find((b) => b.id === briefId);
+-    if (!brief) return;
++    if (!brief) throw new Error('The brief is no longer available. Refresh and try again.');
+ 
+-    const submittedAt = new Date().toISOString();
++    let submittedAt = new Date().toISOString();
+ 
+     if (supabaseActive) {
+       try {
+-        const { error } = await supabase.from('briefs').update({ submitted_at: submittedAt }).eq('id', briefId);
++        const { data, error } = await supabase
++          .from('briefs')
++          .update({ submitted_at: submittedAt })
++          .eq('id', briefId)
++          .select('id, submitted_at')
++          .single();
+         if (error) throw error;
++        if (!data || data.id !== briefId || !data.submitted_at) {
++          throw new Error('The brief submission was not persisted. Please retry or contact an administrator.');
++        }
++        submittedAt = data.submitted_at;
+       } catch (err) {
+         console.error('Supabase brief submit error:', err);
+         throw err;
+diff --git a/src/components/ClientDashboard.tsx b/src/components/ClientDashboard.tsx
+index ec12f17..1cdef47 100644
+--- a/src/components/ClientDashboard.tsx
++++ b/src/components/ClientDashboard.tsx
+@@ -521,6 +521,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
+     return asg ? users.find((u) => u.id === asg.agent_id) : null;
+   }, [clientAssignments, users]);
+ 
++  const assignedUiUxDesigner = useMemo(() => {
++    const asg = clientAssignments.find((a) => a.service_type === 'interface');
++    return asg ? users.find((u) => u.id === asg.agent_id) : null;
++  }, [clientAssignments, users]);
++
+   // Campaign Access Evaluation under RLS:
+   // - Operational: Media Buying Team Lead, Media Buying Agent (assigned only)
+   // - View-Only: Executive, Head of Technical, AM Team Lead, AM Agent (assigned only)
+@@ -637,6 +642,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
+     currentUser.role === 'media_buying_agent' ||
+     currentUser.role === 'social_media_team_lead' ||
+     currentUser.role === 'social_media_agent' ||
++    currentUser.role === 'ui_ux_designer' ||
+     currentUser.role === 'graphic_designer' ||
+     currentUser.role === 'video_editor';
+ 
+@@ -2190,6 +2196,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
+                   emptyInitial: 'C',
+                 })}
+ 
++                {renderServiceAssignmentCard({
++                  serviceType: 'interface',
++                  title: 'UI/UX Designer',
++                  assignedUser: assignedUiUxDesigner,
++                  emptyLabel: 'Awaiting UI/UX assignment',
++                  departmentLabel: 'CREATIVE — Interface Design',
++                  accentTextClass: 'text-violet-400',
++                  avatarClass: 'bg-violet-900/20 border-violet-700/30 text-violet-300',
++                  emptyInitial: 'U',
++                })}
++
+                 {/* Client Portal Access */}
+                 <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
+                   <div className="flex items-center justify-between mb-3">
+diff --git a/src/components/CrossTeamTaskBoard.tsx b/src/components/CrossTeamTaskBoard.tsx
+index 2cc4974..ea199bd 100644
+--- a/src/components/CrossTeamTaskBoard.tsx
++++ b/src/components/CrossTeamTaskBoard.tsx
+@@ -211,6 +211,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+   const [isTaskTypeManagerOpen, setIsTaskTypeManagerOpen] = useState(false);
+   const canManageTaskTypes = currentUser?.role === 'executive' || currentUser?.role === 'head_of_technical';
++  const isUiUxDesigner = currentUser?.role === 'ui_ux_designer';
+   const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskRecord | null>(null);
+   useEffect(() => {
+     if (selectedTaskDetails?.id && onMarkTaskViewed) {
+@@ -1443,7 +1444,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+           )}
+ 
+           {/* Create Task Button */}
+-          <button
++          {!isUiUxDesigner && <button
+             onClick={() => {
+               const recovery = readTaskCreateRecovery(currentUserId);
+               if (recovery) {
+@@ -1465,7 +1466,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+           >
+             <PlusCircle className="w-4 h-4 text-purple-200" />
+             <span>New Task</span>
+-          </button>
++          </button>}
+         </div>
+ 
+         {/* Quick Filter Pills Row */}
+@@ -1861,13 +1862,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+                             >
+                               <Eye className="w-3.5 h-3.5" />
+                             </button>
+-                            <button
++                            {!isUiUxDesigner && <button
+                               onClick={() => openEditModal(task)}
+                               className="p-1.5 rounded-lg bg-stone-800 text-stone-300 hover:text-purple-300"
+                               title="Edit Task"
+                             >
+                               <Edit2 className="w-3.5 h-3.5" />
+-                            </button>
++                            </button>}
+                           </div>
+                         </td>
+                       </tr>
+@@ -2216,13 +2217,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+                 <div>
+                   <div className="flex items-center justify-between mb-1.5">
+                     <label className="text-[11px] font-semibold text-stone-400">Subtasks:</label>
+-                    <button
++                    {!isUiUxDesigner && <button
+                       onClick={() => openAddSubtaskModal(selectedTaskDetails)}
+                       className="text-[11px] font-bold text-purple-300 hover:text-purple-200 flex items-center gap-1"
+                     >
+                       <PlusCircle className="w-3.5 h-3.5" />
+                       Add Subtask
+-                    </button>
++                    </button>}
+                   </div>
+                   <SubtaskList
+                     parentTask={selectedTaskDetails}
+@@ -2231,6 +2232,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+                     level={2}
+                     onAddSubtask={openAddSubtaskModal}
+                     onEditSubtask={openEditModal}
++                    readOnly={isUiUxDesigner}
+                   />
+                 </div>
+               )}
+@@ -2273,7 +2275,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+ 
+             {/* Modal Actions */}
+             <div className="pt-3 border-t border-stone-800 flex items-center justify-between">
+-              <button
++              {!isUiUxDesigner && <button
+                 onClick={() => {
+                   const taskToEdit = selectedTaskDetails;
+                   setSelectedTaskDetails(null);
+@@ -2283,7 +2285,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
+               >
+                 <Edit2 className="w-3.5 h-3.5" />
+                 <span>Edit Task</span>
+-              </button>
++              </button>}
+ 
+               <button
+                 onClick={() => setSelectedTaskDetails(null)}
+diff --git a/src/components/MyWorkHub.tsx b/src/components/MyWorkHub.tsx
+index 46996cb..cda05b9 100644
+--- a/src/components/MyWorkHub.tsx
++++ b/src/components/MyWorkHub.tsx
+@@ -119,7 +119,7 @@ const SERVICE_TEAM_LEAD_ROLES: UserRole[] = ['media_buying_team_lead', 'seo_team
+ // from active task assignment instead: a genuinely different, more
+ // transient signal than an owned relationship, but the only one this app's
+ // data model actually gives these roles.
+-const TASK_DERIVED_CLIENT_ROLES: UserRole[] = ['graphic_designer', 'video_editor', 'programming_agent'];
++const TASK_DERIVED_CLIENT_ROLES: UserRole[] = ['graphic_designer', 'video_editor', 'programming_agent', 'ui_ux_designer'];
+ 
+ const STATUS_LABELS: Record<TaskStatus, string> = {
+   todo: 'To Do',
+diff --git a/src/components/ServiceBriefsRoutingView.tsx b/src/components/ServiceBriefsRoutingView.tsx
+index 0d06aaf..9f269f8 100644
+--- a/src/components/ServiceBriefsRoutingView.tsx
++++ b/src/components/ServiceBriefsRoutingView.tsx
+@@ -21,6 +21,7 @@ import {
+   Eye,
+   Gauge,
+   ClipboardCheck,
++  Palette,
+ } from 'lucide-react';
+ import {
+   ClientRecord,
+@@ -551,6 +552,21 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
+         icon: <Share2 className="w-5 h-5 text-pink-400" />,
+       };
+     }
++    if (serviceType === 'interface') {
++      return {
++        serviceType,
++        isTeamLead: false,
++        teamLeadRole,
++        serviceNameEn: 'Interface Design (UI/UX)',
++        departmentName: 'CREATIVE — UI/UX Design',
++        leadRoleTitle: 'UI/UX Design',
++        agentRoleTitle: 'UI/UX Designer',
++        accentColor: '#8b5cf6',
++        badgeBg: 'var(--dept-design-tint)',
++        badgeText: 'var(--dept-design-ink)',
++        icon: <Palette className="w-5 h-5 text-violet-400" />,
++      };
++    }
+     return null;
+   };
+ 
+@@ -562,7 +578,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
+         <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
+         <h3 className="text-base font-bold text-white">Access Restricted</h3>
+         <p className="text-xs text-stone-300">
+-          Reserved for SEO, Social Media, and Media Buying teams.
++          Reserved for SEO, Social Media, Media Buying, and assigned UI/UX teams.
+         </p>
+       </div>
+     );
+@@ -595,7 +611,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
+       return true;
+     } else {
+       const myAssignment = assignments.find(
+-        (a) => a.client_id === c.id && a.agent_id === currentUser.id
++        (a) => a.client_id === c.id && a.service_type === serviceType && a.agent_id === currentUser.id
+       );
+       return !!myAssignment;
+     }
+diff --git a/src/components/SubtaskList.tsx b/src/components/SubtaskList.tsx
+index 5aaae3e..e35c45d 100644
+--- a/src/components/SubtaskList.tsx
++++ b/src/components/SubtaskList.tsx
+@@ -14,6 +14,7 @@ interface SubtaskListProps {
+   level: 2 | 3;
+   onAddSubtask: (parentTask: TaskRecord) => void;
+   onEditSubtask: (task: TaskRecord) => void;
++  readOnly?: boolean;
+ }
+ 
+ const statusBadge = (status: TaskStatus) => {
+@@ -53,6 +54,7 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
+   level,
+   onAddSubtask,
+   onEditSubtask,
++  readOnly = false,
+ }) => {
+   const children = allTasks.filter((t) => t.parent_task_id === parentTask.id);
+ 
+@@ -106,14 +108,14 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
+                     {child.due_date}
+                   </span>
+                 )}
+-                <button
++                {!readOnly && <button
+                   onClick={() => onEditSubtask(child)}
+                   className="p-1 rounded bg-stone-900 text-stone-400 hover:text-white"
+                   title="Edit"
+                 >
+                   <Edit2 className="w-3 h-3" />
+-                </button>
+-                {canNestFurther && (
++                </button>}
++                {canNestFurther && !readOnly && (
+                   <button
+                     onClick={() => onAddSubtask(child)}
+                     className="p-1 rounded bg-stone-900 text-stone-400 hover:text-purple-300"
+@@ -133,6 +135,7 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({
+                 level={(level + 1) as 2 | 3}
+                 onAddSubtask={onAddSubtask}
+                 onEditSubtask={onEditSubtask}
++                readOnly={readOnly}
+               />
+             )}
+           </div>
+diff --git a/src/data/roles.ts b/src/data/roles.ts
+index 4a84ec0..ff0f608 100644
+--- a/src/data/roles.ts
++++ b/src/data/roles.ts
+@@ -310,6 +310,22 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
+     canAssignAM: false,
+     description: 'Video production, motion graphics, and short-form video ads.',
+   },
++  ui_ux_designer: {
++    role: 'ui_ux_designer',
++    englishTitle: 'UI/UX Designer',
++    portalTitleEn: 'UI/UX Designer Portal',
++    portalSlug: 'ui-ux-designer',
++    team: 'Creative & Design',
++    department: 'CREATIVE',
++    badgeBg: 'var(--role-graphic-designer-tint)',
++    badgeText: 'var(--role-graphic-designer-ink)',
++    defaultModule: 'my_work',
++    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks'],
++    canCreateCampaign: false,
++    canManageCapacity: false,
++    canAssignAM: false,
++    description: 'Interface design briefs and personally assigned task delivery; brief access is read-only.',
++  },
+   ai_engineer: {
+     role: 'ai_engineer',
+     englishTitle: 'AI Engineer',
+diff --git a/src/lib/serviceAssignment.ts b/src/lib/serviceAssignment.ts
+index 3213b0e..2be82f8 100644
+--- a/src/lib/serviceAssignment.ts
++++ b/src/lib/serviceAssignment.ts
+@@ -1,11 +1,11 @@
+ import { ServiceType, UserRecord, UserRole } from '../types/database';
+ import { isActiveEmployee } from './permissions';
+ 
+-export type AssignableServiceType = Extract<ServiceType, 'seo' | 'media_buying' | 'social_media'>;
++export type AssignableServiceType = Extract<ServiceType, 'seo' | 'media_buying' | 'social_media' | 'interface'>;
+ 
+ export interface ServiceAssignmentConfig {
+   serviceType: AssignableServiceType;
+-  teamLeadRole: UserRole;
++  teamLeadRole: UserRole | null;
+   agentRoles: readonly UserRole[];
+ }
+ 
+@@ -25,6 +25,11 @@ export const SERVICE_ASSIGNMENT_CONFIG: Record<AssignableServiceType, ServiceAss
+     teamLeadRole: 'social_media_team_lead',
+     agentRoles: ['social_media_agent'],
+   },
++  interface: {
++    serviceType: 'interface',
++    teamLeadRole: null,
++    agentRoles: ['ui_ux_designer'],
++  },
+ };
+ 
+ export const getServiceAssignmentConfigForRole = (
+@@ -41,7 +46,7 @@ export const getEligibleServiceAssignees = (
+   const config = SERVICE_ASSIGNMENT_CONFIG[serviceType];
+   return users.filter(
+     (user) =>
+-      (user.role === config.teamLeadRole || config.agentRoles.includes(user.role)) &&
++      ((config.teamLeadRole !== null && user.role === config.teamLeadRole) || config.agentRoles.includes(user.role)) &&
+       isActiveEmployee(user)
+   );
+ };
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+index cc1689d..a4d21b4 100644
+--- a/src/lib/supabase.ts
++++ b/src/lib/supabase.ts
+@@ -137,7 +137,7 @@ export function isEmployeeAccessibleUnderRLS(
+ 
+   // 4. Shared resources: Graphic Designers and Video Editors are visible to ALL roles
+   // (EXCEPT Sales who have no access to creative or technical operational staff)
+-  if (targetEmployee.role === 'graphic_designer' || targetEmployee.role === 'video_editor') {
++  if (targetEmployee.role === 'graphic_designer' || targetEmployee.role === 'video_editor' || targetEmployee.role === 'ui_ux_designer') {
+     return viewer.role !== 'sales';
+   }
+ 
+@@ -175,7 +175,7 @@ export function isEmployeeAccessibleUnderRLS(
+   }
+ 
+   // Graphic Designer and Video Editor do NOT gain access to all employee records
+-  if (viewer.role === 'graphic_designer' || viewer.role === 'video_editor') {
++  if (viewer.role === 'graphic_designer' || viewer.role === 'video_editor' || viewer.role === 'ui_ux_designer') {
+     return false;
+   }
+ 
+@@ -252,6 +252,7 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
+       'social_media_agent',
+       'graphic_designer',
+       'video_editor',
++      'ui_ux_designer',
+       'ai_engineer',
+       'marketing_manager',
+     ];
+@@ -272,6 +273,9 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
+   }
+ 
+   // Graphic Designers & Video Editors
++  if (viewerRole === 'ui_ux_designer') {
++    return ['ui_ux_designer'];
++  }
+   if (viewerRole === 'graphic_designer' || viewerRole === 'video_editor') {
+     return ['graphic_designer', 'video_editor'];
+   }
+@@ -363,6 +367,12 @@ export function isClientAccessibleUnderRLS(
+     );
+   }
+ 
++  if (viewer.role === 'ui_ux_designer') {
++    return inMemoryAssignments.some(
++      (assignment) => assignment.client_id === client.id && assignment.service_type === 'interface' && assignment.agent_id === viewer.id
++    );
++  }
++
+   // 7. SEO & Social Leads: Full visibility in their department
+   if (viewer.role === 'seo_team_lead' || viewer.role === 'social_media_team_lead') {
+     return true;
+diff --git a/src/lib/taskLifecycle.ts b/src/lib/taskLifecycle.ts
+index 59f514a..0d35bfb 100644
+--- a/src/lib/taskLifecycle.ts
++++ b/src/lib/taskLifecycle.ts
+@@ -89,7 +89,7 @@ export const canEditTaskAssignees = (
+   users: Pick<UserRecord, 'id' | 'team'>[],
+   clients: Pick<ClientRecord, 'id' | 'am_agent_id'>[]
+ ): boolean => {
+-  if (currentUser.role === 'sales') return false;
++  if (currentUser.role === 'sales' || currentUser.role === 'ui_ux_designer') return false;
+ 
+   const assigneeIds = resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to);
+   const isAdmin = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'ai_engineer';
+diff --git a/src/types/database.ts b/src/types/database.ts
+index 53d59d9..51299e3 100644
+--- a/src/types/database.ts
++++ b/src/types/database.ts
+@@ -24,6 +24,7 @@ export type BuiltInRole =
+   | 'social_media_agent'        // Social Media Agent
+   | 'graphic_designer'          // Graphic Designer
+   | 'video_editor'              // Video Editor
++  | 'ui_ux_designer'            // UI/UX Designer — interface briefs + assigned tasks only
+   | 'ai_engineer'                // AI Engineer
+   // NOT a team lead of graphic_designer/video_editor — that shared resource pool stays exactly
+   // as-is (no dedicated manager, visible to everyone but sales via employee_visible()'s existing
+

@@ -1,0 +1,3154 @@
+`n===== supabase/migrations/20261023000000_task_done_link_and_closed_status.sql =====
+-- Task Board: "Closed" lifecycle stage + "Done Link" field.
+--
+-- done_link is a NEW, dedicated column — deliberately not a reuse of the existing drive_link
+-- column, which has different, always-visible-regardless-of-status semantics used by existing
+-- tasks as a general reference link. done_link is specifically the assignee's link to their
+-- finished work, submitted once a task reaches 'completed', for the creator/assignee/
+-- head_of_technical to review before manually closing the task (see canCloseTask() in
+-- src/lib/taskLifecycle.ts — enforced today at the UI layer only, not by RLS; see that file's
+-- comment and this session's own decision on that tradeoff).
+--
+-- 'closed' is a new tasks.status value: a manual confirmation step after 'completed', not a
+-- distinct kind of done — see isTaskDone() in src/lib/taskLifecycle.ts, which treats the two as
+-- functionally identical for every downstream calculation.
+begin;
+
+alter table public.tasks add column done_link text;
+
+alter table public.tasks drop constraint tasks_status_check;
+alter table public.tasks add constraint tasks_status_check
+  check (status in ('todo', 'in_progress', 'in_review', 'completed', 'blocked', 'closed'));
+
+commit;
+`n===== supabase/migrations/20261023100000_tasks_close_transition_rls.sql =====
+-- Server-side match for the new "Close Task" UI gate (src/lib/taskLifecycle.ts's canCloseTask):
+-- tasks_update_rls otherwise lets anyone with task_visible() update a task to any status,
+-- including the new 'closed' value, with no assignee/creator restriction at all — matching this
+-- session's own repeated pattern of checking that a UI-level restriction is also enforced at the
+-- RLS layer for anything permission-like, rather than trusting the client alone. Every other
+-- status transition is completely unaffected: this only narrows the specific case of the new
+-- value being 'closed'.
+begin;
+
+drop policy if exists "tasks_update_rls" on public.tasks;
+create policy "tasks_update_rls" on public.tasks
+for update to authenticated
+using (public.task_visible(assigned_to, parent_task_id, client_id))
+with check (
+  public.task_visible(assigned_to, parent_task_id, client_id)
+  and (
+    status <> 'closed'
+    or created_by = public.app_user_id()
+    or assigned_to = public.app_user_id()
+    or public.app_user_role() = 'head_of_technical'
+  )
+);
+
+commit;
+`n===== supabase/migrations/20261103000000_task_assignees_foundation.sql =====
+-- PR 1 of the "task assignees" project — DATABASE FOUNDATION ONLY. Purely additive: no existing
+-- table, column, function, trigger, policy, or grant is altered or dropped. tasks.assigned_to
+-- keeps being the single column every existing screen and every existing RLS policy reads — this
+-- migration only grows a new, currently-unread shadow structure alongside it and keeps it in sync
+-- going one direction (legacy assigned_to -> new task_assignees). No frontend behavior changes.
+--
+-- IMPORTANT — what this migration deliberately does NOT do (by design, per the agreed PR
+-- sequencing, so later PRs know exactly what's still owed):
+--   1. It does NOT change task_visible(), tasks_select_rls, tasks_update_rls, tasks_insert_rls,
+--      task_comments_*_rls, task_attachments_*_rls, employee_visible(), clients_select_rls, or
+--      capacity/notifications. All of those still key off tasks.assigned_to alone. Today that's
+--      harmless because nothing in this PR gives a task more than one real assignee yet (see next
+--      point) — but it is the thing that MUST be fixed, together with whatever later PR adds a
+--      write path that actually assigns a second person to a task, or that second person will be
+--      added to task_assignees and still be unable to see the task at all.
+--   2. It does NOT add any write path (RPC, policy, or UI) that lets a task end up with more than
+--      one row in task_assignees. The only writer of task_assignees in this PR is the sync trigger
+--      below, which only ever mirrors the single tasks.assigned_to column — so immediately after
+--      this migration, task_assignees still has at most one row per task, exactly matching
+--      assigned_to. Multi-assignee as a real, usable feature starts in a later PR.
+--   3. It does NOT implement the reverse sync (task_assignees -> tasks.assigned_to). That belongs
+--      in PR 4, together with pg_trigger_depth() recursion protection (needed then because a
+--      reverse trigger writing tasks.assigned_to would re-fire THIS forward trigger). This
+--      forward-only trigger cannot recurse: it only ever writes to task_assignees/
+--      task_assignee_log, never back to tasks, so there is nothing for it to re-trigger.
+begin;
+
+-- ----------------------------------------------------------------------------
+-- 1. task_assignees — the new, currently-unread source of truth for "who is on this task."
+--    Kept in sync FROM tasks.assigned_to by the trigger below; nothing reads it yet.
+-- ----------------------------------------------------------------------------
+create table if not exists public.task_assignees (
+  task_id text not null references public.tasks (id) on delete cascade,
+  user_id text not null references public.users (id),
+  added_by text references public.users (id),
+  viewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (task_id, user_id)
+);
+
+create index if not exists idx_task_assignees_user_id on public.task_assignees (user_id);
+
+-- ----------------------------------------------------------------------------
+-- 2. task_assignee_log — append-only audit trail of every add/remove. Deliberately NOT
+--    foreign-keyed to tasks.id: the log must survive even if a task row were ever removed (tasks
+--    itself has no DELETE grant/policy today, so this is defensive, not a response to a real
+--    deletion path), so a task_id here is a plain, unenforced reference, not a real FK.
+-- ----------------------------------------------------------------------------
+create table if not exists public.task_assignee_log (
+  id uuid primary key default gen_random_uuid(),
+  task_id text not null,
+  user_id text not null,
+  action text not null check (action in ('added', 'removed')),
+  actor_id text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_task_assignee_log_task_id_created_at
+  on public.task_assignee_log (task_id, created_at);
+
+-- ----------------------------------------------------------------------------
+-- 3. tasks.batch_id — groups the independent per-client task copies a later PR's "create for
+--    multiple clients" flow will produce, for DISPLAY ONLY. Nothing in this migration, and nothing
+--    else today, reads this column — it has zero effect on capacity, KPI, or any report
+--    aggregation, by construction (nothing queries it).
+-- ----------------------------------------------------------------------------
+alter table public.tasks add column if not exists batch_id text;
+create index if not exists idx_tasks_batch_id on public.tasks (batch_id);
+
+-- ----------------------------------------------------------------------------
+-- 4. Backfill — one task_assignees row per existing task that already has an assigned_to, so the
+--    new table starts out exactly mirroring current reality. ON CONFLICT DO NOTHING makes this
+--    half idempotent on its own; re-running the whole migration file is additionally guarded by
+--    the create-table-if-not-exists above (a second run finds the tables already populated and
+--    this insert simply no-ops every row via the conflict clause).
+-- ----------------------------------------------------------------------------
+insert into public.task_assignees (task_id, user_id, added_by, viewed_at, created_at)
+select id, assigned_to, created_by, assignee_viewed_at, created_at
+from public.tasks
+where assigned_to is not null
+on conflict (task_id, user_id) do nothing;
+
+-- Log backfill: a single set-based INSERT...SELECT over the same row set above — cheap (no
+-- per-row procedural loop), so included rather than skipped. created_at is backdated to the
+-- task's own created_at (not now()), so the log's timeline reflects when the assignment actually
+-- happened, not when this migration ran. The NOT EXISTS guard makes this safe to re-run: unlike
+-- the task_assignees backfill above, this plain INSERT has no natural ON CONFLICT target (the
+-- log's primary key is a generated uuid, not (task_id, user_id)), so without it a second run of
+-- this migration file would duplicate every backfilled log row.
+insert into public.task_assignee_log (task_id, user_id, action, actor_id, created_at)
+select t.id, t.assigned_to, 'added', t.created_by, t.created_at
+from public.tasks t
+where t.assigned_to is not null
+  and not exists (select 1 from public.task_assignee_log l
+                  where l.task_id = t.id and l.user_id = t.assigned_to and l.action = 'added');
+
+-- ----------------------------------------------------------------------------
+-- 5. Legacy -> new sync trigger. SECURITY DEFINER so it can write task_assignees/
+--    task_assignee_log even though authenticated has no INSERT/UPDATE/DELETE grant on either
+--    (see section 6) — the trigger runs as its owner, not as the authenticated caller.
+--
+--    Fires on INSERT, and on UPDATE of either assigned_to OR assignee_viewed_at — assignee_viewed_at
+--    is included in the column list (beyond what the task's header literally asked for) because
+--    handleMarkTaskViewed (App.tsx) updates ONLY assignee_viewed_at, with assigned_to absent from
+--    that statement's column list entirely; a trigger declared "UPDATE OF assigned_to" alone would
+--    never fire for that write, and the mirrored viewed_at this trigger maintains would silently
+--    go stale the first time anyone opens a task without its assignment also changing in the same
+--    statement. Flagging this explicitly since it's a deliberate reading of the spec, not a typo.
+-- ----------------------------------------------------------------------------
+create or replace function public.sync_legacy_assigned_to_to_task_assignees()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if TG_OP = 'INSERT' then
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+    return new;
+  end if;
+
+  -- TG_OP = 'UPDATE'
+  if new.assigned_to is distinct from old.assigned_to then
+    if old.assigned_to is not null then
+      delete from public.task_assignees where task_id = old.id and user_id = old.assigned_to;
+
+      -- actor_id: tasks has no "who made this specific edit" column, so created_by is the best
+      -- available proxy for this legacy-mirror path. A later PR's RPC-based write path (the one
+      -- that actually lets someone other than the creator change assignees) can pass the true
+      -- actor explicitly instead of relying on this trigger's inference.
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (old.id, old.assigned_to, 'removed', new.created_by);
+    end if;
+
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+
+  elsif new.assignee_viewed_at is distinct from old.assignee_viewed_at and new.assigned_to is not null then
+    -- assigned_to unchanged, only the shared "viewed" timestamp moved — mirror it onto that
+    -- assignee's row rather than touching task_assignee_log (no add/remove happened).
+    update public.task_assignees
+    set viewed_at = new.assignee_viewed_at
+    where task_id = new.id and user_id = new.assigned_to;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.sync_legacy_assigned_to_to_task_assignees() from public, anon, authenticated;
+
+drop trigger if exists sync_legacy_assigned_to_to_task_assignees_trigger on public.tasks;
+create trigger sync_legacy_assigned_to_to_task_assignees_trigger
+after insert or update of assigned_to, assignee_viewed_at on public.tasks
+for each row
+execute function public.sync_legacy_assigned_to_to_task_assignees();
+
+-- ----------------------------------------------------------------------------
+-- 6. RLS — SELECT only, for both new tables. "Can see this row" is defined purely as "can see the
+--    parent task," by re-querying public.tasks from inside the policy: because this policy runs
+--    under the caller's own role (not a SECURITY DEFINER function), that inner query is itself
+--    subject to tasks' own RLS (tasks_select_rls) — so this adds no new visibility logic of its
+--    own and automatically tracks task_visible()/tasks_select_rls forever, including whatever a
+--    later PR changes them to. No INSERT/UPDATE/DELETE policy or grant on either table: the only
+--    writer today is the SECURITY DEFINER trigger above (which bypasses grants as the function
+--    owner), and a later PR's controlled RPC will be the only other one. Default privileges are
+--    revoked in this project, so every grant below is explicit.
+-- ----------------------------------------------------------------------------
+alter table public.task_assignees enable row level security;
+
+drop policy if exists "task_assignees_select_rls" on public.task_assignees;
+create policy "task_assignees_select_rls" on public.task_assignees
+for select to authenticated
+using (
+  exists (select 1 from public.tasks t where t.id = task_assignees.task_id)
+);
+
+grant select on public.task_assignees to authenticated;
+grant all on public.task_assignees to service_role;
+
+alter table public.task_assignee_log enable row level security;
+
+drop policy if exists "task_assignee_log_select_rls" on public.task_assignee_log;
+create policy "task_assignee_log_select_rls" on public.task_assignee_log
+for select to authenticated
+using (
+  exists (select 1 from public.tasks t where t.id = task_assignee_log.task_id)
+);
+
+grant select on public.task_assignee_log to authenticated;
+grant all on public.task_assignee_log to service_role;
+
+commit;
+`n===== supabase/migrations/20261105000000_task_assignees_rpcs.sql =====
+-- PR 4a of the task-assignees project — DATABASE LAYER for real multi-assignee writes. Builds on
+-- PR 1 (task_assignees/task_assignee_log tables + the legacy-forward sync trigger) and PR 2
+-- (task_visible_v2()/task_closable(), the cutover). Nothing here is read by the frontend yet — PR
+-- 4b wires the Create/Edit Task form to these RPCs. tasks.assigned_to remains the single column
+-- every existing screen (MyWorkHub's badge, every capacity/report aggregation) still reads; this
+-- migration's reverse-sync trigger is what keeps it correct once an assignee list can have more
+-- than one person again.
+--
+-- Objects added, in dependency order:
+--   1. idx_tasks_batch_client_unique — partial unique index, (batch_id, client_id) where
+--      batch_id is not null. Stops one "send to multiple clients" batch from producing two copies
+--      for the same client (double-submit/retry) — create_task_copy() treats a conflict on it as
+--      "already created, return the existing row" rather than an error (see section 5).
+--   2. sync_legacy_assigned_to_to_task_assignees() — PR 1's forward trigger function, re-defined
+--      with a pg_trigger_depth() guard at the top.
+--   3. sync_task_assignees_to_legacy_assigned_to() + its AFTER INSERT OR DELETE trigger on
+--      task_assignees — the reverse half of PR 1's one-way sync, promised but deliberately
+--      deferred there. Recomputes tasks.assigned_to as the OLDEST remaining assignee
+--      (min(created_at)) every time task_assignees' membership changes. ALSO guarded by
+--      pg_trigger_depth() > 1, symmetrically with section 2 — see that section's comment for why
+--      both sides carry the same guard rather than relying on just one.
+--   4. set_task_assignees(p_task_id, p_user_ids) — the only place a task's assignee SET is ever
+--      written going forward (besides the legacy forward-sync mirror).
+--   5. create_task_copy(...) — SECURITY INVOKER. Inserts one new task (assigned_to left null,
+--      status forced to 'todo') under the CALLER's own tasks_insert_rls, then calls
+--      set_task_assignees() for the real assignee list. Idempotent per (batch_id, client_id): a
+--      retried/duplicate call for a pair that already has a copy returns that existing row
+--      instead of raising the unique-index violation.
+--   6. mark_task_viewed(p_task_id) — SECURITY DEFINER. First-view-wins: only ever sets a viewed_at
+--      that is currently null, both on the caller's own task_assignees row and (backward-compat)
+--      on tasks.assignee_viewed_at.
+--   7. get_capacity_snapshot(p_user_ids) — SECURITY DEFINER. Counts only, no task or client
+--      content. See its own comment for the exact counting rule for each branch.
+--   8. task_attachments_objects_select_rls (storage.objects) — widened to the OR of the original
+--      folder-name -> task_visible_v2 rule and a new task_attachments.storage_path ->
+--      task_visible_v2 rule, so both a legacy single-task file and a just-uploaded object with no
+--      task_attachments row yet keep resolving under the old rule, while a file shared across
+--      multiple copies (added via section 9a, below) resolves for every copy's own assignees via
+--      the new rule.
+--   8b. idx_task_attachments_storage_path — index backing that new rule's join.
+--   9a. add_task_attachments_for_copies(...) — SECURITY INVOKER, unchanged in shape from the first
+--       draft of this migration.
+--   9b. delete_task_attachment(p_attachment_id) — SECURITY DEFINER. Deletes the metadata row only
+--       and returns the storage_path when no other task_attachments row still references it (null
+--       otherwise) — it does NOT delete the storage.objects row itself (confirmed against
+--       Supabase's own docs: a SQL DELETE on storage.objects removes only the metadata row and
+--       leaves the actual file orphaned in the bucket; only the Storage API's own remove endpoint
+--       deletes the underlying object). The caller is responsible for calling
+--       `supabase.storage.from('task-attachments').remove([path])` when a non-null path comes
+--       back. See section 9c for the policy that lets that follow-up call succeed even though, by
+--       then, the task_attachments row the OLD delete policy depended on is already gone.
+--   9c. task_attachments_objects_delete_own_rls (storage.objects) — NEW, additive policy: the
+--       uploader (owner = auth.uid()) may always delete their own object directly, independent of
+--       any task_attachments row's existence. The pre-existing
+--       task_attachments_objects_delete_rls policy (keyed on a task_attachments row's
+--       uploaded_by) is left in place untouched; the two are simply OR'd together as permissive
+--       policies, same as the SELECT policy's OR above.
+--
+-- Escalation/validity guard (set_task_assignees, applied ONLY to ids newly entering the list —
+-- i.e. in the computed to-add set, never to an id that was already an assignee and is simply
+-- being re-confirmed by resaving the list):
+--   - nobody may name executive except themselves
+--   - only executive may name head_of_technical (besides themselves)
+--   - sales may never be assigned to a task
+--   - ai_engineer is unrestricted
+--   - "active, auth_id not null" likewise checked only for these newly-added ids
+-- This is byte-identical in shape to tasks_insert_rls's existing assigned_to guard
+-- (20261101100000_task_cross_team_visibility.sql / 20261104100000_task_visibility_cutover.sql)
+-- plus the sales exclusion that single-assignee guard never had to spell out itself. Checking this
+-- only against the to-add set (rather than the whole requested list) matters: a task that already
+-- has, say, a head_of_technical assignee must stay editable by a non-executive actor for every
+-- OTHER change (add/remove someone else, reorder) as long as that pre-existing assignee isn't
+-- being newly added by this same call.
+--
+-- set_task_assignees additionally never lets the task's own creator be removed from its assignee
+-- list (independent of who is calling), and never sends a "you were assigned" notification when
+-- the new assignee IS the actor (assigning yourself needs no notification).
+--
+-- set_task_assignees's permission gate (round 2 revision — narrower than task_visible_v2 on
+-- purpose): task_closable(p_task_id) [admin roles / creator / any current assignee] OR an am_agent
+-- who manages the task's client OR an am_team_lead whose own team includes the am_agent managing
+-- the task's client OR any of the 4 team-lead roles on a task visible to them via the team rule
+-- (creator or any assignee on their own team, plus the seo_team_lead/Programming carve-out).
+-- sales is explicitly excluded. marketing_manager is deliberately NOT included: task_visible_v2
+-- gives marketing_manager visibility into a graphic_designer/video_editor's task purely so they
+-- can see creative work in progress, not so they can reassign it — being able to SEE a task is not
+-- the same permission as being able to manage who's on it, so this gate only replicates
+-- task_visible_v2's admin/creator/assignee/am-agent/team-lead doors, never its marketing_manager
+-- door. See set_task_assignees' own body for the exact SQL.
+begin;
+
+-- ----------------------------------------------------------------------------
+-- 1. (batch_id, client_id) partial unique index.
+-- ----------------------------------------------------------------------------
+create unique index if not exists idx_tasks_batch_client_unique
+  on public.tasks (batch_id, client_id)
+  where batch_id is not null;
+
+-- ----------------------------------------------------------------------------
+-- 2. Forward trigger function — same body as
+--    20261103000000_task_assignees_foundation.sql, with one addition: an early return when
+--    pg_trigger_depth() > 1, i.e. this execution is a cascade from inside another trigger (the
+--    reverse-sync trigger in section 3) rather than a direct, top-level write to
+--    tasks.assigned_to/assignee_viewed_at. The reverse trigger (section 3) carries the identical
+--    guard, symmetrically: only ONE side needs it to prevent an infinite loop (whichever fires
+--    first stops the other from cascading back), but guarding both means neither side ever does
+--    real work beyond the first, top-level trigger invocation on EITHER side of the sync, so a
+--    direct write that bounces back and forth once is never mistaken for 2 separate real changes.
+-- ----------------------------------------------------------------------------
+create or replace function public.sync_legacy_assigned_to_to_task_assignees()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if pg_trigger_depth() > 1 then
+    return new;
+  end if;
+
+  if TG_OP = 'INSERT' then
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+    return new;
+  end if;
+
+  -- TG_OP = 'UPDATE'
+  if new.assigned_to is distinct from old.assigned_to then
+    if old.assigned_to is not null then
+      delete from public.task_assignees where task_id = old.id and user_id = old.assigned_to;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (old.id, old.assigned_to, 'removed', new.created_by);
+    end if;
+
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+
+  elsif new.assignee_viewed_at is distinct from old.assignee_viewed_at and new.assigned_to is not null then
+    update public.task_assignees
+    set viewed_at = new.assignee_viewed_at
+    where task_id = new.id and user_id = new.assigned_to;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.sync_legacy_assigned_to_to_task_assignees() from public, anon, authenticated;
+
+-- Trigger attachment unchanged from PR 1 (same events, same timing, same function name) — not
+-- re-created, only the function body above changed.
+
+-- ----------------------------------------------------------------------------
+-- 3. Reverse trigger — task_assignees membership change -> recompute tasks.assigned_to as the
+--    OLDEST remaining assignee (min(created_at), tie-broken by user_id for determinism). Fires on
+--    INSERT/DELETE only: an UPDATE of task_assignees.viewed_at never changes membership or
+--    ordering, so it has nothing to recompute. The `is distinct from` guard means this never
+--    issues a no-op UPDATE, so it never fires the forward trigger pointlessly. Carries the same
+--    pg_trigger_depth() > 1 guard as section 2, for the same symmetric reason explained there.
+-- ----------------------------------------------------------------------------
+create or replace function public.sync_task_assignees_to_legacy_assigned_to()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_task_id text := coalesce(new.task_id, old.task_id);
+  v_new_assigned_to text;
+begin
+  if pg_trigger_depth() > 1 then
+    return null;
+  end if;
+
+  select user_id into v_new_assigned_to
+  from public.task_assignees
+  where task_id = v_task_id
+  order by created_at asc, user_id asc
+  limit 1;
+
+  update public.tasks
+  set assigned_to = v_new_assigned_to
+  where id = v_task_id
+    and assigned_to is distinct from v_new_assigned_to;
+
+  return null;
+end;
+$$;
+
+revoke all on function public.sync_task_assignees_to_legacy_assigned_to() from public, anon, authenticated;
+
+drop trigger if exists sync_task_assignees_to_legacy_assigned_to_trigger on public.task_assignees;
+create trigger sync_task_assignees_to_legacy_assigned_to_trigger
+after insert or delete on public.task_assignees
+for each row
+execute function public.sync_task_assignees_to_legacy_assigned_to();
+
+-- ----------------------------------------------------------------------------
+-- 4. set_task_assignees(p_task_id, p_user_ids) — replaces a task's full assignee set with the
+--    given ordered list. Locks the task row first so two concurrent calls on the same task can't
+--    race on the diff. A no-op diff (same set, any order) does nothing at all — no log row, no
+--    notification, not even a touch of task_assignees.
+-- ----------------------------------------------------------------------------
+create or replace function public.set_task_assignees(p_task_id text, p_user_ids text[])
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_task public.tasks;
+  v_actor_id text := public.app_user_id();
+  v_ordered_ids text[] := array[]::text[];
+  v_current_ids text[];
+  v_to_add text[] := array[]::text[];
+  v_to_remove text[] := array[]::text[];
+  v_uid text;
+  v_target_role text;
+  v_auth_id text;
+  v_deactivated_at timestamptz;
+begin
+  select * into v_task from public.tasks where id = p_task_id for update;
+  if not found then
+    raise exception 'Task not found';
+  end if;
+
+  -- Gate — see this migration's header comment for the full rationale. Deliberately NOT
+  -- task_visible_v2(id): that would also let marketing_manager (via the creative-role door) and
+  -- an am_agent/am_team_lead with no real management relationship to THIS task manage its
+  -- assignees merely because they can see it. Allowed:
+  --   - task_closable(p_task_id): admin roles, the task's creator, or any current assignee.
+  --   - am_agent who manages the task's client (client_am_agent_is_caller — same door
+  --     task_visible_v2 itself uses for am_agent).
+  --   - am_team_lead whose OWN team includes the am_agent managing the task's client.
+  --   - any of the 4 team-lead roles, on a task visible to them via the team rule (creator or any
+  --     assignee on their own team, plus the seo_team_lead/Programming carve-out) — byte-identical
+  --     to task_visible_v2's own team-lead branch.
+  -- sales is excluded explicitly (not just structurally — see header comment).
+  if public.app_user_role() = 'sales' or not (
+    public.task_closable(p_task_id)
+    or (
+      public.app_user_role() = 'am_agent'
+      and v_task.client_id is not null
+      and public.client_am_agent_is_caller(v_task.client_id)
+    )
+    or (
+      public.app_user_role() = 'am_team_lead'
+      and v_task.client_id is not null
+      and exists (
+        select 1 from public.clients c
+        join public.users ua on ua.id = c.am_agent_id
+        where c.id = v_task.client_id and ua.team = public.app_user_team()
+      )
+    )
+    or (
+      public.app_user_role() in ('am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead')
+      and (
+        exists (select 1 from public.users u where u.id = v_task.created_by and u.team = public.app_user_team())
+        or exists (
+          select 1 from public.task_assignees ta
+          join public.users u on u.id = ta.user_id
+          where ta.task_id = p_task_id and u.team = public.app_user_team()
+        )
+        or (
+          public.app_user_role() = 'seo_team_lead'
+          and (
+            exists (select 1 from public.users u where u.id = v_task.created_by and u.team = 'Programming')
+            or exists (
+              select 1 from public.task_assignees ta
+              join public.users u on u.id = ta.user_id
+              where ta.task_id = p_task_id and u.team = 'Programming'
+            )
+          )
+        )
+      )
+    )
+  ) then
+    raise exception 'You do not have permission to modify this task''s assignees.';
+  end if;
+
+  -- Dedupe + drop nulls, preserving first-occurrence order. Order matters: among brand-new
+  -- additions below, the first one listed gets the earliest clock_timestamp() and so becomes the
+  -- oldest assignee (tasks.assigned_to, via the reverse trigger) if the task had none before.
+  foreach v_uid in array coalesce(p_user_ids, array[]::text[]) loop
+    if v_uid is not null and not (v_uid = any(v_ordered_ids)) then
+      v_ordered_ids := array_append(v_ordered_ids, v_uid);
+    end if;
+  end loop;
+
+  select coalesce(array_agg(user_id), array[]::text[]) into v_current_ids
+  from public.task_assignees where task_id = p_task_id;
+
+  foreach v_uid in array v_ordered_ids loop
+    if not (v_uid = any(v_current_ids)) then
+      v_to_add := array_append(v_to_add, v_uid);
+    end if;
+  end loop;
+
+  foreach v_uid in array v_current_ids loop
+    if not (v_uid = any(v_ordered_ids)) then
+      v_to_remove := array_append(v_to_remove, v_uid);
+    end if;
+  end loop;
+
+  -- The creator can never be removed from their own task's assignee list — independent of who is
+  -- calling, and checked against the diff (not the raw requested list) so it fires exactly when
+  -- the creator is CURRENTLY assigned and the new list would drop them.
+  if v_task.created_by = any(v_to_remove) then
+    raise exception 'The task''s creator cannot be removed from its assignee list.';
+  end if;
+
+  if array_length(v_to_add, 1) is null and array_length(v_to_remove, 1) is null then
+    return;
+  end if;
+
+  -- Validity + escalation guard, applied ONLY to ids actually entering the list (v_to_add) — see
+  -- this migration's header comment. A pre-existing assignee is never re-validated just because
+  -- the list is being re-saved.
+  foreach v_uid in array v_to_add loop
+    v_target_role := public.user_role_by_id(v_uid);
+    if v_target_role is null then
+      raise exception 'User % not found', v_uid;
+    end if;
+    if v_target_role = 'sales' then
+      raise exception 'sales may not be assigned to tasks';
+    end if;
+    if not (
+      v_uid = v_actor_id
+      or v_target_role not in ('executive', 'head_of_technical')
+      or (public.app_user_role() = 'executive' and v_target_role = 'head_of_technical')
+    ) then
+      raise exception 'You are not permitted to assign %.', v_uid;
+    end if;
+
+    select auth_id, deactivated_at into v_auth_id, v_deactivated_at
+    from public.users where id = v_uid;
+    if v_auth_id is null or v_deactivated_at is not null then
+      raise exception 'User % is not an active employee and cannot be newly assigned.', v_uid;
+    end if;
+  end loop;
+
+  foreach v_uid in array v_to_remove loop
+    delete from public.task_assignees where task_id = p_task_id and user_id = v_uid;
+    insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+    values (p_task_id, v_uid, 'removed', v_actor_id);
+    -- Deliberately no notification: the removed person would open a link into a task
+    -- task_visible_v2 has already stopped showing them, the moment their row is gone.
+  end loop;
+
+  foreach v_uid in array v_to_add loop
+    insert into public.task_assignees (task_id, user_id, added_by, created_at)
+    values (p_task_id, v_uid, v_actor_id, clock_timestamp());
+    insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+    values (p_task_id, v_uid, 'added', v_actor_id);
+
+    -- No notification when you assign yourself — nothing to tell yourself you don't already know.
+    if v_uid <> v_actor_id then
+      insert into public.notifications (id, user_id, title, message, sender_id, is_read, type, link_url, created_at)
+      values (
+        'notif-' || gen_random_uuid()::text,
+        v_uid,
+        'New Task Assigned',
+        'You have been assigned a new task: ' || v_task.title || '.',
+        v_actor_id,
+        false,
+        'task_assigned',
+        'module:tasks',
+        now()
+      );
+    end if;
+  end loop;
+end;
+$$;
+
+revoke all on function public.set_task_assignees(text, text[]) from public, anon;
+grant execute on function public.set_task_assignees(text, text[]) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 5. create_task_copy(...) — SECURITY INVOKER on purpose: the INSERT below runs under the
+--    CALLER's own tasks_insert_rls (role <> sales, created_by = caller, parent_task_id visible —
+--    all already enforced there with no need to duplicate any of it here), with assigned_to
+--    always null at insert time, so that policy's own assignee-escalation branch is always
+--    trivially satisfied too. set_task_assignees() (SECURITY DEFINER) is called afterward for the
+--    real assignee list — the one and only path that can ever put someone other than null into
+--    this task's assignee set. One call creates one task; a "send to multiple clients" batch calls
+--    this once per client, passing the same p_batch_id each time.
+--
+--    Idempotent per (batch_id, client_id): ON CONFLICT DO NOTHING against the partial unique
+--    index means a retried/duplicate call for a pair that already has a copy inserts nothing;
+--    the fallback SELECT (also under the caller's own RLS) then returns that EXISTING row instead
+--    of raising. Race-safe because Postgres's own ON CONFLICT handling blocks a conflicting
+--    inserter until the winning transaction commits, so by the time the fallback SELECT runs, the
+--    other copy is guaranteed to already be visible (if it's visible to this caller at all) — an
+--    existing-but-invisible-to-this-caller row is treated as an error, not silently returned.
+-- ----------------------------------------------------------------------------
+create or replace function public.create_task_copy(
+  p_client_id text,
+  p_title text,
+  p_description text,
+  p_team text,
+  p_due_date date,
+  p_priority text,
+  p_estimated_hours numeric default null,
+  p_task_type text default null,
+  p_task_type_other text default null,
+  p_parent_task_id text default null,
+  p_batch_id text default null,
+  p_assignee_ids text[] default null
+)
+returns public.tasks
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_task public.tasks;
+  v_id text := 'tsk-' || gen_random_uuid()::text;
+begin
+  -- The tasks.client_id foreign key only checks EXISTENCE (FK checks bypass RLS, running as the
+  -- table owner) — it would happily let a caller reference a real client they can't actually see.
+  -- This EXISTS, run under SECURITY INVOKER, goes through clients_select_rls as the caller, so an
+  -- existing-but-invisible client is rejected exactly like a nonexistent one.
+  if p_client_id is not null and not exists (select 1 from public.clients where id = p_client_id) then
+    raise exception 'Client not found or not accessible.';
+  end if;
+
+  insert into public.tasks (
+    id, client_id, title, description, assigned_to, created_by, team, status,
+    due_date, priority, estimated_hours, actual_hours, parent_task_id,
+    task_type, task_type_other, batch_id
+  ) values (
+    v_id, p_client_id, p_title, p_description, null, public.app_user_id(), p_team, 'todo',
+    p_due_date, p_priority, p_estimated_hours, 0, p_parent_task_id,
+    p_task_type, p_task_type_other, p_batch_id
+  )
+  on conflict (batch_id, client_id) where batch_id is not null do nothing
+  returning * into v_task;
+
+  if not found then
+    -- Idempotent retry: a copy for this batch+client pair already exists. Return it (under the
+    -- caller's own RLS) instead of failing on the unique index.
+    select * into v_task from public.tasks where batch_id = p_batch_id and client_id = p_client_id;
+    if not found then
+      raise exception 'A task for this batch and client already exists but is not accessible to you.';
+    end if;
+    return v_task;
+  end if;
+
+  if p_assignee_ids is not null and array_length(p_assignee_ids, 1) is not null then
+    perform public.set_task_assignees(v_task.id, p_assignee_ids);
+  end if;
+
+  -- Re-select: set_task_assignees()'s inserts into task_assignees fire the reverse-sync trigger
+  -- (section 3) synchronously, so by now tasks.assigned_to reflects the real assignee list —
+  -- the row captured by the RETURNING clause above always had assigned_to = null.
+  select * into v_task from public.tasks where id = v_task.id;
+
+  return v_task;
+end;
+$$;
+
+revoke all on function public.create_task_copy(text, text, text, text, date, text, numeric, text, text, text, text, text[]) from public, anon;
+grant execute on function public.create_task_copy(text, text, text, text, date, text, numeric, text, text, text, text, text[]) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 6. mark_task_viewed(p_task_id) — SECURITY DEFINER: task_assignees has no UPDATE grant for
+--    authenticated at all (PR 1's own comment), so the first write below is impossible without it.
+--    First-view-wins: both writes are gated on the target column currently being null, so a
+--    second call (opening the task again later) never overwrites the original "first viewed at"
+--    moment. By construction this can only ever touch the CALLING user's own task_assignees row
+--    and the task's assignee_viewed_at column when the caller is specifically its current legacy
+--    assigned_to — there is no parameter a caller could pass to touch anyone else's data, same
+--    reasoning as touch_last_seen() (20261030200000_touch_last_seen_rpc.sql).
+-- ----------------------------------------------------------------------------
+create or replace function public.mark_task_viewed(p_task_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.task_assignees
+  set viewed_at = now()
+  where task_id = p_task_id and user_id = public.app_user_id() and viewed_at is null;
+
+  -- Backward-compat mirror for MyWorkHub's existing `!assignee_viewed_at` badge check, which still
+  -- reads the single legacy column — only meaningful while the caller IS the legacy assigned_to.
+  update public.tasks
+  set assignee_viewed_at = now()
+  where id = p_task_id and assigned_to = public.app_user_id() and assignee_viewed_at is null;
+end;
+$$;
+
+revoke all on function public.mark_task_viewed(text) from public, anon;
+grant execute on function public.mark_task_viewed(text) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 7. get_capacity_snapshot(p_user_ids) — SECURITY DEFINER, counts only, no task or client content.
+--
+--    am_agent/am_team_lead branch: byte-identical to capacity.ts's getUserCapacityData
+--    (src/lib/capacity.ts) — both roles are measured by clients.am_agent_id = this user's id
+--    (NOT am_team_lead_id; capacity.ts filters assignedClients by am_agent_id regardless of which
+--    of the two roles the user holds, so a team lead's count is literally "clients where THEY
+--    personally are am_agent_id", same as the agent case), excluding status = 'closed' and
+--    status = 'paused' (isPausedClient()). Re-checked line by line against the live capacity.ts
+--    text — this branch was already correct in the first draft of this migration, kept unchanged.
+--
+--    Every other role: DELIBERATELY DIVERGES from capacity.ts's current client-side computation.
+--    capacity.ts still filters its own (RLS-narrowed) `tasks` array by `assigned_to === user.id`
+--    — the single legacy column — because that's the only relationship it has today. This
+--    function instead counts by task_assignees MEMBERSHIP (join task_assignees -> tasks), so a
+--    task with 3 assignees counts fully for all 3 of them, and a task with zero assignees counts
+--    for nobody — the real multi-assignee measure, not a mirror of the legacy single-column one.
+--    "Non-done" mirrors isTaskDone() (src/lib/taskLifecycle.ts: status in ('completed', 'closed'))
+--    exactly. capacityLimit/isUntracked/status/remainingCapacity/utilizationRate are left to
+--    capacity.ts to keep computing client-side from users.capacity_limit, exactly as today — pure
+--    arithmetic, not data this function needs to duplicate.
+-- ----------------------------------------------------------------------------
+create or replace function public.get_capacity_snapshot(p_user_ids text[])
+returns table(user_id text, used_capacity integer)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- Explicit raise, not a silently-empty resultset: a sales caller asking for capacity data is a
+  -- permission violation, not a legitimately-empty query — same posture as every other
+  -- permission check in this migration.
+  if public.app_user_role() = 'sales' then
+    raise exception 'sales may not query capacity data.';
+  end if;
+
+  return query
+    select
+      u.id,
+      (case
+        when u.role in ('am_agent', 'am_team_lead') then (
+          select count(*)::integer
+          from public.clients c
+          where c.am_agent_id = u.id
+            and c.status <> 'closed'
+            and c.status <> 'paused'
+        )
+        else (
+          select count(*)::integer
+          from public.task_assignees ta
+          join public.tasks t on t.id = ta.task_id
+          where ta.user_id = u.id
+            and t.status not in ('completed', 'closed')
+        )
+      end)
+    from public.users u
+    where u.id = any(coalesce(p_user_ids, array[]::text[]));
+end;
+$$;
+
+revoke all on function public.get_capacity_snapshot(text[]) from public, anon;
+grant execute on function public.get_capacity_snapshot(text[]) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 8. storage.objects SELECT policy, widened to an OR of the original folder-name -> task id ->
+--    task_visible_v2 rule and a new task_attachments.storage_path -> task_visible_v2 rule. Keeping
+--    the old rule (rather than replacing it, as the first draft of this migration did) matters for
+--    two cases: a legacy single-task file (whose folder-owner task has no reason to ever gain a
+--    task_attachments row referencing it beyond the one it already has) stays resolvable purely by
+--    the old rule, and a just-uploaded object for a NEW batch — uploaded before
+--    add_task_attachments_for_copies() (section 9a) has run, so no task_attachments row exists
+--    pointing at it yet — stays resolvable too, via the folder it was uploaded into. The new rule
+--    is what makes every OTHER copy's own assignees able to see the same shared object once
+--    section 9a's rows exist. INSERT policy is untouched (still folder-name -> task_visible_v2 —
+--    the very first upload for a batch still has no task_attachments row for a path-based check to
+--    key off). The pre-existing DELETE policy is untouched too; section 9c adds an independent one
+--    alongside it.
+-- ----------------------------------------------------------------------------
+drop policy if exists "task_attachments_objects_select_rls" on storage.objects;
+create policy "task_attachments_objects_select_rls" on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'task-attachments'
+  and (
+    exists (
+      select 1 from public.tasks t
+      where t.id = (storage.foldername(name))[1]
+        and public.task_visible_v2(t.id)
+    )
+    or exists (
+      select 1 from public.task_attachments a
+      where a.storage_path = storage.objects.name
+        and public.task_visible_v2(a.task_id)
+    )
+  )
+);
+
+-- 8b. Index backing the new rule's join (storage_path had no index before this migration).
+create index if not exists idx_task_attachments_storage_path on public.task_attachments (storage_path);
+
+-- ----------------------------------------------------------------------------
+-- 9a. add_task_attachments_for_copies(...) — SECURITY INVOKER. Adds one task_attachments row per
+--     given task id, all sharing the one already-uploaded storage_path. Deliberately does NOT
+--     re-check storage.objects itself — running under the caller's own RLS means each inserted row
+--     is independently checked by the existing task_attachments_insert_rls policy (uploaded_by =
+--     caller and task_visible_v2(task_id)) — exactly the same rule a single direct insert already
+--     has to satisfy, just applied once per task id in the array. If any one of the given task ids
+--     isn't actually visible to/created by the caller, the whole multi-row insert is rejected
+--     atomically.
+-- ----------------------------------------------------------------------------
+create or replace function public.add_task_attachments_for_copies(
+  p_task_ids text[],
+  p_storage_path text,
+  p_filename text,
+  p_file_size bigint,
+  p_mime_type text
+)
+returns setof public.task_attachments
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  if p_task_ids is null or array_length(p_task_ids, 1) is null then
+    raise exception 'p_task_ids must not be empty';
+  end if;
+
+  if not ((storage.foldername(p_storage_path))[1] = any(p_task_ids)) then
+    raise exception 'storage_path does not belong to any of the given tasks';
+  end if;
+
+  return query
+    insert into public.task_attachments (id, task_id, storage_path, filename, file_size, mime_type, uploaded_by, uploaded_at)
+    select 'att-' || gen_random_uuid()::text, t, p_storage_path, p_filename, p_file_size, p_mime_type, public.app_user_id(), now()
+    from unnest(p_task_ids) as t
+    returning *;
+end;
+$$;
+
+revoke all on function public.add_task_attachments_for_copies(text[], text, text, bigint, text) from public, anon;
+grant execute on function public.add_task_attachments_for_copies(text[], text, text, bigint, text) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 9b. delete_task_attachment(p_attachment_id) — SECURITY DEFINER, uploader-only (deliberately
+--     stricter than the live table/storage delete policies, which also let
+--     executive/head_of_technical/ai_engineer delete any attachment — a shared, multi-copy
+--     attachment's blast radius is wider now, so this one path has no role escape).
+--
+--     Deletes ONLY the task_attachments metadata row, then returns the storage_path when no other
+--     task_attachments row still references it (null otherwise) — it deliberately does NOT touch
+--     storage.objects. Confirmed against Supabase's own docs (Storage > Management > Delete
+--     Objects): removing a storage.objects row with plain SQL deletes only the metadata; the
+--     actual file is left behind in the bucket as an orphan, because the real deletion against the
+--     underlying object store happens in the Storage API server, not via a database trigger or
+--     constraint. The caller must follow a non-null return with
+--     `supabase.storage.from('task-attachments').remove([path])` — see section 9c for the policy
+--     that lets that succeed.
+--
+--     The advisory lock makes the "is this the last reference" check race-safe: two concurrent
+--     deletes of sibling rows sharing one path serialize on it, so whichever runs second always
+--     sees the first's delete already committed-in-transaction before counting remaining
+--     references — exactly one of the two calls gets back the non-null path, never zero, never
+--     both.
+-- ----------------------------------------------------------------------------
+create or replace function public.delete_task_attachment(p_attachment_id text)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_attachment public.task_attachments;
+  v_remaining integer;
+begin
+  select * into v_attachment from public.task_attachments where id = p_attachment_id;
+  if not found then
+    raise exception 'Attachment not found';
+  end if;
+
+  if v_attachment.uploaded_by <> public.app_user_id() then
+    raise exception 'Only the uploader may delete this attachment.';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(v_attachment.storage_path, 0));
+
+  delete from public.task_attachments where id = p_attachment_id;
+
+  select count(*) into v_remaining
+  from public.task_attachments
+  where storage_path = v_attachment.storage_path;
+
+  if v_remaining = 0 then
+    return v_attachment.storage_path;
+  end if;
+
+  return null;
+end;
+$$;
+
+revoke all on function public.delete_task_attachment(text) from public, anon;
+grant execute on function public.delete_task_attachment(text) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 9c. NEW storage.objects DELETE policy — additive, alongside the pre-existing
+--     task_attachments_objects_delete_rls (untouched). That old policy keys off a task_attachments
+--     row's uploaded_by, but by the time a client calls the Storage API's remove() following a
+--     non-null delete_task_attachment() return, the metadata row is ALREADY gone — so the old
+--     policy alone would no longer match, and the call would silently remove 0 objects. This one
+--     keys off storage.objects' own `owner` column instead (set by the Storage API to the
+--     uploader's auth.uid() at upload time), independent of task_attachments entirely, so the
+--     uploader can always remove their own object however many task_attachments rows referenced it
+--     before this cleanup call.
+-- ----------------------------------------------------------------------------
+drop policy if exists "task_attachments_objects_delete_own_rls" on storage.objects;
+create policy "task_attachments_objects_delete_own_rls" on storage.objects
+for delete
+to authenticated
+using (
+  bucket_id = 'task-attachments'
+  and owner = auth.uid()
+);
+
+commit;
+`n===== task-management-architecture-review/002_transactional_rpc_contracts_NOT_EXECUTED.sql =====
+
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:26:-- it does not infer 
+completion from assignment. Existing linked_task_ids is written as a temporary
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:27:-- compatibility mirror 
+until Report Workspace reads daily_log_task_links directly.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:28:create or replace function 
+public.submit_daily_activity_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:29:  p_request_key uuid,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:30:  p_report_date date,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:31:  p_entries jsonb,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:32:  p_impersonation_session_id 
+text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:33:) returns setof 
+public.daily_logs
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:240:-- completion actor. Any 
+date/client/task-link change requires current-cycle confirmed evidence
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:241:-- for the complete 
+replacement set and is committed atomically with the compatibility array.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:242:create or replace function 
+public.update_daily_activity_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:243:  p_request_key 
+uuid,p_log_id text,p_expected_row_version bigint,p_report_date date,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:244:  p_client_id 
+text,p_summary_text text,p_task_ids jsonb,p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:245:) returns public.daily_logs
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:246:language plpgsql security 
+definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:247:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:342:-- Delete remains the 
+existing own-row/7-day behavior, but requires normalized-array parity so a
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:343:-- legacy or conflicted row 
+cannot silently lose links. Link removals are audited before deletion.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:344:create or replace function 
+public.delete_daily_activity_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:345:  p_request_key 
+uuid,p_log_id text,p_expected_row_version bigint,p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:346:) returns boolean language 
+plpgsql security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:347:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:348:  v_actor 
+text:=public.app_user_id(); v_log public.daily_logs; v_request public.task_mutation_requests;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:349:  v_original_actor text; 
+v_audit_session text; v_identity record;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:391:-- established: trusted 
+actor, optimistic version, individual completion evidence, Close from
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:392:-- completed with 
+done_link, and durable reopen history. The shared-task rule remains fail-closed.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:393:create or replace function 
+public.transition_task_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:394:  p_task_id text,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:395:  p_action text,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:396:  p_payload jsonb,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:397:  p_expected_row_version 
+bigint,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:398:  p_request_key uuid,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:419:  if v_actor is null or 
+p_request_key is null or nullif(trim(p_task_id),'') is null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:420:     or 
+p_expected_row_version is null or p_expected_row_version<1
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:421:     or p_action not in 
+('record_completion','close','reopen','set_status')
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:422:     or p_payload is null 
+or jsonb_typeof(p_payload)<>'object' then
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:423:    raise exception 
+'Invalid task transition request';
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:424:  end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:425:  if (p_action='reopen' and 
+(p_payload-array['reason','status']::text[])<>'{}'::jsonb)
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:426:     or 
+(p_action='set_status' and (p_payload-array['status','reason']::text[])<>'{}'::jsonb)
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:427:     or (p_action in 
+('record_completion','close') and p_payload<>'{}'::jsonb) then
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:428:    raise exception 
+'Unexpected task transition fields';
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:429:  end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:430:  
+v_reason:=nullif(trim(p_payload->>'reason'),'');
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:431:  
+v_target_status:=nullif(trim(p_payload->>'status'),'');
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:432:  if p_action='reopen' and 
+(v_reason is null or char_length(v_reason)>500
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:467:    
+'blocked_from_status',v_task.blocked_from_status,'done_link_present',nullif(trim(v_task.done_link),'') is not null);
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:468:
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:469:  if 
+p_action='record_completion' then
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:470:    if not 
+public.task_actor_is_assignee(p_task_id,v_actor) then
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:471:      raise exception 'Only 
+a current assignee may record individual completion';
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:472:    end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:473:    if v_task.status in 
+('completed','closed') then raise exception 'This task cycle is already complete'; end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:474:    
+v_cycle:=v_task.lifecycle_cycle;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:481:    update public.tasks set 
+status='completed',completed_at=clock_timestamp(),blocked_from_status=null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:482:    where id=p_task_id 
+returning * into v_task;
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:483:  elsif p_action='close' 
+then
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:484:    if not 
+public.task_closable(p_task_id) or v_task.status<>'completed' or nullif(trim(v_task.done_link),'') is null then
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:485:      raise exception 'Task 
+is not eligible to close';
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:486:    end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:487:    update public.tasks set 
+status='closed',blocked_from_status=null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:488:      where id=p_task_id 
+returning * into v_task;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:489:  elsif p_action='reopen' 
+then
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:490:    if not 
+public.task_closable(p_task_id) or v_task.status not in ('completed','closed') then
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:491:      raise exception 'Task 
+cannot be reopened without authorization and reason';
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:492:    end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:493:    update public.tasks set 
+status=coalesce(v_target_status,'in_progress'),completed_at=null,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:494:      
+lifecycle_cycle=lifecycle_cycle+1,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:495:      
+blocked_from_status=case when v_target_status='blocked' then v_task.status else null end
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:525:-- Allowlisted 
+ordinary-field mutation. Status, assignments, archive identity and concurrency
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:526:-- columns have dedicated 
+RPCs and can never be supplied here.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:527:create or replace function 
+public.mutate_task_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:528:  p_task_id 
+text,p_expected_row_version bigint,p_changes jsonb,p_request_key uuid,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:529:  
+p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:530:) returns public.tasks 
+language plpgsql security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:531:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:532:  v_identity record; 
+v_actor text; v_original text; v_session text; v_task public.tasks;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:606:-- assignment authorization 
+and mirror synchronization; this wrapper adds concurrency,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:607:-- idempotency and trusted 
+impersonation audit identity.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:608:create or replace function 
+public.set_task_assignees_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:609:  p_task_id text,p_user_ids 
+text[],p_expected_row_version bigint,p_request_key uuid,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:610:  
+p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:611:) returns public.tasks 
+language plpgsql security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:612:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:613:  v_identity record; 
+v_actor text; v_original text; v_session text; v_task public.tasks;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:659:grant execute on function 
+public.set_task_assignees_v2(text,text[],bigint,uuid,text) to authenticated;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:660:
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:661:create or replace function 
+public.archive_task_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:662:  p_task_id text,p_restore 
+boolean,p_reason text,p_expected_row_version bigint,p_request_key uuid,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:663:  
+p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:664:) returns public.tasks 
+language plpgsql security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:665:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:666:  v_identity record; 
+v_actor text; v_original text; v_session text; v_task public.tasks;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:713:grant execute on function 
+public.archive_task_v2(text,boolean,text,bigint,uuid,text) to authenticated;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:714:
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:715:create or replace function 
+public.list_archived_tasks_v2()
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:716:returns setof public.tasks 
+language sql stable security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:717:  select t.* from 
+public.tasks t where t.archived_at is not null and public.task_history_visible_v2(t.id)
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:718:  order by t.archived_at 
+desc,t.id;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:719:$$;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:720:revoke all on function 
+public.list_archived_tasks_v2() from public,anon;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:723:-- Capacity is an 
+active-work view. Preserve the existing AM client-count branch and make the task
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:724:-- branch archive-aware 
+while retaining the repository's normalized-assignee/legacy-fallback rule.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:725:create or replace function 
+public.get_capacity_snapshot(p_user_ids text[])
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:726:returns table(user_id text, 
+used_capacity integer)
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:727:language plpgsql stable 
+security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:728:begin
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:729:  if 
+public.app_user_role()='sales' then raise exception 'sales may not query capacity data.'; end if;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:730:  return query
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:754:using (archived_at is null 
+and public.task_mutable_v2(id))
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:755:with check (archived_at is 
+null and public.task_mutable_v2(id)
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:756:  and (status<>'closed' or 
+public.task_closable(id) or created_by=public.app_user_id()));
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:757:
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:758:-- Partial-success bulk 
+creation. Each BEGIN/EXCEPTION block is a PostgreSQL subtransaction: a
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:759:-- failed item rolls back 
+its task, assignment changes and event, while prior independent items
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:760:-- remain eligible to 
+commit with the outer call. The batch header and final item rows make retry
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:761:-- results stable, 
+including duplicate/invalid explicit inputs.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:762:create or replace function 
+public.create_task_bulk_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:763:  p_request_key 
+uuid,p_selection_mode text,p_client_ids text[],p_payload jsonb,
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:764:  
+p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:765:) returns 
+table(item_ordinal integer,requested_client_id text,success boolean,task_id text,error_code text,error_message text)
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:766:language plpgsql security 
+definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:767:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:877:-- deactivation. It removes 
+only current assignment membership; history remains in
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:878:-- 
+task_assignee_log/task_events and no unrelated task field is changed.
+> task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:879:create or replace function 
+public.remove_user_from_open_tasks_v2(
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:880:  p_user_id 
+text,p_request_key uuid,p_impersonation_session_id text default null
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:881:) returns integer language 
+plpgsql security definer set search_path=public,pg_temp as $$
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:882:declare
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:883:  v_identity record; 
+v_actor text; v_original text; v_session text; v_target public.users;
+  task-management-architecture-review\002_transactional_rpc_contracts_NOT_EXECUTED.sql:884:  v_request 
+public.task_mutation_requests; v_hash text; v_task_id text; v_task public.tasks;
+
+
+
+===== supabase/migrations/20261023000000_task_done_link_and_closed_status.sql =====
+-- Task Board: "Closed" lifecycle stage + "Done Link" field.
+--
+-- done_link is a NEW, dedicated column — deliberately not a reuse of the existing drive_link
+-- column, which has different, always-visible-regardless-of-status semantics used by existing
+-- tasks as a general reference link. done_link is specifically the assignee's link to their
+-- finished work, submitted once a task reaches 'completed', for the creator/assignee/
+-- head_of_technical to review before manually closing the task (see canCloseTask() in
+-- src/lib/taskLifecycle.ts — enforced today at the UI layer only, not by RLS; see that file's
+-- comment and this session's own decision on that tradeoff).
+--
+-- 'closed' is a new tasks.status value: a manual confirmation step after 'completed', not a
+-- distinct kind of done — see isTaskDone() in src/lib/taskLifecycle.ts, which treats the two as
+-- functionally identical for every downstream calculation.
+begin;
+
+alter table public.tasks add column done_link text;
+
+alter table public.tasks drop constraint tasks_status_check;
+alter table public.tasks add constraint tasks_status_check
+  check (status in ('todo', 'in_progress', 'in_review', 'completed', 'blocked', 'closed'));
+
+commit;
+===== supabase/migrations/20261023100000_tasks_close_transition_rls.sql =====
+-- Server-side match for the new "Close Task" UI gate (src/lib/taskLifecycle.ts's canCloseTask):
+-- tasks_update_rls otherwise lets anyone with task_visible() update a task to any status,
+-- including the new 'closed' value, with no assignee/creator restriction at all — matching this
+-- session's own repeated pattern of checking that a UI-level restriction is also enforced at the
+-- RLS layer for anything permission-like, rather than trusting the client alone. Every other
+-- status transition is completely unaffected: this only narrows the specific case of the new
+-- value being 'closed'.
+begin;
+
+drop policy if exists "tasks_update_rls" on public.tasks;
+create policy "tasks_update_rls" on public.tasks
+for update to authenticated
+using (public.task_visible(assigned_to, parent_task_id, client_id))
+with check (
+  public.task_visible(assigned_to, parent_task_id, client_id)
+  and (
+    status <> 'closed'
+    or created_by = public.app_user_id()
+    or assigned_to = public.app_user_id()
+    or public.app_user_role() = 'head_of_technical'
+  )
+);
+
+commit;
+===== supabase/migrations/20261103000000_task_assignees_foundation.sql =====
+-- PR 1 of the "task assignees" project — DATABASE FOUNDATION ONLY. Purely additive: no existing
+-- table, column, function, trigger, policy, or grant is altered or dropped. tasks.assigned_to
+-- keeps being the single column every existing screen and every existing RLS policy reads — this
+-- migration only grows a new, currently-unread shadow structure alongside it and keeps it in sync
+-- going one direction (legacy assigned_to -> new task_assignees). No frontend behavior changes.
+--
+-- IMPORTANT — what this migration deliberately does NOT do (by design, per the agreed PR
+-- sequencing, so later PRs know exactly what's still owed):
+--   1. It does NOT change task_visible(), tasks_select_rls, tasks_update_rls, tasks_insert_rls,
+--      task_comments_*_rls, task_attachments_*_rls, employee_visible(), clients_select_rls, or
+--      capacity/notifications. All of those still key off tasks.assigned_to alone. Today that's
+--      harmless because nothing in this PR gives a task more than one real assignee yet (see next
+--      point) — but it is the thing that MUST be fixed, together with whatever later PR adds a
+--      write path that actually assigns a second person to a task, or that second person will be
+--      added to task_assignees and still be unable to see the task at all.
+--   2. It does NOT add any write path (RPC, policy, or UI) that lets a task end up with more than
+--      one row in task_assignees. The only writer of task_assignees in this PR is the sync trigger
+--      below, which only ever mirrors the single tasks.assigned_to column — so immediately after
+--      this migration, task_assignees still has at most one row per task, exactly matching
+--      assigned_to. Multi-assignee as a real, usable feature starts in a later PR.
+--   3. It does NOT implement the reverse sync (task_assignees -> tasks.assigned_to). That belongs
+--      in PR 4, together with pg_trigger_depth() recursion protection (needed then because a
+--      reverse trigger writing tasks.assigned_to would re-fire THIS forward trigger). This
+--      forward-only trigger cannot recurse: it only ever writes to task_assignees/
+--      task_assignee_log, never back to tasks, so there is nothing for it to re-trigger.
+begin;
+
+-- ----------------------------------------------------------------------------
+-- 1. task_assignees — the new, currently-unread source of truth for "who is on this task."
+--    Kept in sync FROM tasks.assigned_to by the trigger below; nothing reads it yet.
+-- ----------------------------------------------------------------------------
+create table if not exists public.task_assignees (
+  task_id text not null references public.tasks (id) on delete cascade,
+  user_id text not null references public.users (id),
+  added_by text references public.users (id),
+  viewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (task_id, user_id)
+);
+
+create index if not exists idx_task_assignees_user_id on public.task_assignees (user_id);
+
+-- ----------------------------------------------------------------------------
+-- 2. task_assignee_log — append-only audit trail of every add/remove. Deliberately NOT
+--    foreign-keyed to tasks.id: the log must survive even if a task row were ever removed (tasks
+--    itself has no DELETE grant/policy today, so this is defensive, not a response to a real
+--    deletion path), so a task_id here is a plain, unenforced reference, not a real FK.
+-- ----------------------------------------------------------------------------
+create table if not exists public.task_assignee_log (
+  id uuid primary key default gen_random_uuid(),
+  task_id text not null,
+  user_id text not null,
+  action text not null check (action in ('added', 'removed')),
+  actor_id text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_task_assignee_log_task_id_created_at
+  on public.task_assignee_log (task_id, created_at);
+
+-- ----------------------------------------------------------------------------
+-- 3. tasks.batch_id — groups the independent per-client task copies a later PR's "create for
+--    multiple clients" flow will produce, for DISPLAY ONLY. Nothing in this migration, and nothing
+--    else today, reads this column — it has zero effect on capacity, KPI, or any report
+--    aggregation, by construction (nothing queries it).
+-- ----------------------------------------------------------------------------
+alter table public.tasks add column if not exists batch_id text;
+create index if not exists idx_tasks_batch_id on public.tasks (batch_id);
+
+-- ----------------------------------------------------------------------------
+-- 4. Backfill — one task_assignees row per existing task that already has an assigned_to, so the
+--    new table starts out exactly mirroring current reality. ON CONFLICT DO NOTHING makes this
+--    half idempotent on its own; re-running the whole migration file is additionally guarded by
+--    the create-table-if-not-exists above (a second run finds the tables already populated and
+--    this insert simply no-ops every row via the conflict clause).
+-- ----------------------------------------------------------------------------
+insert into public.task_assignees (task_id, user_id, added_by, viewed_at, created_at)
+select id, assigned_to, created_by, assignee_viewed_at, created_at
+from public.tasks
+where assigned_to is not null
+on conflict (task_id, user_id) do nothing;
+
+-- Log backfill: a single set-based INSERT...SELECT over the same row set above — cheap (no
+-- per-row procedural loop), so included rather than skipped. created_at is backdated to the
+-- task's own created_at (not now()), so the log's timeline reflects when the assignment actually
+-- happened, not when this migration ran. The NOT EXISTS guard makes this safe to re-run: unlike
+-- the task_assignees backfill above, this plain INSERT has no natural ON CONFLICT target (the
+-- log's primary key is a generated uuid, not (task_id, user_id)), so without it a second run of
+-- this migration file would duplicate every backfilled log row.
+insert into public.task_assignee_log (task_id, user_id, action, actor_id, created_at)
+select t.id, t.assigned_to, 'added', t.created_by, t.created_at
+from public.tasks t
+where t.assigned_to is not null
+  and not exists (select 1 from public.task_assignee_log l
+                  where l.task_id = t.id and l.user_id = t.assigned_to and l.action = 'added');
+
+-- ----------------------------------------------------------------------------
+-- 5. Legacy -> new sync trigger. SECURITY DEFINER so it can write task_assignees/
+--    task_assignee_log even though authenticated has no INSERT/UPDATE/DELETE grant on either
+--    (see section 6) — the trigger runs as its owner, not as the authenticated caller.
+--
+--    Fires on INSERT, and on UPDATE of either assigned_to OR assignee_viewed_at — assignee_viewed_at
+--    is included in the column list (beyond what the task's header literally asked for) because
+--    handleMarkTaskViewed (App.tsx) updates ONLY assignee_viewed_at, with assigned_to absent from
+--    that statement's column list entirely; a trigger declared "UPDATE OF assigned_to" alone would
+--    never fire for that write, and the mirrored viewed_at this trigger maintains would silently
+--    go stale the first time anyone opens a task without its assignment also changing in the same
+--    statement. Flagging this explicitly since it's a deliberate reading of the spec, not a typo.
+-- ----------------------------------------------------------------------------
+create or replace function public.sync_legacy_assigned_to_to_task_assignees()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if TG_OP = 'INSERT' then
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+    return new;
+  end if;
+
+  -- TG_OP = 'UPDATE'
+  if new.assigned_to is distinct from old.assigned_to then
+    if old.assigned_to is not null then
+      delete from public.task_assignees where task_id = old.id and user_id = old.assigned_to;
+
+      -- actor_id: tasks has no "who made this specific edit" column, so created_by is the best
+      -- available proxy for this legacy-mirror path. A later PR's RPC-based write path (the one
+      -- that actually lets someone other than the creator change assignees) can pass the true
+      -- actor explicitly instead of relying on this trigger's inference.
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (old.id, old.assigned_to, 'removed', new.created_by);
+    end if;
+
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+
+  elsif new.assignee_viewed_at is distinct from old.assignee_viewed_at and new.assigned_to is not null then
+    -- assigned_to unchanged, only the shared "viewed" timestamp moved — mirror it onto that
+    -- assignee's row rather than touching task_assignee_log (no add/remove happened).
+    update public.task_assignees
+    set viewed_at = new.assignee_viewed_at
+    where task_id = new.id and user_id = new.assigned_to;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.sync_legacy_assigned_to_to_task_assignees() from public, anon, authenticated;
+
+drop trigger if exists sync_legacy_assigned_to_to_task_assignees_trigger on public.tasks;
+create trigger sync_legacy_assigned_to_to_task_assignees_trigger
+after insert or update of assigned_to, assignee_viewed_at on public.tasks
+for each row
+execute function public.sync_legacy_assigned_to_to_task_assignees();
+
+-- ----------------------------------------------------------------------------
+-- 6. RLS — SELECT only, for both new tables. "Can see this row" is defined purely as "can see the
+--    parent task," by re-querying public.tasks from inside the policy: because this policy runs
+--    under the caller's own role (not a SECURITY DEFINER function), that inner query is itself
+--    subject to tasks' own RLS (tasks_select_rls) — so this adds no new visibility logic of its
+--    own and automatically tracks task_visible()/tasks_select_rls forever, including whatever a
+--    later PR changes them to. No INSERT/UPDATE/DELETE policy or grant on either table: the only
+--    writer today is the SECURITY DEFINER trigger above (which bypasses grants as the function
+--    owner), and a later PR's controlled RPC will be the only other one. Default privileges are
+--    revoked in this project, so every grant below is explicit.
+-- ----------------------------------------------------------------------------
+alter table public.task_assignees enable row level security;
+
+drop policy if exists "task_assignees_select_rls" on public.task_assignees;
+create policy "task_assignees_select_rls" on public.task_assignees
+for select to authenticated
+using (
+  exists (select 1 from public.tasks t where t.id = task_assignees.task_id)
+);
+
+grant select on public.task_assignees to authenticated;
+grant all on public.task_assignees to service_role;
+
+alter table public.task_assignee_log enable row level security;
+
+drop policy if exists "task_assignee_log_select_rls" on public.task_assignee_log;
+create policy "task_assignee_log_select_rls" on public.task_assignee_log
+for select to authenticated
+using (
+  exists (select 1 from public.tasks t where t.id = task_assignee_log.task_id)
+);
+
+grant select on public.task_assignee_log to authenticated;
+grant all on public.task_assignee_log to service_role;
+
+commit;
+===== supabase/migrations/20261105000000_task_assignees_rpcs.sql =====
+-- PR 4a of the task-assignees project — DATABASE LAYER for real multi-assignee writes. Builds on
+-- PR 1 (task_assignees/task_assignee_log tables + the legacy-forward sync trigger) and PR 2
+-- (task_visible_v2()/task_closable(), the cutover). Nothing here is read by the frontend yet — PR
+-- 4b wires the Create/Edit Task form to these RPCs. tasks.assigned_to remains the single column
+-- every existing screen (MyWorkHub's badge, every capacity/report aggregation) still reads; this
+-- migration's reverse-sync trigger is what keeps it correct once an assignee list can have more
+-- than one person again.
+--
+-- Objects added, in dependency order:
+--   1. idx_tasks_batch_client_unique — partial unique index, (batch_id, client_id) where
+--      batch_id is not null. Stops one "send to multiple clients" batch from producing two copies
+--      for the same client (double-submit/retry) — create_task_copy() treats a conflict on it as
+--      "already created, return the existing row" rather than an error (see section 5).
+--   2. sync_legacy_assigned_to_to_task_assignees() — PR 1's forward trigger function, re-defined
+--      with a pg_trigger_depth() guard at the top.
+--   3. sync_task_assignees_to_legacy_assigned_to() + its AFTER INSERT OR DELETE trigger on
+--      task_assignees — the reverse half of PR 1's one-way sync, promised but deliberately
+--      deferred there. Recomputes tasks.assigned_to as the OLDEST remaining assignee
+--      (min(created_at)) every time task_assignees' membership changes. ALSO guarded by
+--      pg_trigger_depth() > 1, symmetrically with section 2 — see that section's comment for why
+--      both sides carry the same guard rather than relying on just one.
+--   4. set_task_assignees(p_task_id, p_user_ids) — the only place a task's assignee SET is ever
+--      written going forward (besides the legacy forward-sync mirror).
+--   5. create_task_copy(...) — SECURITY INVOKER. Inserts one new task (assigned_to left null,
+--      status forced to 'todo') under the CALLER's own tasks_insert_rls, then calls
+--      set_task_assignees() for the real assignee list. Idempotent per (batch_id, client_id): a
+--      retried/duplicate call for a pair that already has a copy returns that existing row
+--      instead of raising the unique-index violation.
+--   6. mark_task_viewed(p_task_id) — SECURITY DEFINER. First-view-wins: only ever sets a viewed_at
+--      that is currently null, both on the caller's own task_assignees row and (backward-compat)
+--      on tasks.assignee_viewed_at.
+--   7. get_capacity_snapshot(p_user_ids) — SECURITY DEFINER. Counts only, no task or client
+--      content. See its own comment for the exact counting rule for each branch.
+--   8. task_attachments_objects_select_rls (storage.objects) — widened to the OR of the original
+--      folder-name -> task_visible_v2 rule and a new task_attachments.storage_path ->
+--      task_visible_v2 rule, so both a legacy single-task file and a just-uploaded object with no
+--      task_attachments row yet keep resolving under the old rule, while a file shared across
+--      multiple copies (added via section 9a, below) resolves for every copy's own assignees via
+--      the new rule.
+--   8b. idx_task_attachments_storage_path — index backing that new rule's join.
+--   9a. add_task_attachments_for_copies(...) — SECURITY INVOKER, unchanged in shape from the first
+--       draft of this migration.
+--   9b. delete_task_attachment(p_attachment_id) — SECURITY DEFINER. Deletes the metadata row only
+--       and returns the storage_path when no other task_attachments row still references it (null
+--       otherwise) — it does NOT delete the storage.objects row itself (confirmed against
+--       Supabase's own docs: a SQL DELETE on storage.objects removes only the metadata row and
+--       leaves the actual file orphaned in the bucket; only the Storage API's own remove endpoint
+--       deletes the underlying object). The caller is responsible for calling
+--       `supabase.storage.from('task-attachments').remove([path])` when a non-null path comes
+--       back. See section 9c for the policy that lets that follow-up call succeed even though, by
+--       then, the task_attachments row the OLD delete policy depended on is already gone.
+--   9c. task_attachments_objects_delete_own_rls (storage.objects) — NEW, additive policy: the
+--       uploader (owner = auth.uid()) may always delete their own object directly, independent of
+--       any task_attachments row's existence. The pre-existing
+--       task_attachments_objects_delete_rls policy (keyed on a task_attachments row's
+--       uploaded_by) is left in place untouched; the two are simply OR'd together as permissive
+--       policies, same as the SELECT policy's OR above.
+--
+-- Escalation/validity guard (set_task_assignees, applied ONLY to ids newly entering the list —
+-- i.e. in the computed to-add set, never to an id that was already an assignee and is simply
+-- being re-confirmed by resaving the list):
+--   - nobody may name executive except themselves
+--   - only executive may name head_of_technical (besides themselves)
+--   - sales may never be assigned to a task
+--   - ai_engineer is unrestricted
+--   - "active, auth_id not null" likewise checked only for these newly-added ids
+-- This is byte-identical in shape to tasks_insert_rls's existing assigned_to guard
+-- (20261101100000_task_cross_team_visibility.sql / 20261104100000_task_visibility_cutover.sql)
+-- plus the sales exclusion that single-assignee guard never had to spell out itself. Checking this
+-- only against the to-add set (rather than the whole requested list) matters: a task that already
+-- has, say, a head_of_technical assignee must stay editable by a non-executive actor for every
+-- OTHER change (add/remove someone else, reorder) as long as that pre-existing assignee isn't
+-- being newly added by this same call.
+--
+-- set_task_assignees additionally never lets the task's own creator be removed from its assignee
+-- list (independent of who is calling), and never sends a "you were assigned" notification when
+-- the new assignee IS the actor (assigning yourself needs no notification).
+--
+-- set_task_assignees's permission gate (round 2 revision — narrower than task_visible_v2 on
+-- purpose): task_closable(p_task_id) [admin roles / creator / any current assignee] OR an am_agent
+-- who manages the task's client OR an am_team_lead whose own team includes the am_agent managing
+-- the task's client OR any of the 4 team-lead roles on a task visible to them via the team rule
+-- (creator or any assignee on their own team, plus the seo_team_lead/Programming carve-out).
+-- sales is explicitly excluded. marketing_manager is deliberately NOT included: task_visible_v2
+-- gives marketing_manager visibility into a graphic_designer/video_editor's task purely so they
+-- can see creative work in progress, not so they can reassign it — being able to SEE a task is not
+-- the same permission as being able to manage who's on it, so this gate only replicates
+-- task_visible_v2's admin/creator/assignee/am-agent/team-lead doors, never its marketing_manager
+-- door. See set_task_assignees' own body for the exact SQL.
+begin;
+
+-- ----------------------------------------------------------------------------
+-- 1. (batch_id, client_id) partial unique index.
+-- ----------------------------------------------------------------------------
+create unique index if not exists idx_tasks_batch_client_unique
+  on public.tasks (batch_id, client_id)
+  where batch_id is not null;
+
+-- ----------------------------------------------------------------------------
+-- 2. Forward trigger function — same body as
+--    20261103000000_task_assignees_foundation.sql, with one addition: an early return when
+--    pg_trigger_depth() > 1, i.e. this execution is a cascade from inside another trigger (the
+--    reverse-sync trigger in section 3) rather than a direct, top-level write to
+--    tasks.assigned_to/assignee_viewed_at. The reverse trigger (section 3) carries the identical
+--    guard, symmetrically: only ONE side needs it to prevent an infinite loop (whichever fires
+--    first stops the other from cascading back), but guarding both means neither side ever does
+--    real work beyond the first, top-level trigger invocation on EITHER side of the sync, so a
+--    direct write that bounces back and forth once is never mistaken for 2 separate real changes.
+-- ----------------------------------------------------------------------------
+create or replace function public.sync_legacy_assigned_to_to_task_assignees()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if pg_trigger_depth() > 1 then
+    return new;
+  end if;
+
+  if TG_OP = 'INSERT' then
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+    return new;
+  end if;
+
+  -- TG_OP = 'UPDATE'
+  if new.assigned_to is distinct from old.assigned_to then
+    if old.assigned_to is not null then
+      delete from public.task_assignees where task_id = old.id and user_id = old.assigned_to;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (old.id, old.assigned_to, 'removed', new.created_by);
+    end if;
+
+    if new.assigned_to is not null then
+      insert into public.task_assignees (task_id, user_id, added_by, viewed_at)
+      values (new.id, new.assigned_to, new.created_by, new.assignee_viewed_at)
+      on conflict (task_id, user_id) do update set viewed_at = excluded.viewed_at;
+
+      insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+      values (new.id, new.assigned_to, 'added', new.created_by);
+    end if;
+
+  elsif new.assignee_viewed_at is distinct from old.assignee_viewed_at and new.assigned_to is not null then
+    update public.task_assignees
+    set viewed_at = new.assignee_viewed_at
+    where task_id = new.id and user_id = new.assigned_to;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.sync_legacy_assigned_to_to_task_assignees() from public, anon, authenticated;
+
+-- Trigger attachment unchanged from PR 1 (same events, same timing, same function name) — not
+-- re-created, only the function body above changed.
+
+-- ----------------------------------------------------------------------------
+-- 3. Reverse trigger — task_assignees membership change -> recompute tasks.assigned_to as the
+--    OLDEST remaining assignee (min(created_at), tie-broken by user_id for determinism). Fires on
+--    INSERT/DELETE only: an UPDATE of task_assignees.viewed_at never changes membership or
+--    ordering, so it has nothing to recompute. The `is distinct from` guard means this never
+--    issues a no-op UPDATE, so it never fires the forward trigger pointlessly. Carries the same
+--    pg_trigger_depth() > 1 guard as section 2, for the same symmetric reason explained there.
+-- ----------------------------------------------------------------------------
+create or replace function public.sync_task_assignees_to_legacy_assigned_to()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_task_id text := coalesce(new.task_id, old.task_id);
+  v_new_assigned_to text;
+begin
+  if pg_trigger_depth() > 1 then
+    return null;
+  end if;
+
+  select user_id into v_new_assigned_to
+  from public.task_assignees
+  where task_id = v_task_id
+  order by created_at asc, user_id asc
+  limit 1;
+
+  update public.tasks
+  set assigned_to = v_new_assigned_to
+  where id = v_task_id
+    and assigned_to is distinct from v_new_assigned_to;
+
+  return null;
+end;
+$$;
+
+revoke all on function public.sync_task_assignees_to_legacy_assigned_to() from public, anon, authenticated;
+
+drop trigger if exists sync_task_assignees_to_legacy_assigned_to_trigger on public.task_assignees;
+create trigger sync_task_assignees_to_legacy_assigned_to_trigger
+after insert or delete on public.task_assignees
+for each row
+execute function public.sync_task_assignees_to_legacy_assigned_to();
+
+-- ----------------------------------------------------------------------------
+-- 4. set_task_assignees(p_task_id, p_user_ids) — replaces a task's full assignee set with the
+--    given ordered list. Locks the task row first so two concurrent calls on the same task can't
+--    race on the diff. A no-op diff (same set, any order) does nothing at all — no log row, no
+--    notification, not even a touch of task_assignees.
+-- ----------------------------------------------------------------------------
+create or replace function public.set_task_assignees(p_task_id text, p_user_ids text[])
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_task public.tasks;
+  v_actor_id text := public.app_user_id();
+  v_ordered_ids text[] := array[]::text[];
+  v_current_ids text[];
+  v_to_add text[] := array[]::text[];
+  v_to_remove text[] := array[]::text[];
+  v_uid text;
+  v_target_role text;
+  v_auth_id text;
+  v_deactivated_at timestamptz;
+begin
+  select * into v_task from public.tasks where id = p_task_id for update;
+  if not found then
+    raise exception 'Task not found';
+  end if;
+
+  -- Gate — see this migration's header comment for the full rationale. Deliberately NOT
+  -- task_visible_v2(id): that would also let marketing_manager (via the creative-role door) and
+  -- an am_agent/am_team_lead with no real management relationship to THIS task manage its
+  -- assignees merely because they can see it. Allowed:
+  --   - task_closable(p_task_id): admin roles, the task's creator, or any current assignee.
+  --   - am_agent who manages the task's client (client_am_agent_is_caller — same door
+  --     task_visible_v2 itself uses for am_agent).
+  --   - am_team_lead whose OWN team includes the am_agent managing the task's client.
+  --   - any of the 4 team-lead roles, on a task visible to them via the team rule (creator or any
+  --     assignee on their own team, plus the seo_team_lead/Programming carve-out) — byte-identical
+  --     to task_visible_v2's own team-lead branch.
+  -- sales is excluded explicitly (not just structurally — see header comment).
+  if public.app_user_role() = 'sales' or not (
+    public.task_closable(p_task_id)
+    or (
+      public.app_user_role() = 'am_agent'
+      and v_task.client_id is not null
+      and public.client_am_agent_is_caller(v_task.client_id)
+    )
+    or (
+      public.app_user_role() = 'am_team_lead'
+      and v_task.client_id is not null
+      and exists (
+        select 1 from public.clients c
+        join public.users ua on ua.id = c.am_agent_id
+        where c.id = v_task.client_id and ua.team = public.app_user_team()
+      )
+    )
+    or (
+      public.app_user_role() in ('am_team_lead', 'media_buying_team_lead', 'seo_team_lead', 'social_media_team_lead')
+      and (
+        exists (select 1 from public.users u where u.id = v_task.created_by and u.team = public.app_user_team())
+        or exists (
+          select 1 from public.task_assignees ta
+          join public.users u on u.id = ta.user_id
+          where ta.task_id = p_task_id and u.team = public.app_user_team()
+        )
+        or (
+          public.app_user_role() = 'seo_team_lead'
+          and (
+            exists (select 1 from public.users u where u.id = v_task.created_by and u.team = 'Programming')
+            or exists (
+              select 1 from public.task_assignees ta
+              join public.users u on u.id = ta.user_id
+              where ta.task_id = p_task_id and u.team = 'Programming'
+            )
+          )
+        )
+      )
+    )
+  ) then
+    raise exception 'You do not have permission to modify this task''s assignees.';
+  end if;
+
+  -- Dedupe + drop nulls, preserving first-occurrence order. Order matters: among brand-new
+  -- additions below, the first one listed gets the earliest clock_timestamp() and so becomes the
+  -- oldest assignee (tasks.assigned_to, via the reverse trigger) if the task had none before.
+  foreach v_uid in array coalesce(p_user_ids, array[]::text[]) loop
+    if v_uid is not null and not (v_uid = any(v_ordered_ids)) then
+      v_ordered_ids := array_append(v_ordered_ids, v_uid);
+    end if;
+  end loop;
+
+  select coalesce(array_agg(user_id), array[]::text[]) into v_current_ids
+  from public.task_assignees where task_id = p_task_id;
+
+  foreach v_uid in array v_ordered_ids loop
+    if not (v_uid = any(v_current_ids)) then
+      v_to_add := array_append(v_to_add, v_uid);
+    end if;
+  end loop;
+
+  foreach v_uid in array v_current_ids loop
+    if not (v_uid = any(v_ordered_ids)) then
+      v_to_remove := array_append(v_to_remove, v_uid);
+    end if;
+  end loop;
+
+  -- The creator can never be removed from their own task's assignee list — independent of who is
+  -- calling, and checked against the diff (not the raw requested list) so it fires exactly when
+  -- the creator is CURRENTLY assigned and the new list would drop them.
+  if v_task.created_by = any(v_to_remove) then
+    raise exception 'The task''s creator cannot be removed from its assignee list.';
+  end if;
+
+  if array_length(v_to_add, 1) is null and array_length(v_to_remove, 1) is null then
+    return;
+  end if;
+
+  -- Validity + escalation guard, applied ONLY to ids actually entering the list (v_to_add) — see
+  -- this migration's header comment. A pre-existing assignee is never re-validated just because
+  -- the list is being re-saved.
+  foreach v_uid in array v_to_add loop
+    v_target_role := public.user_role_by_id(v_uid);
+    if v_target_role is null then
+      raise exception 'User % not found', v_uid;
+    end if;
+    if v_target_role = 'sales' then
+      raise exception 'sales may not be assigned to tasks';
+    end if;
+    if not (
+      v_uid = v_actor_id
+      or v_target_role not in ('executive', 'head_of_technical')
+      or (public.app_user_role() = 'executive' and v_target_role = 'head_of_technical')
+    ) then
+      raise exception 'You are not permitted to assign %.', v_uid;
+    end if;
+
+    select auth_id, deactivated_at into v_auth_id, v_deactivated_at
+    from public.users where id = v_uid;
+    if v_auth_id is null or v_deactivated_at is not null then
+      raise exception 'User % is not an active employee and cannot be newly assigned.', v_uid;
+    end if;
+  end loop;
+
+  foreach v_uid in array v_to_remove loop
+    delete from public.task_assignees where task_id = p_task_id and user_id = v_uid;
+    insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+    values (p_task_id, v_uid, 'removed', v_actor_id);
+    -- Deliberately no notification: the removed person would open a link into a task
+    -- task_visible_v2 has already stopped showing them, the moment their row is gone.
+  end loop;
+
+  foreach v_uid in array v_to_add loop
+    insert into public.task_assignees (task_id, user_id, added_by, created_at)
+    values (p_task_id, v_uid, v_actor_id, clock_timestamp());
+    insert into public.task_assignee_log (task_id, user_id, action, actor_id)
+    values (p_task_id, v_uid, 'added', v_actor_id);
+
+    -- No notification when you assign yourself — nothing to tell yourself you don't already know.
+    if v_uid <> v_actor_id then
+      insert into public.notifications (id, user_id, title, message, sender_id, is_read, type, link_url, created_at)
+      values (
+        'notif-' || gen_random_uuid()::text,
+        v_uid,
+        'New Task Assigned',
+        'You have been assigned a new task: ' || v_task.title || '.',
+        v_actor_id,
+        false,
+        'task_assigned',
+        'module:tasks',
+        now()
+      );
+    end if;
+  end loop;
+end;
+$$;
+
+revoke all on function public.set_task_assignees(text, text[]) from public, anon;
+grant execute on function public.set_task_assignees(text, text[]) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 5. create_task_copy(...) — SECURITY INVOKER on purpose: the INSERT below runs under the
+--    CALLER's own tasks_insert_rls (role <> sales, created_by = caller, parent_task_id visible —
+--    all already enforced there with no need to duplicate any of it here), with assigned_to
+--    always null at insert time, so that policy's own assignee-escalation branch is always
+--    trivially satisfied too. set_task_assignees() (SECURITY DEFINER) is called afterward for the
+--    real assignee list — the one and only path that can ever put someone other than null into
+--    this task's assignee set. One call creates one task; a "send to multiple clients" batch calls
+--    this once per client, passing the same p_batch_id each time.
+--
+--    Idempotent per (batch_id, client_id): ON CONFLICT DO NOTHING against the partial unique
+--    index means a retried/duplicate call for a pair that already has a copy inserts nothing;
+--    the fallback SELECT (also under the caller's own RLS) then returns that EXISTING row instead
+--    of raising. Race-safe because Postgres's own ON CONFLICT handling blocks a conflicting
+--    inserter until the winning transaction commits, so by the time the fallback SELECT runs, the
+--    other copy is guaranteed to already be visible (if it's visible to this caller at all) — an
+--    existing-but-invisible-to-this-caller row is treated as an error, not silently returned.
+-- ----------------------------------------------------------------------------
+create or replace function public.create_task_copy(
+  p_client_id text,
+  p_title text,
+  p_description text,
+  p_team text,
+  p_due_date date,
+  p_priority text,
+  p_estimated_hours numeric default null,
+  p_task_type text default null,
+  p_task_type_other text default null,
+  p_parent_task_id text default null,
+  p_batch_id text default null,
+  p_assignee_ids text[] default null
+)
+returns public.tasks
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_task public.tasks;
+  v_id text := 'tsk-' || gen_random_uuid()::text;
+begin
+  -- The tasks.client_id foreign key only checks EXISTENCE (FK checks bypass RLS, running as the
+  -- table owner) — it would happily let a caller reference a real client they can't actually see.
+  -- This EXISTS, run under SECURITY INVOKER, goes through clients_select_rls as the caller, so an
+  -- existing-but-invisible client is rejected exactly like a nonexistent one.
+  if p_client_id is not null and not exists (select 1 from public.clients where id = p_client_id) then
+    raise exception 'Client not found or not accessible.';
+  end if;
+
+  insert into public.tasks (
+    id, client_id, title, description, assigned_to, created_by, team, status,
+    due_date, priority, estimated_hours, actual_hours, parent_task_id,
+    task_type, task_type_other, batch_id
+  ) values (
+    v_id, p_client_id, p_title, p_description, null, public.app_user_id(), p_team, 'todo',
+    p_due_date, p_priority, p_estimated_hours, 0, p_parent_task_id,
+    p_task_type, p_task_type_other, p_batch_id
+  )
+  on conflict (batch_id, client_id) where batch_id is not null do nothing
+  returning * into v_task;
+
+  if not found then
+    -- Idempotent retry: a copy for this batch+client pair already exists. Return it (under the
+    -- caller's own RLS) instead of failing on the unique index.
+    select * into v_task from public.tasks where batch_id = p_batch_id and client_id = p_client_id;
+    if not found then
+      raise exception 'A task for this batch and client already exists but is not accessible to you.';
+    end if;
+    return v_task;
+  end if;
+
+  if p_assignee_ids is not null and array_length(p_assignee_ids, 1) is not null then
+    perform public.set_task_assignees(v_task.id, p_assignee_ids);
+  end if;
+
+  -- Re-select: set_task_assignees()'s inserts into task_assignees fire the reverse-sync trigger
+  -- (section 3) synchronously, so by now tasks.assigned_to reflects the real assignee list —
+  -- the row captured by the RETURNING clause above always had assigned_to = null.
+  select * into v_task from public.tasks where id = v_task.id;
+
+  return v_task;
+end;
+$$;
+
+revoke all on function public.create_task_copy(text, text, text, text, date, text, numeric, text, text, text, text, text[]) from public, anon;
+grant execute on function public.create_task_copy(text, text, text, text, date, text, numeric, text, text, text, text, text[]) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 6. mark_task_viewed(p_task_id) — SECURITY DEFINER: task_assignees has no UPDATE grant for
+--    authenticated at all (PR 1's own comment), so the first write below is impossible without it.
+--    First-view-wins: both writes are gated on the target column currently being null, so a
+--    second call (opening the task again later) never overwrites the original "first viewed at"
+--    moment. By construction this can only ever touch the CALLING user's own task_assignees row
+--    and the task's assignee_viewed_at column when the caller is specifically its current legacy
+--    assigned_to — there is no parameter a caller could pass to touch anyone else's data, same
+--    reasoning as touch_last_seen() (20261030200000_touch_last_seen_rpc.sql).
+-- ----------------------------------------------------------------------------
+create or replace function public.mark_task_viewed(p_task_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.task_assignees
+  set viewed_at = now()
+  where task_id = p_task_id and user_id = public.app_user_id() and viewed_at is null;
+
+  -- Backward-compat mirror for MyWorkHub's existing `!assignee_viewed_at` badge check, which still
+  -- reads the single legacy column — only meaningful while the caller IS the legacy assigned_to.
+  update public.tasks
+  set assignee_viewed_at = now()
+  where id = p_task_id and assigned_to = public.app_user_id() and assignee_viewed_at is null;
+end;
+$$;
+
+revoke all on function public.mark_task_viewed(text) from public, anon;
+grant execute on function public.mark_task_viewed(text) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 7. get_capacity_snapshot(p_user_ids) — SECURITY DEFINER, counts only, no task or client content.
+--
+--    am_agent/am_team_lead branch: byte-identical to capacity.ts's getUserCapacityData
+--    (src/lib/capacity.ts) — both roles are measured by clients.am_agent_id = this user's id
+--    (NOT am_team_lead_id; capacity.ts filters assignedClients by am_agent_id regardless of which
+--    of the two roles the user holds, so a team lead's count is literally "clients where THEY
+--    personally are am_agent_id", same as the agent case), excluding status = 'closed' and
+--    status = 'paused' (isPausedClient()). Re-checked line by line against the live capacity.ts
+--    text — this branch was already correct in the first draft of this migration, kept unchanged.
+--
+--    Every other role: DELIBERATELY DIVERGES from capacity.ts's current client-side computation.
+--    capacity.ts still filters its own (RLS-narrowed) `tasks` array by `assigned_to === user.id`
+--    — the single legacy column — because that's the only relationship it has today. This
+--    function instead counts by task_assignees MEMBERSHIP (join task_assignees -> tasks), so a
+--    task with 3 assignees counts fully for all 3 of them, and a task with zero assignees counts
+--    for nobody — the real multi-assignee measure, not a mirror of the legacy single-column one.
+--    "Non-done" mirrors isTaskDone() (src/lib/taskLifecycle.ts: status in ('completed', 'closed'))
+--    exactly. capacityLimit/isUntracked/status/remainingCapacity/utilizationRate are left to
+--    capacity.ts to keep computing client-side from users.capacity_limit, exactly as today — pure
+--    arithmetic, not data this function needs to duplicate.
+-- ----------------------------------------------------------------------------
+create or replace function public.get_capacity_snapshot(p_user_ids text[])
+returns table(user_id text, used_capacity integer)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- Explicit raise, not a silently-empty resultset: a sales caller asking for capacity data is a
+  -- permission violation, not a legitimately-empty query — same posture as every other
+  -- permission check in this migration.
+  if public.app_user_role() = 'sales' then
+    raise exception 'sales may not query capacity data.';
+  end if;
+
+  return query
+    select
+      u.id,
+      (case
+        when u.role in ('am_agent', 'am_team_lead') then (
+          select count(*)::integer
+          from public.clients c
+          where c.am_agent_id = u.id
+            and c.status <> 'closed'
+            and c.status <> 'paused'
+        )
+        else (
+          select count(*)::integer
+          from public.task_assignees ta
+          join public.tasks t on t.id = ta.task_id
+          where ta.user_id = u.id
+            and t.status not in ('completed', 'closed')
+        )
+      end)
+    from public.users u
+    where u.id = any(coalesce(p_user_ids, array[]::text[]));
+end;
+$$;
+
+revoke all on function public.get_capacity_snapshot(text[]) from public, anon;
+grant execute on function public.get_capacity_snapshot(text[]) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 8. storage.objects SELECT policy, widened to an OR of the original folder-name -> task id ->
+--    task_visible_v2 rule and a new task_attachments.storage_path -> task_visible_v2 rule. Keeping
+--    the old rule (rather than replacing it, as the first draft of this migration did) matters for
+--    two cases: a legacy single-task file (whose folder-owner task has no reason to ever gain a
+--    task_attachments row referencing it beyond the one it already has) stays resolvable purely by
+--    the old rule, and a just-uploaded object for a NEW batch — uploaded before
+--    add_task_attachments_for_copies() (section 9a) has run, so no task_attachments row exists
+--    pointing at it yet — stays resolvable too, via the folder it was uploaded into. The new rule
+--    is what makes every OTHER copy's own assignees able to see the same shared object once
+--    section 9a's rows exist. INSERT policy is untouched (still folder-name -> task_visible_v2 —
+--    the very first upload for a batch still has no task_attachments row for a path-based check to
+--    key off). The pre-existing DELETE policy is untouched too; section 9c adds an independent one
+--    alongside it.
+-- ----------------------------------------------------------------------------
+drop policy if exists "task_attachments_objects_select_rls" on storage.objects;
+create policy "task_attachments_objects_select_rls" on storage.objects
+for select
+to authenticated
+using (
+  bucket_id = 'task-attachments'
+  and (
+    exists (
+      select 1 from public.tasks t
+      where t.id = (storage.foldername(name))[1]
+        and public.task_visible_v2(t.id)
+    )
+    or exists (
+      select 1 from public.task_attachments a
+      where a.storage_path = storage.objects.name
+        and public.task_visible_v2(a.task_id)
+    )
+  )
+);
+
+-- 8b. Index backing the new rule's join (storage_path had no index before this migration).
+create index if not exists idx_task_attachments_storage_path on public.task_attachments (storage_path);
+
+-- ----------------------------------------------------------------------------
+-- 9a. add_task_attachments_for_copies(...) — SECURITY INVOKER. Adds one task_attachments row per
+--     given task id, all sharing the one already-uploaded storage_path. Deliberately does NOT
+--     re-check storage.objects itself — running under the caller's own RLS means each inserted row
+--     is independently checked by the existing task_attachments_insert_rls policy (uploaded_by =
+--     caller and task_visible_v2(task_id)) — exactly the same rule a single direct insert already
+--     has to satisfy, just applied once per task id in the array. If any one of the given task ids
+--     isn't actually visible to/created by the caller, the whole multi-row insert is rejected
+--     atomically.
+-- ----------------------------------------------------------------------------
+create or replace function public.add_task_attachments_for_copies(
+  p_task_ids text[],
+  p_storage_path text,
+  p_filename text,
+  p_file_size bigint,
+  p_mime_type text
+)
+returns setof public.task_attachments
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  if p_task_ids is null or array_length(p_task_ids, 1) is null then
+    raise exception 'p_task_ids must not be empty';
+  end if;
+
+  if not ((storage.foldername(p_storage_path))[1] = any(p_task_ids)) then
+    raise exception 'storage_path does not belong to any of the given tasks';
+  end if;
+
+  return query
+    insert into public.task_attachments (id, task_id, storage_path, filename, file_size, mime_type, uploaded_by, uploaded_at)
+    select 'att-' || gen_random_uuid()::text, t, p_storage_path, p_filename, p_file_size, p_mime_type, public.app_user_id(), now()
+    from unnest(p_task_ids) as t
+    returning *;
+end;
+$$;
+
+revoke all on function public.add_task_attachments_for_copies(text[], text, text, bigint, text) from public, anon;
+grant execute on function public.add_task_attachments_for_copies(text[], text, text, bigint, text) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 9b. delete_task_attachment(p_attachment_id) — SECURITY DEFINER, uploader-only (deliberately
+--     stricter than the live table/storage delete policies, which also let
+--     executive/head_of_technical/ai_engineer delete any attachment — a shared, multi-copy
+--     attachment's blast radius is wider now, so this one path has no role escape).
+--
+--     Deletes ONLY the task_attachments metadata row, then returns the storage_path when no other
+--     task_attachments row still references it (null otherwise) — it deliberately does NOT touch
+--     storage.objects. Confirmed against Supabase's own docs (Storage > Management > Delete
+--     Objects): removing a storage.objects row with plain SQL deletes only the metadata; the
+--     actual file is left behind in the bucket as an orphan, because the real deletion against the
+--     underlying object store happens in the Storage API server, not via a database trigger or
+--     constraint. The caller must follow a non-null return with
+--     `supabase.storage.from('task-attachments').remove([path])` — see section 9c for the policy
+--     that lets that succeed.
+--
+--     The advisory lock makes the "is this the last reference" check race-safe: two concurrent
+--     deletes of sibling rows sharing one path serialize on it, so whichever runs second always
+--     sees the first's delete already committed-in-transaction before counting remaining
+--     references — exactly one of the two calls gets back the non-null path, never zero, never
+--     both.
+-- ----------------------------------------------------------------------------
+create or replace function public.delete_task_attachment(p_attachment_id text)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_attachment public.task_attachments;
+  v_remaining integer;
+begin
+  select * into v_attachment from public.task_attachments where id = p_attachment_id;
+  if not found then
+    raise exception 'Attachment not found';
+  end if;
+
+  if v_attachment.uploaded_by <> public.app_user_id() then
+    raise exception 'Only the uploader may delete this attachment.';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(v_attachment.storage_path, 0));
+
+  delete from public.task_attachments where id = p_attachment_id;
+
+  select count(*) into v_remaining
+  from public.task_attachments
+  where storage_path = v_attachment.storage_path;
+
+  if v_remaining = 0 then
+    return v_attachment.storage_path;
+  end if;
+
+  return null;
+end;
+$$;
+
+revoke all on function public.delete_task_attachment(text) from public, anon;
+grant execute on function public.delete_task_attachment(text) to authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 9c. NEW storage.objects DELETE policy — additive, alongside the pre-existing
+--     task_attachments_objects_delete_rls (untouched). That old policy keys off a task_attachments
+--     row's uploaded_by, but by the time a client calls the Storage API's remove() following a
+--     non-null delete_task_attachment() return, the metadata row is ALREADY gone — so the old
+--     policy alone would no longer match, and the call would silently remove 0 objects. This one
+--     keys off storage.objects' own `owner` column instead (set by the Storage API to the
+--     uploader's auth.uid() at upload time), independent of task_attachments entirely, so the
+--     uploader can always remove their own object however many task_attachments rows referenced it
+--     before this cleanup call.
+-- ----------------------------------------------------------------------------
+drop policy if exists "task_attachments_objects_delete_own_rls" on storage.objects;
+create policy "task_attachments_objects_delete_own_rls" on storage.objects
+for delete
+to authenticated
+using (
+  bucket_id = 'task-attachments'
+  and owner = auth.uid()
+);
+
+commit;
+===== task-management-architecture-review/002_transactional_rpc_contracts_NOT_EXECUTED.sql =====
+-- DESIGN DRAFT — NOT EXECUTED, NOT APPROVED FOR PRODUCTION.
+-- Depends on 001 and on approved answers in REVIEW.md. It intentionally fails closed.
+begin;
+set local lock_timeout='5s';
+set local statement_timeout='5min';
+do $$ begin
+  if current_setting('app.apply_task_architecture_draft', true) <> 'review-only' then
+    raise exception 'DRAFT ONLY: transactional RPC contracts were not approved for execution';
+  end if;
+  if to_regclass('public.task_events') is null
+     or to_regclass('public.task_completion_events') is null
+     or to_regclass('public.daily_log_task_links') is null
+     or to_regclass('public.task_mutation_requests') is null
+     or to_regclass('public.task_completion_revocations') is null
+     or to_regprocedure('public.client_visible_for_task_rpc(text)') is null
+     or to_regprocedure('public.task_actor_is_assignee(text,text)') is null
+     or to_regprocedure('public.resolve_task_audit_identity(text)') is null
+     or to_regprocedure('pg_catalog.sha256(bytea)') is null then
+    raise exception 'Foundation draft is missing';
+  end if;
+end $$;
+
+-- Daily Activity contract: p_entries is a JSON array of
+-- {client_id: text|null, summary_text: text, task_ids: text[]}.
+-- One call is one employee/day and is all-or-nothing. It requires individual completion evidence;
+-- it does not infer completion from assignment. Existing linked_task_ids is written as a temporary
+-- compatibility mirror until Report Workspace reads daily_log_task_links directly.
+create or replace function public.submit_daily_activity_v2(
+  p_request_key uuid,
+  p_report_date date,
+  p_entries jsonb,
+  p_impersonation_session_id text default null
+) returns setof public.daily_logs
+language plpgsql
+security definer
+set search_path=public,pg_temp
+as $$
+declare
+  v_actor text := public.app_user_id();
+  v_original_actor text; v_audit_session text; v_identity record;
+  v_hash text;
+  v_existing public.task_mutation_requests;
+  v_entry jsonb;
+  v_task_id text;
+  v_client_id text;
+  v_log public.daily_logs;
+  v_task public.tasks;
+  v_completion_id uuid;
+  v_result_ids text[] := array[]::text[];
+  v_result_versions jsonb := '{}'::jsonb;
+  v_seen_task_ids text[] := array[]::text[];
+  v_task_count integer:=0;
+  v_event_ordinal integer:=0;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original_actor:=v_identity.original_actor_id;
+  v_audit_session:=v_identity.impersonation_session_id;
+  if v_actor is null or p_request_key is null or p_report_date is null
+     or jsonb_typeof(p_entries) <> 'array' or jsonb_array_length(p_entries)=0 then
+    raise exception 'Invalid daily activity request';
+  end if;
+  if jsonb_array_length(p_entries)>50 then raise exception 'Daily Activity accepts at most 50 entries'; end if;
+
+  -- Validate the complete bounded payload before the first INSERT. JSON strings are required;
+  -- jsonb_array_elements_text coercion is deliberately not accepted as schema validation.
+  for v_entry in select value from jsonb_array_elements(p_entries) loop
+    if jsonb_typeof(v_entry)<>'object'
+       or (v_entry-array['client_id','summary_text','task_ids']::text[])<>'{}'::jsonb
+       or not (v_entry ? 'task_ids') or jsonb_typeof(v_entry->'task_ids')<>'array'
+       or (v_entry ? 'summary_text' and jsonb_typeof(v_entry->'summary_text')<>'string')
+       or (v_entry ? 'client_id' and jsonb_typeof(v_entry->'client_id') not in ('string','null')) then
+      raise exception 'Invalid Daily Activity entry shape';
+    end if;
+    if char_length(coalesce(v_entry->>'summary_text',''))>5000 then raise exception 'Daily Activity text is too long'; end if;
+    if nullif(trim(coalesce(v_entry->>'summary_text','')),'') is null
+       and jsonb_array_length(v_entry->'task_ids')=0 then
+      raise exception 'Each Daily Activity entry needs text or task evidence';
+    end if;
+    v_client_id:=nullif(trim(v_entry->>'client_id'),'');
+    if v_client_id is not null and (char_length(v_client_id)>200 or not public.client_visible_for_task_rpc(v_client_id)) then
+      raise exception 'Client is unavailable';
+    end if;
+    for v_task_id in select value#>>'{}' from jsonb_array_elements(v_entry->'task_ids') loop
+      if exists(select 1 from jsonb_array_elements(v_entry->'task_ids') x where jsonb_typeof(x.value)<>'string') then
+        raise exception 'Every task id must be a JSON string';
+      end if;
+      if nullif(trim(v_task_id),'') is null or char_length(v_task_id)>200 then raise exception 'Invalid task id'; end if;
+      if v_task_id=any(v_seen_task_ids) then raise exception 'Task % appears more than once in this request',v_task_id; end if;
+      v_seen_task_ids:=array_append(v_seen_task_ids,v_task_id);
+      v_task_count:=v_task_count+1;
+      if v_task_count>100 then raise exception 'Daily Activity accepts at most 100 task links'; end if;
+    end loop;
+  end loop;
+
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('date',p_report_date,'entries',p_entries,
+    'impersonation_session_id',v_audit_session)::text,'UTF8')),'hex');
+  select * into v_existing from public.task_mutation_requests
+  where actor_id=v_actor and request_key=p_request_key;
+  if found then
+    if v_existing.action<>'submit_daily_activity_v2' or v_existing.payload_hash<>v_hash then
+      raise exception 'Idempotency key was reused with a different payload';
+    end if;
+    if v_existing.completed_at is not null then
+      if jsonb_typeof(v_existing.result->'daily_log_ids') is distinct from 'array'
+         or jsonb_typeof(v_existing.result->'daily_log_versions') is distinct from 'object'
+         or exists (
+           select 1 from jsonb_array_elements_text(v_existing.result->'daily_log_ids') saved(saved_id)
+           where not (v_existing.result->'daily_log_versions' ? saved_id)
+         )
+         or exists (
+           select 1 from jsonb_object_keys(v_existing.result->'daily_log_versions') saved(saved_id)
+           where not exists (
+             select 1 from jsonb_array_elements_text(v_existing.result->'daily_log_ids') x(id)
+             where x.id=saved_id
+           )
+         )
+         or exists (
+           select 1
+           from jsonb_each_text(v_existing.result->'daily_log_versions') saved(id,row_version)
+           left join public.daily_logs d on d.id=saved.id and d.user_id=v_actor
+           where d.id is null or d.row_version<>saved.row_version::bigint
+         ) then
+        raise exception 'Prior request succeeded, but its Daily Activity rows changed; reload instead of replaying';
+      end if;
+      return query select d.* from public.daily_logs d
+      where d.user_id=v_actor
+        and d.id=any(coalesce(array(select jsonb_array_elements_text(v_existing.result->'daily_log_ids')),array[]::text[]));
+      return;
+    end if;
+  end if;
+
+  -- Acquire the actor/request lock before task locks, matching every other v2 RPC. Invalid task
+  -- evidence still rolls this row back with the surrounding transaction.
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original_actor,v_audit_session,p_request_key,'submit_daily_activity_v2',v_hash)
+  on conflict do nothing;
+  select * into v_existing from public.task_mutation_requests
+  where actor_id=v_actor and request_key=p_request_key for update;
+  if v_existing.action<>'submit_daily_activity_v2' or v_existing.payload_hash<>v_hash then
+    raise exception 'Idempotency key was reused with a different payload';
+  end if;
+  if v_existing.completed_at is not null then
+    if jsonb_typeof(v_existing.result->'daily_log_ids') is distinct from 'array'
+       or jsonb_typeof(v_existing.result->'daily_log_versions') is distinct from 'object'
+       or exists (
+         select 1 from jsonb_array_elements_text(v_existing.result->'daily_log_ids') saved(saved_id)
+         where not (v_existing.result->'daily_log_versions' ? saved_id)
+       )
+       or exists (
+         select 1 from jsonb_object_keys(v_existing.result->'daily_log_versions') saved(saved_id)
+         where not exists (
+           select 1 from jsonb_array_elements_text(v_existing.result->'daily_log_ids') x(id)
+           where x.id=saved_id
+         )
+       )
+       or exists (
+         select 1
+         from jsonb_each_text(v_existing.result->'daily_log_versions') saved(id,row_version)
+         left join public.daily_logs d on d.id=saved.id and d.user_id=v_actor
+         where d.id is null or d.row_version<>saved.row_version::bigint
+       ) then
+      raise exception 'Prior request succeeded, but its Daily Activity rows changed; reload instead of replaying';
+    end if;
+    return query select d.* from public.daily_logs d
+    where d.user_id=v_actor
+      and d.id=any(coalesce(array(select jsonb_array_elements_text(v_existing.result->'daily_log_ids')),array[]::text[]));
+    return;
+  end if;
+
+  -- Deterministic lock order avoids two multi-task submissions deadlocking each other.
+  for v_task_id in select unnest(v_seen_task_ids) order by 1 loop
+    perform 1 from public.tasks where id=v_task_id for update;
+  end loop;
+
+  -- Validate every task and its current completion cycle before any data write.
+  for v_entry in select value from jsonb_array_elements(p_entries) loop
+    v_client_id:=nullif(trim(v_entry->>'client_id'),'');
+    for v_task_id in select jsonb_array_elements_text(v_entry->'task_ids') loop
+      select * into v_task from public.tasks where id=v_task_id;
+      if not found or v_task.archived_at is not null or not public.task_visible_v2(v_task_id) then raise exception 'Task is unavailable'; end if;
+      if v_task.client_id is distinct from v_client_id then raise exception 'Task client mismatch'; end if;
+      if v_task.status not in ('completed','closed') or v_task.completed_at is null
+         or (v_task.completed_at at time zone 'UTC')::date<>p_report_date then
+        raise exception 'Task completion state/date does not match the Daily Activity date';
+      end if;
+      if not public.task_actor_is_assignee(v_task_id,v_actor) then
+        raise exception 'Task is not assigned to the Daily Activity owner';
+      end if;
+      select e.id into v_completion_id from public.task_completion_events e
+      where e.task_id=v_task_id and e.user_id=v_actor and e.task_cycle=v_task.lifecycle_cycle
+        and (e.completed_at at time zone 'UTC')::date=p_report_date
+        and not exists(select 1 from public.task_completion_revocations r where r.completion_event_id=e.id)
+      order by e.completed_at desc limit 1;
+      if v_completion_id is null then raise exception 'No individual completion evidence for task % in its current cycle',v_task_id; end if;
+    end loop;
+  end loop;
+
+  for v_entry in select value from jsonb_array_elements(p_entries) loop
+    v_client_id:=nullif(trim(v_entry->>'client_id'),'');
+    v_log := null;
+    insert into public.daily_logs(id,user_id,date,summary_text,linked_task_ids,client_id)
+    values(
+      'dlog-'||gen_random_uuid()::text, v_actor, p_report_date,
+      coalesce(v_entry->>'summary_text',''),
+      array(select jsonb_array_elements_text(v_entry->'task_ids')),
+      v_client_id
+    ) returning * into v_log;
+
+    for v_task_id in select jsonb_array_elements_text(v_entry->'task_ids') loop
+      select * into v_task from public.tasks where id=v_task_id;
+      select e.id into v_completion_id
+      from public.task_completion_events e
+      where e.task_id=v_task_id and e.user_id=v_actor and e.task_cycle=v_task.lifecycle_cycle
+        and (e.completed_at at time zone 'UTC')::date=p_report_date
+        and not exists(select 1 from public.task_completion_revocations r where r.completion_event_id=e.id)
+      order by e.completed_at desc limit 1;
+      insert into public.daily_log_task_links(
+        daily_log_id,task_id,user_id,report_date,client_id,completion_event_id,attribution_status,created_by
+      ) values(v_log.id,v_task_id,v_actor,p_report_date,v_task.client_id,v_completion_id,'confirmed',v_actor);
+      insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,request_key,event_ordinal,metadata)
+      values(v_task_id,v_task.batch_id,'daily_log_linked',v_actor,v_original_actor,v_audit_session,p_request_key,v_event_ordinal,
+        jsonb_build_object('daily_log_id',v_log.id));
+      v_event_ordinal:=v_event_ordinal+1;
+    end loop;
+    v_result_ids := array_append(v_result_ids,v_log.id);
+    v_result_versions := v_result_versions || jsonb_build_object(v_log.id,v_log.row_version);
+  end loop;
+
+  update public.task_mutation_requests
+  set result=jsonb_build_object('daily_log_ids',to_jsonb(v_result_ids),'daily_log_versions',v_result_versions),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return query select d.* from public.daily_logs d where d.id=any(v_result_ids) order by d.id;
+end;
+$$;
+
+revoke all on function public.submit_daily_activity_v2(uuid,date,jsonb,text) from public,anon;
+grant execute on function public.submit_daily_activity_v2(uuid,date,jsonb,text) to authenticated;
+
+-- Single-row edit contract. Historical links may be preserved unchanged without inventing a
+-- completion actor. Any date/client/task-link change requires current-cycle confirmed evidence
+-- for the complete replacement set and is committed atomically with the compatibility array.
+create or replace function public.update_daily_activity_v2(
+  p_request_key uuid,p_log_id text,p_expected_row_version bigint,p_report_date date,
+  p_client_id text,p_summary_text text,p_task_ids jsonb,p_impersonation_session_id text default null
+) returns public.daily_logs
+language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_actor text:=public.app_user_id(); v_log public.daily_logs; v_task public.tasks;
+  v_original_actor text; v_audit_session text; v_identity record;
+  v_request public.task_mutation_requests; v_hash text; v_task_id text; v_completion_id uuid;
+  v_ids text[]:=array[]::text[]; v_old_ids text[]; v_scope_changed boolean; v_ordinal integer:=0;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original_actor:=v_identity.original_actor_id;
+  v_audit_session:=v_identity.impersonation_session_id;
+  if v_actor is null or p_request_key is null or nullif(trim(p_log_id),'') is null
+     or p_expected_row_version is null or p_expected_row_version<1 or p_report_date is null
+     or p_task_ids is null or jsonb_typeof(p_task_ids)<>'array' or jsonb_array_length(p_task_ids)>100
+     or char_length(coalesce(p_summary_text,''))>5000
+     or (nullif(trim(coalesce(p_summary_text,'')),'') is null and jsonb_array_length(p_task_ids)=0) then
+    raise exception 'Invalid Daily Activity update';
+  end if;
+  if p_client_id is not null and (nullif(trim(p_client_id),'') is null or char_length(p_client_id)>200
+     or not public.client_visible_for_task_rpc(p_client_id)) then raise exception 'Client is unavailable'; end if;
+  for v_task_id in select value#>>'{}' from jsonb_array_elements(p_task_ids) loop
+    if exists(select 1 from jsonb_array_elements(p_task_ids) x where jsonb_typeof(x.value)<>'string')
+       or nullif(trim(v_task_id),'') is null or char_length(v_task_id)>200 then raise exception 'Invalid task id'; end if;
+    if v_task_id=any(v_ids) then raise exception 'Duplicate task id %',v_task_id; end if;
+    v_ids:=array_append(v_ids,v_task_id);
+  end loop;
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('log_id',p_log_id,'version',p_expected_row_version,
+    'date',p_report_date,'client_id',p_client_id,'summary_text',p_summary_text,'task_ids',p_task_ids,
+    'impersonation_session_id',v_audit_session)::text,'UTF8')),'hex');
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original_actor,v_audit_session,p_request_key,'update_daily_activity_v2',v_hash) on conflict do nothing;
+  select * into v_request from public.task_mutation_requests where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>'update_daily_activity_v2' or v_request.payload_hash<>v_hash then
+    raise exception 'Idempotency key was reused with a different payload';
+  end if;
+  if v_request.completed_at is not null then
+    select * into v_log from public.daily_logs where id=v_request.result->>'daily_log_id' and user_id=v_actor;
+    if not found or v_log.row_version is distinct from nullif(v_request.result->>'row_version','')::bigint then
+      raise exception 'Prior request succeeded, but the Daily Activity row changed; reload instead of replaying';
+    end if;
+    return v_log;
+  end if;
+  select * into v_log from public.daily_logs where id=p_log_id for update;
+  if not found or v_log.user_id<>v_actor or v_log.created_at<=now()-interval '7 days' then
+    raise exception 'Daily Activity log is unavailable for editing';
+  end if;
+  if v_log.row_version<>p_expected_row_version then raise exception 'Daily Activity changed; refresh first'; end if;
+  v_old_ids:=coalesce(v_log.linked_task_ids,array[]::text[]);
+  v_scope_changed:=v_log.date<>p_report_date or v_log.client_id is distinct from p_client_id or v_old_ids is distinct from v_ids;
+  if v_scope_changed then
+    for v_task_id in select unnest(v_ids) order by 1 loop perform 1 from public.tasks where id=v_task_id for update; end loop;
+    for v_task_id in select unnest(v_ids) loop
+      select * into v_task from public.tasks where id=v_task_id;
+      if not found or v_task.archived_at is not null or not public.task_visible_v2(v_task_id)
+         or v_task.client_id is distinct from p_client_id
+         or v_task.status not in ('completed','closed') or v_task.completed_at is null
+         or (v_task.completed_at at time zone 'UTC')::date<>p_report_date
+         or not public.task_actor_is_assignee(v_task_id,v_actor) then raise exception 'Task % is not eligible for this log',v_task_id; end if;
+      select e.id into v_completion_id from public.task_completion_events e
+      where e.task_id=v_task_id and e.user_id=v_actor and e.task_cycle=v_task.lifecycle_cycle
+        and (e.completed_at at time zone 'UTC')::date=p_report_date
+        and not exists(select 1 from public.task_completion_revocations r where r.completion_event_id=e.id)
+      order by e.completed_at desc limit 1;
+      if v_completion_id is null then raise exception 'No current-cycle completion evidence for task %',v_task_id; end if;
+    end loop;
+  end if;
+  update public.daily_logs set date=p_report_date,client_id=p_client_id,summary_text=coalesce(p_summary_text,''),linked_task_ids=v_ids
+  where id=p_log_id returning * into v_log;
+  if v_scope_changed then
+    for v_task_id in select task_id from public.daily_log_task_links where daily_log_id=p_log_id order by task_id loop
+      select * into v_task from public.tasks where id=v_task_id;
+      insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,request_key,event_ordinal,metadata)
+      values(v_task_id,v_task.batch_id,'daily_log_unlinked',v_actor,v_original_actor,v_audit_session,p_request_key,v_ordinal,jsonb_build_object('daily_log_id',p_log_id));
+      v_ordinal:=v_ordinal+1;
+    end loop;
+    delete from public.daily_log_task_links where daily_log_id=p_log_id;
+    for v_task_id in select unnest(v_ids) loop
+      select * into v_task from public.tasks where id=v_task_id;
+      select e.id into v_completion_id from public.task_completion_events e
+      where e.task_id=v_task_id and e.user_id=v_actor and e.task_cycle=v_task.lifecycle_cycle
+        and (e.completed_at at time zone 'UTC')::date=p_report_date
+        and not exists(select 1 from public.task_completion_revocations r where r.completion_event_id=e.id)
+      order by e.completed_at desc limit 1;
+      insert into public.daily_log_task_links(daily_log_id,task_id,user_id,report_date,client_id,completion_event_id,attribution_status,created_by)
+      values(p_log_id,v_task_id,v_actor,p_report_date,p_client_id,v_completion_id,'confirmed',v_actor);
+      insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,request_key,event_ordinal,metadata)
+      values(v_task_id,v_task.batch_id,'daily_log_linked',v_actor,v_original_actor,v_audit_session,p_request_key,v_ordinal,jsonb_build_object('daily_log_id',p_log_id));
+      v_ordinal:=v_ordinal+1;
+    end loop;
+  end if;
+  update public.task_mutation_requests set result=jsonb_build_object('daily_log_id',p_log_id,'row_version',v_log.row_version),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return v_log;
+end; $$;
+revoke all on function public.update_daily_activity_v2(uuid,text,bigint,date,text,text,jsonb,text) from public,anon;
+grant execute on function public.update_daily_activity_v2(uuid,text,bigint,date,text,text,jsonb,text) to authenticated;
+
+-- Delete remains the existing own-row/7-day behavior, but requires normalized-array parity so a
+-- legacy or conflicted row cannot silently lose links. Link removals are audited before deletion.
+create or replace function public.delete_daily_activity_v2(
+  p_request_key uuid,p_log_id text,p_expected_row_version bigint,p_impersonation_session_id text default null
+) returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_actor text:=public.app_user_id(); v_log public.daily_logs; v_request public.task_mutation_requests;
+  v_original_actor text; v_audit_session text; v_identity record;
+  v_hash text; v_task_id text; v_task public.tasks; v_ordinal integer:=0; v_link_ids text[];
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original_actor:=v_identity.original_actor_id;
+  v_audit_session:=v_identity.impersonation_session_id;
+  if v_actor is null or p_request_key is null or nullif(trim(p_log_id),'') is null
+     or p_expected_row_version is null or p_expected_row_version<1 then
+    raise exception 'Invalid Daily Activity delete';
+  end if;
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('log_id',p_log_id,'version',p_expected_row_version,
+    'impersonation_session_id',v_audit_session)::text,'UTF8')),'hex');
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original_actor,v_audit_session,p_request_key,'delete_daily_activity_v2',v_hash) on conflict do nothing;
+  select * into v_request from public.task_mutation_requests where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>'delete_daily_activity_v2' or v_request.payload_hash<>v_hash then raise exception 'Idempotency key reuse'; end if;
+  if v_request.completed_at is not null then return true; end if;
+  select * into v_log from public.daily_logs where id=p_log_id for update;
+  if not found or v_log.user_id<>v_actor or v_log.created_at<=now()-interval '7 days' then raise exception 'Log unavailable for deletion'; end if;
+  if v_log.row_version<>p_expected_row_version then raise exception 'Daily Activity changed; refresh first'; end if;
+  select coalesce(array_agg(task_id order by task_id),array[]::text[]) into v_link_ids
+  from public.daily_log_task_links where daily_log_id=p_log_id;
+  if v_link_ids is distinct from coalesce((select array_agg(u.task_id order by u.task_id)
+    from unnest(coalesce(v_log.linked_task_ids,array[]::text[])) as u(task_id)),array[]::text[]) then
+    raise exception 'Legacy link parity is unresolved; deletion is blocked';
+  end if;
+  for v_task_id in select unnest(v_link_ids) loop
+    select * into v_task from public.tasks where id=v_task_id;
+    insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,request_key,event_ordinal,metadata)
+    values(v_task_id,v_task.batch_id,'daily_log_unlinked',v_actor,v_original_actor,v_audit_session,p_request_key,v_ordinal,jsonb_build_object('daily_log_id',p_log_id));
+    v_ordinal:=v_ordinal+1;
+  end loop;
+  delete from public.daily_log_task_links where daily_log_id=p_log_id;
+  delete from public.daily_logs where id=p_log_id;
+  update public.task_mutation_requests set result=jsonb_build_object('deleted',true,'daily_log_id',p_log_id),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return true;
+end; $$;
+revoke all on function public.delete_daily_activity_v2(uuid,text,bigint,text) from public,anon;
+grant execute on function public.delete_daily_activity_v2(uuid,text,bigint,text) to authenticated;
+
+-- Lifecycle mutation contract. This draft implements only the invariants that are already
+-- established: trusted actor, optimistic version, individual completion evidence, Close from
+-- completed with done_link, and durable reopen history. The shared-task rule remains fail-closed.
+create or replace function public.transition_task_v2(
+  p_task_id text,
+  p_action text,
+  p_payload jsonb,
+  p_expected_row_version bigint,
+  p_request_key uuid,
+  p_impersonation_session_id text default null
+) returns public.tasks
+language plpgsql
+security definer
+set search_path=public,pg_temp
+as $$
+declare
+  v_actor text:=public.app_user_id();
+  v_original_actor text; v_audit_session text; v_identity record;
+  v_task public.tasks;
+  v_before jsonb;
+  v_cycle bigint;
+  v_reason text;
+  v_target_status text;
+  v_hash text;
+  v_request public.task_mutation_requests;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original_actor:=v_identity.original_actor_id;
+  v_audit_session:=v_identity.impersonation_session_id;
+  if v_actor is null or p_request_key is null or nullif(trim(p_task_id),'') is null
+     or p_expected_row_version is null or p_expected_row_version<1
+     or p_action not in ('record_completion','close','reopen','set_status')
+     or p_payload is null or jsonb_typeof(p_payload)<>'object' then
+    raise exception 'Invalid task transition request';
+  end if;
+  if (p_action='reopen' and (p_payload-array['reason','status']::text[])<>'{}'::jsonb)
+     or (p_action='set_status' and (p_payload-array['status','reason']::text[])<>'{}'::jsonb)
+     or (p_action in ('record_completion','close') and p_payload<>'{}'::jsonb) then
+    raise exception 'Unexpected task transition fields';
+  end if;
+  v_reason:=nullif(trim(p_payload->>'reason'),'');
+  v_target_status:=nullif(trim(p_payload->>'status'),'');
+  if p_action='reopen' and (v_reason is null or char_length(v_reason)>500
+     or coalesce(v_target_status,'in_progress') not in ('todo','in_progress','in_review','blocked')) then
+    raise exception 'A reason of at most 500 characters is required';
+  end if;
+  if p_action='set_status' and (
+    v_target_status not in ('todo','in_progress','in_review','blocked')
+    or (v_target_status='blocked' and (v_reason is null or char_length(v_reason)>500))
+    or (v_reason is not null and char_length(v_reason)>500)
+  ) then raise exception 'Invalid status transition payload'; end if;
+  v_hash:=encode(pg_catalog.sha256(convert_to(
+    jsonb_build_object('task_id',p_task_id,'action',p_action,'payload',p_payload,'expected_row_version',p_expected_row_version,
+      'impersonation_session_id',v_audit_session)::text,
+    'UTF8')),'hex');
+
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original_actor,v_audit_session,p_request_key,'transition_task_v2:'||p_action,v_hash)
+  on conflict do nothing;
+  select * into v_request from public.task_mutation_requests
+  where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>'transition_task_v2:'||p_action or v_request.payload_hash<>v_hash then
+    raise exception 'Idempotency key was reused with a different lifecycle payload';
+  end if;
+  if v_request.completed_at is not null then
+    select * into v_task from public.tasks where id=v_request.result->>'task_id';
+    if not found or v_task.row_version is distinct from nullif(v_request.result->>'row_version','')::bigint then
+      raise exception 'Prior request succeeded, but the task changed; reload instead of replaying';
+    end if;
+    return v_task;
+  end if;
+
+  select * into v_task from public.tasks where id=p_task_id for update;
+  if not found or v_task.archived_at is not null or not public.task_visible_v2(p_task_id) then raise exception 'Task unavailable'; end if;
+  if v_task.row_version<>p_expected_row_version then raise exception 'Task changed; refresh first'; end if;
+  v_before:=jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,
+    'row_version',v_task.row_version,'lifecycle_cycle',v_task.lifecycle_cycle,
+    'blocked_from_status',v_task.blocked_from_status,'done_link_present',nullif(trim(v_task.done_link),'') is not null);
+
+  if p_action='record_completion' then
+    if not public.task_actor_is_assignee(p_task_id,v_actor) then
+      raise exception 'Only a current assignee may record individual completion';
+    end if;
+    if v_task.status in ('completed','closed') then raise exception 'This task cycle is already complete'; end if;
+    v_cycle:=v_task.lifecycle_cycle;
+    insert into public.task_completion_events(task_id,user_id,task_cycle,actor_id,request_key,evidence)
+      values(p_task_id,v_actor,v_cycle,v_actor,p_request_key,
+        jsonb_build_object('source','task_transition_v2','output_present',nullif(trim(v_task.done_link),'') is not null));
+    -- Approved rule: the first authorized assignee who records their own evidence completes the
+    -- shared task. The task row lock serializes competing assignees; no caller may name a
+    -- different employee, and the unique per-user/cycle evidence remains immutable.
+    update public.tasks set status='completed',completed_at=clock_timestamp(),blocked_from_status=null
+    where id=p_task_id returning * into v_task;
+  elsif p_action='close' then
+    if not public.task_closable(p_task_id) or v_task.status<>'completed' or nullif(trim(v_task.done_link),'') is null then
+      raise exception 'Task is not eligible to close';
+    end if;
+    update public.tasks set status='closed',blocked_from_status=null
+      where id=p_task_id returning * into v_task;
+  elsif p_action='reopen' then
+    if not public.task_closable(p_task_id) or v_task.status not in ('completed','closed') then
+      raise exception 'Task cannot be reopened without authorization and reason';
+    end if;
+    update public.tasks set status=coalesce(v_target_status,'in_progress'),completed_at=null,
+      lifecycle_cycle=lifecycle_cycle+1,
+      blocked_from_status=case when v_target_status='blocked' then v_task.status else null end
+      where id=p_task_id returning * into v_task;
+  elsif p_action='set_status' then
+    if not public.task_mutable_v2(p_task_id) or v_task.status in ('completed','closed') then
+      raise exception 'Task status requires a dedicated authorized transition';
+    end if;
+    if v_task.status='blocked' and v_target_status='blocked' then raise exception 'Task is already blocked'; end if;
+    update public.tasks set status=v_target_status,
+      completed_at=null,
+      blocked_from_status=case when v_target_status='blocked' then v_task.status else null end
+    where id=p_task_id returning * into v_task;
+  end if;
+
+  insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,request_key,before_state,after_state,metadata)
+  values(p_task_id,v_task.batch_id,p_action,v_actor,v_original_actor,v_audit_session,p_request_key,
+    v_before,
+    jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,
+      'row_version',v_task.row_version,'lifecycle_cycle',v_task.lifecycle_cycle,
+      'blocked_from_status',v_task.blocked_from_status,'done_link_present',nullif(trim(v_task.done_link),'') is not null),
+    case when v_reason is null then '{}'::jsonb else jsonb_build_object('reason',v_reason) end);
+  update public.task_mutation_requests
+  set result=jsonb_build_object('task_id',p_task_id,'row_version',v_task.row_version),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return v_task;
+end;
+$$;
+
+revoke all on function public.transition_task_v2(text,text,jsonb,bigint,uuid,text) from public,anon;
+grant execute on function public.transition_task_v2(text,text,jsonb,bigint,uuid,text) to authenticated;
+
+-- Allowlisted ordinary-field mutation. Status, assignments, archive identity and concurrency
+-- columns have dedicated RPCs and can never be supplied here.
+create or replace function public.mutate_task_v2(
+  p_task_id text,p_expected_row_version bigint,p_changes jsonb,p_request_key uuid,
+  p_impersonation_session_id text default null
+) returns public.tasks language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_identity record; v_actor text; v_original text; v_session text; v_task public.tasks;
+  v_request public.task_mutation_requests; v_hash text; v_before jsonb; v_changed jsonb;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original:=v_identity.original_actor_id; v_session:=v_identity.impersonation_session_id;
+  if p_request_key is null or nullif(trim(p_task_id),'') is null or p_expected_row_version is null
+     or p_expected_row_version<1 or jsonb_typeof(p_changes)<>'object' or p_changes='{}'::jsonb
+     or (p_changes-array['title','description','client_id','team','due_date','priority','estimated_hours',
+       'actual_hours','parent_task_id','drive_link','done_link','task_type','task_type_other']::text[])<>'{}'::jsonb then
+    raise exception 'Invalid task mutation payload';
+  end if;
+  if p_changes ? 'title' and (jsonb_typeof(p_changes->'title')<>'string'
+      or char_length(trim(p_changes->>'title')) not between 1 and 300) then raise exception 'Invalid task title'; end if;
+  if p_changes ? 'description' and (jsonb_typeof(p_changes->'description')<>'string'
+      or char_length(p_changes->>'description')>10000) then raise exception 'Invalid task description'; end if;
+  if p_changes ? 'priority' and p_changes->>'priority' not in ('low','medium','high','urgent') then raise exception 'Invalid priority'; end if;
+  if p_changes ? 'client_id' and (jsonb_typeof(p_changes->'client_id')<>'string'
+      or not public.client_visible_for_task_rpc(p_changes->>'client_id')) then raise exception 'Client is unavailable'; end if;
+  if p_changes ? 'due_date' and jsonb_typeof(p_changes->'due_date')<>'string' then raise exception 'Invalid due date'; end if;
+  if p_changes ? 'estimated_hours' and jsonb_typeof(p_changes->'estimated_hours') not in ('number','null') then raise exception 'Invalid estimated hours'; end if;
+  if p_changes ? 'actual_hours' and jsonb_typeof(p_changes->'actual_hours') not in ('number','null') then raise exception 'Invalid actual hours'; end if;
+  if p_changes ? 'done_link' and jsonb_typeof(p_changes->'done_link') not in ('string','null') then raise exception 'Invalid done link'; end if;
+
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('task_id',p_task_id,'version',p_expected_row_version,
+    'changes',p_changes,'impersonation_session_id',v_session)::text,'UTF8')),'hex');
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original,v_session,p_request_key,'mutate_task_v2',v_hash) on conflict do nothing;
+  select * into v_request from public.task_mutation_requests where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>'mutate_task_v2' or v_request.payload_hash<>v_hash then raise exception 'Idempotency key reuse'; end if;
+  if v_request.completed_at is not null then
+    select * into v_task from public.tasks where id=v_request.result->>'task_id';
+    if not found or v_task.row_version is distinct from nullif(v_request.result->>'row_version','')::bigint then
+      raise exception 'Prior request succeeded, but the task changed; reload instead of replaying';
+    end if;
+    return v_task;
+  end if;
+
+  select * into v_task from public.tasks where id=p_task_id for update;
+  if not found or v_task.archived_at is not null or not public.task_mutable_v2(p_task_id) then raise exception 'Task is unavailable for editing' using errcode='42501'; end if;
+  if v_task.row_version<>p_expected_row_version then raise exception 'Task changed; refresh first' using errcode='40001'; end if;
+  v_before:=jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+    'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+    'done_link_present',nullif(trim(v_task.done_link),'') is not null);
+
+  update public.tasks set
+    title=case when p_changes?'title' then trim(p_changes->>'title') else title end,
+    description=case when p_changes?'description' then p_changes->>'description' else description end,
+    client_id=case when p_changes?'client_id' then p_changes->>'client_id' else client_id end,
+    team=case when p_changes?'team' then p_changes->>'team' else team end,
+    due_date=case when p_changes?'due_date' then (p_changes->>'due_date')::date else due_date end,
+    priority=case when p_changes?'priority' then p_changes->>'priority' else priority end,
+    estimated_hours=case when p_changes?'estimated_hours' then (p_changes->>'estimated_hours')::numeric else estimated_hours end,
+    actual_hours=case when p_changes?'actual_hours' then (p_changes->>'actual_hours')::numeric else actual_hours end,
+    parent_task_id=case when p_changes?'parent_task_id' then nullif(p_changes->>'parent_task_id','') else parent_task_id end,
+    drive_link=case when p_changes?'drive_link' then nullif(p_changes->>'drive_link','') else drive_link end,
+    done_link=case when p_changes?'done_link' then nullif(p_changes->>'done_link','') else done_link end,
+    task_type=case when p_changes?'task_type' then nullif(p_changes->>'task_type','') else task_type end,
+    task_type_other=case when p_changes?'task_type_other' then nullif(p_changes->>'task_type_other','') else task_type_other end
+  where id=p_task_id returning * into v_task;
+  select jsonb_agg(k.key order by k.key) into v_changed from jsonb_object_keys(p_changes) k(key);
+  insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,
+    request_key,before_state,after_state,metadata)
+  values(p_task_id,v_task.batch_id,'field_changed',v_actor,v_original,v_session,p_request_key,v_before,
+    jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+      'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+      'done_link_present',nullif(trim(v_task.done_link),'') is not null),jsonb_build_object('changed_fields',v_changed));
+  update public.task_mutation_requests set result=jsonb_build_object('task_id',p_task_id,'row_version',v_task.row_version),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return v_task;
+end $$;
+revoke all on function public.mutate_task_v2(text,bigint,jsonb,uuid,text) from public,anon;
+grant execute on function public.mutate_task_v2(text,bigint,jsonb,uuid,text) to authenticated;
+
+-- Audited assignment boundary. The established set_task_assignees function remains the source of
+-- assignment authorization and mirror synchronization; this wrapper adds concurrency,
+-- idempotency and trusted impersonation audit identity.
+create or replace function public.set_task_assignees_v2(
+  p_task_id text,p_user_ids text[],p_expected_row_version bigint,p_request_key uuid,
+  p_impersonation_session_id text default null
+) returns public.tasks language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_identity record; v_actor text; v_original text; v_session text; v_task public.tasks;
+  v_request public.task_mutation_requests; v_hash text; v_before jsonb;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original:=v_identity.original_actor_id; v_session:=v_identity.impersonation_session_id;
+  if p_request_key is null or nullif(trim(p_task_id),'') is null or p_expected_row_version is null
+     or p_expected_row_version<1 or p_user_ids is null or cardinality(p_user_ids)>100
+     or array_position(p_user_ids,null) is not null
+     or exists(select 1 from unnest(p_user_ids) u(id) group by id having nullif(trim(id),'') is null or count(*)>1) then
+    raise exception 'Invalid task assignment request';
+  end if;
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('task_id',p_task_id,'version',p_expected_row_version,
+    'user_ids',p_user_ids,'impersonation_session_id',v_session)::text,'UTF8')),'hex');
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original,v_session,p_request_key,'set_task_assignees_v2',v_hash) on conflict do nothing;
+  select * into v_request from public.task_mutation_requests where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>'set_task_assignees_v2' or v_request.payload_hash<>v_hash then raise exception 'Idempotency key reuse'; end if;
+  if v_request.completed_at is not null then
+    select * into v_task from public.tasks where id=v_request.result->>'task_id';
+    if not found or v_task.row_version is distinct from nullif(v_request.result->>'row_version','')::bigint then
+      raise exception 'Prior assignment request succeeded, but the task changed; reload instead of replaying';
+    end if;
+    return v_task;
+  end if;
+  select * into v_task from public.tasks where id=p_task_id for update;
+  if not found or v_task.archived_at is not null then raise exception 'Task is unavailable'; end if;
+  if v_task.row_version<>p_expected_row_version then raise exception 'Task changed; refresh first' using errcode='40001'; end if;
+  v_before:=jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+    'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+    'done_link_present',nullif(trim(v_task.done_link),'') is not null);
+  perform public.set_task_assignees(p_task_id,p_user_ids);
+  -- Assignment membership is part of the task's concurrency contract even when the legacy mirror
+  -- value does not change (for example adding a second assignee). Force one task-row version bump.
+  update public.tasks set updated_at=updated_at where id=p_task_id returning * into v_task;
+  insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,
+    request_key,before_state,after_state,metadata)
+  values(p_task_id,v_task.batch_id,'assignees_changed',v_actor,v_original,v_session,p_request_key,v_before,
+    jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+      'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+      'done_link_present',nullif(trim(v_task.done_link),'') is not null),
+    jsonb_build_object('changed_fields',jsonb_build_array('assignees')));
+  update public.task_mutation_requests set result=jsonb_build_object('task_id',p_task_id,'row_version',v_task.row_version),
+    completed_at=clock_timestamp() where actor_id=v_actor and request_key=p_request_key;
+  return v_task;
+end $$;
+revoke all on function public.set_task_assignees_v2(text,text[],bigint,uuid,text) from public,anon;
+grant execute on function public.set_task_assignees_v2(text,text[],bigint,uuid,text) to authenticated;
+
+create or replace function public.archive_task_v2(
+  p_task_id text,p_restore boolean,p_reason text,p_expected_row_version bigint,p_request_key uuid,
+  p_impersonation_session_id text default null
+) returns public.tasks language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_identity record; v_actor text; v_original text; v_session text; v_task public.tasks;
+  v_request public.task_mutation_requests; v_hash text; v_reason text:=nullif(trim(p_reason),''); v_before jsonb;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original:=v_identity.original_actor_id; v_session:=v_identity.impersonation_session_id;
+  if p_request_key is null or nullif(trim(p_task_id),'') is null or p_expected_row_version is null or p_expected_row_version<1
+     or p_restore is null or (not p_restore and (v_reason is null or char_length(v_reason)>500))
+     or (v_reason is not null and char_length(v_reason)>500) then raise exception 'Invalid archive request'; end if;
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('task_id',p_task_id,'restore',p_restore,'reason',v_reason,
+    'version',p_expected_row_version,'impersonation_session_id',v_session)::text,'UTF8')),'hex');
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original,v_session,p_request_key,case when p_restore then 'restore_task_v2' else 'archive_task_v2' end,v_hash) on conflict do nothing;
+  select * into v_request from public.task_mutation_requests where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>case when p_restore then 'restore_task_v2' else 'archive_task_v2' end or v_request.payload_hash<>v_hash then raise exception 'Idempotency key reuse'; end if;
+  if v_request.completed_at is not null then
+    select * into v_task from public.tasks where id=v_request.result->>'task_id';
+    if not found or v_task.row_version is distinct from nullif(v_request.result->>'row_version','')::bigint then
+      raise exception 'Prior request succeeded, but the task changed; reload instead of replaying';
+    end if;
+    return v_task;
+  end if;
+  select * into v_task from public.tasks where id=p_task_id for update;
+  if not found or not public.task_archive_allowed_v2(p_task_id) then raise exception 'Task archive action is unauthorized' using errcode='42501'; end if;
+  if v_task.row_version<>p_expected_row_version then raise exception 'Task changed; refresh first' using errcode='40001'; end if;
+  if p_restore and v_task.archived_at is null then raise exception 'Task is not archived'; end if;
+  if not p_restore and v_task.archived_at is not null then raise exception 'Task is already archived'; end if;
+  v_before:=jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+    'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+    'done_link_present',nullif(trim(v_task.done_link),'') is not null);
+  if p_restore then
+    update public.tasks set archived_at=null,archived_by=null,archive_reason=null where id=p_task_id returning * into v_task;
+  else
+    update public.tasks set archived_at=clock_timestamp(),archived_by=v_actor,archive_reason=v_reason where id=p_task_id returning * into v_task;
+  end if;
+  insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,
+    request_key,before_state,after_state,metadata)
+  values(p_task_id,v_task.batch_id,case when p_restore then 'task_restored' else 'task_archived' end,
+    v_actor,v_original,v_session,p_request_key,v_before,
+    jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+      'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+      'done_link_present',nullif(trim(v_task.done_link),'') is not null),
+    case when v_reason is null then '{}'::jsonb else jsonb_build_object('reason',v_reason) end);
+  update public.task_mutation_requests set result=jsonb_build_object('task_id',p_task_id,'row_version',v_task.row_version),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return v_task;
+end $$;
+revoke all on function public.archive_task_v2(text,boolean,text,bigint,uuid,text) from public,anon;
+grant execute on function public.archive_task_v2(text,boolean,text,bigint,uuid,text) to authenticated;
+
+create or replace function public.list_archived_tasks_v2()
+returns setof public.tasks language sql stable security definer set search_path=public,pg_temp as $$
+  select t.* from public.tasks t where t.archived_at is not null and public.task_history_visible_v2(t.id)
+  order by t.archived_at desc,t.id;
+$$;
+revoke all on function public.list_archived_tasks_v2() from public,anon;
+grant execute on function public.list_archived_tasks_v2() to authenticated;
+
+-- Capacity is an active-work view. Preserve the existing AM client-count branch and make the task
+-- branch archive-aware while retaining the repository's normalized-assignee/legacy-fallback rule.
+create or replace function public.get_capacity_snapshot(p_user_ids text[])
+returns table(user_id text, used_capacity integer)
+language plpgsql stable security definer set search_path=public,pg_temp as $$
+begin
+  if public.app_user_role()='sales' then raise exception 'sales may not query capacity data.'; end if;
+  return query
+  select u.id,(case when u.role in ('am_agent','am_team_lead') then (
+    select count(*)::integer from public.clients c
+    where c.am_agent_id=u.id and c.status not in ('closed','paused')
+  ) else (
+    select count(*)::integer from public.tasks t
+    where t.archived_at is null and t.status not in ('completed','closed') and (
+      exists(select 1 from public.task_assignees ta where ta.task_id=t.id and ta.user_id=u.id)
+      or (not exists(select 1 from public.task_assignees ta where ta.task_id=t.id) and t.assigned_to=u.id)
+    )
+  ) end) from public.users u where u.id=any(coalesce(p_user_ids,array[]::text[]));
+end $$;
+revoke all on function public.get_capacity_snapshot(text[]) from public,anon;
+grant execute on function public.get_capacity_snapshot(text[]) to authenticated,service_role;
+
+-- Ordinary table reads are active-only. Historical consumers must use the explicit history helper
+-- from SECURITY DEFINER report sources or list_archived_tasks_v2; permissive-policy OR cannot
+-- reintroduce archived rows because this is the only tasks SELECT policy in the repository lineage.
+drop policy if exists tasks_select_rls on public.tasks;
+create policy tasks_select_rls on public.tasks for select to authenticated using (
+  archived_at is null and ((created_by=public.app_user_id() and public.app_user_role()<>'sales') or public.task_active_visible_v2(id))
+);
+drop policy if exists tasks_update_rls on public.tasks;
+create policy tasks_update_rls on public.tasks for update to authenticated
+using (archived_at is null and public.task_mutable_v2(id))
+with check (archived_at is null and public.task_mutable_v2(id)
+  and (status<>'closed' or public.task_closable(id) or created_by=public.app_user_id()));
+
+-- Partial-success bulk creation. Each BEGIN/EXCEPTION block is a PostgreSQL subtransaction: a
+-- failed item rolls back its task, assignment changes and event, while prior independent items
+-- remain eligible to commit with the outer call. The batch header and final item rows make retry
+-- results stable, including duplicate/invalid explicit inputs.
+create or replace function public.create_task_bulk_v2(
+  p_request_key uuid,p_selection_mode text,p_client_ids text[],p_payload jsonb,
+  p_impersonation_session_id text default null
+) returns table(item_ordinal integer,requested_client_id text,success boolean,task_id text,error_code text,error_message text)
+language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_identity record; v_actor text; v_original text; v_session text; v_hash text; v_batch public.task_batches;
+  v_clients text[]; v_client text; v_ordinal integer; v_item_hash text; v_task public.tasks; v_task_id text;
+  v_assignees text[]; v_sqlstate text; v_message text;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original:=v_identity.original_actor_id; v_session:=v_identity.impersonation_session_id;
+  if v_actor is null or p_request_key is null or p_selection_mode not in ('explicit','all_clients')
+     or jsonb_typeof(p_payload)<>'object'
+     or (p_payload-array['title','description','team','due_date','priority','estimated_hours','task_type',
+       'task_type_other','parent_task_id','assignee_ids']::text[])<>'{}'::jsonb
+     or jsonb_typeof(p_payload->'title')<>'string' or char_length(trim(p_payload->>'title')) not between 1 and 300
+     or jsonb_typeof(p_payload->'description')<>'string' or char_length(p_payload->>'description')>10000
+     or jsonb_typeof(p_payload->'due_date')<>'string'
+     or p_payload->>'priority' not in ('low','medium','high','urgent')
+     or not (p_payload ? 'assignee_ids') or jsonb_typeof(p_payload->'assignee_ids')<>'array'
+     or jsonb_array_length(p_payload->'assignee_ids')>100
+     or exists(select 1 from jsonb_array_elements(p_payload->'assignee_ids') x where jsonb_typeof(x.value)<>'string') then
+    raise exception 'Invalid bulk task request';
+  end if;
+  if public.app_user_role()='sales' then raise exception 'Sales cannot create tasks' using errcode='42501'; end if;
+  select coalesce(array_agg(value order by value),array[]::text[]) into v_assignees
+  from (select distinct nullif(trim(value#>>'{}'),'') value from jsonb_array_elements(p_payload->'assignee_ids')) q
+  where value is not null;
+  if p_selection_mode='all_clients' then
+    if p_client_ids is not null and cardinality(p_client_ids)>0 then raise exception 'All Clients does not accept client ids'; end if;
+    select coalesce(array_agg(c.id order by c.id),array[]::text[]) into v_clients
+    from public.clients c where c.status='active' and public.client_visible_for_task_rpc(c.id);
+    if cardinality(v_clients)=0 then raise exception 'No active authorized clients are eligible'; end if;
+  else
+    if p_client_ids is null or cardinality(p_client_ids)=0 or cardinality(p_client_ids)>200 then
+      raise exception 'Explicit bulk creation requires 1 to 200 client items';
+    end if;
+    v_clients:=p_client_ids;
+  end if;
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('mode',p_selection_mode,'client_ids',v_clients,
+    'payload',p_payload,'impersonation_session_id',v_session)::text,'UTF8')),'hex');
+  insert into public.task_batches(id,created_by,original_actor_id,impersonation_session_id,request_key,selection_mode,client_ids,payload_hash)
+  values(p_request_key,v_actor,v_original,v_session,p_request_key,p_selection_mode,
+    array(select distinct trim(x) from unnest(v_clients) x where nullif(trim(x),'') is not null order by 1),v_hash)
+  on conflict(created_by,request_key) do nothing;
+  select * into v_batch from public.task_batches where created_by=v_actor and request_key=p_request_key for update;
+  if not found or v_batch.payload_hash<>v_hash or v_batch.selection_mode<>p_selection_mode then
+    raise exception 'Bulk idempotency key was reused with a different payload';
+  end if;
+  if exists(select 1 from public.task_batch_items i where i.batch_id=v_batch.id) then
+    if exists(select 1 from public.task_batch_items i where i.batch_id=v_batch.id and i.result_status='pending') then
+      raise exception 'Stored bulk request has an incomplete item state';
+    end if;
+    return query select i.item_ordinal,i.requested_client_id,i.result_status='succeeded',i.task_id,i.error_code,i.error_message
+      from public.task_batch_items i where i.batch_id=v_batch.id order by i.item_ordinal;
+    return;
+  end if;
+
+  for v_client,v_ordinal in select x.client_id,x.ordinality::integer from unnest(v_clients) with ordinality x(client_id,ordinality) loop
+    v_client:=nullif(trim(v_client),'');
+    v_item_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('ordinal',v_ordinal,'client_id',v_client,'payload',p_payload)::text,'UTF8')),'hex');
+    insert into public.task_batch_items(batch_id,item_ordinal,requested_client_id,item_payload_hash,result_status)
+    values(v_batch.id,v_ordinal,v_client,v_item_hash,'pending');
+    begin
+      if v_client is null then raise exception using errcode='22023',message='Client id is empty'; end if;
+      if exists(select 1 from unnest(v_clients) with ordinality prior(id,n) where n<v_ordinal and nullif(trim(id),'')=v_client) then
+        raise exception using errcode='23505',message='Duplicate client item';
+      end if;
+      if not public.client_visible_for_task_rpc(v_client) then raise exception using errcode='42501',message='Client is unavailable'; end if;
+      if p_selection_mode='all_clients' then
+        perform 1 from public.clients c where c.id=v_client and c.status='active' for key share;
+        if not found then raise exception using errcode='55000',message='Client is no longer active'; end if;
+      end if;
+      if nullif(p_payload->>'parent_task_id','') is not null
+         and not public.task_active_visible_v2(p_payload->>'parent_task_id') then
+        raise exception using errcode='42501',message='Parent task is unavailable';
+      end if;
+      v_task_id:='tsk-'||gen_random_uuid()::text;
+      insert into public.tasks(id,client_id,title,description,assigned_to,created_by,team,status,due_date,priority,
+        estimated_hours,actual_hours,parent_task_id,task_type,task_type_other,batch_id)
+      values(v_task_id,v_client,trim(p_payload->>'title'),p_payload->>'description',null,v_actor,nullif(p_payload->>'team',''),
+        'todo',(p_payload->>'due_date')::date,p_payload->>'priority',(p_payload->>'estimated_hours')::numeric,0,
+        nullif(p_payload->>'parent_task_id',''),nullif(p_payload->>'task_type',''),nullif(p_payload->>'task_type_other',''),p_request_key::text)
+      returning * into v_task;
+      if cardinality(v_assignees)>0 then perform public.set_task_assignees(v_task_id,v_assignees); end if;
+      select * into v_task from public.tasks where id=v_task_id;
+      insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,
+        request_key,event_ordinal,after_state,metadata)
+      values(v_task_id,v_task.batch_id,'task_created',v_actor,v_original,v_session,p_request_key,v_ordinal,
+        jsonb_build_object('status',v_task.status,'completed_at',v_task.completed_at,'row_version',v_task.row_version,
+          'lifecycle_cycle',v_task.lifecycle_cycle,'blocked_from_status',v_task.blocked_from_status,
+          'done_link_present',false),jsonb_build_object('batch_id',v_batch.id::text));
+      update public.task_batch_items set result_status='succeeded',task_id=v_task_id,completed_at=clock_timestamp()
+      where batch_id=v_batch.id and item_ordinal=v_ordinal;
+    exception when others then
+      get stacked diagnostics v_sqlstate=returned_sqlstate,v_message=message_text;
+      update public.task_batch_items set result_status='failed',
+        error_code=case v_sqlstate when '23505' then 'DUPLICATE_ITEM' when '42501' then 'NOT_AUTHORIZED'
+          when '23503' then 'INVALID_REFERENCE' when '22007' then 'INVALID_DATE' else 'INVALID_ITEM' end,
+        error_message=case v_sqlstate when '23505' then 'This client appears more than once in the request.'
+          when '42501' then 'The client, parent task, or assignee is not authorized.'
+          when '23503' then 'A referenced client, task, or employee is unavailable.'
+          when '22007' then 'The due date is invalid.' else 'This task item failed validation and was not created.' end,
+        completed_at=clock_timestamp()
+      where batch_id=v_batch.id and item_ordinal=v_ordinal;
+    end;
+  end loop;
+  return query select i.item_ordinal,i.requested_client_id,i.result_status='succeeded',i.task_id,i.error_code,i.error_message
+    from public.task_batch_items i where i.batch_id=v_batch.id order by i.item_ordinal;
+end $$;
+revoke all on function public.create_task_bulk_v2(uuid,text,text[],jsonb,text) from public,anon;
+grant execute on function public.create_task_bulk_v2(uuid,text,text[],jsonb,text) to authenticated;
+
+-- Replacement for the legacy bulk assigned_to=NULL write used after a permitted employee
+-- deactivation. It removes only current assignment membership; history remains in
+-- task_assignee_log/task_events and no unrelated task field is changed.
+create or replace function public.remove_user_from_open_tasks_v2(
+  p_user_id text,p_request_key uuid,p_impersonation_session_id text default null
+) returns integer language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+  v_identity record; v_actor text; v_original text; v_session text; v_target public.users;
+  v_request public.task_mutation_requests; v_hash text; v_task_id text; v_task public.tasks;
+  v_count integer:=0; v_ordinal integer:=0;
+begin
+  select * into v_identity from public.resolve_task_audit_identity(p_impersonation_session_id);
+  v_actor:=v_identity.effective_actor_id; v_original:=v_identity.original_actor_id; v_session:=v_identity.impersonation_session_id;
+  if p_request_key is null or nullif(trim(p_user_id),'') is null then raise exception 'Invalid unassignment request'; end if;
+  select * into v_target from public.users where id=p_user_id;
+  if not found or v_target.deactivated_at is null or not public.employee_manageable(v_target.id,v_target.role) then
+    raise exception 'Employee is unavailable for deactivation cleanup' using errcode='42501';
+  end if;
+  v_hash:=encode(pg_catalog.sha256(convert_to(jsonb_build_object('user_id',p_user_id,
+    'impersonation_session_id',v_session)::text,'UTF8')),'hex');
+  insert into public.task_mutation_requests(actor_id,original_actor_id,impersonation_session_id,request_key,action,payload_hash)
+  values(v_actor,v_original,v_session,p_request_key,'remove_user_from_open_tasks_v2',v_hash) on conflict do nothing;
+  select * into v_request from public.task_mutation_requests where actor_id=v_actor and request_key=p_request_key for update;
+  if v_request.action<>'remove_user_from_open_tasks_v2' or v_request.payload_hash<>v_hash then raise exception 'Idempotency key reuse'; end if;
+  if v_request.completed_at is not null then return coalesce((v_request.result->>'affected_count')::integer,0); end if;
+  for v_task_id in
+    select t.id from public.tasks t
+    where t.archived_at is null and t.status not in ('completed','closed') and (
+      exists(select 1 from public.task_assignees ta where ta.task_id=t.id and ta.user_id=p_user_id)
+      or (not exists(select 1 from public.task_assignees ta where ta.task_id=t.id) and t.assigned_to=p_user_id)
+    ) order by t.id for update of t
+  loop
+    select * into v_task from public.tasks where id=v_task_id;
+    delete from public.task_assignees where task_id=v_task_id and user_id=p_user_id;
+    if not exists(select 1 from public.task_assignees where task_id=v_task_id) and v_task.assigned_to=p_user_id then
+      update public.tasks set assigned_to=null where id=v_task_id;
+      select * into v_task from public.tasks where id=v_task_id;
+    end if;
+    insert into public.task_events(task_id,batch_id,event_type,actor_id,original_actor_id,impersonation_session_id,
+      request_key,event_ordinal,metadata)
+    values(v_task_id,v_task.batch_id,'assignee_removed',v_actor,v_original,v_session,p_request_key,v_ordinal,
+      jsonb_build_object('affected_count',1));
+    v_count:=v_count+1; v_ordinal:=v_ordinal+1;
+  end loop;
+  update public.task_mutation_requests set result=jsonb_build_object('affected_count',v_count),completed_at=clock_timestamp()
+  where actor_id=v_actor and request_key=p_request_key;
+  return v_count;
+end $$;
+revoke all on function public.remove_user_from_open_tasks_v2(text,uuid,text) from public,anon;
+grant execute on function public.remove_user_from_open_tasks_v2(text,uuid,text) to authenticated;
+
+-- set_status supports todo/in_progress/in_review/blocked under task_mutable_v2. Completion,
+-- closing and reopening remain dedicated actions with stronger evidence and authorization.
+
+-- Direct legacy-column task and Daily Activity writes remain during frontend cutover. Daily writes
+-- are locked down by 004 only after parity/smoke tests. Task lockdown remains blocked until every
+-- ordinary edit/assignment/batch/archive path has an expected-version audited RPC.
+commit;
