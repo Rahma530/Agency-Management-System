@@ -1,0 +1,492 @@
+import { BuiltInRole, UserRole } from '../types/database';
+import { getActiveCustomRole, getCustomRoleModules, isCustomRoleCacheLoaded } from './customRoles';
+
+export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates';
+
+export interface RoleMetadata {
+  role: UserRole;
+  englishTitle: string;
+  arabicTitle?: string;
+  portalTitleEn: string;
+  portalSlug: string;
+  team: string;
+  department: string;
+  badgeBg: string;
+  badgeText: string;
+  defaultModule: AppModuleId;
+  allowedModules: AppModuleId[];
+  description: string;
+  canCreateCampaign?: boolean;
+  canManageCapacity?: boolean;
+  canAssignAM?: boolean;
+}
+
+export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
+  executive: {
+    role: 'executive',
+    englishTitle: 'Executive Management (C-Level)',
+    portalTitleEn: 'Executive Portal',
+    portalSlug: 'executive',
+    team: 'Executive',
+    department: 'Executive Board',
+    badgeBg: 'var(--role-executive-tint)',
+    badgeText: 'var(--role-executive-ink)',
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    canCreateCampaign: false,
+    canManageCapacity: true,
+    canAssignAM: true,
+    description: 'Strategic oversight, operational capacity monitoring, and organization-wide performance.',
+  },
+  head_of_technical: {
+    role: 'head_of_technical',
+    englishTitle: 'Head of Technical',
+    portalTitleEn: 'Head of Technical Portal',
+    portalSlug: 'head-of-technical',
+    team: 'Technical',
+    department: 'Technical & Operations',
+    badgeBg: 'var(--role-head-of-technical-tint)',
+    badgeText: 'var(--role-head-of-technical-ink)',
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    canCreateCampaign: false,
+    canManageCapacity: true,
+    canAssignAM: true,
+    description: 'Cross-functional technical leadership, workflow tracking, and team capacity.',
+  },
+  sales: {
+    role: 'sales',
+    englishTitle: 'Sales Representative',
+    portalTitleEn: 'Sales Portal',
+    portalSlug: 'sales',
+    team: 'Sales',
+    department: 'Sales & Business Development',
+    badgeBg: 'var(--role-sales-tint)',
+    badgeText: 'var(--role-sales-ink)',
+    // My Work removed (confirmed): its Tasks section never applied to sales anyway, and its My
+    // Clients section duplicated — in a strictly narrower form — what SalesPortalView.tsx (the
+    // Onboarding module) already shows: the same sales_owner_id-scoped client list, plus the
+    // Register/Bulk-Upload actions and a Total Contract Value KPI My Work never had. The one thing
+    // uniquely reachable through My Work was its "My Performance" button (EmployeePerformancePage);
+    // since that page's metrics are task/capacity-based and sales has neither, its practical value
+    // was already negligible. Onboarding is now sales's only module and default landing screen.
+    defaultModule: 'onboarding',
+    allowedModules: ['onboarding'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: true,
+    description: 'Client registration, agreement setup, and handoff to Account Management.',
+  },
+  am_team_lead: {
+    role: 'am_team_lead',
+    englishTitle: 'AM Team Leader',
+    portalTitleEn: 'AM Team Leader Portal',
+    portalSlug: 'am-team-lead',
+    team: 'Account Management',
+    department: 'Account Management',
+    badgeBg: 'var(--role-am-team-lead-tint)',
+    badgeText: 'var(--role-am-team-lead-ink)',
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'campaigns', 'reports', 'employees'],
+    canCreateCampaign: false,
+    canManageCapacity: true,
+    canAssignAM: true,
+    description: 'Client onboarding queue, Account Manager assignments, brief reviews, and client health.',
+  },
+  am_agent: {
+    role: 'am_agent',
+    englishTitle: 'Account Manager (AM)',
+    portalTitleEn: 'Account Manager Portal',
+    portalSlug: 'am-agent',
+    team: 'Account Management',
+    department: 'Account Management',
+    badgeBg: 'var(--role-am-agent-tint)',
+    badgeText: 'var(--role-am-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'dashboard', 'onboarding', 'service_briefs', 'tasks', 'campaigns', 'reports', 'brief_templates'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Assigned client onboarding, dynamic service briefs, and client communication.',
+  },
+  media_buying_team_lead: {
+    role: 'media_buying_team_lead',
+    englishTitle: 'Media Buying Team Leader',
+    portalTitleEn: 'Media Buying Lead Portal',
+    portalSlug: 'media-buying-team-lead',
+    team: 'Media Buying',
+    department: 'Paid Media',
+    badgeBg: 'var(--role-media-buying-lead-tint)',
+    badgeText: 'var(--role-media-buying-lead-ink)',
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'my_work', 'campaigns', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'capacity', 'reports', 'employees'],
+    canCreateCampaign: true,
+    canManageCapacity: true,
+    canAssignAM: false,
+    description: 'Full campaign management, budget allocation, team ROAS optimization, and client briefs.',
+  },
+  media_buying_agent: {
+    role: 'media_buying_agent',
+    englishTitle: 'Media Buying Specialist',
+    portalTitleEn: 'Media Buying Specialist Portal',
+    portalSlug: 'media-buying-agent',
+    team: 'Media Buying',
+    department: 'Paid Media',
+    badgeBg: 'var(--role-media-buying-agent-tint)',
+    badgeText: 'var(--role-media-buying-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'campaigns', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'reports'],
+    canCreateCampaign: true,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Operational campaign management for assigned clients, ad spend tracking, and conversion APIs.',
+  },
+  seo_team_lead: {
+    role: 'seo_team_lead',
+    englishTitle: 'SEO Team Leader',
+    portalTitleEn: 'SEO Team Leader Portal',
+    portalSlug: 'seo-team-lead',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'var(--role-seo-lead-tint)',
+    badgeText: 'var(--role-seo-lead-ink)',
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'capacity', 'reports', 'employees'],
+    canCreateCampaign: false,
+    canManageCapacity: true,
+    canAssignAM: false,
+    description: 'SEO strategy, keyword audits, multi-service onboarding reviews, and team task distribution.',
+  },
+  seo_agent: {
+    role: 'seo_agent',
+    englishTitle: 'SEO Specialist',
+    portalTitleEn: 'SEO Specialist Portal',
+    portalSlug: 'seo-agent',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'var(--role-seo-agent-tint)',
+    badgeText: 'var(--role-seo-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
+  },
+  store_manager: {
+    role: 'store_manager',
+    englishTitle: 'Store Manager',
+    portalTitleEn: 'Store Manager Portal',
+    portalSlug: 'store-manager',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'var(--role-seo-agent-tint)',
+    badgeText: 'var(--role-seo-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Store optimization, catalog SEO, technical SEO tasks, and daily logs.',
+  },
+  // Identical treatment to seo_agent everywhere (task visibility/assignment, capacity tracking,
+  // brief access, seo_team_lead oversight, allowedModules) — see the migration adding this role
+  // alongside every RLS function/policy that previously hardcoded 'seo_agent'.
+  seo_content_agent: {
+    role: 'seo_content_agent',
+    englishTitle: 'SEO Content Specialist',
+    portalTitleEn: 'SEO Content Specialist Portal',
+    portalSlug: 'seo-content-agent',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'var(--role-seo-agent-tint)',
+    badgeText: 'var(--role-seo-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
+  },
+  // Identical treatment to seo_agent everywhere — see seo_content_agent's comment above.
+  seo_backlink_agent: {
+    role: 'seo_backlink_agent',
+    englishTitle: 'SEO Backlink Specialist',
+    portalTitleEn: 'SEO Backlink Specialist Portal',
+    portalSlug: 'seo-backlink-agent',
+    team: 'SEO',
+    department: 'Organic Search (SEO)',
+    badgeBg: 'var(--role-seo-agent-tint)',
+    badgeText: 'var(--role-seo-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'On-page audits, backlink execution, technical SEO tasks, and daily logs.',
+  },
+  // Structurally like graphic_designer/video_editor (no dedicated team lead, task-based work
+  // with no service_type/assignments relationship to clients) — but exclusively owned by
+  // seo_team_lead's oversight rather than shared across every team lead the way the creative
+  // pool is. allowedModules mirrors graphic_designer/video_editor for that reason, not seo_agent:
+  // service_briefs and reports are both built around a service_type this role doesn't have.
+  programming_agent: {
+    role: 'programming_agent',
+    englishTitle: 'Programming Specialist',
+    portalTitleEn: 'Programming Specialist Portal',
+    portalSlug: 'programming-agent',
+    team: 'Programming',
+    department: 'Programming',
+    badgeBg: 'var(--role-programming-tint)',
+    badgeText: 'var(--role-programming-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'tasks'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Website/platform development tasks and technical implementation, under SEO Team Lead oversight.',
+  },
+  social_media_team_lead: {
+    role: 'social_media_team_lead',
+    englishTitle: 'Social Media Team Leader',
+    portalTitleEn: 'Social Media Lead Portal',
+    portalSlug: 'social-media-team-lead',
+    team: 'Social Media',
+    department: 'Social Media & Content',
+    badgeBg: 'var(--role-social-lead-tint)',
+    badgeText: 'var(--role-social-lead-ink)',
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'capacity', 'reports', 'employees'],
+    canCreateCampaign: false,
+    canManageCapacity: true,
+    canAssignAM: false,
+    description: 'Content calendar approvals, multi-service client brief reviews, and publishing workflows.',
+  },
+  social_media_agent: {
+    role: 'social_media_agent',
+    englishTitle: 'Social Media Specialist',
+    portalTitleEn: 'Social Media Specialist Portal',
+    portalSlug: 'social-media-agent',
+    team: 'Social Media',
+    department: 'Social Media & Content',
+    badgeBg: 'var(--role-social-agent-tint)',
+    badgeText: 'var(--role-social-agent-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks', 'reports'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Copywriting, content scheduling, community engagement, and assigned tasks.',
+  },
+  graphic_designer: {
+    role: 'graphic_designer',
+    englishTitle: 'Graphic Designer',
+    portalTitleEn: 'Graphic Designer Portal',
+    portalSlug: 'graphic-designer',
+    team: 'Creative & Design',
+    department: 'Creative & Visual Design',
+    badgeBg: 'var(--role-graphic-designer-tint)',
+    badgeText: 'var(--role-graphic-designer-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'tasks'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Brand identity, ad creative assets, and cross-team design deliverables.',
+  },
+  video_editor: {
+    role: 'video_editor',
+    englishTitle: 'Video Editor',
+    portalTitleEn: 'Video Editor Portal',
+    portalSlug: 'video-editor',
+    team: 'Video Production',
+    department: 'Video Production',
+    badgeBg: 'var(--role-video-editor-tint)',
+    badgeText: 'var(--role-video-editor-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'tasks'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Video production, motion graphics, and short-form video ads.',
+  },
+  ui_ux_designer: {
+    role: 'ui_ux_designer',
+    englishTitle: 'UI/UX Designer',
+    portalTitleEn: 'UI/UX Designer Portal',
+    portalSlug: 'ui-ux-designer',
+    team: 'Creative & Design',
+    department: 'CREATIVE',
+    badgeBg: 'var(--role-graphic-designer-tint)',
+    badgeText: 'var(--role-graphic-designer-ink)',
+    defaultModule: 'my_work',
+    allowedModules: ['my_work', 'daily_operations', 'onboarding', 'service_briefs', 'tasks'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Interface design briefs and personally assigned task delivery; brief access is read-only.',
+  },
+  ai_engineer: {
+    role: 'ai_engineer',
+    englishTitle: 'AI Engineer',
+    portalTitleEn: 'AI Engineer Portal',
+    portalSlug: 'ai-engineer',
+    team: 'AI Engineering',
+    department: 'AI & Automation',
+    badgeBg: 'var(--role-ai-engineer-tint)',
+    badgeText: 'var(--role-ai-engineer-ink)',
+    // Application authorization intentionally mirrors head_of_technical, with one addition:
+    // my_work, since unlike head_of_technical this role does hands-on, personally-assigned work
+    // (see description below) and needs the same personal task/daily-log hub every other
+    // hands-on role gets. defaultModule stays 'dashboard', matching head_of_technical's landing.
+    defaultModule: 'dashboard',
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    canCreateCampaign: false,
+    canManageCapacity: true,
+    canAssignAM: true,
+    description: 'AI-assisted automation, internal tooling, and technical support across cross-team task delivery.',
+  },
+  // NOT a team lead of graphic_designer/video_editor — that shared pool keeps its existing
+  // "no dedicated manager, visible to everyone but sales" model untouched. This role is a narrow,
+  // cross-cutting exception: visibility into and task-assignment rights over ONLY those two
+  // roles' tasks, plus read-only capacity visibility for the same two — no employee-management
+  // rights (no 'employees' module, never added to any edit/deactivate-capable list). Lands
+  // directly on the Task Board (pre-filtered to Creative) rather than a dashboard, since they
+  // have no clients/employees of their own to manage — a TeamLeadDashboard-style landing would be
+  // mostly empty for them.
+  marketing_manager: {
+    role: 'marketing_manager',
+    englishTitle: 'Marketing Manager',
+    portalTitleEn: 'Marketing Manager Portal',
+    portalSlug: 'marketing-manager',
+    team: 'Marketing',
+    department: 'Marketing',
+    badgeBg: 'var(--role-marketing-manager-tint)',
+    badgeText: 'var(--role-marketing-manager-ink)',
+    defaultModule: 'tasks',
+    allowedModules: ['my_work', 'tasks', 'capacity'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Cross-cutting oversight of the shared Creative pool (Graphic Design & Video Production) — task assignment and read-only capacity visibility only.',
+  },
+};
+
+// A team lead's own department agents ONLY — not the team lead role itself, not the shared
+// graphic_designer/video_editor pool, not other departments' leads. Used wherever a team lead's
+// direct-report relationship needs to be checked (capacity edit rights, report scoping, task
+// board employee filtering) — keep this as the single source of truth rather than redefining it
+// per-component.
+export const TEAM_LEAD_TO_AGENT_ROLE: Partial<Record<UserRole, UserRole[]>> = {
+  am_team_lead: ['am_agent'],
+  media_buying_team_lead: ['media_buying_agent'],
+  seo_team_lead: ['seo_agent', 'store_manager', 'seo_content_agent', 'seo_backlink_agent'],
+  social_media_team_lead: ['social_media_agent'],
+};
+
+// Fail-closed fallback for a role string that isn't a key in AGENCY_ROLES (unrecognized, or
+// missing entirely). allowedModules is deliberately empty — isModuleAllowed() then rejects every
+// module, so the app's existing AccessDenied screen (App.tsx's hash router falls back to it
+// whenever isModuleAllowed() is false) is what the user sees, with no special-casing needed here
+// or at any call site. Never falls back to executive or any other privileged role.
+const UNCONFIGURED_ROLE_FALLBACK: RoleMetadata = {
+  role: 'executive', // placeholder only — nothing reads RoleMetadata.role; access is gated entirely by allowedModules below
+  englishTitle: 'Unconfigured Role',
+  portalTitleEn: 'Account Setup Required — Contact Your Administrator',
+  portalSlug: 'unconfigured',
+  team: '',
+  department: '',
+  badgeBg: 'var(--role-executive-tint)',
+  badgeText: 'var(--role-executive-ink)',
+  defaultModule: 'dashboard', // unreachable: allowedModules is empty, so no module is ever "allowed"
+  allowedModules: [],
+  canCreateCampaign: false,
+  canManageCapacity: false,
+  canAssignAM: false,
+  description: 'Your role is not configured. Contact an administrator.',
+};
+
+// True for one of the 19 keys in AGENCY_ROLES. The one place that distinguishes "built-in" from
+// "everything else" (a custom role, or truly unknown) — every other consumer should call this
+// rather than re-deriving the same check, so a future built-in role addition only has to update
+// AGENCY_ROLES itself.
+//
+// Normalizes the same way getRoleInfo() below does before comparing. Not load-bearing against
+// the database today — custom_roles_id_shape_check forces every custom_roles.id to already be
+// lowercase, and users_role_valid_guard_trigger requires an exact match against either that id
+// or one of these 19 literals, so a stored role value can't actually drift in case. It's here so
+// every OTHER caller of this function (App.tsx's custom-role loading gate,
+// CampaignManagementModule.tsx, reportingEngine.ts) gets the same fail-safe behavior getRoleInfo
+// already has, rather than each one needing to remember to normalize first.
+export const isBuiltInRole = (role: UserRole): role is BuiltInRole =>
+  Object.prototype.hasOwnProperty.call(AGENCY_ROLES, typeof role === 'string' ? role.trim().toLowerCase() : role);
+
+export const getRoleInfo = (role?: UserRole): RoleMetadata => {
+  // Employee role values are compared against AGENCY_ROLES' exact keys below.
+  // Normalize whitespace/casing first so drift in the stored value (e.g. a
+  // trailing space or different case from how it was entered) doesn't get
+  // silently misrouted to the fail-closed fallback.
+  const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : role;
+
+  if (!normalizedRole) {
+    return UNCONFIGURED_ROLE_FALLBACK;
+  }
+
+  if (isBuiltInRole(normalizedRole)) {
+    return AGENCY_ROLES[normalizedRole];
+  }
+
+  // Not a built-in role — check the custom-roles cache (populated once at app bootstrap by
+  // App.tsx; see src/data/customRoles.ts) before falling back. An inactive custom role, or one
+  // that simply isn't in the cache yet (e.g. this is called before the bootstrap fetch finishes),
+  // resolves exactly like an unknown role — fail closed, never a guess.
+  const customRole = getActiveCustomRole(normalizedRole);
+  if (customRole) {
+    return {
+      role: customRole.id,
+      englishTitle: customRole.english_title,
+      arabicTitle: customRole.arabic_title ?? undefined,
+      portalTitleEn: customRole.portal_title_en,
+      portalSlug: customRole.portal_slug,
+      team: customRole.team ?? '',
+      department: customRole.department_id ?? '',
+      // Neutral, generic UI tokens — not one of the role-specific --role-*-tint/-ink pairs above,
+      // so an admin-created role with no badge color set of its own never looks like it was
+      // assigned the Executive badge by default.
+      badgeBg: customRole.badge_bg || 'var(--control-surface)',
+      badgeText: customRole.badge_text || 'var(--text-mid)',
+      defaultModule: customRole.default_module as AppModuleId,
+      allowedModules: getCustomRoleModules(customRole.id) as AppModuleId[],
+      canCreateCampaign: false,
+      canManageCapacity: false,
+      canAssignAM: false,
+      description: '',
+    };
+  }
+
+  // Only warn once the cache has actually finished loading — before that, "not found yet" is
+  // expected for a legitimate custom role and not worth logging as a configuration problem.
+  if (isCustomRoleCacheLoaded()) {
+    console.warn(
+      `getRoleInfo: unrecognized role "${role}" — denying module access (fail closed). ` +
+        `This is not an intentional mapping; check the role value on the employee record.`
+    );
+  }
+  return UNCONFIGURED_ROLE_FALLBACK;
+};
+
+export const isModuleAllowed = (role?: UserRole, moduleId?: AppModuleId): boolean => {
+  if (!role || !moduleId) return false;
+  const meta = getRoleInfo(role);
+  return meta.allowedModules.includes(moduleId);
+};
+
+export const getPortalSlug = (role?: UserRole): string => {
+  const meta = getRoleInfo(role);
+  return meta.portalSlug;
+};
+
+export const getRoleFromSlug = (slug: string): UserRole | null => {
+  const entry = Object.values(AGENCY_ROLES).find((r) => r.portalSlug === slug);
+  return entry ? entry.role : null;
+};
