@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Building2, UserCheck, Globe, Briefcase, Phone, Layers, Plus, StickyNote, ChevronDown, Save, DollarSign, Calendar } from 'lucide-react';
+import { X, Building2, UserCheck, Globe, Briefcase, Phone, Layers, Plus, StickyNote, ChevronDown, Save, DollarSign, Calendar, Percent } from 'lucide-react';
 import { ClientRecord, ClientSector, ServiceType } from '../types/database';
 import {
   CLIENT_SERVICE_OPTIONS,
@@ -47,6 +47,11 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
   const [contractDurationMonths, setContractDurationMonths] = useState<number | ''>(client.contract_duration_months ?? '');
   const [startDate, setStartDate] = useState(client.start_date || '');
   const [renewalDate, setRenewalDate] = useState(client.renewal_date || '');
+  // Mentorship Tracker needs this as a fraction (0.3 = 30%), but people type percentages, so the
+  // input holds 0-100 and we convert on save. See 20261207000000_update_client_details_add_margin.sql.
+  const [profitMarginPct, setProfitMarginPct] = useState<number | ''>(
+    client.profit_margin_pct != null ? Math.round(client.profit_margin_pct * 10000) / 100 : ''
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -105,6 +110,10 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
         return;
       }
     }
+    if (profitMarginPct !== '' && (Number(profitMarginPct) < 0 || Number(profitMarginPct) > 100)) {
+      setSaveError('Profit Margin % must be between 0 and 100.');
+      return;
+    }
 
     const { services, other_services } = splitClientServices([...selectedServices, ...customServices]);
 
@@ -142,6 +151,10 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
     }
     if ((startDate || null) !== (client.start_date || null)) patch.start_date = startDate || null;
     if ((renewalDate || null) !== (client.renewal_date || null)) patch.renewal_date = renewalDate || null;
+    const nextProfitMarginPct = profitMarginPct === '' ? null : Number(profitMarginPct) / 100;
+    if (nextProfitMarginPct !== (client.profit_margin_pct ?? null)) {
+      patch.profit_margin_pct = nextProfitMarginPct;
+    }
 
     if (Object.keys(patch).length === 0) {
       onClose();
@@ -395,6 +408,27 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
                   style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
                 />
               </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Profit Margin % (optional)
+            </label>
+            <p className="text-[11px] mb-1.5" style={{ color: 'var(--grey)' }}>
+              Used by the Mentorship Tracker to turn Sales into Profit.
+            </p>
+            <div className="relative max-w-[200px]">
+              <Percent className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={profitMarginPct}
+                onChange={(e) => setProfitMarginPct(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+              />
             </div>
           </div>
 

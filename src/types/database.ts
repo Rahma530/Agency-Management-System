@@ -224,6 +224,11 @@ export interface ClientRecord {
   // period-scoped gained/lost client metrics in MyWorkHub; not a general "assigned since" display
   // field beyond that.
   am_agent_assigned_at?: string | null;
+  // Media Buyers Mentorship Tracker: this client's profit margin as a fraction (0.3 = 30%),
+  // used by get_mentorship_snapshot() to turn Sales into Profit. Optional — a client with no
+  // margin set yet shows "Setup Needed" in the Mentorship tab until this is filled in. Editable
+  // via EditClientModal.tsx (see 20261207000000_update_client_details_add_margin.sql).
+  profit_margin_pct?: number | null;
   created_at?: string;
 }
 
@@ -273,7 +278,7 @@ export interface ClientAccessFields {
 // built from pieces, it widens to plain `string` and every .select(...) call site below falls back
 // to an untyped `GenericStringError` result instead.
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, created_at' as const;
+  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
