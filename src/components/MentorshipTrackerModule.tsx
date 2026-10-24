@@ -772,6 +772,42 @@ const LogMonthlyDataForm: React.FC<{
   const [amounts, setAmounts] = useState<Record<string, { sales: string; spend: string }>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [loadingExisting, setLoadingExisting] = useState(false);
+
+  // Pre-fill with whatever's already logged for this client+month (instead of always starting
+  // blank) so re-selecting a client you already logged shows and lets you EDIT the existing
+  // numbers — previously this form had no way to see what was already there, so re-picking a
+  // client looked like "starting from scratch" even though the data existed (same RLS select
+  // policy already covers every role that can reach this form).
+  useEffect(() => {
+    if (!clientId) {
+      setSelectedPlatforms(new Set());
+      setAmounts({});
+      return;
+    }
+    let cancelled = false;
+    setLoadingExisting(true);
+    setMessage(null);
+    (async () => {
+      const { data } = await supabaseRaw
+        .from('media_buying_insights')
+        .select('platform, sales_value, spend')
+        .eq('client_id', clientId)
+        .eq('week_start_date', reportingMonth);
+      if (cancelled) return;
+      setLoadingExisting(false);
+      const existing = (data as { platform: string; sales_value: number | null; spend: number | null }[]) || [];
+      setSelectedPlatforms(new Set(existing.map((r) => r.platform)));
+      const nextAmounts: Record<string, { sales: string; spend: string }> = {};
+      existing.forEach((r) => {
+        nextAmounts[r.platform] = { sales: String(r.sales_value ?? ''), spend: String(r.spend ?? '') };
+      });
+      setAmounts(nextAmounts);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, reportingMonth]);
 
   const togglePlatform = (p: string) => {
     setSelectedPlatforms((prev) => {
@@ -825,8 +861,8 @@ const LogMonthlyDataForm: React.FC<{
       setMessage({ type: 'err', text: error.message });
     } else {
       setMessage({ type: 'ok', text: `Saved ${platformsToSave.length} platform${platformsToSave.length > 1 ? 's' : ''}.` });
-      setAmounts({});
-      setSelectedPlatforms(new Set());
+      // Leave the form showing what was just saved (don't blank it back out) — it's now the
+      // existing data for this client+month, same as what re-selecting this client would load.
       onSaved();
     }
   };
@@ -850,11 +886,16 @@ const LogMonthlyDataForm: React.FC<{
               </option>
             ))}
           </select>
+          {loadingExisting && (
+            <div className="text-[11px] mt-1" style={{ color: 'var(--text-lo)' }}>
+              Loading what's already logged for this client this month…
+            </div>
+          )}
         </div>
 
         <div>
           <label className={labelClass} style={{ color: 'var(--grey)' }}>
-            Platforms (check every platform this client has numbers for this month)
+            Platforms (check every platform this client has numbers for this month — already-logged ones are pre-filled below so you can edit them)
           </label>
           <div className="flex flex-wrap gap-2">
             {PLATFORMS.map((p) => {
