@@ -95,6 +95,17 @@ function fmtPct(n: number | null): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
+// Short display labels for the per-platform Sales/Spend columns — keeps the (already wide,
+// horizontally-scrollable) Overview table header compact.
+const PLATFORM_LABELS: Record<(typeof PLATFORMS)[number], string> = {
+  tiktok: 'TikTok',
+  meta: 'Meta',
+  snapchat: 'Snap',
+  google: 'Google',
+  salla: 'Salla',
+  zid: 'Zid',
+};
+
 // Tint/ink pairs drawn from this app's own semantic tokens (index.css), not generic Tailwind
 // red/green — same vocabulary as role badges and task-status badges elsewhere in the app.
 const STATUS_TOKENS: Record<string, { bg: string; ink: string }> = {
@@ -373,16 +384,22 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       <th className="py-3 px-4 text-right">Required Growth</th>
                       <th className="py-3 px-4 text-right">Profit Growth</th>
                       <th className="py-3 px-4">Status</th>
+                      {PLATFORMS.map((p) => (
+                        <React.Fragment key={`head-${p}`}>
+                          <th className="py-3 px-4 text-right border-l border-purple-900/20">
+                            {PLATFORM_LABELS[p]} Sales
+                          </th>
+                          <th className="py-3 px-4 text-right">{PLATFORM_LABELS[p]} Spend</th>
+                        </React.Fragment>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-purple-900/20 text-xs">
                     {buyerRows.map((r) => {
                       const st = STATUS_TOKENS[r.status] || { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' };
                       const breakdown = platformBreakdown[r.client_id] || {};
-                      const breakdownPlatforms = PLATFORMS.filter((p) => breakdown[p]);
                       return (
-                        <React.Fragment key={r.client_id}>
-                        <tr>
+                        <tr key={r.client_id}>
                           <td className="py-3.5 px-4 font-semibold text-white">{r.client_name}</td>
                           <td className="py-3.5 px-4 text-right">
                             {editingMarginClientId === r.client_id ? (
@@ -461,35 +478,20 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                               {r.status}
                             </span>
                           </td>
+                          {PLATFORMS.map((p) => {
+                            const pb = breakdown[p];
+                            return (
+                              <React.Fragment key={`${r.client_id}-${p}`}>
+                                <td className="py-3.5 px-4 text-right text-stone-300 border-l border-purple-900/10">
+                                  {fmtMoney(pb ? pb.sales : null)}
+                                </td>
+                                <td className="py-3.5 px-4 text-right text-stone-300">
+                                  {fmtMoney(pb ? pb.spend : null)}
+                                </td>
+                              </React.Fragment>
+                            );
+                          })}
                         </tr>
-                        {breakdownPlatforms.length > 0 && (
-                          <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                            <td colSpan={12} className="py-2.5 px-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: 'var(--text-lo)' }}>
-                                  This month by platform:
-                                </span>
-                                {breakdownPlatforms.map((p) => {
-                                  const pb = breakdown[p];
-                                  const roas = pb.spend > 0 ? pb.sales / pb.spend : 0;
-                                  return (
-                                    <span
-                                      key={p}
-                                      className="px-2.5 py-1 rounded-lg text-[11px]"
-                                      style={{ background: 'var(--canvas)', border: '1px solid var(--border-soft)' }}
-                                    >
-                                      <span className="font-semibold text-white capitalize">{p}</span>
-                                      <span className="text-stone-400">
-                                        {' '}· Sales {fmtMoney(pb.sales)} · Spend {fmtMoney(pb.spend)} · ROAS {roas.toFixed(2)}
-                                      </span>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                        </React.Fragment>
                       );
                     })}
                   </tbody>
