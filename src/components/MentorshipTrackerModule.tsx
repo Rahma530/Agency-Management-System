@@ -256,6 +256,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       style={{ color: 'var(--ink-soft)', background: 'var(--canvas)' }}
                     >
                       <th className="py-3 px-4">Client</th>
+                      <th className="py-3 px-4 text-right">Margin</th>
                       <th className="py-3 px-4 text-right">Avg 3M Sales</th>
                       <th className="py-3 px-4 text-right">Avg 3M Spent</th>
                       <th className="py-3 px-4 text-right">Avg 3M Profit</th>
@@ -273,6 +274,13 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       return (
                         <tr key={r.client_id}>
                           <td className="py-3.5 px-4 font-semibold text-white">{r.client_name}</td>
+                          <td className="py-3.5 px-4 text-right">
+                            {r.profit_margin_pct == null ? (
+                              <span style={{ color: 'var(--warning)' }}>Not set</span>
+                            ) : (
+                              <span className="text-stone-300">{fmtPct(r.profit_margin_pct)}</span>
+                            )}
+                          </td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_sales)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_spent)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_profit)}</td>
