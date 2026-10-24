@@ -62,8 +62,22 @@ interface MentorshipOversightRow {
   assigned_at: string;
 }
 
+interface MentorshipGrowthTierRow {
+  id: number;
+  min_spend: number;
+  max_spend: number | null;
+  required_growth_pct: number;
+  active: boolean;
+}
+
 const OVERSIGHT_ADMIN_ROLES = ['executive', 'head_of_technical', 'media_buying_team_lead'];
 const MEDIA_BUYER_ROLE = 'media_buying_agent';
+
+// mentorship_growth_tiers_write_rls's role list (20261204000000, corrected by
+// 20261211000000_mentorship_growth_tiers_role_swap.sql) — same three roles as
+// OVERSIGHT_ADMIN_ROLES above; kept as its own name so each call site reads for what it's
+// actually gating, even though the role sets happen to be identical right now.
+const GROWTH_TIER_ADMIN_ROLES = OVERSIGHT_ADMIN_ROLES;
 
 // 'salla' and 'zid' aren't ad platforms (no spend runs "on" them) — they're the client's store
 // platform, logged here anyway because the owner wants to compare what Salla/Zid record as real
@@ -131,7 +145,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
   currentUser,
   allUsers,
 }) => {
-  const [tab, setTab] = useState<'overview' | 'log' | 'oversight'>('overview');
+  const [tab, setTab] = useState<'overview' | 'log' | 'oversight' | 'growth-tiers'>('overview');
   const [reportingMonth, setReportingMonth] = useState<string>(currentMonthStart());
   const [rows, setRows] = useState<MentorshipSnapshotRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -157,6 +171,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
   const [marginError, setMarginError] = useState<string | null>(null);
 
   const isOversightAdmin = OVERSIGHT_ADMIN_ROLES.includes(currentUser.role);
+  const isGrowthTierAdmin = GROWTH_TIER_ADMIN_ROLES.includes(currentUser.role);
 
   const loadSnapshot = useCallback(async () => {
     setLoading(true);
@@ -376,6 +391,9 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
         <TabButton active={tab === 'log'} onClick={() => setTab('log')} label="Log Monthly Data" />
         {isOversightAdmin && (
           <TabButton active={tab === 'oversight'} onClick={() => setTab('oversight')} label="Oversight" />
+        )}
+        {isGrowthTierAdmin && (
+          <TabButton active={tab === 'growth-tiers'} onClick={() => setTab('growth-tiers')} label="Growth Tiers" />
         )}
       </div>
 
@@ -663,6 +681,8 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
       {tab === 'oversight' && isOversightAdmin && (
         <OversightPanel currentUser={currentUser} allUsers={allUsers} />
       )}
+
+      {tab === 'growth-tiers' && isGrowthTierAdmin && <GrowthTiersPanel />}
     </div>
   );
 };
@@ -1038,6 +1058,315 @@ const OversightPanel: React.FC<{ currentUser: UserRecord; allUsers: UserRecord[]
             ))}
           </ul>
         )}
+      </div>
+    </div>
+  );
+};
+
+// Executive / Head of Technical / Media Buying Team Lead only (mirrors
+// mentorship_growth_tiers_write_rls exactly, per 20261211000000_mentorship_growth_tiers_role_
+// swap.sql — ai_engineer never should have had write access here, and media_buying_team_lead,
+// who actually runs this tracker day to day, should have) — manages the spend -> required-
+// growth-% lookup get_mentorship_snapshot's `tier`
+// lateral join reads (avg_3m_spend between min_spend and max_spend, null max_spend = no upper
+// bound). Previously DB-only (seeded once from the tracker's original Settings sheet, no UI ever
+// built for it) — every client showing the same Required Growth % is expected while they're all
+// still in their first 3 months (avg_3m_spend = 0, so everyone falls in the lowest tier); it
+// diverges automatically per client once real spend history exists. Rows are edited in place or
+// deactivated, never deleted — same posture as public.platforms and the table's own RLS comment —
+// so a tier a past calculation already used keeps resolving consistently.
+const GrowthTiersPanel: React.FC = () => {
+  const [tiers, setTiers] = useState<MentorshipGrowthTierRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editMin, setEditMin] = useState('');
+  const [editMax, setEditMax] = useState('');
+  const [editPct, setEditPct] = useState('');
+  const [editActive, setEditActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [newMin, setNewMin] = useState('');
+  const [newMax, setNewMax] = useState('');
+  const [newPct, setNewPct] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const { data, error: fetchError } = await supabaseRaw
+      .from('mentorship_growth_tiers')
+      .select('id, min_spend, max_spend, required_growth_pct, active')
+      .order('min_spend');
+    if (fetchError) {
+      setError(fetchError.message);
+    } else {
+      setTiers((data as MentorshipGrowthTierRow[]) || []);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const startEditing = (t: MentorshipGrowthTierRow) => {
+    setEditingId(t.id);
+    setEditMin(String(t.min_spend));
+    setEditMax(t.max_spend == null ? '' : String(t.max_spend));
+    setEditPct(String(Math.round(t.required_growth_pct * 10000) / 100));
+    setEditActive(t.active);
+    setError(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setError(null);
+  };
+
+  const saveEditing = async () => {
+    if (editingId == null) return;
+    const minNum = Number(editMin);
+    const maxNum = editMax.trim() === '' ? null : Number(editMax);
+    const pctNum = Number(editPct);
+    if (!Number.isFinite(minNum) || minNum < 0) {
+      setError('Min Spend must be a number >= 0.');
+      return;
+    }
+    if (maxNum !== null && (!Number.isFinite(maxNum) || maxNum <= minNum)) {
+      setError('Max Spend must be greater than Min Spend, or left blank for no upper bound.');
+      return;
+    }
+    if (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100) {
+      setError('Required Growth % must be between 0 and 100.');
+      return;
+    }
+    setSaving(true);
+    const { error: updateError } = await supabaseRaw
+      .from('mentorship_growth_tiers')
+      .update({
+        min_spend: minNum,
+        max_spend: maxNum,
+        required_growth_pct: pctNum / 100,
+        active: editActive,
+      })
+      .eq('id', editingId);
+    setSaving(false);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setEditingId(null);
+    load();
+  };
+
+  const addTier = async () => {
+    const minNum = Number(newMin);
+    const maxNum = newMax.trim() === '' ? null : Number(newMax);
+    const pctNum = Number(newPct);
+    if (!Number.isFinite(minNum) || minNum < 0) {
+      setError('Min Spend must be a number >= 0.');
+      return;
+    }
+    if (maxNum !== null && (!Number.isFinite(maxNum) || maxNum <= minNum)) {
+      setError('Max Spend must be greater than Min Spend, or left blank for no upper bound.');
+      return;
+    }
+    if (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100) {
+      setError('Required Growth % must be between 0 and 100.');
+      return;
+    }
+    setAdding(true);
+    setError(null);
+    const { error: insertError } = await supabaseRaw.from('mentorship_growth_tiers').insert([
+      { min_spend: minNum, max_spend: maxNum, required_growth_pct: pctNum / 100, active: true },
+    ]);
+    setAdding(false);
+    if (insertError) {
+      setError(insertError.message);
+      return;
+    }
+    setNewMin('');
+    setNewMax('');
+    setNewPct('');
+    load();
+  };
+
+  return (
+    <div className="max-w-3xl">
+      {error && (
+        <div
+          className="mb-4 p-3 rounded-xl text-sm flex items-center gap-2"
+          style={{ background: 'rgba(245,163,163,0.12)', border: '1px solid var(--border-rose)', color: 'var(--roas-bad)' }}
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+        </div>
+      )}
+
+      <div className="rounded-[20px] p-5 mb-5" style={cardStyle}>
+        <h2 className="font-bold text-white mb-1">Required Growth tiers</h2>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-lo)' }}>
+          Looked up by a client's Avg 3M Spend. Deactivate a tier instead of deleting it — a past
+          month's calculation keeps resolving against whatever was active at the time it ran.
+        </p>
+
+        {loading ? (
+          <div className="text-sm" style={{ color: 'var(--text-lo)' }}>
+            Loading…
+          </div>
+        ) : (
+          <table className="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr
+                className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider"
+                style={{ color: 'var(--ink-soft)' }}
+              >
+                <th className="py-2 pr-3">Min Spend</th>
+                <th className="py-2 pr-3">Max Spend</th>
+                <th className="py-2 pr-3">Required Growth %</th>
+                <th className="py-2 pr-3">Active</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-purple-900/20">
+              {tiers.map((t) => {
+                const isEditing = editingId === t.id;
+                return (
+                  <tr key={t.id}>
+                    <td className="py-2.5 pr-3">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          value={editMin}
+                          onChange={(e) => setEditMin(e.target.value)}
+                          className={`${inputClass} w-28`}
+                        />
+                      ) : (
+                        <span className="text-stone-300">{fmtMoney(t.min_spend)}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          placeholder="No upper bound"
+                          value={editMax}
+                          onChange={(e) => setEditMax(e.target.value)}
+                          className={`${inputClass} w-28`}
+                        />
+                      ) : (
+                        <span className="text-stone-300">{t.max_spend == null ? 'No upper bound' : fmtMoney(t.max_spend)}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={editPct}
+                          onChange={(e) => setEditPct(e.target.value)}
+                          className={`${inputClass} w-20`}
+                        />
+                      ) : (
+                        <span className="text-stone-300">{fmtPct(t.required_growth_pct)}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      {isEditing ? (
+                        <input
+                          type="checkbox"
+                          checked={editActive}
+                          onChange={(e) => setEditActive(e.target.checked)}
+                        />
+                      ) : (
+                        <span style={{ color: t.active ? 'var(--success)' : 'var(--text-lo)' }}>
+                          {t.active ? 'Active' : 'Inactive'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5">
+                      {isEditing ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={saveEditing}
+                            disabled={saving}
+                            className="p-1 rounded"
+                            style={{ color: 'var(--success)' }}
+                            title="Save"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditing}
+                            disabled={saving}
+                            className="p-1 rounded text-stone-400 hover:text-white"
+                            title="Cancel"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEditing(t)}
+                          className="text-xs font-semibold hover:underline"
+                          style={{ color: 'var(--purple-light)' }}
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {tiers.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-4 text-center text-sm" style={{ color: 'var(--text-lo)' }}>
+                    No tiers yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="rounded-[20px] p-5" style={cardStyle}>
+        <h2 className="font-bold text-white mb-4 flex items-center gap-2">
+          <Plus className="w-4 h-4" /> Add a tier
+        </h2>
+        <div className="flex gap-3 items-end flex-wrap">
+          <div>
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Min Spend
+            </label>
+            <input type="number" value={newMin} onChange={(e) => setNewMin(e.target.value)} className={`${inputClass} w-32`} />
+          </div>
+          <div>
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Max Spend (blank = no limit)
+            </label>
+            <input type="number" value={newMax} onChange={(e) => setNewMax(e.target.value)} className={`${inputClass} w-40`} />
+          </div>
+          <div>
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Required Growth %
+            </label>
+            <input type="number" min={0} max={100} value={newPct} onChange={(e) => setNewPct(e.target.value)} className={`${inputClass} w-24`} />
+          </div>
+          <button
+            onClick={addTier}
+            disabled={adding}
+            className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold text-white shadow-md hover:opacity-90 disabled:opacity-50"
+            style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
+          >
+            <Plus className="w-4 h-4" /> Add
+          </button>
+        </div>
       </div>
     </div>
   );
