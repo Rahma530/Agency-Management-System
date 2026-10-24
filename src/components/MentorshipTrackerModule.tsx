@@ -65,7 +65,13 @@ interface MentorshipOversightRow {
 const OVERSIGHT_ADMIN_ROLES = ['executive', 'head_of_technical', 'media_buying_team_lead'];
 const MEDIA_BUYER_ROLE = 'media_buying_agent';
 
-const PLATFORMS = ['tiktok', 'meta', 'snapchat', 'google'] as const;
+// 'salla' and 'zid' aren't ad platforms (no spend runs "on" them) — they're the client's store
+// platform, logged here anyway because the owner wants to compare what Salla/Zid record as real
+// store sales against what the ad platforms (TikTok/Meta/Snapchat/Google) self-report, since those
+// numbers routinely don't match. `media_buying_insights.platform` is plain text with no check
+// constraint (see 20261030600000_document_media_buying_insights.sql), so adding values here needs
+// no migration — same reasoning as the original tiktok/meta/snapchat/google list.
+const PLATFORMS = ['tiktok', 'meta', 'snapchat', 'google', 'salla', 'zid'] as const;
 
 // Builds "YYYY-MM-01" for the LOCAL calendar month, without ever going through
 // Date#toISOString() — toISOString() converts to UTC first, which silently rolls the date back
@@ -199,6 +205,47 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
     setEditingMarginClientId(null);
   };
 
+  // Per-platform breakdown for the current reporting month only (not a 3-month average — this is
+  // meant to compare what the ad platforms self-report against what the client's store platform
+  // (Salla/Zid) actually recorded for the SAME month, so averaging across months would blur
+  // exactly the discrepancy this is for). Queried directly from media_buying_insights rather than
+  // through get_mentorship_snapshot, which only ever returns per-client totals already summed
+  // across platforms — same RLS policy already covers every role that can see these rows
+  // (20261030600000_document_media_buying_insights.sql's select policy).
+  const [platformBreakdown, setPlatformBreakdown] = useState<
+    Record<string, Record<string, { sales: number; spend: number }>>
+  >({});
+
+  useEffect(() => {
+    const clientIds = Array.from(new Set(rows.map((r) => r.client_id)));
+    if (clientIds.length === 0) {
+      setPlatformBreakdown({});
+      return;
+    }
+    (async () => {
+      const { data, error: fetchError } = await supabaseRaw
+        .from('media_buying_insights')
+        .select('client_id, platform, sales_value, spend')
+        .in('client_id', clientIds)
+        .eq('week_start_date', reportingMonth);
+      if (fetchError || !data) {
+        setPlatformBreakdown({});
+        return;
+      }
+      const map: Record<string, Record<string, { sales: number; spend: number }>> = {};
+      (data as { client_id: string; platform: string; sales_value: number | null; spend: number | null }[]).forEach(
+        (row) => {
+          if (!map[row.client_id]) map[row.client_id] = {};
+          map[row.client_id][row.platform] = {
+            sales: Number(row.sales_value) || 0,
+            spend: Number(row.spend) || 0,
+          };
+        }
+      );
+      setPlatformBreakdown(map);
+    })();
+  }, [rows, reportingMonth]);
+
   const buyers = useMemo(() => {
     const map = new Map<string, string>();
     rows.forEach((r) => map.set(r.media_buyer_id, r.media_buyer_name));
@@ -322,6 +369,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       <th className="py-3 px-4 text-right">Current Sales</th>
                       <th className="py-3 px-4 text-right">Current Spent</th>
                       <th className="py-3 px-4 text-right">Current Profit</th>
+                      <th className="py-3 px-4 text-right">Current ROAS</th>
                       <th className="py-3 px-4 text-right">Required Growth</th>
                       <th className="py-3 px-4 text-right">Profit Growth</th>
                       <th className="py-3 px-4">Status</th>
@@ -330,8 +378,11 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                   <tbody className="divide-y divide-purple-900/20 text-xs">
                     {buyerRows.map((r) => {
                       const st = STATUS_TOKENS[r.status] || { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' };
+                      const breakdown = platformBreakdown[r.client_id] || {};
+                      const breakdownPlatforms = PLATFORMS.filter((p) => breakdown[p]);
                       return (
-                        <tr key={r.client_id}>
+                        <React.Fragment key={r.client_id}>
+                        <tr>
                           <td className="py-3.5 px-4 font-semibold text-white">{r.client_name}</td>
                           <td className="py-3.5 px-4 text-right">
                             {editingMarginClientId === r.client_id ? (
@@ -397,6 +448,9 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.current_sales)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.current_spent)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.current_profit)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">
+                            {r.current_roas != null ? r.current_roas.toFixed(2) : '—'}
+                          </td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.required_growth_pct)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.profit_growth_pct)}</td>
                           <td className="py-3.5 px-4">
@@ -408,6 +462,34 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                             </span>
                           </td>
                         </tr>
+                        {breakdownPlatforms.length > 0 && (
+                          <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
+                            <td colSpan={12} className="py-2.5 px-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: 'var(--text-lo)' }}>
+                                  This month by platform:
+                                </span>
+                                {breakdownPlatforms.map((p) => {
+                                  const pb = breakdown[p];
+                                  const roas = pb.spend > 0 ? pb.sales / pb.spend : 0;
+                                  return (
+                                    <span
+                                      key={p}
+                                      className="px-2.5 py-1 rounded-lg text-[11px]"
+                                      style={{ background: 'var(--canvas)', border: '1px solid var(--border-soft)' }}
+                                    >
+                                      <span className="font-semibold text-white capitalize">{p}</span>
+                                      <span className="text-stone-400">
+                                        {' '}· Sales {fmtMoney(pb.sales)} · Spend {fmtMoney(pb.spend)} · ROAS {roas.toFixed(2)}
+                                      </span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -466,10 +548,16 @@ const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: string }
   </div>
 );
 
-// Logs one client+platform+month row into public.media_buying_insights (sales_value + spend).
-// Writes with week_start_date = first day of the chosen month — the backend's monthly aggregation
-// (get_mentorship_snapshot's `monthly` CTE) buckets by date_trunc('month', week_start_date), so a
-// single first-of-month row is exactly equivalent to "this client's figure for this month".
+// Logs one-or-more client+platform+month rows into public.media_buying_insights (sales_value +
+// spend) in a single upsert. Writes with week_start_date = first day of the chosen month — the
+// backend's monthly aggregation (get_mentorship_snapshot's `monthly` CTE) buckets by
+// date_trunc('month', week_start_date), so a single first-of-month row per platform is exactly
+// equivalent to "this client's figure for this platform, this month".
+//
+// Platforms are checkboxes rather than a single dropdown so one submission can log every platform
+// this client is actually running on at once (including the non-ad "platforms" salla/zid — see
+// the PLATFORMS comment above), instead of re-opening this form once per platform.
+//
 // Existing RLS on media_buying_insights (20261030600000) already allows media_buying_agent (for
 // their own assigned clients), media_buying_team_lead and am_agent to insert — no new RPC needed.
 const LogMonthlyDataForm: React.FC<{
@@ -486,40 +574,65 @@ const LogMonthlyDataForm: React.FC<{
   );
 
   const [clientId, setClientId] = useState('');
-  const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]>('meta');
-  const [sales, setSales] = useState('');
-  const [spend, setSpend] = useState('');
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
+  const [amounts, setAmounts] = useState<Record<string, { sales: string; spend: string }>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
+  const togglePlatform = (p: string) => {
+    setSelectedPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+    setMessage(null);
+  };
+
+  const setAmount = (p: string, field: 'sales' | 'spend', value: string) => {
+    setAmounts((prev) => ({ ...prev, [p]: { sales: prev[p]?.sales ?? '', spend: prev[p]?.spend ?? '', [field]: value } }));
+  };
+
   const submit = async () => {
-    if (!clientId || sales === '' || spend === '') {
-      setMessage({ type: 'err', text: 'Pick a client and enter both Sales and Spend.' });
+    if (!clientId) {
+      setMessage({ type: 'err', text: 'Pick a client first.' });
       return;
+    }
+    const platformsToSave = PLATFORMS.filter((p) => selectedPlatforms.has(p));
+    if (platformsToSave.length === 0) {
+      setMessage({ type: 'err', text: 'Check at least one platform.' });
+      return;
+    }
+    const payload: Record<string, unknown>[] = [];
+    for (const p of platformsToSave) {
+      const a = amounts[p];
+      if (!a || a.sales === '' || a.spend === '') {
+        setMessage({ type: 'err', text: `Enter both Sales and Spend for ${p}.` });
+        return;
+      }
+      payload.push({
+        id: `mbi_${clientId}_${p}_${reportingMonth}`,
+        client_id: clientId,
+        platform: p,
+        week_start_date: reportingMonth,
+        sales_value: Number(a.sales),
+        spend: Number(a.spend),
+        source: 'manual',
+        created_by: currentUser.id,
+      });
     }
     setSaving(true);
     setMessage(null);
-    const id = `mbi_${clientId}_${platform}_${reportingMonth}`;
-    const { error } = await supabaseRaw.from('media_buying_insights').upsert(
-      {
-        id,
-        client_id: clientId,
-        platform,
-        week_start_date: reportingMonth,
-        sales_value: Number(sales),
-        spend: Number(spend),
-        source: 'manual',
-        created_by: currentUser.id,
-      },
-      { onConflict: 'client_id,platform,week_start_date' },
-    );
+    const { error } = await supabaseRaw
+      .from('media_buying_insights')
+      .upsert(payload, { onConflict: 'client_id,platform,week_start_date' });
     setSaving(false);
     if (error) {
       setMessage({ type: 'err', text: error.message });
     } else {
-      setMessage({ type: 'ok', text: 'Saved.' });
-      setSales('');
-      setSpend('');
+      setMessage({ type: 'ok', text: `Saved ${platformsToSave.length} platform${platformsToSave.length > 1 ? 's' : ''}.` });
+      setAmounts({});
+      setSelectedPlatforms(new Set());
       onSaved();
     }
   };
@@ -547,35 +660,61 @@ const LogMonthlyDataForm: React.FC<{
 
         <div>
           <label className={labelClass} style={{ color: 'var(--grey)' }}>
-            Platform
+            Platforms (check every platform this client has numbers for this month)
           </label>
-          <select
-            value={platform}
-            onChange={(e) => setPlatform(e.target.value as (typeof PLATFORMS)[number])}
-            className={inputClass}
-          >
-            {PLATFORMS.map((p) => (
-              <option key={p} value={p} className="bg-stone-900 text-white">
-                {p}
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-wrap gap-2">
+            {PLATFORMS.map((p) => {
+              const checked = selectedPlatforms.has(p);
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => togglePlatform(p)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition-all flex items-center gap-1.5"
+                  style={
+                    checked
+                      ? { background: 'rgba(123, 47, 247, 0.3)', color: 'var(--purple-light)', border: '1px solid var(--purple)' }
+                      : { background: 'rgba(10, 10, 13, 0.8)', color: 'var(--grey)', border: '1px solid var(--border-soft)' }
+                  }
+                >
+                  <input type="checkbox" checked={checked} onChange={() => togglePlatform(p)} className="hidden" />
+                  {checked && <Check className="w-3.5 h-3.5" />}
+                  {p}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass} style={{ color: 'var(--grey)' }}>
-              Sales Value
-            </label>
-            <input type="number" value={sales} onChange={(e) => setSales(e.target.value)} className={inputClass} />
+        {PLATFORMS.filter((p) => selectedPlatforms.has(p)).map((p) => (
+          <div key={p} className="grid grid-cols-[auto_1fr_1fr] items-end gap-3">
+            <div className="text-xs font-semibold capitalize pb-2.5" style={{ color: 'var(--purple-light)' }}>
+              {p}
+            </div>
+            <div>
+              <label className={labelClass} style={{ color: 'var(--grey)' }}>
+                Sales Value
+              </label>
+              <input
+                type="number"
+                value={amounts[p]?.sales ?? ''}
+                onChange={(e) => setAmount(p, 'sales', e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} style={{ color: 'var(--grey)' }}>
+                {p === 'salla' || p === 'zid' ? 'Store Spend/Fees' : 'Ad Spend'}
+              </label>
+              <input
+                type="number"
+                value={amounts[p]?.spend ?? ''}
+                onChange={(e) => setAmount(p, 'spend', e.target.value)}
+                className={inputClass}
+              />
+            </div>
           </div>
-          <div>
-            <label className={labelClass} style={{ color: 'var(--grey)' }}>
-              Ad Spend
-            </label>
-            <input type="number" value={spend} onChange={(e) => setSpend(e.target.value)} className={inputClass} />
-          </div>
-        </div>
+        ))}
 
         {message && (
           <div
