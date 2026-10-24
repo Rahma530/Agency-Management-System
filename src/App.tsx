@@ -104,6 +104,8 @@ import {
   ClientPortalUserRecord,
   MeetingRecord,
   ClientContractRecord,
+  BriefAttachmentRecord,
+  ClientAccessAttachmentRecord,
   PlatformConnectionRecord,
   BriefFieldDef,
   PlatformCategory,
@@ -313,6 +315,7 @@ export default function App() {
   const [clientPortalUsers, setClientPortalUsers] = useState<ClientPortalUserRecord[]>([]);
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [clientContracts, setClientContracts] = useState<ClientContractRecord[]>([]);
+  const [briefAttachments, setBriefAttachments] = useState<BriefAttachmentRecord[]>([]);
   const [platformConnections, setPlatformConnections] = useState<PlatformConnectionRecord[]>([]);
   const [taskBoardAssigneePrefill, setTaskBoardAssigneePrefill] = useState<string | null>(null);
   // Set by handleNotificationClick when a task notification's link_url ('task:<id>') is clicked —
@@ -1776,6 +1779,16 @@ export default function App() {
         const { data: contractData, error: contractErr } = await supabase.from('client_contracts').select('*');
         if (!contractErr && contractData) {
           setClientContracts(contractData as ClientContractRecord[]);
+        }
+
+        // Fetch brief_attachments — RLS already scopes this to whatever briefs the caller can see
+        // (brief_attachments_select_rls mirrors briefs_select_rls exactly), so a plain select('*')
+        // never over-fetches beyond what briefs itself already returned above.
+        const { data: briefAttachmentData, error: briefAttachmentErr } = await supabase
+          .from('brief_attachments')
+          .select('*');
+        if (!briefAttachmentErr && briefAttachmentData) {
+          setBriefAttachments(briefAttachmentData as BriefAttachmentRecord[]);
         }
 
         // Fetch platform_connections (Module 6 scaffolding: manual integration status tracker)
@@ -5214,6 +5227,162 @@ export default function App() {
     showNotification('Contract document removed.');
   };
 
+  // 8g2. Upload an attachment on a service brief (brief_attachments) — same private-bucket
+  // upload-then-insert-metadata pattern as handleUploadClientContract. brief_attachments_insert_rls
+  // (20261130000000_brief_attachments.sql) mirrors briefs_update_rls, so this simply attempts the
+  // insert and lets RLS be the real gate; the caller (BriefAttachmentsPanel) only ever shows the
+  // Upload button when canEditServiceBrief() already agrees.
+  const handleUploadBriefAttachment = async (briefId: string, file: File) => {
+    if (!supabaseActive) {
+      showNotification('File attachments require a connected Supabase backend.', 'info');
+      return;
+    }
+
+    const attachmentId = `ba-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`;
+    const storagePath = buildBriefAttachmentStoragePath(briefId, attachmentId, file.name);
+
+    const { error: uploadError } = await supabase.storage
+      .from('brief-attachments')
+      .upload(storagePath, file, { contentType: file.type });
+    if (uploadError) {
+      console.error('Supabase brief attachment upload error:', uploadError);
+      throw uploadError;
+    }
+
+    const newAttachmentPayload: BriefAttachmentRecord = {
+      id: attachmentId,
+      brief_id: briefId,
+      storage_path: storagePath,
+      filename: file.name,
+      file_size: file.size,
+      mime_type: file.type,
+      uploaded_by: currentUser.id,
+      uploaded_at: new Date().toISOString(),
+    };
+
+    const { data, error: insertError } = await supabase
+      .from('brief_attachments')
+      .insert([newAttachmentPayload])
+      .select();
+    if (insertError) {
+      console.error('Supabase brief attachment metadata insert error:', insertError);
+      await supabase.storage.from('brief-attachments').remove([storagePath]);
+      throw insertError;
+    }
+
+    setBriefAttachments((prev) => [...prev, (data?.[0] as BriefAttachmentRecord) || newAttachmentPayload]);
+    showNotification(`"${file.name}" attached to the brief.`);
+  };
+
+  // Delete a brief attachment — removes the Storage object FIRST, then the metadata row, matching
+  // brief_attachments_objects_delete_rls's own documented ordering requirement (that policy is
+  // keyed off the still-existing brief_attachments row).
+  const handleDeleteBriefAttachment = async (attachmentId: string) => {
+    const attachment = briefAttachments.find((a) => a.id === attachmentId);
+    if (!attachment) return;
+
+    if (supabaseActive) {
+      const { error: storageError } = await supabase.storage.from('brief-attachments').remove([attachment.storage_path]);
+      if (storageError) {
+        console.error('Supabase brief attachment storage delete error:', storageError);
+        showNotification('Unable to remove this attachment.', 'info');
+        return;
+      }
+      const { error } = await supabase.from('brief_attachments').delete().eq('id', attachmentId);
+      if (error) {
+        console.error('Supabase brief attachment delete error:', error);
+        showNotification('Unable to remove this attachment.', 'info');
+        return;
+      }
+    }
+
+    setBriefAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    showNotification('Attachment removed.');
+  };
+
+  // 8g3. Client Access attachments (ID/visa images, etc.) — unlike brief_attachments, this table
+  // has NO direct grant/RLS policy for `authenticated` at all (20261201000000_client_access_
+  // attachments.sql): every read/write goes through a SECURITY DEFINER RPC, same lockdown posture
+  // as the 10 ClientAccessFields columns (get_client_access/update_client_access). Never fetched
+  // eagerly with the rest of app state — only when the Client Access section is actually opened,
+  // same as onFetchClientAccess below.
+  const handleFetchClientAccessAttachments = async (clientId: string): Promise<ClientAccessAttachmentRecord[]> => {
+    if (!supabaseActive) return [];
+    const { data, error } = await supabase.rpc('get_client_access_attachments', { p_client_id: clientId });
+    if (error) {
+      console.error('Supabase get_client_access_attachments error:', error);
+      throw error;
+    }
+    return (data as ClientAccessAttachmentRecord[] | null) || [];
+  };
+
+  const handleUploadClientAccessAttachment = async (
+    clientId: string,
+    file: File,
+    label: string | null
+  ): Promise<ClientAccessAttachmentRecord> => {
+    if (!supabaseActive) throw new Error('File attachments require a connected Supabase backend.');
+
+    const attachmentId = `cxa-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`;
+    const storagePath = buildClientAccessAttachmentStoragePath(clientId, attachmentId, file.name);
+
+    const { error: uploadError } = await supabase.storage
+      .from('client-access-attachments')
+      .upload(storagePath, file, { contentType: file.type });
+    if (uploadError) {
+      console.error('Supabase client access attachment upload error:', uploadError);
+      throw uploadError;
+    }
+
+    const { data: insertedId, error: insertError } = await supabase.rpc('insert_client_access_attachment', {
+      p_client_id: clientId,
+      p_storage_path: storagePath,
+      p_filename: file.name,
+      p_file_size: file.size,
+      p_mime_type: file.type,
+      p_label: label,
+    });
+    if (insertError) {
+      console.error('Supabase insert_client_access_attachment error:', insertError);
+      await supabase.storage.from('client-access-attachments').remove([storagePath]);
+      throw insertError;
+    }
+
+    return {
+      id: insertedId as string,
+      storage_path: storagePath,
+      filename: file.name,
+      file_size: file.size,
+      mime_type: file.type,
+      label,
+      uploaded_by: currentUser.id,
+      uploaded_at: new Date().toISOString(),
+    };
+  };
+
+  // Delete ordering is not load-bearing here the way it is for brief_attachments/task_attachments
+  // (see 20261201000000_client_access_attachments.sql's header, point 5) — the storage.objects
+  // delete policy depends only on role + client_id, not on the metadata row — but Storage is still
+  // removed first for consistency with every other attachment feature and to avoid an orphaned
+  // Storage object if the RPC call itself fails.
+  const handleDeleteClientAccessAttachment = async (
+    clientId: string,
+    attachmentId: string,
+    storagePath: string
+  ): Promise<void> => {
+    if (!supabaseActive) return;
+    const { error: storageError } = await supabase.storage.from('client-access-attachments').remove([storagePath]);
+    if (storageError) {
+      console.error('Supabase client access attachment storage delete error:', storageError);
+      throw storageError;
+    }
+    const { error } = await supabase.rpc('delete_client_access_attachment', { p_attachment_id: attachmentId });
+    if (error) {
+      console.error('Supabase delete_client_access_attachment error:', error);
+      throw error;
+    }
+  };
+
   // 8h. Manually set a platform's connection status (Module 6 scaffolding, point 1). This is a
   // real tracker of the human process of getting API access from a client — never a live
   // connection, never a real OAuth flow, and no credentials are read or written here at all.
@@ -6332,6 +6501,12 @@ export default function App() {
                     onUpdateClientDetails={handleUpdateClientDetails}
                     onUpdateClientAccess={handleUpdateClientAccess}
                     onFetchClientAccess={handleFetchClientAccess}
+                    briefAttachments={briefAttachments}
+                    onUploadBriefAttachment={handleUploadBriefAttachment}
+                    onDeleteBriefAttachment={handleDeleteBriefAttachment}
+                    onFetchClientAccessAttachments={handleFetchClientAccessAttachments}
+                    onUploadClientAccessAttachment={handleUploadClientAccessAttachment}
+                    onDeleteClientAccessAttachment={handleDeleteClientAccessAttachment}
                     onPreviewMergeClients={handlePreviewMergeClients}
                     onMergeClients={handleMergeClients}
                   />
@@ -6389,6 +6564,9 @@ export default function App() {
                   onUpdateClientDetails={handleUpdateClientDetails}
                   onUpdateClientAccess={handleUpdateClientAccess}
                   onFetchClientAccess={handleFetchClientAccess}
+                  briefAttachments={briefAttachments}
+                  onUploadBriefAttachment={handleUploadBriefAttachment}
+                  onDeleteBriefAttachment={handleDeleteBriefAttachment}
                 />
               </div>
             )}

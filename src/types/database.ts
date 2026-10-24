@@ -589,6 +589,36 @@ export interface ClientContractRecord {
   uploaded_at: string;
 }
 
+// 6d. brief_attachments — same shape as ClientContractRecord/TaskAttachmentRecord, one level up
+// (brief instead of client/task). RLS mirrors briefs_select_rls/briefs_update_rls exactly (see
+// 20261130000000_brief_attachments.sql) — who can see/edit the brief can see/edit its attachments.
+export interface BriefAttachmentRecord {
+  id: string;
+  brief_id: string;
+  storage_path: string;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
+// 6e. client_access_attachments — the attachment analog of ClientAccessFields. Never fetched via a
+// bare select('*') like the other *Record types above: the table carries no SELECT/INSERT/DELETE
+// grant for `authenticated` at all (20261201000000_client_access_attachments.sql) — every row only
+// ever reaches the browser through get_client_access_attachments()/insert_client_access_attachment()/
+// delete_client_access_attachment(), same lockdown posture as the 10 ClientAccessFields columns.
+export interface ClientAccessAttachmentRecord {
+  id: string;
+  storage_path: string;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  label: string | null;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
 // 7. campaigns
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
 
