@@ -29,6 +29,7 @@ import {
   Check,
   X,
   Search,
+  Info,
 } from 'lucide-react';
 import { supabaseRaw } from '../lib/supabase';
 import { UserRecord } from '../types/database';
@@ -136,6 +137,103 @@ const inputClass =
   'w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500';
 const labelClass = 'text-[11px] font-semibold block mb-1';
 const cardStyle = { background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' };
+
+// Plain-language restatements of get_mentorship_snapshot()'s actual SQL (20261206000000) — kept
+// in sync with that function's own column-by-column comment block by convention, the same way
+// NON_SENSITIVE_CLIENT_COLUMNS and ClientRecord are kept in sync elsewhere in this app. Shown via
+// MetricHeader's hover info icon, requested as "a tooltip like Meta Ads Manager's column info
+// popups" so a column's exact formula is one hover away instead of needing the SQL file.
+const METRIC_INFO: Record<string, { title: string; description: string }> = {
+  margin: {
+    title: 'Margin',
+    description: "The client's profit margin %, set manually. Used in Profit = Sales × Margin − Spend.",
+  },
+  avg3mSales: {
+    title: 'Avg 3M Sales',
+    description:
+      'Average monthly Sales over the 3 calendar months strictly before the selected month — counts only months that actually have logged data, not a fixed ÷3.',
+  },
+  avg3mSpent: {
+    title: 'Avg 3M Spent',
+    description:
+      'Average monthly Spend over the 3 calendar months strictly before the selected month — counts only months that actually have logged data.',
+  },
+  avg3mProfit: {
+    title: 'Avg 3M Profit',
+    description: 'Avg 3M Sales × Margin − Avg 3M Spent.',
+  },
+  currentSales: {
+    title: 'Current Sales',
+    description: 'Total Sales logged for the selected month, summed across every platform.',
+  },
+  currentSpent: {
+    title: 'Current Spent',
+    description: 'Total Spend logged for the selected month, summed across every platform.',
+  },
+  currentProfit: {
+    title: 'Current Profit',
+    description: 'Current Sales × Margin − Current Spent.',
+  },
+  currentRoas: {
+    title: 'Current ROAS',
+    description: 'Current Sales ÷ Current Spent for the selected month. Shows 0.00 when Spend is 0.',
+  },
+  requiredGrowth: {
+    title: 'Required Growth',
+    description:
+      "Looked up from Avg 3M Spent against the Growth Tiers table (Growth Tiers tab) — a client spending more recently needs a lower growth % to stay on track, and vice versa.",
+  },
+  profitGrowth: {
+    title: 'Profit Growth',
+    description:
+      '(Current Profit ÷ Avg 3M Profit) − 1. Left blank when Avg 3M Profit is zero or negative — there is no valid baseline to measure growth against.',
+  },
+  status: {
+    title: 'Status',
+    description:
+      'Setup Needed: Start Date or Margin not set yet. Onboarding: before the client\'s first full calendar month. No Data: nothing logged yet for the selected month. First 2 full months: Successful once Profit is positive (break-even counts in month 1). From month 3 on: Successful needs Profit positive AND Profit Growth at/above Required Growth, else Below Target. No Baseline: not enough history yet to judge growth.',
+  },
+};
+
+// Small hover-info icon next to a table header's label — click/hover reveals the metric's exact
+// formula (METRIC_INFO above). `align` flips which side the popup opens from so it doesn't run
+// off the table edge for the first/last columns.
+const MetricHeader: React.FC<{ label: string; metricKey: keyof typeof METRIC_INFO; align?: 'left' | 'right' }> = ({
+  label,
+  metricKey,
+  align = 'right',
+}) => {
+  const [open, setOpen] = useState(false);
+  const info = METRIC_INFO[metricKey];
+  return (
+    <span className="relative inline-flex items-center gap-1 normal-case">
+      {label}
+      <button
+        type="button"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onClick={() => setOpen((o) => !o)}
+        className="text-stone-500 hover:text-white"
+        aria-label={`What is ${label}?`}
+      >
+        <Info className="w-3 h-3" />
+      </button>
+      {open && (
+        <div
+          className={`absolute z-30 top-full mt-2 w-60 p-3 rounded-xl text-left font-normal normal-case ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
+          style={{ background: 'var(--canvas)', border: '1px solid var(--border-soft)' }}
+        >
+          <div className="font-bold text-white text-xs mb-1">{info.title}</div>
+          <div className="text-[11px] leading-relaxed" style={{ color: 'var(--text-lo)' }}>
+            {info.description}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+};
 
 interface MentorshipTrackerModuleProps {
   currentUser: UserRecord;
@@ -477,17 +575,17 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       style={{ color: 'var(--ink-soft)', background: 'var(--canvas)' }}
                     >
                       <th className="py-3 px-4">Client</th>
-                      <th className="py-3 px-4 text-right">Margin</th>
-                      <th className="py-3 px-4 text-right">Avg 3M Sales</th>
-                      <th className="py-3 px-4 text-right">Avg 3M Spent</th>
-                      <th className="py-3 px-4 text-right">Avg 3M Profit</th>
-                      <th className="py-3 px-4 text-right">Current Sales</th>
-                      <th className="py-3 px-4 text-right">Current Spent</th>
-                      <th className="py-3 px-4 text-right">Current Profit</th>
-                      <th className="py-3 px-4 text-right">Current ROAS</th>
-                      <th className="py-3 px-4 text-right">Required Growth</th>
-                      <th className="py-3 px-4 text-right">Profit Growth</th>
-                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Margin" metricKey="margin" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Avg 3M Sales" metricKey="avg3mSales" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Avg 3M Spent" metricKey="avg3mSpent" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Avg 3M Profit" metricKey="avg3mProfit" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Current Sales" metricKey="currentSales" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Current Spent" metricKey="currentSpent" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Current Profit" metricKey="currentProfit" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Current ROAS" metricKey="currentRoas" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Required Growth" metricKey="requiredGrowth" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Profit Growth" metricKey="profitGrowth" /></th>
+                      <th className="py-3 px-4"><MetricHeader label="Status" metricKey="status" align="left" /></th>
                       {PLATFORMS.map((p) => (
                         <th key={`head-${p}`} className="py-3 px-4 text-center">
                           {PLATFORM_LABELS[p]}
