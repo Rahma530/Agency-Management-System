@@ -127,9 +127,7 @@ const PLATFORM_LABELS: Record<(typeof PLATFORMS)[number], string> = {
 const STATUS_TOKENS: Record<string, { bg: string; ink: string }> = {
   Successful: { bg: 'var(--success-bg)', ink: 'var(--success)' },
   'Below Target': { bg: 'var(--pink-bg)', ink: 'var(--roas-bad)' },
-  Onboarding: { bg: 'var(--info-bg)', ink: 'var(--info)' },
   'No Data': { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' },
-  'No Baseline': { bg: 'var(--warning-bg)', ink: 'var(--warning)' },
   'Setup Needed': { bg: 'rgba(168,155,184,0.15)', ink: 'var(--text-lo)' },
 };
 
@@ -138,8 +136,9 @@ const inputClass =
 const labelClass = 'text-[11px] font-semibold block mb-1';
 const cardStyle = { background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' };
 
-// Plain-language restatements of get_mentorship_snapshot()'s actual SQL (20261206000000) — kept
-// in sync with that function's own column-by-column comment block by convention, the same way
+// Plain-language restatements of get_mentorship_snapshot()'s actual SQL (20261206000000,
+// simplified by 20261212000000) — kept in sync with that function's own column-by-column comment
+// block by convention, the same way
 // NON_SENSITIVE_CLIENT_COLUMNS and ClientRecord are kept in sync elsewhere in this app. Shown via
 // MetricHeader's hover info icon, requested as "a tooltip like Meta Ads Manager's column info
 // popups" so a column's exact formula is one hover away instead of needing the SQL file.
@@ -191,7 +190,7 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   status: {
     title: 'Status',
     description:
-      'Setup Needed: Start Date or Margin not set yet. Onboarding: before the client\'s first full calendar month. No Data: nothing logged yet for the selected month. First 2 full months: Successful once Profit is positive (break-even counts in month 1). From month 3 on: Successful needs Profit positive AND Profit Growth at/above Required Growth, else Below Target. No Baseline: not enough history yet to judge growth.',
+      "Based only on the selected month — Start Date plays no role. Setup Needed: Margin not set yet. No Data: nothing logged for the selected month. Successful: this month's Profit (Current Sales × Margin − Current Spent) is 0 or positive. Below Target: this month's Profit is negative.",
   },
 };
 
