@@ -4,6 +4,13 @@
 -- live (per 20261124000000_ai_engineer_deprivilege.sql). Stored as a fraction (0.3 = 30%), same
 -- convention as the column itself (20261204000000_mentorship_sales_margin_tiers.sql) — the
 -- frontend converts the 0-100 percent the user types into/out of this fraction.
+--
+-- media_buying_team_lead is also let in here, but scoped tightly: they may only ever send a patch
+-- whose keys are exactly {profit_margin_pct} — nothing else (name, contract figures, etc. stay out
+-- of their reach on any client). This mirrors their role as one of the 3 Mentorship Tracker
+-- oversight groups (Executive / Head of Technical / Media Buying Team Lead — see
+-- 20261205000000_mentorship_oversight.sql) needing to set margins for clients worked by media
+-- buyers they oversee, without granting them general client-editing rights.
 begin;
 
 create or replace function public.update_client_details(p_client_id text, p_patch jsonb)
@@ -15,6 +22,7 @@ as $$
 declare
   v_client public.clients;
   v_key text;
+  v_patch_keys text[];
   v_allowed_keys text[] := array[
     'name', 'client_contact_name', 'phone_number', 'website_or_social_link', 'sector', 'industry',
     'services', 'other_services', 'sales_brief', 'contract_value', 'due_value', 'remaining_value',
@@ -37,10 +45,13 @@ begin
     raise exception 'Client not found';
   end if;
 
+  select coalesce(array_agg(key), array[]::text[]) into v_patch_keys from jsonb_object_keys(p_patch) as key;
+
   if not (
     public.app_user_role() in ('executive', 'head_of_technical', 'am_team_lead')
     or (public.app_user_role() = 'am_agent' and v_client.am_agent_id = public.app_user_id())
     or (public.app_user_role() = 'sales' and v_client.sales_owner_id = public.app_user_id())
+    or (public.app_user_role() = 'media_buying_team_lead' and v_patch_keys <@ array['profit_margin_pct'])
   ) then
     raise exception 'You do not have permission to edit this client.';
   end if;
