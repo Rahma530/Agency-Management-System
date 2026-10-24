@@ -26,6 +26,7 @@ import { extractLinks } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
 import { classifyWorkLogService } from '../../lib/workLogServiceClassification';
 import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
+import { ReportContentPreview } from './ReportContentPreview';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
 // so the same values drive both this component's own Sources/Draft logic AND the Comparison
@@ -1093,6 +1094,16 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         <textarea dir="auto" readOnly={selectedReport?.status === 'final' || !!selectedReport?.archived_at} value={draftText} onChange={(event) => setDraftText(event.target.value)} placeholder="Pull sources or select a saved report" className="w-full min-h-56 px-3 py-3 rounded-xl text-sm bg-[#100c1c] border border-purple-900/50 text-white read-only:text-stone-200 read-only:cursor-default" />
       )}
 
+      {/* Live preview of the draft text above — shows exactly what the PDF/HTML export will
+          produce (real image thumbnails, short "View attachment" links) instead of the raw
+          150+ character signed URLs the textarea itself displays. See ReportContentPreview.tsx. */}
+      {!isLoadingDetails && !detailsError && draftText.trim() && (
+        <div className="rounded-xl border border-purple-900/30 bg-stone-950/30 p-3">
+          <p className="text-[11px] font-bold text-purple-200 mb-2">Live preview (as it will appear in the export)</p>
+          <ReportContentPreview contentText={draftText} />
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
         {!selectedReport ? <button disabled={busy || !draftText.trim() || !previewManifest} onClick={createDraft} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save draft</button> : <>
           <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={saveVersion} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save version</button>
@@ -1129,8 +1140,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           button that CREATES a new one is gone; apply_report_ai_suggestion itself is untouched. */}
       {suggestion && selectedReport?.status !== 'final' && !selectedReport?.archived_at && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3 rounded-xl border border-indigo-800/40 bg-indigo-950/20">
-          <div><p className="text-xs font-bold text-stone-300 mb-2">Current text</p><pre dir="auto" className="whitespace-pre-wrap text-xs text-stone-300">{draftText}</pre></div>
-          <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre dir="auto" className="whitespace-pre-wrap text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={busy} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300">Keep current</button></div></div>
+          <div><p className="text-xs font-bold text-stone-300 mb-2">Current text</p><pre dir="auto" className="whitespace-pre-wrap break-words text-xs text-stone-300">{draftText}</pre></div>
+          <div><p className="text-xs font-bold text-indigo-200 mb-2">AI proposal</p><pre dir="auto" className="whitespace-pre-wrap break-words text-xs text-stone-200">{suggestion.suggested_text}</pre><div className="flex gap-2 mt-3"><button disabled={busy} onClick={applySuggestion} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white"><Sparkles className="w-3.5 h-3.5 inline mr-1" />Apply as new version</button><button onClick={() => setSuggestion(null)} className="px-3 py-2 rounded-lg text-xs bg-stone-800 text-stone-300">Keep current</button></div></div>
         </div>
       )}
       {selectedReport && !isLoadingDetails && !detailsError && (
@@ -1141,7 +1152,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
               <div className="space-y-2 mt-2">{versions.map((version) => (
                 <details key={version.id} className="rounded-lg border border-stone-800 p-2">
                   <summary className="cursor-pointer text-[11px] text-stone-300">v{version.version_no} · {version.origin.replace('_', ' ')}{version.id === selectedReport.current_version_id ? ' · current' : ''}{version.created_at ? ` · ${new Date(version.created_at).toLocaleString()}` : ''}</summary>
-                  <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-stone-300">{version.content_text}</pre>
+                  <div className="mt-2"><ReportContentPreview contentText={version.content_text} /></div>
                 </details>
               ))}</div>
             )}
