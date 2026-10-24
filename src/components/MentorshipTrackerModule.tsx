@@ -73,10 +73,11 @@ interface MentorshipGrowthTierRow {
 const OVERSIGHT_ADMIN_ROLES = ['executive', 'head_of_technical', 'media_buying_team_lead'];
 const MEDIA_BUYER_ROLE = 'media_buying_agent';
 
-// Exactly mentorship_growth_tiers_write_rls's role list (20261204000000) — media_buying_team_lead
-// is NOT included here (unlike OVERSIGHT_ADMIN_ROLES above), since the write policy on this table
-// never granted it insert/update.
-const GROWTH_TIER_ADMIN_ROLES = ['executive', 'head_of_technical', 'ai_engineer'];
+// mentorship_growth_tiers_write_rls's role list (20261204000000, corrected by
+// 20261211000000_mentorship_growth_tiers_role_swap.sql) — same three roles as
+// OVERSIGHT_ADMIN_ROLES above; kept as its own name so each call site reads for what it's
+// actually gating, even though the role sets happen to be identical right now.
+const GROWTH_TIER_ADMIN_ROLES = OVERSIGHT_ADMIN_ROLES;
 
 // 'salla' and 'zid' aren't ad platforms (no spend runs "on" them) — they're the client's store
 // platform, logged here anyway because the owner wants to compare what Salla/Zid record as real
@@ -1062,8 +1063,11 @@ const OversightPanel: React.FC<{ currentUser: UserRecord; allUsers: UserRecord[]
   );
 };
 
-// Executive / Head of Technical / AI Engineer only (mirrors mentorship_growth_tiers_write_rls
-// exactly) — manages the spend -> required-growth-% lookup get_mentorship_snapshot's `tier`
+// Executive / Head of Technical / Media Buying Team Lead only (mirrors
+// mentorship_growth_tiers_write_rls exactly, per 20261211000000_mentorship_growth_tiers_role_
+// swap.sql — ai_engineer never should have had write access here, and media_buying_team_lead,
+// who actually runs this tracker day to day, should have) — manages the spend -> required-
+// growth-% lookup get_mentorship_snapshot's `tier`
 // lateral join reads (avg_3m_spend between min_spend and max_spend, null max_spend = no upper
 // bound). Previously DB-only (seeded once from the tracker's original Settings sheet, no UI ever
 // built for it) — every client showing the same Required Growth % is expected while they're all
