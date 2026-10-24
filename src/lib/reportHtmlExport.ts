@@ -181,7 +181,7 @@ ${opts.bodyHtml}
 // the entry above it. A line that is ONLY a link (no other text once extractLinks strips it) is
 // treated as an attachment of the PREVIOUS entry; anything else starts a new entry (keeping any
 // links found inline within its own text, in case a line ever carries both).
-function parseWorkLogEntries(body: string): { text: string; attachmentUrls: string[] }[] {
+export function parseWorkLogEntries(body: string): { text: string; attachmentUrls: string[] }[] {
   const entries: { text: string; attachmentUrls: string[] }[] = [];
   body
     .split('\n')
