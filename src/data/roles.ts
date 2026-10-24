@@ -1,7 +1,7 @@
 import { BuiltInRole, UserRole } from '../types/database';
 import { getActiveCustomRole, getCustomRoleModules, isCustomRoleCacheLoaded } from './customRoles';
 
-export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates';
+export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship';
 
 export interface RoleMetadata {
   role: UserRole;
@@ -32,7 +32,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-executive-tint)',
     badgeText: 'var(--role-executive-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -48,7 +48,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-head-of-technical-tint)',
     badgeText: 'var(--role-head-of-technical-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates'],
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -119,7 +119,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-media-buying-lead-tint)',
     badgeText: 'var(--role-media-buying-lead-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'my_work', 'campaigns', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'capacity', 'reports', 'employees'],
+    allowedModules: ['dashboard', 'my_work', 'campaigns', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'capacity', 'reports', 'employees', 'mentorship'],
     canCreateCampaign: true,
     canManageCapacity: true,
     canAssignAM: false,
@@ -135,7 +135,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-media-buying-agent-tint)',
     badgeText: 'var(--role-media-buying-agent-ink)',
     defaultModule: 'my_work',
-    allowedModules: ['my_work', 'campaigns', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'reports'],
+    allowedModules: ['my_work', 'campaigns', 'onboarding', 'service_briefs', 'daily_operations', 'tasks', 'reports', 'mentorship'],
     canCreateCampaign: true,
     canManageCapacity: false,
     canAssignAM: false,

@@ -26,6 +26,7 @@ import {
   X,
   Sun,
   Moon,
+  TrendingUp,
 } from 'lucide-react';
 import {
   supabase,
@@ -174,6 +175,7 @@ import { CrossTeamTaskBoard } from './components/CrossTeamTaskBoard';
 import { DailyOperationsModule } from './components/DailyOperationsModule';
 import { ImportDataModal } from './components/ImportDataModal';
 import { CampaignManagementModule } from './components/CampaignManagementModule';
+import { MentorshipTrackerModule } from './components/MentorshipTrackerModule';
 import { ServiceBriefsRoutingView } from './components/ServiceBriefsRoutingView';
 import { MyWorkHub } from './components/MyWorkHub';
 import { SalesPortalView } from './components/SalesPortalView';
@@ -6264,6 +6266,21 @@ export default function App() {
               </button>
             )}
 
+            {/* Tab 5b: Media Buyers Mentorship Tracker */}
+            {userRoleInfo.allowedModules.includes('mentorship') && (
+              <button
+                onClick={() => handleTabChange('mentorship')}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
+                  activeTab === 'mentorship'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
+                }`}
+              >
+                <TrendingUp className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">Mentorship</span>
+              </button>
+            )}
+
             {/* Tab 6: Reports & Comparisons (Reporting Engine) */}
             {userRoleInfo.allowedModules.includes('reports') && (
               <button
@@ -6702,6 +6719,13 @@ export default function App() {
                   onUpdateClientAccess={handleUpdateClientAccess}
                   onFetchClientAccess={handleFetchClientAccess}
                 />
+              </div>
+            )}
+
+            {/* Tab 5b: Media Buyers Mentorship Tracker */}
+            {activeTab === 'mentorship' && (
+              <div className="space-y-6">
+                <MentorshipTrackerModule currentUser={currentUser} allUsers={users} />
               </div>
             )}
 
