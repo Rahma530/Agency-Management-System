@@ -161,7 +161,7 @@ export const BriefAttachmentsPanel: React.FC<BriefAttachmentsPanelProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-purple-300 bg-purple-900/30 hover:bg-purple-800/50 hover:text-white border border-purple-700/40 transition-all disabled:opacity-50"
           >
             {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
-            <span>{isUploading ? 'Uploading...' : 'Attach File'}</span>
+            <span>{isUploading ? 'Uploading...' : 'Add Attachment'}</span>
           </button>
         </div>
       )}

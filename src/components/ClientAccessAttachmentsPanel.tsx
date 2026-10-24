@@ -124,7 +124,7 @@ export const ClientAccessAttachmentsPanel: React.FC<ClientAccessAttachmentsPanel
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold text-white flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-red-400" />
-          <span>Access Documents (ID / Visa)</span>
+          <span>Attachments</span>
         </h3>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-stone-400 font-mono">{sorted.length}</span>
@@ -137,7 +137,7 @@ export const ClientAccessAttachmentsPanel: React.FC<ClientAccessAttachmentsPanel
       {isLoading ? (
         <p className="text-xs text-stone-500 italic">Loading...</p>
       ) : sorted.length === 0 ? (
-        <p className="text-xs text-stone-500 italic">No documents uploaded yet.</p>
+        <p className="text-xs text-stone-500 italic">No files attached yet.</p>
       ) : (
         <div className="space-y-1.5">
           {sorted.map((a) => {
@@ -199,7 +199,7 @@ export const ClientAccessAttachmentsPanel: React.FC<ClientAccessAttachmentsPanel
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-red-300 bg-red-900/30 hover:bg-red-800/50 hover:text-white border border-red-700/40 transition-all disabled:opacity-50"
           >
             {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-            <span>{isUploading ? 'Uploading...' : 'Upload Document'}</span>
+            <span>{isUploading ? 'Uploading...' : 'Add Attachment'}</span>
           </button>
         </div>
       )}
