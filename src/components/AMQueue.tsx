@@ -53,6 +53,8 @@ import {
   ClientContractRecord,
   BriefFieldDef,
   BriefFieldSchemaRow,
+  BriefAttachmentRecord,
+  ClientAccessAttachmentRecord,
 } from '../types/database';
 import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
@@ -160,6 +162,16 @@ interface AMQueueProps {
   onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
+  briefAttachments?: BriefAttachmentRecord[];
+  onUploadBriefAttachment?: (briefId: string, file: File) => Promise<void>;
+  onDeleteBriefAttachment?: (attachmentId: string) => Promise<void>;
+  onFetchClientAccessAttachments?: (clientId: string) => Promise<ClientAccessAttachmentRecord[]>;
+  onUploadClientAccessAttachment?: (
+    clientId: string,
+    file: File,
+    label: string | null
+  ) => Promise<ClientAccessAttachmentRecord>;
+  onDeleteClientAccessAttachment?: (clientId: string, attachmentId: string, storagePath: string) => Promise<void>;
   // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical
   // only, gated below via canMergeClients(currentRole). Both optional: absent
   // entirely, the Client Portfolio table's checkbox column and "Merge selected" button, and
@@ -230,6 +242,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
+  briefAttachments = [],
+  onUploadBriefAttachment,
+  onDeleteBriefAttachment,
+  onFetchClientAccessAttachments,
+  onUploadClientAccessAttachment,
+  onDeleteClientAccessAttachment,
   onPreviewMergeClients,
   onMergeClients,
 }) => {
@@ -860,6 +878,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
+          briefAttachments={briefAttachments}
+          onUploadBriefAttachment={onUploadBriefAttachment}
+          onDeleteBriefAttachment={onDeleteBriefAttachment}
+          onFetchClientAccessAttachments={onFetchClientAccessAttachments}
+          onUploadClientAccessAttachment={onUploadClientAccessAttachment}
+          onDeleteClientAccessAttachment={onDeleteClientAccessAttachment}
           allClients={clients}
           onPreviewMergeClients={onPreviewMergeClients}
           onMergeClients={onMergeClients}

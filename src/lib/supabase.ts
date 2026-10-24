@@ -607,6 +607,28 @@ export function buildClientContractStoragePath(
   return `${clientId}/${contractId}-${sanitizeAttachmentFilename(rawFilename)}`;
 }
 
+// Same convention, for the 'brief-attachments' bucket. First path segment MUST be the brief's own
+// id — the storage.objects RLS policies (20261130000000_brief_attachments.sql) read
+// (storage.foldername(name))[1] as the brief_id to re-derive visibility from public.briefs.
+export function buildBriefAttachmentStoragePath(
+  briefId: string,
+  attachmentId: string,
+  rawFilename: string
+): string {
+  return `${briefId}/${attachmentId}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
+// Same convention, for the 'client-access-attachments' bucket. First path segment MUST be the
+// client's own id — the storage.objects RLS policies (20261201000000_client_access_attachments.sql)
+// read (storage.foldername(name))[1] as the client_id directly (no join needed, unlike briefs).
+export function buildClientAccessAttachmentStoragePath(
+  clientId: string,
+  attachmentId: string,
+  rawFilename: string
+): string {
+  return `${clientId}/${attachmentId}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
 let rawClientInstance: SupabaseClient | null = null;
 
 /**

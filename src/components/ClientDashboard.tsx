@@ -61,6 +61,8 @@ import {
   ClientContractRecord,
   BriefFieldDef,
   BriefFieldSchemaRow,
+  BriefAttachmentRecord,
+  ClientAccessAttachmentRecord,
 } from '../types/database';
 import { DynamicBriefForm } from './DynamicBriefForm';
 import {
@@ -96,6 +98,8 @@ import { LogSeoMetricsModal } from './LogSeoMetricsModal';
 import { MonthlyReportDraftView } from './reporting/MonthlyReportDraftView';
 import { ClientMeetingsPanel } from './ClientMeetingsPanel';
 import { ClientContractsPanel } from './ClientContractsPanel';
+import { BriefAttachmentsPanel } from './BriefAttachmentsPanel';
+import { ClientAccessAttachmentsPanel } from './ClientAccessAttachmentsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
 import { EditClientModal } from './EditClientModal';
 import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient, canMergeClients } from '../lib/permissions';
@@ -249,6 +253,16 @@ interface ClientDashboardProps {
   // reach the browser through this narrow, audit-logged RPC. Returns null on any failure
   // (permission denied, network error) — same non-throwing convention as onGenerateAiSummary.
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
+  briefAttachments?: BriefAttachmentRecord[];
+  onUploadBriefAttachment?: (briefId: string, file: File) => Promise<void>;
+  onDeleteBriefAttachment?: (attachmentId: string) => Promise<void>;
+  onFetchClientAccessAttachments?: (clientId: string) => Promise<ClientAccessAttachmentRecord[]>;
+  onUploadClientAccessAttachment?: (
+    clientId: string,
+    file: File,
+    label: string | null
+  ) => Promise<ClientAccessAttachmentRecord>;
+  onDeleteClientAccessAttachment?: (clientId: string, attachmentId: string, storagePath: string) => Promise<void>;
   // Weekly manual-entry write path for social_insights (see
   // 20261025000000_social_insights_weekly_manual_entry.sql) — omitted entirely means "this viewer
   // can't log social metrics for this client", same optional-prop convention as onGenerateAiSummary.
@@ -331,6 +345,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
+  briefAttachments = [],
+  onUploadBriefAttachment,
+  onDeleteBriefAttachment,
+  onFetchClientAccessAttachments,
+  onUploadClientAccessAttachment,
+  onDeleteClientAccessAttachment,
   onLogSocialMetrics,
   onLogSeoMetrics,
 }) => {
@@ -2777,6 +2797,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           </div>
                         </div>
                       ))}
+                      {onFetchClientAccessAttachments && onUploadClientAccessAttachment && onDeleteClientAccessAttachment && (
+                        <ClientAccessAttachmentsPanel
+                          clientId={client.id}
+                          canUpload={canEditClientAccess}
+                          onFetch={onFetchClientAccessAttachments}
+                          onUpload={onUploadClientAccessAttachment}
+                          onDelete={onDeleteClientAccessAttachment}
+                        />
+                      )}
                     </div>
                   ) : selectedBriefService ? (
                     (() => {
@@ -2826,6 +2855,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             currentUserId={currentUser.id}
                             canEdit={canEditBrief}
                           />
+                          {selectedBrief && onUploadBriefAttachment && onDeleteBriefAttachment && (
+                            <BriefAttachmentsPanel
+                              briefId={selectedBrief.id}
+                              attachments={briefAttachments}
+                              users={users}
+                              canUpload={canEditBrief}
+                              onUpload={onUploadBriefAttachment}
+                              onDelete={onDeleteBriefAttachment}
+                            />
+                          )}
                         </div>
                       );
                     })()

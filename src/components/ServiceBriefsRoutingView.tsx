@@ -64,7 +64,8 @@ import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../li
 import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportGenerationResult } from './reporting/ComparisonDisplay';
 import { canSeeContractValue, canEditBriefFieldSchema, canEditServiceBrief, canViewBriefContent } from '../lib/permissions';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
-import { BriefFieldDef, BriefFieldSchemaRow } from '../types/database';
+import { BriefFieldDef, BriefFieldSchemaRow, BriefAttachmentRecord } from '../types/database';
+import { BriefAttachmentsPanel } from './BriefAttachmentsPanel';
 
 interface ServiceBriefsRoutingViewProps {
   currentUser: UserRecord;
@@ -152,6 +153,9 @@ interface ServiceBriefsRoutingViewProps {
   onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
+  briefAttachments?: BriefAttachmentRecord[];
+  onUploadBriefAttachment?: (briefId: string, file: File) => Promise<void>;
+  onDeleteBriefAttachment?: (attachmentId: string) => Promise<void>;
 }
 
 // AM roles (am_team_lead, am_agent) don't work a single service — they need visibility into
@@ -455,6 +459,9 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
+  briefAttachments = [],
+  onUploadBriefAttachment,
+  onDeleteBriefAttachment,
 }) => {
   // AM roles get a dedicated cross-service overview instead of the single-service specialist
   // workflow below (they manage the overall client relationship, not one department's queue).
@@ -747,23 +754,35 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       );
     }
     return (
-      <DynamicBriefForm
-        clientId={selectedClient.id}
-        clientName={selectedClient.name}
-        serviceType={serviceType}
-        fieldDefs={briefFieldSchemas[serviceType] || []}
-        existingBrief={brief}
-        revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
-        onSaveBrief={onSaveBrief || (async () => {})}
-        onSubmitBrief={onSubmitBrief}
-        currentUserId={currentUser.id}
-        canEdit={
-          canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSaveBrief === 'function'
-        }
-        canSubmit={
-          canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSubmitBrief === 'function'
-        }
-      />
+      <div className="space-y-4">
+        <DynamicBriefForm
+          clientId={selectedClient.id}
+          clientName={selectedClient.name}
+          serviceType={serviceType}
+          fieldDefs={briefFieldSchemas[serviceType] || []}
+          existingBrief={brief}
+          revisions={briefRevisions.filter((r) => r.client_id === selectedClient.id && r.service_type === serviceType)}
+          onSaveBrief={onSaveBrief || (async () => {})}
+          onSubmitBrief={onSubmitBrief}
+          currentUserId={currentUser.id}
+          canEdit={
+            canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSaveBrief === 'function'
+          }
+          canSubmit={
+            canEditServiceBrief(currentUser.role, currentUser.id, selectedClient) && typeof onSubmitBrief === 'function'
+          }
+        />
+        {brief && onUploadBriefAttachment && onDeleteBriefAttachment && (
+          <BriefAttachmentsPanel
+            briefId={brief.id}
+            attachments={briefAttachments}
+            users={users}
+            canUpload={canEditServiceBrief(currentUser.role, currentUser.id, selectedClient)}
+            onUpload={onUploadBriefAttachment}
+            onDelete={onDeleteBriefAttachment}
+          />
+        )}
+      </div>
     );
   };
 
