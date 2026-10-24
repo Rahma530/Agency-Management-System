@@ -579,11 +579,34 @@ const LogMonthlyDataForm: React.FC<{
   reportingMonth: string;
   onSaved: () => void;
 }> = ({ currentUser, rows, reportingMonth, onSaved }) => {
+  // media_buying_agent: only their own assigned clients (matches media_buying_insights_write_rls
+  // — agent_assigned() — exactly). The other 3 roles (executive, head_of_technical,
+  // media_buying_team_lead) can now write for ANY client as an emergency fallback (see
+  // 20261210000000_media_buying_insights_admin_emergency_write.sql), so for them this pulls the
+  // full active client list directly rather than `rows`, which is oversight-scoped
+  // (get_mentorship_snapshot only returns a media buyer's clients to an overseer who has
+  // explicitly added themselves via mentorship_oversight) — using `rows` here would silently hide
+  // exactly the clients an emergency fallback exists to cover.
+  const isEmergencyFallbackRole = currentUser.role !== MEDIA_BUYER_ROLE;
+  const [allActiveClients, setAllActiveClients] = useState<[string, string][]>([]);
+
+  useEffect(() => {
+    if (!isEmergencyFallbackRole) return;
+    (async () => {
+      const { data } = await supabaseRaw
+        .from('clients')
+        .select('id, name')
+        .neq('status', 'closed')
+        .order('name');
+      setAllActiveClients(((data as { id: string; name: string }[]) || []).map((c) => [c.id, c.name]));
+    })();
+  }, [isEmergencyFallbackRole]);
+
   const myClients = useMemo(
-    () => (currentUser.role === MEDIA_BUYER_ROLE
-      ? Array.from(new Map(rows.filter((r) => r.media_buyer_id === currentUser.id).map((r) => [r.client_id, r.client_name])).entries())
-      : Array.from(new Map(rows.map((r) => [r.client_id, r.client_name])).entries())),
-    [rows, currentUser],
+    () => (isEmergencyFallbackRole
+      ? allActiveClients
+      : Array.from(new Map(rows.filter((r) => r.media_buyer_id === currentUser.id).map((r) => [r.client_id, r.client_name])).entries())),
+    [rows, currentUser, isEmergencyFallbackRole, allActiveClients],
   );
 
   const [clientId, setClientId] = useState('');
