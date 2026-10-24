@@ -10,12 +10,10 @@
 // file as two in-module views, switched by a local tab state, to keep this a single drop-in
 // component.
 //
-// Wiring into App.tsx (not done here — see the integration note at the bottom of this file):
-//   import { MentorshipTrackerModule } from './components/MentorshipTrackerModule';
-//   ... render <MentorshipTrackerModule currentUser={currentUser} /> wherever the app's nav
-//   decides to show it (e.g. a new sidebar item, visible to media_buying_agent/
-//   media_buying_team_lead/executive/head_of_technical — the RPC itself double-checks visibility
-//   regardless of what the nav shows).
+// Styled with this app's actual dark design-token system (src/index.css: --gradient-card,
+// --border-soft, --grey, --canvas, etc. and the bg-stone-900/80 input convention seen in
+// CapacityManagement.tsx / AMQueue.tsx) rather than generic light-theme Tailwind grays — the app
+// has no separate "dark mode", this IS the theme.
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -24,7 +22,6 @@ import {
   DollarSign,
   Target,
   Plus,
-  X,
   UserPlus,
   Trash2,
   RefreshCw,
@@ -68,9 +65,16 @@ const MEDIA_BUYER_ROLE = 'media_buying_agent';
 
 const PLATFORMS = ['tiktok', 'meta', 'snapchat', 'google'] as const;
 
+// Builds "YYYY-MM-01" for the LOCAL calendar month, without ever going through
+// Date#toISOString() — toISOString() converts to UTC first, which silently rolls the date back
+// to the last day of the PREVIOUS month for any timezone ahead of UTC (e.g. Africa/Cairo,
+// UTC+3) at local midnight. get_mentorship_snapshot() rejects anything that isn't the first of a
+// month, so that shift is not cosmetic — it breaks the call outright.
 function currentMonthStart(): string {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
 }
 
 function fmtMoney(n: number | null): string {
@@ -83,14 +87,21 @@ function fmtPct(n: number | null): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  Successful: 'bg-green-100 text-green-800',
-  'Below Target': 'bg-red-100 text-red-800',
-  Onboarding: 'bg-blue-100 text-blue-800',
-  'No Data': 'bg-gray-100 text-gray-600',
-  'No Baseline': 'bg-amber-100 text-amber-800',
-  'Setup Needed': 'bg-gray-200 text-gray-700',
+// Tint/ink pairs drawn from this app's own semantic tokens (index.css), not generic Tailwind
+// red/green — same vocabulary as role badges and task-status badges elsewhere in the app.
+const STATUS_TOKENS: Record<string, { bg: string; ink: string }> = {
+  Successful: { bg: 'var(--success-bg)', ink: 'var(--success)' },
+  'Below Target': { bg: 'var(--pink-bg)', ink: 'var(--roas-bad)' },
+  Onboarding: { bg: 'var(--info-bg)', ink: 'var(--info)' },
+  'No Data': { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' },
+  'No Baseline': { bg: 'var(--warning-bg)', ink: 'var(--warning)' },
+  'Setup Needed': { bg: 'rgba(168,155,184,0.15)', ink: 'var(--text-lo)' },
 };
+
+const inputClass =
+  'w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500';
+const labelClass = 'text-[11px] font-semibold block mb-1';
+const cardStyle = { background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' };
 
 interface MentorshipTrackerModuleProps {
   currentUser: UserRecord;
@@ -158,8 +169,8 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <TrendingUp className="w-6 h-6 text-indigo-600" />
+        <h1 className="text-xl font-bold text-white flex items-center gap-2">
+          <TrendingUp className="w-5 h-5" style={{ color: 'var(--purple-light)' }} />
           Media Buyers Mentorship
         </h1>
         <div className="flex items-center gap-3">
@@ -167,11 +178,11 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
             type="month"
             value={reportingMonth.slice(0, 7)}
             onChange={(e) => setReportingMonth(`${e.target.value}-01`)}
-            className="border rounded-lg px-3 py-1.5 text-sm"
+            className={`${inputClass} w-auto`}
           />
           <button
             onClick={loadSnapshot}
-            className="p-2 rounded-lg border hover:bg-gray-50"
+            className="p-2 rounded-lg border border-stone-800 text-stone-300 hover:text-white hover:bg-stone-900/60"
             title="Refresh"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -179,7 +190,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
         </div>
       </div>
 
-      <div className="flex gap-2 mb-6 border-b">
+      <div className="flex gap-1 mb-6 border-b border-stone-800">
         <TabButton active={tab === 'overview'} onClick={() => setTab('overview')} label="Overview" />
         <TabButton active={tab === 'log'} onClick={() => setTab('log')} label="Log Monthly Data" />
         {isOversightAdmin && (
@@ -188,15 +199,22 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
       </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-red-50 text-red-700 text-sm flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" /> {error}
+        <div
+          className="mb-4 p-3 rounded-xl text-sm flex items-center gap-2"
+          style={{
+            background: 'rgba(245,163,163,0.12)',
+            border: '1px solid var(--border-rose)',
+            color: 'var(--roas-bad)',
+          }}
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
         </div>
       )}
 
       {tab === 'overview' && (
         <>
           {buyers.length === 0 && !loading && (
-            <div className="text-sm text-gray-500 py-12 text-center">
+            <div className="text-sm py-12 text-center" style={{ color: 'var(--text-lo)' }}>
               No media buyers visible for this month — either none are assigned to you to oversee,
               or there is no data yet.
             </div>
@@ -208,10 +226,10 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                 <button
                   key={b.id}
                   onClick={() => setActiveBuyerId(b.id)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
                     activeBuyerId === b.id
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      ? 'bg-purple-600/30 text-white border-purple-500/50'
+                      : 'bg-stone-900/60 text-stone-300 border-stone-800 hover:text-white'
                   }`}
                 >
                   {b.name}
@@ -222,7 +240,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
 
           {activeBuyerId && (
             <>
-              <div className="grid grid-cols-5 gap-3 mb-5">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
                 <StatCard icon={<Users className="w-4 h-4" />} label="Total Clients" value={String(totals.totalClients)} />
                 <StatCard icon={<DollarSign className="w-4 h-4" />} label="Total Spent" value={fmtMoney(totals.totalSpent)} />
                 <StatCard icon={<DollarSign className="w-4 h-4" />} label="Total Sales" value={fmtMoney(totals.totalSales)} />
@@ -230,45 +248,50 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                 <StatCard icon={<Target className="w-4 h-4" />} label="Success Rate" value={fmtPct(totals.successRate)} />
               </div>
 
-              <div className="overflow-x-auto border rounded-xl">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 text-gray-600">
-                    <tr>
-                      <th className="text-left p-3">Client</th>
-                      <th className="text-right p-3">Avg 3M Sales</th>
-                      <th className="text-right p-3">Avg 3M Spent</th>
-                      <th className="text-right p-3">Avg 3M Profit</th>
-                      <th className="text-right p-3">Current Sales</th>
-                      <th className="text-right p-3">Current Spent</th>
-                      <th className="text-right p-3">Current Profit</th>
-                      <th className="text-right p-3">Required Growth</th>
-                      <th className="text-right p-3">Profit Growth</th>
-                      <th className="text-left p-3">Status</th>
+              <div className="overflow-x-auto rounded-[20px]" style={cardStyle}>
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr
+                      className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--ink-soft)', background: 'var(--canvas)' }}
+                    >
+                      <th className="py-3 px-4">Client</th>
+                      <th className="py-3 px-4 text-right">Avg 3M Sales</th>
+                      <th className="py-3 px-4 text-right">Avg 3M Spent</th>
+                      <th className="py-3 px-4 text-right">Avg 3M Profit</th>
+                      <th className="py-3 px-4 text-right">Current Sales</th>
+                      <th className="py-3 px-4 text-right">Current Spent</th>
+                      <th className="py-3 px-4 text-right">Current Profit</th>
+                      <th className="py-3 px-4 text-right">Required Growth</th>
+                      <th className="py-3 px-4 text-right">Profit Growth</th>
+                      <th className="py-3 px-4">Status</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {buyerRows.map((r) => (
-                      <tr key={r.client_id} className="border-t">
-                        <td className="p-3 font-medium text-gray-900">{r.client_name}</td>
-                        <td className="p-3 text-right">{fmtMoney(r.avg_3m_sales)}</td>
-                        <td className="p-3 text-right">{fmtMoney(r.avg_3m_spent)}</td>
-                        <td className="p-3 text-right">{fmtMoney(r.avg_3m_profit)}</td>
-                        <td className="p-3 text-right">{fmtMoney(r.current_sales)}</td>
-                        <td className="p-3 text-right">{fmtMoney(r.current_spent)}</td>
-                        <td className="p-3 text-right">{fmtMoney(r.current_profit)}</td>
-                        <td className="p-3 text-right">{fmtPct(r.required_growth_pct)}</td>
-                        <td className="p-3 text-right">{fmtPct(r.profit_growth_pct)}</td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                              STATUS_STYLES[r.status] || 'bg-gray-100 text-gray-700'
-                            }`}
-                          >
-                            {r.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody className="divide-y divide-purple-900/20 text-xs">
+                    {buyerRows.map((r) => {
+                      const st = STATUS_TOKENS[r.status] || { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' };
+                      return (
+                        <tr key={r.client_id}>
+                          <td className="py-3.5 px-4 font-semibold text-white">{r.client_name}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_sales)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_spent)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_profit)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.current_sales)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.current_spent)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.current_profit)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.required_growth_pct)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.profit_growth_pct)}</td>
+                          <td className="py-3.5 px-4">
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                              style={{ background: st.bg, color: st.ink }}
+                            >
+                              {r.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -304,8 +327,8 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; label: string 
 }) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-      active ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+    className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+      active ? 'border-purple-500 text-white' : 'border-transparent text-stone-400 hover:text-stone-200'
     }`}
   >
     {label}
@@ -317,11 +340,11 @@ const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: string }
   label,
   value,
 }) => (
-  <div className="border rounded-xl p-3">
-    <div className="flex items-center gap-1.5 text-gray-500 text-xs mb-1">
+  <div className="rounded-[20px] p-3" style={cardStyle}>
+    <div className="flex items-center gap-1.5 text-[11px] font-semibold mb-1" style={{ color: 'var(--grey)' }}>
       {icon} {label}
     </div>
-    <div className="text-lg font-semibold text-gray-900">{value}</div>
+    <div className="text-lg font-bold text-white">{value}</div>
   </div>
 );
 
@@ -384,22 +407,20 @@ const LogMonthlyDataForm: React.FC<{
   };
 
   return (
-    <div className="max-w-xl border rounded-xl p-5">
-      <h2 className="font-semibold text-gray-900 mb-4">
-        Log data for {reportingMonth.slice(0, 7)}
-      </h2>
+    <div className="max-w-xl rounded-[20px] p-5" style={cardStyle}>
+      <h2 className="font-bold text-white mb-4">Log data for {reportingMonth.slice(0, 7)}</h2>
 
       <div className="space-y-3">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Client</label>
-          <select
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            className="w-full border rounded-lg px-3 py-2 text-sm"
-          >
-            <option value="">Select a client…</option>
+          <label className={labelClass} style={{ color: 'var(--grey)' }}>
+            Client
+          </label>
+          <select value={clientId} onChange={(e) => setClientId(e.target.value)} className={inputClass}>
+            <option value="" className="bg-stone-900 text-white">
+              Select a client…
+            </option>
             {myClients.map(([id, name]) => (
-              <option key={id} value={id}>
+              <option key={id} value={id} className="bg-stone-900 text-white">
                 {name}
               </option>
             ))}
@@ -407,14 +428,16 @@ const LogMonthlyDataForm: React.FC<{
         </div>
 
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Platform</label>
+          <label className={labelClass} style={{ color: 'var(--grey)' }}>
+            Platform
+          </label>
           <select
             value={platform}
             onChange={(e) => setPlatform(e.target.value as (typeof PLATFORMS)[number])}
-            className="w-full border rounded-lg px-3 py-2 text-sm"
+            className={inputClass}
           >
             {PLATFORMS.map((p) => (
-              <option key={p} value={p}>
+              <option key={p} value={p} className="bg-stone-900 text-white">
                 {p}
               </option>
             ))}
@@ -423,27 +446,24 @@ const LogMonthlyDataForm: React.FC<{
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Sales Value</label>
-            <input
-              type="number"
-              value={sales}
-              onChange={(e) => setSales(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            />
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Sales Value
+            </label>
+            <input type="number" value={sales} onChange={(e) => setSales(e.target.value)} className={inputClass} />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Ad Spend</label>
-            <input
-              type="number"
-              value={spend}
-              onChange={(e) => setSpend(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            />
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Ad Spend
+            </label>
+            <input type="number" value={spend} onChange={(e) => setSpend(e.target.value)} className={inputClass} />
           </div>
         </div>
 
         {message && (
-          <div className={`text-sm ${message.type === 'ok' ? 'text-green-600' : 'text-red-600'}`}>
+          <div
+            className="text-sm"
+            style={{ color: message.type === 'ok' ? 'var(--success)' : 'var(--roas-bad)' }}
+          >
             {message.text}
           </div>
         )}
@@ -451,7 +471,8 @@ const LogMonthlyDataForm: React.FC<{
         <button
           onClick={submit}
           disabled={saving}
-          className="w-full bg-indigo-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+          className="w-full rounded-xl py-2 text-sm font-bold text-white shadow-md hover:opacity-90 active:scale-98 disabled:opacity-50"
+          style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
@@ -511,35 +532,33 @@ const OversightPanel: React.FC<{ currentUser: UserRecord; allUsers: UserRecord[]
 
   return (
     <div className="max-w-2xl">
-      <div className="border rounded-xl p-5 mb-5">
-        <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+      <div className="rounded-[20px] p-5 mb-5" style={cardStyle}>
+        <h2 className="font-bold text-white mb-4 flex items-center gap-2">
           <UserPlus className="w-4 h-4" /> Add oversight
         </h2>
         <div className="flex gap-3 items-end">
           <div className="flex-1">
-            <label className="block text-xs text-gray-500 mb-1">Overseer</label>
-            <select
-              value={selectedOverseer}
-              onChange={(e) => setSelectedOverseer(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            >
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Overseer
+            </label>
+            <select value={selectedOverseer} onChange={(e) => setSelectedOverseer(e.target.value)} className={inputClass}>
               {overseers.map((u) => (
-                <option key={u.id} value={u.id}>
+                <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                   {u.name}
                 </option>
               ))}
             </select>
           </div>
           <div className="flex-1">
-            <label className="block text-xs text-gray-500 mb-1">Media Buyer</label>
-            <select
-              value={selectedBuyer}
-              onChange={(e) => setSelectedBuyer(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Select…</option>
+            <label className={labelClass} style={{ color: 'var(--grey)' }}>
+              Media Buyer
+            </label>
+            <select value={selectedBuyer} onChange={(e) => setSelectedBuyer(e.target.value)} className={inputClass}>
+              <option value="" className="bg-stone-900 text-white">
+                Select…
+              </option>
               {mediaBuyers.map((u) => (
-                <option key={u.id} value={u.id}>
+                <option key={u.id} value={u.id} className="bg-stone-900 text-white">
                   {u.name}
                 </option>
               ))}
@@ -547,33 +566,39 @@ const OversightPanel: React.FC<{ currentUser: UserRecord; allUsers: UserRecord[]
           </div>
           <button
             onClick={add}
-            className="bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700 flex items-center gap-1.5"
+            className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold text-white shadow-md hover:opacity-90"
+            style={{ background: 'var(--gradient-badge)', border: '1px solid var(--border-strong)' }}
           >
             <Plus className="w-4 h-4" /> Add
           </button>
         </div>
       </div>
 
-      <div className="border rounded-xl p-5">
-        <h2 className="font-semibold text-gray-900 mb-3">Current oversight</h2>
+      <div className="rounded-[20px] p-5" style={cardStyle}>
+        <h2 className="font-bold text-white mb-3">Current oversight</h2>
         {loading ? (
-          <div className="text-sm text-gray-500">Loading…</div>
+          <div className="text-sm" style={{ color: 'var(--text-lo)' }}>
+            Loading…
+          </div>
         ) : links.length === 0 ? (
-          <div className="text-sm text-gray-500">No oversight assigned yet.</div>
+          <div className="text-sm" style={{ color: 'var(--text-lo)' }}>
+            No oversight assigned yet.
+          </div>
         ) : (
-          <ul className="divide-y">
+          <ul className="divide-y divide-purple-900/20">
             {links.map((l) => (
               <li
                 key={`${l.overseer_id}-${l.media_buyer_id}`}
-                className="py-2 flex items-center justify-between text-sm"
+                className="py-2 flex items-center justify-between text-sm text-stone-200"
               >
                 <span>
-                  <strong>{nameOf(l.overseer_id)}</strong> tracks{' '}
-                  <strong>{nameOf(l.media_buyer_id)}</strong>
+                  <strong className="text-white">{nameOf(l.overseer_id)}</strong> tracks{' '}
+                  <strong className="text-white">{nameOf(l.media_buyer_id)}</strong>
                 </span>
                 <button
                   onClick={() => remove(l.overseer_id, l.media_buyer_id)}
-                  className="text-red-600 hover:text-red-800"
+                  style={{ color: 'var(--roas-bad)' }}
+                  className="hover:opacity-75"
                   title="Remove"
                 >
                   <Trash2 className="w-4 h-4" />
