@@ -15,7 +15,7 @@
 // CapacityManagement.tsx / AMQueue.tsx) rather than generic light-theme Tailwind grays — the app
 // has no separate "dark mode", this IS the theme.
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   TrendingUp,
   Users,
@@ -28,6 +28,7 @@ import {
   AlertTriangle,
   Check,
   X,
+  Search,
 } from 'lucide-react';
 import { supabaseRaw } from '../lib/supabase';
 import { UserRecord } from '../types/database';
@@ -351,6 +352,16 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
     [rows, activeBuyerId],
   );
 
+  // Client-name search for the Overview table — only filters what's DISPLAYED, never `buyerRows`
+  // itself, so the stat cards above (Total Clients, Total Spent, Success Rate, etc.) keep
+  // reflecting the whole buyer's book regardless of what's currently typed into the search box.
+  const [overviewSearch, setOverviewSearch] = useState('');
+  const filteredBuyerRows = useMemo(() => {
+    const q = overviewSearch.trim().toLowerCase();
+    if (!q) return buyerRows;
+    return buyerRows.filter((r) => r.client_name.toLowerCase().includes(q));
+  }, [buyerRows, overviewSearch]);
+
   const totals = useMemo(() => {
     const totalClients = buyerRows.length;
     const totalSpent = buyerRows.reduce((s, r) => s + (r.current_spent || 0), 0);
@@ -447,6 +458,17 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                 <StatCard icon={<Target className="w-4 h-4" />} label="Success Rate" value={fmtPct(totals.successRate)} />
               </div>
 
+              <div className="relative mb-3 max-w-xs">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-lo)' }} />
+                <input
+                  type="text"
+                  value={overviewSearch}
+                  onChange={(e) => setOverviewSearch(e.target.value)}
+                  placeholder="Search client…"
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
               <div className="overflow-x-auto rounded-[20px]" style={cardStyle}>
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -474,7 +496,14 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-purple-900/20 text-xs">
-                    {buyerRows.map((r) => {
+                    {filteredBuyerRows.length === 0 && (
+                      <tr>
+                        <td colSpan={18} className="py-6 text-center" style={{ color: 'var(--text-lo)' }}>
+                          No clients match "{overviewSearch}".
+                        </td>
+                      </tr>
+                    )}
+                    {filteredBuyerRows.map((r) => {
                       const st = STATUS_TOKENS[r.status] || { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' };
                       const breakdown = platformBreakdown[r.client_id] || {};
                       return (
@@ -768,6 +797,32 @@ const LogMonthlyDataForm: React.FC<{
   );
 
   const [clientId, setClientId] = useState('');
+
+  // Searchable client picker — same combobox pattern as ReportsHub's client scope field: one
+  // input that both filters AND displays the current selection, instead of a plain <select> that
+  // forces scrolling/typeahead through however many clients this role can see (all active clients
+  // for the 3 emergency-fallback roles above).
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [clientComboboxOpen, setClientComboboxOpen] = useState(false);
+  const clientComboboxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!clientComboboxOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (clientComboboxRef.current && !clientComboboxRef.current.contains(event.target as Node)) {
+        setClientComboboxOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [clientComboboxOpen]);
+
+  const searchedClients = useMemo(() => {
+    const q = clientSearchQuery.trim().toLowerCase();
+    if (!q) return myClients;
+    return myClients.filter(([, name]) => name.toLowerCase().includes(q));
+  }, [myClients, clientSearchQuery]);
+
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const [amounts, setAmounts] = useState<Record<string, { sales: string; spend: string }>>({});
   const [saving, setSaving] = useState(false);
@@ -876,16 +931,73 @@ const LogMonthlyDataForm: React.FC<{
           <label className={labelClass} style={{ color: 'var(--grey)' }}>
             Client
           </label>
-          <select value={clientId} onChange={(e) => setClientId(e.target.value)} className={inputClass}>
-            <option value="" className="bg-stone-900 text-white">
-              Select a client…
-            </option>
-            {myClients.map(([id, name]) => (
-              <option key={id} value={id} className="bg-stone-900 text-white">
-                {name}
-              </option>
-            ))}
-          </select>
+          <div className="relative" ref={clientComboboxRef}>
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--grey)' }} />
+            <input
+              type="text"
+              value={clientSearchQuery}
+              onChange={(e) => {
+                setClientSearchQuery(e.target.value);
+                setClientComboboxOpen(true);
+                if (clientId) setClientId('');
+              }}
+              onFocus={(e) => {
+                setClientComboboxOpen(true);
+                e.target.select();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setClientComboboxOpen(false);
+              }}
+              placeholder="Search client…"
+              className="w-full pl-9 pr-8 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+            />
+            {clientSearchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setClientSearchQuery('');
+                  setClientId('');
+                  setClientComboboxOpen(true);
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
+                aria-label="Clear client"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {clientComboboxOpen && (
+              <div
+                className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-xl"
+                style={{ background: 'var(--canvas)', border: '1px solid var(--border-soft)' }}
+              >
+                {searchedClients.length === 0 ? (
+                  <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-lo)' }}>
+                    No matching clients.
+                  </div>
+                ) : (
+                  searchedClients.map(([id, name]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      // onMouseDown (not onClick) fires before the input's outside-click listener
+                      // can close the dropdown out from under this click.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setClientId(id);
+                        setClientSearchQuery(name);
+                        setClientComboboxOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-purple-900/40 ${
+                        id === clientId ? 'bg-purple-900/30 text-white' : 'text-stone-300'
+                      }`}
+                    >
+                      {name}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           {loadingExisting && (
             <div className="text-[11px] mt-1" style={{ color: 'var(--text-lo)' }}>
               Loading what's already logged for this client this month…
