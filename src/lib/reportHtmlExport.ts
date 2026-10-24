@@ -24,7 +24,7 @@
 // with placeholder/fake data for either — the corresponding section is simply omitted.
 import { ClientComparisonRecord } from '../types/database';
 import { extractLinks } from './textLinks';
-import { resolveEmbeddableImages } from './embeddableImages';
+import { resolveEmbeddableImages, EmbeddedImageAsset } from './embeddableImages';
 import { parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS, buildUnifiedReportMetricsTable, PdfParagraph } from './pdfExport';
 
 // Mirrors pdfExport.ts's BRAND_PURPLE/BRAND_PURPLE_DEEP/BRAND_WHITE (src/index.css's "Kesra Brand
@@ -117,16 +117,46 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-// Plain text -> safe HTML, preserving line breaks (every section body here is plain text, never
-// pre-escaped markup) and turning a bare URL into a real link (same shape the PDF's own link
-// lines cover, minus the embedded-image case, which callers below handle separately so the image
-// doesn't ALSO show up as a redundant link line under itself).
+// Plain text -> safe HTML, preserving line breaks. No link/image handling at all — used ONLY for
+// buildUnifiedReportHtml's AI-generated narrative, which by design never carries an attachment
+// link (see this file's header comment: the Unified report has no path to screenshots at all).
+// Every OTHER caller that might see a bare attachment URL uses renderPlainTextWithAttachments
+// below instead.
 function textToHtml(text: string): string {
   return escapeHtml(text)
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => `<p>${line}</p>`)
+    .join('');
+}
+
+// The actual "plain text -> safe HTML, with bare URLs turned into a real image or link" renderer —
+// what textToHtml's own comment used to claim it did, before this existed. Fixes a real gap: every
+// non-work-log section (the "Final Report" fallback — the common case once a report has been
+// through AI Summary or hand-edited away from composeManifestContent's exact shape — plus
+// "Additional employee context"/"Context and observations") used to go through plain textToHtml,
+// so a raw 150+ char signed URL printed as unbroken escaped text with no wrapping, overflowing the
+// page. Mirrors renderWorkLogsSection's own per-line image/link split, just without the work-log
+// entry grouping (each line stands on its own here).
+function renderPlainTextWithAttachments(body: string, imageAssets: Map<string, EmbeddedImageAsset>): string {
+  return body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((rawLine) => {
+      const { cleanText, links } = extractLinks(rawLine);
+      const images = links.map((url) => imageAssets.get(url)).filter((a): a is NonNullable<typeof a> => !!a);
+      const linkOnlyUrls = links.filter((url) => !imageAssets.get(url));
+      const textHtml = cleanText ? `<p>${escapeHtml(cleanText)}</p>` : '';
+      const shotsHtml = images.length
+        ? `<div class="shots">${images.map((asset) => `<figure><img src="${asset.dataUrl}" alt=""></figure>`).join('')}</div>`
+        : '';
+      const linksHtml = linkOnlyUrls.length
+        ? `<p>${linkOnlyUrls.map((url) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">View attachment</a>`).join(' · ')}</p>`
+        : '';
+      return `${textHtml}${shotsHtml}${linksHtml}`;
+    })
     .join('');
 }
 
@@ -210,11 +240,8 @@ function parseTaskLedgerLine(line: string): string[] {
   return [title, ...rest.map((part) => part.replace(/^linked log dates:\s*/, ''))];
 }
 
-async function renderWorkLogsSection(sections: PdfParagraph[]): Promise<string> {
-  const allUrls = new Set<string>();
+function renderWorkLogsSection(sections: PdfParagraph[], imageAssets: Map<string, EmbeddedImageAsset>): string {
   const parsedSections = sections.map((section) => ({ ...section, entries: parseWorkLogEntries(section.body) }));
-  parsedSections.forEach((section) => section.entries.forEach((entry) => entry.attachmentUrls.forEach((url) => allUrls.add(url))));
-  const imageAssets = await resolveEmbeddableImages(allUrls);
 
   const cardsHtml = parsedSections
     .map((section, i) => {
@@ -310,15 +337,24 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
   const workLogSections = sections.filter((s) => !NON_WORKLOG_HEADINGS.has(s.heading));
   const otherSections = sections.filter((s) => NON_WORKLOG_HEADINGS.has(s.heading));
 
+  // Resolved ONCE across every section's body (not just work-log entries) — otherwise a
+  // screenshot link sitting in "Final Report"/"Additional employee context"/"Context and
+  // observations" would never get embedded at all. Harmless and cheap to include the creative-
+  // summary/task-ledger bodies too even though those shapes never actually carry an attachment
+  // link in practice (allUrls just won't find any there).
+  const allUrls = new Set<string>();
+  sections.forEach((section) => section.body.split('\n').forEach((line) => extractLinks(line).links.forEach((url) => allUrls.add(url))));
+  const imageAssets = await resolveEmbeddableImages(allUrls);
+
   const parts: string[] = [];
-  if (workLogSections.length) parts.push(await renderWorkLogsSection(workLogSections));
+  if (workLogSections.length) parts.push(renderWorkLogsSection(workLogSections, imageAssets));
   otherSections.forEach((section) => {
     if (section.heading === REPORT_SECTION_HEADINGS.creativeSummary) {
       parts.push(renderCreativeSummarySection(section.body));
     } else if (section.heading === REPORT_SECTION_HEADINGS.taskLedger) {
       parts.push(renderTaskLedgerSection(section.body));
     } else {
-      parts.push(noteCard(section.heading, textToHtml(section.body)));
+      parts.push(noteCard(section.heading, renderPlainTextWithAttachments(section.body, imageAssets)));
     }
   });
 
