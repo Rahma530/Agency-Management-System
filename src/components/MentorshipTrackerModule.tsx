@@ -384,13 +384,13 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       <th className="py-3 px-4 text-right">Required Growth</th>
                       <th className="py-3 px-4 text-right">Profit Growth</th>
                       <th className="py-3 px-4">Status</th>
-                      {PLATFORMS.map((p) => (
-                        <React.Fragment key={`head-${p}`}>
-                          <th className="py-3 px-4 text-right border-l border-purple-900/20">
-                            {PLATFORM_LABELS[p]} Sales
-                          </th>
-                          <th className="py-3 px-4 text-right">{PLATFORM_LABELS[p]} Spend</th>
-                        </React.Fragment>
+                      {PLATFORMS.map((p, i) => (
+                        <th
+                          key={`head-${p}`}
+                          className={`py-3 px-4 text-center${i === 0 ? ' border-l border-purple-900/20' : ''}`}
+                        >
+                          {PLATFORM_LABELS[p]}
+                        </th>
                       ))}
                     </tr>
                   </thead>
@@ -478,17 +478,28 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                               {r.status}
                             </span>
                           </td>
-                          {PLATFORMS.map((p) => {
-                            const pb = breakdown[p];
+                          {PLATFORMS.map((p, i) => {
+                            const active = Boolean(breakdown[p]);
                             return (
-                              <React.Fragment key={`${r.client_id}-${p}`}>
-                                <td className="py-3.5 px-4 text-right text-stone-300 border-l border-purple-900/10">
-                                  {fmtMoney(pb ? pb.sales : null)}
-                                </td>
-                                <td className="py-3.5 px-4 text-right text-stone-300">
-                                  {fmtMoney(pb ? pb.spend : null)}
-                                </td>
-                              </React.Fragment>
+                              <td
+                                key={`${r.client_id}-${p}`}
+                                className={`py-3.5 px-4 text-center${i === 0 ? ' border-l border-purple-900/10' : ''}`}
+                                title={
+                                  active
+                                    ? `${PLATFORM_LABELS[p]}: Sales ${fmtMoney(breakdown[p].sales)} · Spend ${fmtMoney(breakdown[p].spend)}`
+                                    : `${PLATFORM_LABELS[p]}: no data logged this month`
+                                }
+                              >
+                                <span
+                                  className="inline-flex items-center justify-center w-4 h-4 rounded"
+                                  style={{
+                                    border: `1px solid ${active ? 'var(--success)' : 'var(--border-soft)'}`,
+                                    background: active ? 'rgba(74, 222, 128, 0.12)' : 'transparent',
+                                  }}
+                                >
+                                  {active && <Check className="w-3 h-3" style={{ color: 'var(--success)' }} />}
+                                </span>
+                              </td>
                             );
                           })}
                         </tr>
