@@ -216,6 +216,70 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
     setEditingMarginClientId(null);
   };
 
+  // Inline per-platform Sales/Spend editing directly from the Overview checkbox cell — same
+  // reasoning and same role gate as Inline Margin editing above (canEditMarginInline covers
+  // exactly the roles that can now write media_buying_insights: media_buying_agent for their own
+  // assigned clients, media_buying_team_lead/head_of_technical/executive for any client, per
+  // 20261210000000_media_buying_insights_admin_emergency_write.sql). Writes through the same
+  // upsert LogMonthlyDataForm uses (one row at a time here, since only one platform is being
+  // edited), onConflict client_id/platform/week_start_date so re-opening an already-checked box
+  // edits that platform's existing row instead of creating a duplicate.
+  const [editingPlatformCell, setEditingPlatformCell] = useState<{ clientId: string; platform: string } | null>(
+    null
+  );
+  const [platformAmounts, setPlatformAmounts] = useState<{ sales: string; spend: string }>({ sales: '', spend: '' });
+  const [platformSaving, setPlatformSaving] = useState(false);
+  const [platformError, setPlatformError] = useState<string | null>(null);
+
+  const startEditingPlatform = (clientId: string, platform: string, current?: { sales: number; spend: number }) => {
+    setEditingPlatformCell({ clientId, platform });
+    setPlatformAmounts({ sales: current ? String(current.sales) : '', spend: current ? String(current.spend) : '' });
+    setPlatformError(null);
+  };
+
+  const cancelEditingPlatform = () => {
+    setEditingPlatformCell(null);
+    setPlatformError(null);
+  };
+
+  const handleSavePlatform = async () => {
+    if (!editingPlatformCell) return;
+    const { clientId, platform } = editingPlatformCell;
+    const salesNum = Number(platformAmounts.sales);
+    const spendNum = Number(platformAmounts.spend);
+    if (platformAmounts.sales === '' || platformAmounts.spend === '' || !Number.isFinite(salesNum) || !Number.isFinite(spendNum)) {
+      setPlatformError('Enter both Sales and Spend.');
+      return;
+    }
+    setPlatformError(null);
+    setPlatformSaving(true);
+    const { error: upsertError } = await supabaseRaw.from('media_buying_insights').upsert(
+      [
+        {
+          id: `mbi_${clientId}_${platform}_${reportingMonth}`,
+          client_id: clientId,
+          platform,
+          week_start_date: reportingMonth,
+          sales_value: salesNum,
+          spend: spendNum,
+          source: 'manual',
+          created_by: currentUser.id,
+        },
+      ],
+      { onConflict: 'client_id,platform,week_start_date' }
+    );
+    setPlatformSaving(false);
+    if (upsertError) {
+      setPlatformError(upsertError.message);
+      return;
+    }
+    setPlatformBreakdown((prev) => ({
+      ...prev,
+      [clientId]: { ...prev[clientId], [platform]: { sales: salesNum, spend: spendNum } },
+    }));
+    setEditingPlatformCell(null);
+  };
+
   // Per-platform breakdown for the current reporting month only (not a 3-month average — this is
   // meant to compare what the ad platforms self-report against what the client's store platform
   // (Salla/Zid) actually recorded for the SAME month, so averaging across months would blur
@@ -384,11 +448,8 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       <th className="py-3 px-4 text-right">Required Growth</th>
                       <th className="py-3 px-4 text-right">Profit Growth</th>
                       <th className="py-3 px-4">Status</th>
-                      {PLATFORMS.map((p, i) => (
-                        <th
-                          key={`head-${p}`}
-                          className={`py-3 px-4 text-center${i === 0 ? ' border-l border-purple-900/20' : ''}`}
-                        >
+                      {PLATFORMS.map((p) => (
+                        <th key={`head-${p}`} className="py-3 px-4 text-center">
                           {PLATFORM_LABELS[p]}
                         </th>
                       ))}
@@ -478,27 +539,104 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                               {r.status}
                             </span>
                           </td>
-                          {PLATFORMS.map((p, i) => {
-                            const active = Boolean(breakdown[p]);
+                          {PLATFORMS.map((p) => {
+                            const pb = breakdown[p];
+                            const active = Boolean(pb);
+                            const isEditing =
+                              editingPlatformCell?.clientId === r.client_id && editingPlatformCell?.platform === p;
                             return (
-                              <td
-                                key={`${r.client_id}-${p}`}
-                                className={`py-3.5 px-4 text-center${i === 0 ? ' border-l border-purple-900/10' : ''}`}
-                                title={
-                                  active
-                                    ? `${PLATFORM_LABELS[p]}: Sales ${fmtMoney(breakdown[p].sales)} · Spend ${fmtMoney(breakdown[p].spend)}`
-                                    : `${PLATFORM_LABELS[p]}: no data logged this month`
-                                }
-                              >
-                                <span
-                                  className="inline-flex items-center justify-center w-4 h-4 rounded"
-                                  style={{
-                                    border: `1px solid ${active ? 'var(--success)' : 'var(--border-soft)'}`,
-                                    background: active ? 'rgba(74, 222, 128, 0.12)' : 'transparent',
-                                  }}
-                                >
-                                  {active && <Check className="w-3 h-3" style={{ color: 'var(--success)' }} />}
-                                </span>
+                              <td key={`${r.client_id}-${p}`} className="py-3.5 px-4 text-center">
+                                {isEditing ? (
+                                  <div
+                                    className="flex flex-col items-stretch gap-1 text-left"
+                                    style={{ minWidth: '92px' }}
+                                  >
+                                    <input
+                                      type="number"
+                                      autoFocus
+                                      placeholder="Sales"
+                                      value={platformAmounts.sales}
+                                      onChange={(e) => setPlatformAmounts((prev) => ({ ...prev, sales: e.target.value }))}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSavePlatform();
+                                        if (e.key === 'Escape') cancelEditingPlatform();
+                                      }}
+                                      className="w-full px-1.5 py-1 rounded-lg text-[11px] focus:outline-none"
+                                      style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--purple)', color: 'var(--white)' }}
+                                    />
+                                    <input
+                                      type="number"
+                                      placeholder="Spend"
+                                      value={platformAmounts.spend}
+                                      onChange={(e) => setPlatformAmounts((prev) => ({ ...prev, spend: e.target.value }))}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSavePlatform();
+                                        if (e.key === 'Escape') cancelEditingPlatform();
+                                      }}
+                                      className="w-full px-1.5 py-1 rounded-lg text-[11px] focus:outline-none"
+                                      style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--purple)', color: 'var(--white)' }}
+                                    />
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={handleSavePlatform}
+                                        disabled={platformSaving}
+                                        className="p-1 rounded"
+                                        style={{ color: 'var(--success)' }}
+                                        title="Save"
+                                      >
+                                        <Check className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={cancelEditingPlatform}
+                                        disabled={platformSaving}
+                                        className="p-1 rounded text-stone-400 hover:text-white"
+                                        title="Cancel"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                    {platformError && (
+                                      <div className="text-[10px]" style={{ color: 'var(--roas-bad)' }}>{platformError}</div>
+                                    )}
+                                  </div>
+                                ) : canEditMarginInline ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditingPlatform(r.client_id, p, pb)}
+                                    title={
+                                      active
+                                        ? `${PLATFORM_LABELS[p]}: Sales ${fmtMoney(pb.sales)} · Spend ${fmtMoney(pb.spend)} — click to edit`
+                                        : `${PLATFORM_LABELS[p]}: no data logged this month — click to add`
+                                    }
+                                  >
+                                    <span
+                                      className="inline-flex items-center justify-center w-4 h-4 rounded hover:opacity-80"
+                                      style={{
+                                        border: `1px solid ${active ? 'var(--success)' : 'var(--border-soft)'}`,
+                                        background: active ? 'rgba(74, 222, 128, 0.12)' : 'transparent',
+                                      }}
+                                    >
+                                      {active && <Check className="w-3 h-3" style={{ color: 'var(--success)' }} />}
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span
+                                    className="inline-flex items-center justify-center w-4 h-4 rounded"
+                                    style={{
+                                      border: `1px solid ${active ? 'var(--success)' : 'var(--border-soft)'}`,
+                                      background: active ? 'rgba(74, 222, 128, 0.12)' : 'transparent',
+                                    }}
+                                    title={
+                                      active
+                                        ? `${PLATFORM_LABELS[p]}: Sales ${fmtMoney(pb.sales)} · Spend ${fmtMoney(pb.spend)}`
+                                        : `${PLATFORM_LABELS[p]}: no data logged this month`
+                                    }
+                                  >
+                                    {active && <Check className="w-3 h-3" style={{ color: 'var(--success)' }} />}
+                                  </span>
+                                )}
                               </td>
                             );
                           })}
