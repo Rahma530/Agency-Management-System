@@ -26,6 +26,8 @@ import {
   Trash2,
   RefreshCw,
   AlertTriangle,
+  Check,
+  X,
 } from 'lucide-react';
 import { supabaseRaw } from '../lib/supabase';
 import { UserRecord } from '../types/database';
@@ -118,6 +120,24 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeBuyerId, setActiveBuyerId] = useState<string | null>(null);
+  // Inline Margin editing — added because neither media_buying_agent nor media_buying_team_lead
+  // has a module in src/data/roles.ts's allowedModules that reaches EditClientModal.tsx (that
+  // modal only ever opens from ClientDashboard.tsx, gated by canEditClient, which doesn't include
+  // either role) — so without this, the backend permission from 20261207000000/20261208000000 had
+  // no screen to actually use it from. media_buying_agent only ever sees their own clients here
+  // (so every row shown to them is already editable per 20261208000000_update_client_details_mb_
+  // agent_margin.sql's assignment check), media_buying_team_lead's grant is margin-only on any
+  // client (20261207000000_update_client_details_add_margin.sql), and HOT/Executive have full
+  // edit rights anyway (and keep access to EditClientModal too — this is just a faster path).
+  const canEditMarginInline =
+    currentUser.role === 'media_buying_agent' ||
+    currentUser.role === 'media_buying_team_lead' ||
+    currentUser.role === 'head_of_technical' ||
+    currentUser.role === 'executive';
+  const [editingMarginClientId, setEditingMarginClientId] = useState<string | null>(null);
+  const [marginInput, setMarginInput] = useState('');
+  const [marginSaving, setMarginSaving] = useState(false);
+  const [marginError, setMarginError] = useState<string | null>(null);
 
   const isOversightAdmin = OVERSIGHT_ADMIN_ROLES.includes(currentUser.role);
 
@@ -139,6 +159,45 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
   useEffect(() => {
     loadSnapshot();
   }, [loadSnapshot]);
+
+  const startEditingMargin = (clientId: string, currentPct: number | null) => {
+    setEditingMarginClientId(clientId);
+    setMarginInput(currentPct != null ? String(Math.round(currentPct * 10000) / 100) : '');
+    setMarginError(null);
+  };
+
+  const cancelEditingMargin = () => {
+    setEditingMarginClientId(null);
+    setMarginError(null);
+  };
+
+  const handleSaveMargin = async (clientId: string) => {
+    const trimmed = marginInput.trim();
+    let fraction: number | null = null;
+    if (trimmed !== '') {
+      const pct = Number(trimmed);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+        setMarginError('Enter a number between 0 and 100.');
+        return;
+      }
+      fraction = pct / 100;
+    }
+    setMarginError(null);
+    setMarginSaving(true);
+    const { error: rpcError } = await supabaseRaw.rpc('update_client_details', {
+      p_client_id: clientId,
+      p_patch: { profit_margin_pct: fraction },
+    });
+    setMarginSaving(false);
+    if (rpcError) {
+      setMarginError(rpcError.message);
+      return;
+    }
+    setRows((prev) =>
+      prev.map((row) => (row.client_id === clientId ? { ...row, profit_margin_pct: fraction } : row))
+    );
+    setEditingMarginClientId(null);
+  };
 
   const buyers = useMemo(() => {
     const map = new Map<string, string>();
@@ -275,10 +334,61 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                         <tr key={r.client_id}>
                           <td className="py-3.5 px-4 font-semibold text-white">{r.client_name}</td>
                           <td className="py-3.5 px-4 text-right">
-                            {r.profit_margin_pct == null ? (
+                            {editingMarginClientId === r.client_id ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  autoFocus
+                                  value={marginInput}
+                                  onChange={(e) => setMarginInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveMargin(r.client_id);
+                                    if (e.key === 'Escape') cancelEditingMargin();
+                                  }}
+                                  className="w-16 px-2 py-1 rounded-lg text-xs text-right focus:outline-none"
+                                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--purple)', color: 'var(--white)' }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveMargin(r.client_id)}
+                                  disabled={marginSaving}
+                                  className="p-1 rounded"
+                                  style={{ color: 'var(--success)' }}
+                                  title="Save"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditingMargin}
+                                  disabled={marginSaving}
+                                  className="p-1 rounded text-stone-400 hover:text-white"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : canEditMarginInline ? (
+                              <button
+                                type="button"
+                                onClick={() => startEditingMargin(r.client_id, r.profit_margin_pct)}
+                                className="hover:underline"
+                              >
+                                {r.profit_margin_pct == null ? (
+                                  <span style={{ color: 'var(--warning)' }}>Not set</span>
+                                ) : (
+                                  <span className="text-stone-300">{fmtPct(r.profit_margin_pct)}</span>
+                                )}
+                              </button>
+                            ) : r.profit_margin_pct == null ? (
                               <span style={{ color: 'var(--warning)' }}>Not set</span>
                             ) : (
                               <span className="text-stone-300">{fmtPct(r.profit_margin_pct)}</span>
+                            )}
+                            {editingMarginClientId === r.client_id && marginError && (
+                              <div className="text-[10px] mt-1" style={{ color: 'var(--roas-bad)' }}>{marginError}</div>
                             )}
                           </td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtMoney(r.avg_3m_sales)}</td>
