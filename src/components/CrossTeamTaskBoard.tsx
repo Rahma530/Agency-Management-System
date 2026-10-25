@@ -270,6 +270,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // browser-local calendar day, same convention as getTodayStr()/isOverdue, not a UTC-day compare
   // (completed_at is a timestamptz and would otherwise drift by the server's UTC offset).
   const [completedOnDate, setCompletedOnDate] = useState<string>('');
+  // "Due On" date filter — shows every task due that calendar day regardless of status (To Do,
+  // In Progress, Completed, whatever), unlike Completed On above which only matches completed_at.
+  // due_date is a plain `date` column (not timestamptz — see schema), already "YYYY-MM-DD", so
+  // this is a direct string compare with no local-timezone conversion needed.
+  const [dueOnDate, setDueOnDate] = useState<string>('');
   // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
   // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
   // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
@@ -1278,6 +1283,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       // of its current status.
       if (completedOnDate && (!t.completed_at || toLocalDateStr(t.completed_at) !== completedOnDate)) return false;
 
+      // Due On date filter — every task due that day, any status included.
+      if (dueOnDate && t.due_date !== dueOnDate) return false;
+
       // Team filter. 'Creative' is a synthetic, assignee-ROLE-scoped value (only ever offered to
       // marketing_manager, see `teams` above) — the literal task.team column splits across
       // "Creative & Design"/"Video Production" for graphic_designer/video_editor, so it can't be
@@ -1329,6 +1337,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     userVisibleTasks,
     quickFilter,
     completedOnDate,
+    dueOnDate,
     selectedTeam,
     selectedClient,
     selectedPriority,
@@ -2143,7 +2152,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-9 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-10 gap-3 pt-2">
           {/* Date Sort — order only, never changes which tasks are included (that's quick
               filter/the dropdowns below). Defaults to Newest First. */}
           <div>
@@ -2174,6 +2183,30 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   type="button"
                   onClick={() => setCompletedOnDate('')}
                   aria-label="Clear completed-on date filter"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Due On date filter — every task due that day, any status (To Do, In Progress,
+              Completed, …). Empty = no filter (the default). */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Due On:</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={dueOnDate}
+                onChange={(e) => setDueOnDate(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500 [color-scheme:dark]"
+              />
+              {dueOnDate && (
+                <button
+                  type="button"
+                  onClick={() => setDueOnDate('')}
+                  aria-label="Clear due-on date filter"
                   className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
                 >
                   <X className="w-3.5 h-3.5" />
