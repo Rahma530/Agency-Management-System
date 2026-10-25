@@ -192,7 +192,14 @@ function pageShell(opts: {
 <header class="hero">
   <div class="eyebrow">${escapeHtml(opts.eyebrow)}</div>
   <h1>${escapeHtml(opts.title)}</h1>
-  ${opts.subtitle ? `<p>${escapeHtml(opts.subtitle)}</p>` : ''}
+  ${opts.subtitle
+    // subtitle is always a plain date range ("22-10 to 25-10") built by the caller — <bdi> isolates
+    // it from the surrounding RTL paragraph direction so the browser's bidi algorithm can't
+    // interleave/reorder its digits and the word "to" (the scrambled "to 2026-10-25 22-10-2026"
+    // shape the agency owner flagged). Kept as its own paragraph, not forced dir="ltr" on <p>
+    // itself, so this still degrades gracefully if a future caller ever passes non-date text here.
+    ? `<p><bdi>${escapeHtml(opts.subtitle)}</bdi></p>`
+    : ''}
   <div class="meta">${metaHtml}</div>
 </header>
 <main class="wrap">
@@ -359,10 +366,17 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
   });
 
   return pageShell({
-    eyebrow: 'Employee Report — KESRA Management System',
+    // options.eyebrow was added to the interface but never actually read here — every export
+    // rendered "Employee Report" in the small top label even for a client report. Now honors
+    // whatever the caller passes, falling back to the old literal only if a call site is ever
+    // added that doesn't set it.
+    eyebrow: options.eyebrow || 'Employee Report — KESRA Management System',
     title: options.title,
     subtitle: options.subtitle,
-    metaItems: options.subtitle ? [{ label: 'Period / Subject', value: options.subtitle }] : [],
+    // No separate "Period / Subject" meta box: options.subtitle (now just the period range, see
+    // the ReportDraftWorkspace.tsx call site) already renders once, directly under the title —
+    // repeating it here as a meta item duplicated it on the page for no reason.
+    metaItems: [],
     bodyHtml: parts.join(''),
   });
 }
@@ -405,7 +419,10 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
     eyebrow: 'Unified Client Report — KESRA Management System',
     title: options.title,
     subtitle: options.subtitle,
-    metaItems: options.subtitle ? [{ label: 'Period', value: options.subtitle }] : [],
+    // No separate "Period" meta box — options.subtitle already renders once, directly under the
+    // title; repeating it here duplicated it on the page for no reason (same fix as
+    // buildIndividualReportHtml above).
+    metaItems: [],
     bodyHtml,
   });
 }
