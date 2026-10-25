@@ -258,6 +258,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('all');
   // Platform filter — matches ANY selected platform (an empty selection means "no filter").
   const [selectedPlatformIds, setSelectedPlatformIds] = useState<string[]>([]);
+  // Date sort — applied after all the filters above, never changes which tasks show, only their
+  // order. Sorts by created_at (falling back to due_date for any older row inserted before that
+  // column existed/was backfilled, so nothing silently sorts as if it were from the Unix epoch).
+  // Defaults to newest-first per the agency owner's request: the previous unsorted order (raw
+  // fetch/array order) happened to read oldest-first, which read as "today's new tasks are buried".
+  const [taskSortOrder, setTaskSortOrder] = useState<'newest' | 'oldest'>('newest');
+  // "Completed On" date filter — a free-text calendar-day picker, separate from the Quick Filter
+  // pills above. Empty string means no filter. Matches tasks.completed_at (set once, the first
+  // time a task's status becomes 'completed' — see its own column comment above) against the
+  // browser-local calendar day, same convention as getTodayStr()/isOverdue, not a UTC-day compare
+  // (completed_at is a timestamptz and would otherwise drift by the server's UTC offset).
+  const [completedOnDate, setCompletedOnDate] = useState<string>('');
+  // "Due On" date filter — shows every task due that calendar day regardless of status (To Do,
+  // In Progress, Completed, whatever), unlike Completed On above which only matches completed_at.
+  // due_date is a plain `date` column (not timestamptz — see schema), already "YYYY-MM-DD", so
+  // this is a direct string compare with no local-timezone conversion needed.
+  const [dueOnDate, setDueOnDate] = useState<string>('');
   // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
   // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
   // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
@@ -1124,6 +1141,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // delegates there instead of carrying a second copy of the rule.
   const isOverdue = (task: TaskRecord) => isTaskOverdueForAssignee(task, todayStr);
 
+  // Browser-local calendar day of a timestamptz value, same formula as getTodayStr() — used to
+  // compare tasks.completed_at (a timestamptz) against the plain YYYY-MM-DD the Completed On date
+  // input gives us, without a UTC-offset mismatch.
+  const toLocalDateStr = (iso: string): string => {
+    const d = new Date(iso);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const isDueSoon = (task: TaskRecord) => {
     if (!task.due_date) return false;
     if (isTaskDone(task.status)) return false;
@@ -1250,6 +1278,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (quickFilter === 'unassigned' && assigneeIds.length > 0) return false;
       if (quickFilter === 'my_tasks' && t.created_by !== currentUserId && !assigneeIds.includes(currentUserId)) return false;
 
+      // Completed On date filter — only tasks actually completed (completed_at set) on that exact
+      // local calendar day. A task never completed (completed_at null) never matches, regardless
+      // of its current status.
+      if (completedOnDate && (!t.completed_at || toLocalDateStr(t.completed_at) !== completedOnDate)) return false;
+
+      // Due On date filter — every task due that day, any status included.
+      if (dueOnDate && t.due_date !== dueOnDate) return false;
+
       // Team filter. 'Creative' is a synthetic, assignee-ROLE-scoped value (only ever offered to
       // marketing_manager, see `teams` above) — the literal task.team column splits across
       // "Creative & Design"/"Video Production" for graphic_designer/video_editor, so it can't be
@@ -1300,6 +1336,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [
     userVisibleTasks,
     quickFilter,
+    completedOnDate,
+    dueOnDate,
     selectedTeam,
     selectedClient,
     selectedPriority,
@@ -1314,6 +1352,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     currentUserId,
     todayStr,
   ]);
+
+  // Date-sorted view of filteredTasks — a separate pass so the filter predicate above stays pure
+  // "which tasks" logic and this stays pure "what order". [...array] before sort() because Array
+  // .sort() mutates in place, and filteredTasks is a useMemo result other code may still read.
+  const sortedTasks = useMemo(() => {
+    const withDate = (t: TaskRecord) => {
+      const value = t.created_at || t.due_date;
+      const time = value ? new Date(value).getTime() : NaN;
+      return Number.isNaN(time) ? 0 : time;
+    };
+    return [...filteredTasks].sort((a, b) =>
+      taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b)
+    );
+  }, [filteredTasks, taskSortOrder]);
 
   // Handlers
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -2100,7 +2152,69 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-10 gap-3 pt-2">
+          {/* Date Sort — order only, never changes which tasks are included (that's quick
+              filter/the dropdowns below). Defaults to Newest First. */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Sort by Date:</label>
+            <select
+              value={taskSortOrder}
+              onChange={(e) => setTaskSortOrder(e.target.value as 'newest' | 'oldest')}
+              className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+            >
+              <option value="newest" className="bg-stone-900 text-white">Newest First</option>
+              <option value="oldest" className="bg-stone-900 text-white">Oldest First</option>
+            </select>
+          </div>
+
+          {/* Completed On date filter — shows only tasks actually completed on that exact day.
+              Empty = no filter (the default). */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Completed On:</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={completedOnDate}
+                onChange={(e) => setCompletedOnDate(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500 [color-scheme:dark]"
+              />
+              {completedOnDate && (
+                <button
+                  type="button"
+                  onClick={() => setCompletedOnDate('')}
+                  aria-label="Clear completed-on date filter"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Due On date filter — every task due that day, any status (To Do, In Progress,
+              Completed, …). Empty = no filter (the default). */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Due On:</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={dueOnDate}
+                onChange={(e) => setDueOnDate(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500 [color-scheme:dark]"
+              />
+              {dueOnDate && (
+                <button
+                  type="button"
+                  onClick={() => setDueOnDate('')}
+                  aria-label="Clear due-on date filter"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Team Filter */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Team:</label>
@@ -2229,7 +2343,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div className="flex items-start gap-4 overflow-x-auto px-1 pb-4 pt-1 overscroll-x-contain">
             {columns.map((column) => {
-              const columnTasks = filteredTasks.filter((t) => t.status === column.id);
+              const columnTasks = sortedTasks.filter((t) => t.status === column.id);
               return (
                 <KanbanColumn
                   key={column.id}
@@ -2304,9 +2418,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       <input
                         type="checkbox"
                         aria-label="Select all tasks"
-                        checked={filteredTasks.length > 0 && filteredTasks.every((t) => selectedTaskIds.has(t.id))}
+                        checked={sortedTasks.length > 0 && sortedTasks.every((t) => selectedTaskIds.has(t.id))}
                         onChange={(e) => {
-                          setSelectedTaskIds(e.target.checked ? new Set(filteredTasks.map((t) => t.id)) : new Set());
+                          setSelectedTaskIds(e.target.checked ? new Set(sortedTasks.map((t) => t.id)) : new Set());
                         }}
                       />
                     </th>
@@ -2327,14 +2441,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-800/60">
-                {filteredTasks.length === 0 ? (
+                {sortedTasks.length === 0 ? (
                   <tr>
                     <td colSpan={canUseBulkActions ? 14 : 13} className="p-8 text-center text-stone-400">
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
                 ) : (
-                  filteredTasks.map((task) => {
+                  sortedTasks.map((task) => {
                     const client = clients.find((c) => c.id === task.client_id);
                     const assigneeNames = (taskAssigneeIdsByTask.get(task.id) || [])
                       .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
@@ -2535,7 +2649,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {/* VIEW 3: TIMELINE / CALENDAR VIEW */}
       {viewMode === 'timeline' && (
         <TaskCalendarView
-          tasks={filteredTasks}
+          tasks={sortedTasks}
           clients={clients}
           users={taskDirectoryUsers}
           onSelectTask={setSelectedTaskDetails}
