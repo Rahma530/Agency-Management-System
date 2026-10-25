@@ -38,6 +38,15 @@ function byDateThenId<T extends { date: string; id: string }>(a: T, b: T): numbe
   return a.date.localeCompare(b.date) || a.id.localeCompare(b.id);
 }
 
+// log.date is a plain `date` column, always "YYYY-MM-DD" — a straight substring split, no Date()
+// parsing/timezone conversion involved. Day/month only (no year), matching how the composed
+// narrative itself reads the date: within a single report period the year never needs spelling
+// out.
+function toDayMonth(isoDate: string): string {
+  const [, month, day] = isoDate.split('-');
+  return `${day}/${month}`;
+}
+
 // Collapses rows that are genuine, DIFFERENT database rows (different ids — dedupeReportSourceKey
 // above only ever catches the SAME id appearing twice) but describe the exact same piece of work:
 // same author, same client, same day, byte-identical text once trimmed. Confirmed cause: a task's
@@ -193,9 +202,11 @@ export function composeInitialReportContent(
   employeeNames: Map<string, string>,
   isCreativeSubject: boolean
 ): string {
-  // No date prefix: the composed narrative reads as plain lines. log.date (and every log's full
-  // row) stays exactly as stored — this only changes what's displayed/drafted, never
-  // report_source_items (the audit ledger, which still orders by and keeps source_date).
+  // Date reads as a trailing clause woven into the sentence itself — "تم نشر بوست بتاريخ 22/10" —
+  // never as a standalone "22/10 :" line above the text (the previous shape, actively confusing:
+  // broke each entry across two lines for no benefit). log.date (and every log's full row) stays
+  // exactly as stored — this only changes what's displayed/drafted, never report_source_items
+  // (the audit ledger, which still orders by and keeps source_date).
   //
   // Employee-scope reports cover a single subject whose name is already shown in the report
   // header/subtitle, so repeating it on every line was always redundant. Client-scope reports can
@@ -204,7 +215,7 @@ export function composeInitialReportContent(
   // manually deleted line by line before every report. `employeeNames`/`scope` are kept as
   // parameters (other call sites still pass them, and `scope` still gates the sections below) even
   // though work lines themselves no longer read either.
-  const workLines = dailyLogs.map((log) => log.summary_text.trim());
+  const workLines = dailyLogs.map((log) => `${log.summary_text.trim()} بتاريخ ${toDayMonth(log.date)}`);
   const noteLines = scope === 'employee'
     ? extraNotes.map((note) => `${note.date} — ${note.note_text.trim()}`)
     : [];
