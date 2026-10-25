@@ -89,6 +89,16 @@ const GROWTH_TIER_ADMIN_ROLES = OVERSIGHT_ADMIN_ROLES;
 // no migration — same reasoning as the original tiktok/meta/snapchat/google list.
 const PLATFORMS = ['tiktok', 'meta', 'snapchat', 'google', 'salla', 'zid'] as const;
 
+// Owner-requested split (after seeing self-reported ad-platform numbers disagree with what the
+// store actually recorded): the 4 ad platforms are no longer a place to type Sales/Spend at all —
+// they're just a checkbox marking "we're actively running this client on this platform", no
+// numbers attached. Salla/Zid are where real Sales/Spend get logged, and that's what
+// get_mentorship_snapshot() (20261214000000) now sums into every Avg 3M / Current figure. Checking
+// an ad-platform box writes a zero-value placeholder row (so "is this platform active this month"
+// is still queryable the same way everything else here is), but the UI never asks for an amount.
+const AD_PLATFORMS = ['tiktok', 'meta', 'snapchat', 'google'] as const;
+const STORE_PLATFORMS = ['salla', 'zid'] as const;
+
 // Builds "YYYY-MM-01" for the LOCAL calendar month, without ever going through
 // Date#toISOString() — toISOString() converts to UTC first, which silently rolls the date back
 // to the last day of the PREVIOUS month for any timezone ahead of UTC (e.g. Africa/Cairo,
@@ -150,12 +160,12 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   avg3mSales: {
     title: 'Avg 3M Sales',
     description:
-      'Average monthly Sales over the 3 calendar months strictly before the selected month — counts only months that actually have logged data, not a fixed ÷3. Only TikTok, Meta, Google and Snapchat count; Salla and Zid are excluded.',
+      'Average monthly Sales over the 3 calendar months strictly before the selected month — counts only months that actually have logged data, not a fixed ÷3. Only Salla and Zid (the store platforms) count; TikTok, Meta, Google and Snapchat are just active/inactive markers and are excluded.',
   },
   avg3mSpent: {
     title: 'Avg 3M Spent',
     description:
-      'Average monthly Spend over the 3 calendar months strictly before the selected month — counts only months that actually have logged data. Only TikTok, Meta, Google and Snapchat count; Salla and Zid are excluded.',
+      'Average monthly Spend over the 3 calendar months strictly before the selected month — counts only months that actually have logged data. Only Salla and Zid count; TikTok, Meta, Google and Snapchat are excluded.',
   },
   avg3mProfit: {
     title: 'Avg 3M Profit',
@@ -163,11 +173,11 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   },
   currentSales: {
     title: 'Current Sales',
-    description: 'Total Sales logged for the selected month, summed across TikTok, Meta, Google and Snapchat only — Salla and Zid are store platforms and are not counted here.',
+    description: 'Total Sales logged for the selected month, summed from Salla and Zid only — TikTok, Meta, Google and Snapchat are active/inactive markers and have no Sales/Spend of their own.',
   },
   currentSpent: {
     title: 'Current Spent',
-    description: 'Total Spend logged for the selected month, summed across TikTok, Meta, Google and Snapchat only — Salla and Zid are store platforms and are not counted here.',
+    description: 'Total Spend logged for the selected month, summed from Salla and Zid only — TikTok, Meta, Google and Snapchat are active/inactive markers and have no Sales/Spend of their own.',
   },
   currentProfit: {
     title: 'Current Profit',
@@ -393,12 +403,56 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
     setEditingPlatformCell(null);
   };
 
-  // Per-platform breakdown for the current reporting month only (not a 3-month average — this is
-  // meant to compare what the ad platforms self-report against what the client's store platform
-  // (Salla/Zid) actually recorded for the SAME month, so averaging across months would blur
-  // exactly the discrepancy this is for). Queried directly from media_buying_insights rather than
-  // through get_mentorship_snapshot, which only ever returns per-client totals already summed
-  // across platforms — same RLS policy already covers every role that can see these rows
+  // Ad-platform checkbox toggle (tiktok/meta/snapchat/google) — a pure on/off marker, never an
+  // amount: checking it writes a zero-value placeholder row (so "active this month" stays
+  // queryable the same way as every other platform row), unchecking it deletes that row. No
+  // Sales/Spend editor ever opens for these — see AD_PLATFORMS comment above.
+  const [adPlatformToggling, setAdPlatformToggling] = useState<string | null>(null);
+
+  const toggleAdPlatform = async (clientId: string, platform: string, currentlyActive: boolean) => {
+    const key = `${clientId}:${platform}`;
+    setAdPlatformToggling(key);
+    if (currentlyActive) {
+      await supabaseRaw
+        .from('media_buying_insights')
+        .delete()
+        .eq('client_id', clientId)
+        .eq('platform', platform)
+        .eq('week_start_date', reportingMonth);
+      setPlatformBreakdown((prev) => {
+        const next = { ...prev, [clientId]: { ...prev[clientId] } };
+        delete next[clientId][platform];
+        return next;
+      });
+    } else {
+      await supabaseRaw.from('media_buying_insights').upsert(
+        [
+          {
+            id: `mbi_${clientId}_${platform}_${reportingMonth}`,
+            client_id: clientId,
+            platform,
+            week_start_date: reportingMonth,
+            sales_value: 0,
+            spend: 0,
+            source: 'manual',
+            created_by: currentUser.id,
+          },
+        ],
+        { onConflict: 'client_id,platform,week_start_date' }
+      );
+      setPlatformBreakdown((prev) => ({
+        ...prev,
+        [clientId]: { ...prev[clientId], [platform]: { sales: 0, spend: 0 } },
+      }));
+    }
+    setAdPlatformToggling(null);
+  };
+
+  // Per-platform breakdown for the current reporting month only (not a 3-month average — this
+  // drives both the ad-platform active/inactive checkboxes and the Salla/Zid Sales/Spend amounts
+  // shown per row). Queried directly from media_buying_insights rather than through
+  // get_mentorship_snapshot, which only ever returns per-client totals already summed across
+  // platforms — same RLS policy already covers every role that can see these rows
   // (20261030600000_document_media_buying_insights.sql's select policy).
   const [platformBreakdown, setPlatformBreakdown] = useState<
     Record<string, Record<string, { sales: number; spend: number }>>
@@ -688,6 +742,43 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                             const active = Boolean(pb);
                             const isEditing =
                               editingPlatformCell?.clientId === r.client_id && editingPlatformCell?.platform === p;
+                            const isAdPlatform = (AD_PLATFORMS as readonly string[]).includes(p);
+                            if (isAdPlatform) {
+                              // Pure on/off marker — no Sales/Spend editor, ever. See AD_PLATFORMS
+                              // comment above.
+                              const toggling = adPlatformToggling === `${r.client_id}:${p}`;
+                              const badge = (
+                                <span
+                                  className={`inline-flex items-center justify-center w-4 h-4 rounded ${canEditMarginInline ? 'hover:opacity-80' : ''}`}
+                                  style={{
+                                    border: `1px solid ${active ? 'var(--success)' : 'var(--border-soft)'}`,
+                                    background: active ? 'rgba(74, 222, 128, 0.12)' : 'transparent',
+                                    opacity: toggling ? 0.5 : 1,
+                                  }}
+                                >
+                                  {active && <Check className="w-3 h-3" style={{ color: 'var(--success)' }} />}
+                                </span>
+                              );
+                              const activeTitle = active
+                                ? `${PLATFORM_LABELS[p]}: active this month`
+                                : `${PLATFORM_LABELS[p]}: not marked active this month`;
+                              return (
+                                <td key={`${r.client_id}-${p}`} className="py-3.5 px-4 text-center">
+                                  {canEditMarginInline ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleAdPlatform(r.client_id, p, active)}
+                                      disabled={toggling}
+                                      title={`${activeTitle} — click to ${active ? 'mark inactive' : 'mark active'}`}
+                                    >
+                                      {badge}
+                                    </button>
+                                  ) : (
+                                    <span title={activeTitle}>{badge}</span>
+                                  )}
+                                </td>
+                              );
+                            }
                             return (
                               <td key={`${r.client_id}-${p}`} className="py-3.5 px-4 text-center">
                                 {isEditing ? (
@@ -987,6 +1078,21 @@ const LogMonthlyDataForm: React.FC<{
     }
     const payload: Record<string, unknown>[] = [];
     for (const p of platformsToSave) {
+      // Ad platforms (tiktok/meta/snapchat/google) are a pure on/off marker — no amount required,
+      // always saved as a zero-value row. Only Salla/Zid need real Sales/Spend entered.
+      if ((AD_PLATFORMS as readonly string[]).includes(p)) {
+        payload.push({
+          id: `mbi_${clientId}_${p}_${reportingMonth}`,
+          client_id: clientId,
+          platform: p,
+          week_start_date: reportingMonth,
+          sales_value: 0,
+          spend: 0,
+          source: 'manual',
+          created_by: currentUser.id,
+        });
+        continue;
+      }
       const a = amounts[p];
       if (!a || a.sales === '' || a.spend === '') {
         setMessage({ type: 'err', text: `Enter both Sales and Spend for ${p}.` });
@@ -1104,7 +1210,7 @@ const LogMonthlyDataForm: React.FC<{
 
         <div>
           <label className={labelClass} style={{ color: 'var(--grey)' }}>
-            Platforms (check every platform this client has numbers for this month — already-logged ones are pre-filled below so you can edit them)
+            Platforms — check TikTok/Meta/Snapchat/Google to mark them as active this month (no numbers needed); check Salla/Zid to log their actual Sales/Spend below (already-logged ones are pre-filled)
           </label>
           <div className="flex flex-wrap gap-2">
             {PLATFORMS.map((p) => {
@@ -1130,7 +1236,7 @@ const LogMonthlyDataForm: React.FC<{
           </div>
         </div>
 
-        {PLATFORMS.filter((p) => selectedPlatforms.has(p)).map((p) => (
+        {(STORE_PLATFORMS as readonly string[]).filter((p) => selectedPlatforms.has(p)).map((p) => (
           <div key={p} className="grid grid-cols-[auto_1fr_1fr] items-end gap-3">
             <div className="text-xs font-semibold capitalize pb-2.5" style={{ color: 'var(--purple-light)' }}>
               {p}
@@ -1148,7 +1254,7 @@ const LogMonthlyDataForm: React.FC<{
             </div>
             <div>
               <label className={labelClass} style={{ color: 'var(--grey)' }}>
-                {p === 'salla' || p === 'zid' ? 'Store Spend/Fees' : 'Ad Spend'}
+                Store Spend/Fees
               </label>
               <input
                 type="number"
