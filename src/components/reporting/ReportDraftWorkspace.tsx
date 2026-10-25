@@ -166,6 +166,29 @@ interface WorkLogServiceGrouping {
 // parseReportContentIntoParagraphs recovers this exact same structure back out of the saved
 // content_text at PDF-export time to give each service its own heading and a decorative divider —
 // see that function's own comment for the heading strings this must stay in sync with.
+// source_date is a plain `date` column, always "YYYY-MM-DD" — a straight substring split, no
+// Date() parsing/timezone conversion involved. Day/month only (no year): within a single report
+// period the year never needs spelling out.
+function toDayMonth(isoDate: string): string {
+  const [, month, day] = isoDate.split('-');
+  return `${day}/${month}`;
+}
+
+// Report header's period range — "22 - 10  to  25 - 10" per the agency owner's exact request,
+// replacing the raw "2026-10-22 to 2026-10-25" ISO pair, which the browser's bidi algorithm used
+// to visibly scramble (digits/"to" reordered) once it sat inside this RTL-dir page. selectedReport
+// .period is always "<fromIso>_<toIso>" (resolveReportPeriod's own format) or empty — periodTo
+// falsy covers both "no period at all" and a malformed one with no underscore.
+function formatReportPeriodRange(period: string): string {
+  const [periodFrom, periodTo] = (period || '').split('_');
+  if (!periodTo) return period || '';
+  const dayMonthSpaced = (isoDate: string) => {
+    const [, month, day] = isoDate.split('-');
+    return `${day} - ${month}`;
+  };
+  return `${dayMonthSpaced(periodFrom)}  to  ${dayMonthSpaced(periodTo)}`;
+}
+
 function renderWorkLogSection(
   logs: Array<Omit<ReportSourceItemRecord, 'id' | 'report_id'>>,
   names: Map<string, string>,
@@ -182,8 +205,12 @@ function renderWorkLogSection(
   // whether a name is PRINTED on the line.
   omitAuthorPrefix?: boolean
 ): string {
-  const renderLine = (_employeeName: string, text: string, attachmentLines: string[]): string => {
-    const firstLine = text;
+  // date (optional): woven into the line as a trailing clause — "تم نشر بوست بتاريخ 22/10" — not
+  // a separate line above the text. Omitted (undefined) for a merged multi-log group (2+ ids):
+  // that text already describes several days' worth of entries at once ("posted X times"-style),
+  // so a single date would misrepresent it. A single-log entry, grouped or not, always gets one.
+  const renderLine = (_employeeName: string, text: string, attachmentLines: string[], date?: string): string => {
+    const firstLine = date ? `${text} بتاريخ ${toDayMonth(date)}` : text;
     return attachmentLines.length ? [firstLine, ...attachmentLines].join('\n') : firstLine;
   };
 
@@ -195,7 +222,8 @@ function renderWorkLogSection(
       line: renderLine(
         names.get(source.user_id) || 'Employee',
         String(source.snapshot.summary_text || '').trim(),
-        linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || [])
+        linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []),
+        source.source_date
       ),
     }));
   } else {
@@ -208,7 +236,8 @@ function renderWorkLogSection(
           const source = logsById.get(id);
           return source ? linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []) : [];
         });
-        return { userId: first.user_id, line: renderLine(names.get(first.user_id) || 'Employee', group.text, attachmentLines) };
+        const date = group.ids.length === 1 ? first.source_date : undefined;
+        return { userId: first.user_id, line: renderLine(names.get(first.user_id) || 'Employee', group.text, attachmentLines, date) };
       })
       .filter((entry): entry is RenderedLine => entry !== null);
   }
@@ -996,8 +1025,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     const subjectName = selectedReport.scope_type === 'employee'
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
       : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
-    const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
-    const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
+    const periodRange = formatReportPeriodRange(selectedReport.period || '');
     await downloadReportPdf({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
       title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
@@ -1026,11 +1054,13 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     const subjectName = selectedReport.scope_type === 'employee'
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
       : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
-    const [periodFrom, periodTo] = (selectedReport.period || '').split('_');
-    const periodRange = periodTo ? `${periodFrom} to ${periodTo}` : (selectedReport.period || '');
+    const periodRange = formatReportPeriodRange(selectedReport.period || '');
     const html = await buildIndividualReportHtml({
-      title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
-      subtitle: `${subjectName} — ${periodRange}`,
+      // Title is the actual client/employee name now, not the literal word "Client"/"Employee" —
+      // the eyebrow line just above it already says which kind of report this is.
+      title: subjectName,
+      eyebrow: `${selectedReport.type === 'client' ? 'Client Report' : 'Employee Report'} — KESRA Management System`,
+      subtitle: periodRange,
       contentText: currentVersion.content_text,
     });
     downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
