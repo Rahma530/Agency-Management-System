@@ -150,12 +150,12 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   avg3mSales: {
     title: 'Avg 3M Sales',
     description:
-      'Average monthly Sales over the 3 calendar months strictly before the selected month — counts only months that actually have logged data, not a fixed ÷3.',
+      'Average monthly Sales over the 3 calendar months strictly before the selected month — counts only months that actually have logged data, not a fixed ÷3. Only TikTok, Meta, Google and Snapchat count; Salla and Zid are excluded.',
   },
   avg3mSpent: {
     title: 'Avg 3M Spent',
     description:
-      'Average monthly Spend over the 3 calendar months strictly before the selected month — counts only months that actually have logged data.',
+      'Average monthly Spend over the 3 calendar months strictly before the selected month — counts only months that actually have logged data. Only TikTok, Meta, Google and Snapchat count; Salla and Zid are excluded.',
   },
   avg3mProfit: {
     title: 'Avg 3M Profit',
@@ -163,11 +163,11 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   },
   currentSales: {
     title: 'Current Sales',
-    description: 'Total Sales logged for the selected month, summed across every platform.',
+    description: 'Total Sales logged for the selected month, summed across TikTok, Meta, Google and Snapchat only — Salla and Zid are store platforms and are not counted here.',
   },
   currentSpent: {
     title: 'Current Spent',
-    description: 'Total Spend logged for the selected month, summed across every platform.',
+    description: 'Total Spend logged for the selected month, summed across TikTok, Meta, Google and Snapchat only — Salla and Zid are store platforms and are not counted here.',
   },
   currentProfit: {
     title: 'Current Profit',
@@ -190,7 +190,7 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   status: {
     title: 'Status',
     description:
-      "Based only on the selected month — Start Date plays no role. Setup Needed: Margin not set yet. No Data: nothing logged for the selected month. Successful: this month's Profit (Current Sales × Margin − Current Spent) is 0 or positive. Below Target: this month's Profit is negative.",
+      "Based only on the selected month's own numbers — Start Date plays no role. Setup Needed: Margin not set yet. No Data: nothing logged for the selected month. With no Avg 3M baseline yet (a new client, or no history before this month): Successful once this month's Profit is 0 or positive. With a valid Avg 3M Profit baseline: Successful requires this month's Profit to meet or beat Avg 3M Profit × (1 + Required Growth); otherwise Below Target.",
   },
 };
 
