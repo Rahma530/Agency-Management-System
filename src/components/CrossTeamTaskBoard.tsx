@@ -264,6 +264,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // Defaults to newest-first per the agency owner's request: the previous unsorted order (raw
   // fetch/array order) happened to read oldest-first, which read as "today's new tasks are buried".
   const [taskSortOrder, setTaskSortOrder] = useState<'newest' | 'oldest'>('newest');
+  // "Completed On" date filter — a free-text calendar-day picker, separate from the Quick Filter
+  // pills above. Empty string means no filter. Matches tasks.completed_at (set once, the first
+  // time a task's status becomes 'completed' — see its own column comment above) against the
+  // browser-local calendar day, same convention as getTodayStr()/isOverdue, not a UTC-day compare
+  // (completed_at is a timestamptz and would otherwise drift by the server's UTC offset).
+  const [completedOnDate, setCompletedOnDate] = useState<string>('');
   // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
   // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
   // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
@@ -1130,6 +1136,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // delegates there instead of carrying a second copy of the rule.
   const isOverdue = (task: TaskRecord) => isTaskOverdueForAssignee(task, todayStr);
 
+  // Browser-local calendar day of a timestamptz value, same formula as getTodayStr() — used to
+  // compare tasks.completed_at (a timestamptz) against the plain YYYY-MM-DD the Completed On date
+  // input gives us, without a UTC-offset mismatch.
+  const toLocalDateStr = (iso: string): string => {
+    const d = new Date(iso);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const isDueSoon = (task: TaskRecord) => {
     if (!task.due_date) return false;
     if (isTaskDone(task.status)) return false;
@@ -1256,6 +1273,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (quickFilter === 'unassigned' && assigneeIds.length > 0) return false;
       if (quickFilter === 'my_tasks' && t.created_by !== currentUserId && !assigneeIds.includes(currentUserId)) return false;
 
+      // Completed On date filter — only tasks actually completed (completed_at set) on that exact
+      // local calendar day. A task never completed (completed_at null) never matches, regardless
+      // of its current status.
+      if (completedOnDate && (!t.completed_at || toLocalDateStr(t.completed_at) !== completedOnDate)) return false;
+
       // Team filter. 'Creative' is a synthetic, assignee-ROLE-scoped value (only ever offered to
       // marketing_manager, see `teams` above) — the literal task.team column splits across
       // "Creative & Design"/"Video Production" for graphic_designer/video_editor, so it can't be
@@ -1306,6 +1328,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [
     userVisibleTasks,
     quickFilter,
+    completedOnDate,
     selectedTeam,
     selectedClient,
     selectedPriority,
@@ -2120,7 +2143,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-8 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-9 gap-3 pt-2">
           {/* Date Sort — order only, never changes which tasks are included (that's quick
               filter/the dropdowns below). Defaults to Newest First. */}
           <div>
@@ -2133,6 +2156,30 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <option value="newest" className="bg-stone-900 text-white">Newest First</option>
               <option value="oldest" className="bg-stone-900 text-white">Oldest First</option>
             </select>
+          </div>
+
+          {/* Completed On date filter — shows only tasks actually completed on that exact day.
+              Empty = no filter (the default). */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Completed On:</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={completedOnDate}
+                onChange={(e) => setCompletedOnDate(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500 [color-scheme:dark]"
+              />
+              {completedOnDate && (
+                <button
+                  type="button"
+                  onClick={() => setCompletedOnDate('')}
+                  aria-label="Clear completed-on date filter"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Team Filter */}
