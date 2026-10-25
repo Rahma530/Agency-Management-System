@@ -264,17 +264,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // Defaults to newest-first per the agency owner's request: the previous unsorted order (raw
   // fetch/array order) happened to read oldest-first, which read as "today's new tasks are buried".
   const [taskSortOrder, setTaskSortOrder] = useState<'newest' | 'oldest'>('newest');
-  // "Completed On" date filter — a free-text calendar-day picker, separate from the Quick Filter
-  // pills above. Empty string means no filter. Matches tasks.completed_at (set once, the first
-  // time a task's status becomes 'completed' — see its own column comment above) against the
-  // browser-local calendar day, same convention as getTodayStr()/isOverdue, not a UTC-day compare
-  // (completed_at is a timestamptz and would otherwise drift by the server's UTC offset).
-  const [completedOnDate, setCompletedOnDate] = useState<string>('');
-  // "Due On" date filter — shows every task due that calendar day regardless of status (To Do,
-  // In Progress, Completed, whatever), unlike Completed On above which only matches completed_at.
-  // due_date is a plain `date` column (not timestamptz — see schema), already "YYYY-MM-DD", so
-  // this is a direct string compare with no local-timezone conversion needed.
-  const [dueOnDate, setDueOnDate] = useState<string>('');
+  // "Date" filter — one free-text calendar-day picker, separate from the Quick Filter pills above.
+  // Empty string means no filter. Owner-requested merge of what used to be two separate exclusive
+  // fields (Completed On / Due On): "مش عايزة completed on ولا due date... عايزة اكتب التاريخ بس
+  // يظهرلي كل ال tasks في اليوم ده و انا اللي هختار الحالة" — type one date, see every task
+  // relevant to that day regardless of status, and pick the status separately via the Status
+  // dropdown. A task matches if it's due that day (due_date, a plain `date` column, already
+  // "YYYY-MM-DD" — direct string compare, no timezone conversion needed) OR was completed that day
+  // (completed_at, a timestamptz, compared against the browser-local calendar day — same
+  // convention as getTodayStr()/isOverdue, not a UTC-day compare, since completed_at would
+  // otherwise drift by the server's UTC offset).
+  const [dateFilter, setDateFilter] = useState<string>('');
   // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
   // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
   // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
@@ -1278,13 +1278,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (quickFilter === 'unassigned' && assigneeIds.length > 0) return false;
       if (quickFilter === 'my_tasks' && t.created_by !== currentUserId && !assigneeIds.includes(currentUserId)) return false;
 
-      // Completed On date filter — only tasks actually completed (completed_at set) on that exact
-      // local calendar day. A task never completed (completed_at null) never matches, regardless
-      // of its current status.
-      if (completedOnDate && (!t.completed_at || toLocalDateStr(t.completed_at) !== completedOnDate)) return false;
-
-      // Due On date filter — every task due that day, any status included.
-      if (dueOnDate && t.due_date !== dueOnDate) return false;
+      // Date filter — every task relevant to that calendar day, any status included: due that day
+      // OR completed that day (an OR of what used to be two separate AND filters).
+      if (dateFilter) {
+        const dueMatch = t.due_date === dateFilter;
+        const completedMatch = !!t.completed_at && toLocalDateStr(t.completed_at) === dateFilter;
+        if (!dueMatch && !completedMatch) return false;
+      }
 
       // Team filter. 'Creative' is a synthetic, assignee-ROLE-scoped value (only ever offered to
       // marketing_manager, see `teams` above) — the literal task.team column splits across
@@ -1336,8 +1336,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [
     userVisibleTasks,
     quickFilter,
-    completedOnDate,
-    dueOnDate,
+    dateFilter,
     selectedTeam,
     selectedClient,
     selectedPriority,
@@ -2167,46 +2166,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             </select>
           </div>
 
-          {/* Completed On date filter — shows only tasks actually completed on that exact day.
-              Empty = no filter (the default). */}
+          {/* Date filter — every task relevant to that day (due that day or completed that day),
+              any status. Empty = no filter (the default); filter by status separately below. */}
           <div>
-            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Completed On:</label>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Date:</label>
             <div className="relative">
               <input
                 type="date"
-                value={completedOnDate}
-                onChange={(e) => setCompletedOnDate(e.target.value)}
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
                 className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500 [color-scheme:dark]"
               />
-              {completedOnDate && (
+              {dateFilter && (
                 <button
                   type="button"
-                  onClick={() => setCompletedOnDate('')}
-                  aria-label="Clear completed-on date filter"
-                  className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Due On date filter — every task due that day, any status (To Do, In Progress,
-              Completed, …). Empty = no filter (the default). */}
-          <div>
-            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Due On:</label>
-            <div className="relative">
-              <input
-                type="date"
-                value={dueOnDate}
-                onChange={(e) => setDueOnDate(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500 [color-scheme:dark]"
-              />
-              {dueOnDate && (
-                <button
-                  type="button"
-                  onClick={() => setDueOnDate('')}
-                  aria-label="Clear due-on date filter"
+                  onClick={() => setDateFilter('')}
+                  aria-label="Clear date filter"
                   className="absolute left-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-white"
                 >
                   <X className="w-3.5 h-3.5" />
