@@ -258,6 +258,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('all');
   // Platform filter — matches ANY selected platform (an empty selection means "no filter").
   const [selectedPlatformIds, setSelectedPlatformIds] = useState<string[]>([]);
+  // Date sort — applied after all the filters above, never changes which tasks show, only their
+  // order. Sorts by created_at (falling back to due_date for any older row inserted before that
+  // column existed/was backfilled, so nothing silently sorts as if it were from the Unix epoch).
+  // Defaults to newest-first per the agency owner's request: the previous unsorted order (raw
+  // fetch/array order) happened to read oldest-first, which read as "today's new tasks are buried".
+  const [taskSortOrder, setTaskSortOrder] = useState<'newest' | 'oldest'>('newest');
   // Populated whenever selectedTeam is a real department (not 'all', not marketing_manager's
   // synthetic 'Creative' value) — mirrors newTeamAssignees/editTeamAssignees's effect below
   // exactly, fetched via the RPC rather than filtering the local `users` prop since that array is
@@ -1315,6 +1321,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     todayStr,
   ]);
 
+  // Date-sorted view of filteredTasks — a separate pass so the filter predicate above stays pure
+  // "which tasks" logic and this stays pure "what order". [...array] before sort() because Array
+  // .sort() mutates in place, and filteredTasks is a useMemo result other code may still read.
+  const sortedTasks = useMemo(() => {
+    const withDate = (t: TaskRecord) => {
+      const value = t.created_at || t.due_date;
+      const time = value ? new Date(value).getTime() : NaN;
+      return Number.isNaN(time) ? 0 : time;
+    };
+    return [...filteredTasks].sort((a, b) =>
+      taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b)
+    );
+  }, [filteredTasks, taskSortOrder]);
+
   // Handlers
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2100,7 +2120,21 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         </div>
 
         {/* Detailed Dropdowns Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-8 gap-3 pt-2">
+          {/* Date Sort — order only, never changes which tasks are included (that's quick
+              filter/the dropdowns below). Defaults to Newest First. */}
+          <div>
+            <label className="text-[11px] font-semibold block mb-1 text-stone-400">Sort by Date:</label>
+            <select
+              value={taskSortOrder}
+              onChange={(e) => setTaskSortOrder(e.target.value as 'newest' | 'oldest')}
+              className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
+            >
+              <option value="newest" className="bg-stone-900 text-white">Newest First</option>
+              <option value="oldest" className="bg-stone-900 text-white">Oldest First</option>
+            </select>
+          </div>
+
           {/* Team Filter */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Team:</label>
@@ -2229,7 +2263,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div className="flex items-start gap-4 overflow-x-auto px-1 pb-4 pt-1 overscroll-x-contain">
             {columns.map((column) => {
-              const columnTasks = filteredTasks.filter((t) => t.status === column.id);
+              const columnTasks = sortedTasks.filter((t) => t.status === column.id);
               return (
                 <KanbanColumn
                   key={column.id}
@@ -2304,9 +2338,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       <input
                         type="checkbox"
                         aria-label="Select all tasks"
-                        checked={filteredTasks.length > 0 && filteredTasks.every((t) => selectedTaskIds.has(t.id))}
+                        checked={sortedTasks.length > 0 && sortedTasks.every((t) => selectedTaskIds.has(t.id))}
                         onChange={(e) => {
-                          setSelectedTaskIds(e.target.checked ? new Set(filteredTasks.map((t) => t.id)) : new Set());
+                          setSelectedTaskIds(e.target.checked ? new Set(sortedTasks.map((t) => t.id)) : new Set());
                         }}
                       />
                     </th>
@@ -2327,14 +2361,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-800/60">
-                {filteredTasks.length === 0 ? (
+                {sortedTasks.length === 0 ? (
                   <tr>
                     <td colSpan={canUseBulkActions ? 14 : 13} className="p-8 text-center text-stone-400">
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
                 ) : (
-                  filteredTasks.map((task) => {
+                  sortedTasks.map((task) => {
                     const client = clients.find((c) => c.id === task.client_id);
                     const assigneeNames = (taskAssigneeIdsByTask.get(task.id) || [])
                       .map((id) => taskDirectoryUsers.find((user) => user.id === id)?.name || 'Unknown employee');
@@ -2535,7 +2569,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       {/* VIEW 3: TIMELINE / CALENDAR VIEW */}
       {viewMode === 'timeline' && (
         <TaskCalendarView
-          tasks={filteredTasks}
+          tasks={sortedTasks}
           clients={clients}
           users={taskDirectoryUsers}
           onSelectTask={setSelectedTaskDetails}
