@@ -1,6 +1,6 @@
 import type { ServiceType } from '../types/database';
 
-export const CLIENT_SERVICES: ServiceType[] = ['seo', 'social_media', 'media_buying', 'interface', 'creation', 'branding'];
+export const CLIENT_SERVICES: ServiceType[] = ['seo', 'social_media', 'media_buying', 'interface', 'creation', 'branding', 'graphic_design'];
 
 // What "شاملة" (Comprehensive) expands to — a strict 4-item subset of CLIENT_SERVICES. Creation
 // and Branding are deliberately excluded: they're orthogonal add-ons a client can have
@@ -25,6 +25,13 @@ export const CLIENT_SERVICE_OPTIONS: { value: ClientServiceOption; label: string
   { value: 'interface', label: 'واجهة', group: 'other' },
   { value: 'creation', label: 'Creation (Store/Website Setup) — إنشاء', group: 'other' },
   { value: 'branding', label: 'Branding — الهوية البصرية', group: 'other' },
+  // Standalone subscribable service (per explicit product decision, superseding the earlier
+  // design that rode a graphic_designer assignment on social_media): a client can need design
+  // work without being subscribed to Social Media at all. Unlike seo/social_media/media_buying,
+  // this is NOT a "core" service — it lives in other_services, same mechanism as interface/
+  // creation/branding, so no clients_services_check change was needed to add it (see
+  // client_has_service(), which already matches services OR other_services).
+  { value: 'graphic_design', label: 'Graphic Design — تصميم جرافيك', group: 'other' },
 ];
 
 /** Expand the bundle and map historical Creative subscriptions to Social Media. */
@@ -42,6 +49,8 @@ export function normalizeClientServices(values: readonly string[] | null | undef
       selected.add('creation');
     } else if (service === 'الهوية البصرية' || service === 'هوية') {
       selected.add('branding');
+    } else if (service === 'تصميم جرافيك' || service === 'graphic design' || service === 'graphic_design') {
+      selected.add('graphic_design');
     } else if (CLIENT_SERVICES.includes(service as ServiceType)) {
       selected.add(service as ServiceType);
     }
@@ -91,6 +100,8 @@ export function splitClientServices(values: readonly string[] | null | undefined
       otherCanonical.add('creation');
     } else if (trimmed === 'الهوية البصرية' || trimmed === 'هوية' || lower === 'branding') {
       otherCanonical.add('branding');
+    } else if (trimmed === 'تصميم جرافيك' || lower === 'graphic design' || lower === 'graphic_design') {
+      otherCanonical.add('graphic_design');
     } else {
       if (customSeen.has(lower)) continue;
       customSeen.add(lower);
@@ -165,6 +176,7 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
   interface: 'واجهة',
   creation: 'Creation (Store/Website Setup)',
   branding: 'Branding',
+  graphic_design: 'Graphic Design',
 };
 
 // Shared service badge colors (AMQueue's client-services chips, ClientDashboard's "Contracted
@@ -179,4 +191,5 @@ export const SERVICE_BADGE_COLORS: Partial<Record<ServiceType, { bg: string; tex
   seo: { bg: 'var(--success-bg)', text: 'var(--success)' },
   creation: { bg: 'var(--warning-bg)', text: 'var(--warning)' },
   branding: { bg: 'var(--info-bg)', text: 'var(--info)' },
+  graphic_design: { bg: 'var(--rose-bg)', text: 'var(--rose)' },
 };

@@ -112,8 +112,7 @@ import {
   AssignableServiceType,
   getEligibleServiceAssignees,
   SERVICE_ASSIGNMENT_CONFIG,
-  getEligibleGraphicDesigners,
-  canAssignGraphicDesigner,
+  canAssignGraphicDesignSpecialist,
 } from '../lib/serviceAssignment';
 import { isTaskDone } from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
@@ -190,11 +189,6 @@ interface ClientDashboardProps {
     agentId: string,
     reasonNotes?: string
   ) => Promise<void>;
-  // Separate from onAssignServiceAgent: the Graphic Designer rides the social_media subscription
-  // but is its own independent slot (a client can have a social_media_agent AND a graphic_designer
-  // at once) — see handleAssignGraphicDesigner in App.tsx and GRAPHIC_DESIGNER_ROLE in
-  // src/lib/serviceAssignment.ts.
-  onAssignGraphicDesigner?: (clientId: string, agentId: string, reasonNotes?: string) => Promise<void>;
   onUpdateTaskStatus?: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onCreateCampaign?: (campaignData: Partial<CampaignRecord>) => Promise<void> | void;
   onUpdateClientStatus?: (
@@ -333,7 +327,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onAssignAMAgent,
   onAssignAMTeamLead,
   onAssignServiceAgent,
-  onAssignGraphicDesigner,
   onUpdateTaskStatus,
   onCreateCampaign,
   onUpdateClientStatus,
@@ -392,8 +385,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   >({});
   const [assigningServiceType, setAssigningServiceType] = useState<AssignableServiceType | null>(null);
   const [assignmentError, setAssignmentError] = useState('');
-  const [selectedGraphicDesignerId, setSelectedGraphicDesignerId] = useState('');
-  const [isAssigningGraphicDesigner, setIsAssigningGraphicDesigner] = useState(false);
   const [showDesignerWorkloadModal, setShowDesignerWorkloadModal] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showChurnConfirm, setShowChurnConfirm] = useState(false);
@@ -582,14 +573,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     return asg ? users.find((u) => u.id === asg.agent_id) : null;
   }, [clientAssignments, users]);
 
-  // Graphic Designer rides the social_media subscription as its own independent slot — found by
-  // the ASSIGNEE'S ROLE, not just service_type (which `assignedSocialSpecialist` above already
-  // claims for the social_media_agent/social_media_team_lead row). See
-  // handleAssignGraphicDesigner in App.tsx and 20261217200000_graphic_designer_social_assignment.sql.
+  // Graphic Design is its own standalone service_type (per explicit product decision — a client
+  // can need design work without being subscribed to Social Media at all), so this is the exact
+  // same one-row-per-(client, service_type) lookup as every other service below — no more
+  // role-based disambiguation needed (that was only required by the earlier, superseded design
+  // where the designer rode the social_media row).
   const assignedGraphicDesigner = useMemo(() => {
-    const asg = clientAssignments.find(
-      (a) => a.service_type === 'social_media' && users.find((u) => u.id === a.agent_id)?.role === 'graphic_designer'
-    );
+    const asg = clientAssignments.find((a) => a.service_type === 'graphic_design');
     return asg ? users.find((u) => u.id === asg.agent_id) : null;
   }, [clientAssignments, users]);
 
@@ -603,12 +593,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const graphicDesignerClientCounts = useMemo(() => {
     const counts = new Map<string, number>();
     assignments.forEach((a) => {
-      if (a.service_type !== 'social_media') return;
-      if (users.find((u) => u.id === a.agent_id)?.role !== 'graphic_designer') return;
+      if (a.service_type !== 'graphic_design') return;
       counts.set(a.agent_id, (counts.get(a.agent_id) || 0) + 1);
     });
     return counts;
-  }, [assignments, users]);
+  }, [assignments]);
 
   // Full per-designer breakdown with client NAMES (not just a count) — kept out of the assignment
   // dropdown above on purpose (a long client list per option would break that menu's layout) and
@@ -617,10 +606,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // client. Needs allClients to resolve client_id -> name; without it (a render path that doesn't
   // pass allClients) each designer still shows with their count, just no names underneath.
   const graphicDesignerWorkload = useMemo(() => {
-    return getEligibleGraphicDesigners(users)
+    return getEligibleServiceAssignees(users, 'graphic_design')
       .map((designer) => {
         const designerAssignments = assignments.filter(
-          (a) => a.service_type === 'social_media' && a.agent_id === designer.id
+          (a) => a.service_type === 'graphic_design' && a.agent_id === designer.id
         );
         const clientNames = allClients
           ? designerAssignments
@@ -1145,24 +1134,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
   // am_team_lead/executive/head_of_technical may assign a designer to any client; am_agent only
   // for the client they are themselves the AM agent for (matches the RLS in
-  // 20261217200000_graphic_designer_social_assignment.sql exactly).
+  // 20261217300000_graphic_design_service.sql exactly). Wider than canManageServiceAssignments
+  // above — this is specifically Graphic Design's own assignment gate, not a general widening.
   const canManageGraphicDesignerAssignment =
-    canAssignGraphicDesigner(currentUser.role) &&
+    canAssignGraphicDesignSpecialist(currentUser.role) &&
     (currentUser.role !== 'am_agent' || client.am_agent_id === currentUser.id);
-
-  const handleAssignGraphicDesignerClick = async () => {
-    if (!onAssignGraphicDesigner || !selectedGraphicDesignerId) return;
-    setIsAssigningGraphicDesigner(true);
-    try {
-      setAssignmentError('');
-      await onAssignGraphicDesigner(client.id, selectedGraphicDesignerId);
-      setSelectedGraphicDesignerId('');
-    } catch (err: any) {
-      setAssignmentError(err?.message || 'Unable to update graphic designer assignment.');
-    } finally {
-      setIsAssigningGraphicDesigner(false);
-    }
-  };
 
   const renderServiceAssignmentCard = ({
     serviceType,
@@ -1173,6 +1149,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     accentTextClass,
     avatarClass,
     emptyInitial,
+    canManage = canManageServiceAssignments,
+    showClientCounts = false,
+    headerAction,
   }: {
     serviceType: AssignableServiceType;
     title: string;
@@ -1182,6 +1161,18 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     accentTextClass: string;
     avatarClass: string;
     emptyInitial: string;
+    // Per-service override: Graphic Design's assignment control is gated more widely than the
+    // other 4 services (see canManageGraphicDesignerAssignment above), so this card needs its own
+    // permission check instead of always using the shared canManageServiceAssignments.
+    canManage?: boolean;
+    // Graphic Design only: shows each candidate's current client count next to their name, so
+    // whoever is assigning can see workload at the point of deciding (see
+    // graphicDesignerClientCounts above). Not used by the other 4 services — they don't have this
+    // "who's free" decision problem since each client only ever needs one of them at a time within
+    // their own small department roster.
+    showClientCounts?: boolean;
+    // Graphic Design only: the "View all designers' workload" link in the card header.
+    headerAction?: React.ReactNode;
   }) => {
     if (!services.includes(serviceType)) return null;
 
@@ -1193,9 +1184,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
     return (
       <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-        <span className={`text-xs font-semibold uppercase tracking-wider block mb-3 ${accentTextClass}`}>
-          {title}
-        </span>
+        <div className="flex items-center justify-between mb-3">
+          <span className={`text-xs font-semibold uppercase tracking-wider ${accentTextClass}`}>{title}</span>
+          {headerAction}
+        </div>
         <div className="flex items-center gap-3">
           <div className={`w-9 h-9 rounded-lg border flex items-center justify-center font-bold text-sm ${avatarClass}`}>
             {assignedUser?.name?.charAt(0) || emptyInitial}
@@ -1209,7 +1201,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           </div>
         </div>
 
-        {canManageServiceAssignments && onAssignServiceAgent && (
+        {canManage && onAssignServiceAgent && (
           <div className="mt-3 pt-3 border-t border-stone-800 flex items-center gap-2">
             <select
               value={selectedAgentId}
@@ -1222,12 +1214,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               className="flex-1 min-w-0 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
             >
               <option value="" disabled>Select a specialist...</option>
-              {eligibleAssignees.map((assignee) => (
-                <option key={assignee.id} value={assignee.id}>
-                  {assignee.name} ({assignee.email})
-                  {assignee.role === assignmentConfig.teamLeadRole ? ' (Team Leader)' : ''}
-                </option>
-              ))}
+              {eligibleAssignees.map((assignee) => {
+                const count = showClientCounts ? graphicDesignerClientCounts.get(assignee.id) || 0 : null;
+                return (
+                  <option key={assignee.id} value={assignee.id}>
+                    {assignee.name} ({assignee.email})
+                    {assignee.role === assignmentConfig.teamLeadRole ? ' (Team Leader)' : ''}
+                    {count !== null ? ` — ${count} ${count === 1 ? 'client' : 'clients'}` : ''}
+                  </option>
+                );
+              })}
             </select>
             <button
               onClick={() => handleAssignServiceAgent(serviceType)}
@@ -2355,67 +2351,26 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   emptyInitial: 'C',
                 })}
 
-                {services.includes('social_media') && (
-                  <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-fuchsia-400">
-                        Graphic Designer
-                      </span>
-                      {canManageGraphicDesignerAssignment && (
-                        <button
-                          onClick={() => setShowDesignerWorkloadModal(true)}
-                          className="text-[10px] font-semibold text-fuchsia-300 hover:text-fuchsia-200 underline underline-offset-2"
-                        >
-                          View all designers' workload
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg border flex items-center justify-center font-bold text-sm bg-fuchsia-900/20 border-fuchsia-700/30 text-fuchsia-300">
-                        {assignedGraphicDesigner?.name?.charAt(0) || 'G'}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {assignedGraphicDesigner?.name || 'Assigned per Content Plan'}
-                        </p>
-                        <p className="text-xs text-stone-400">
-                          {assignedGraphicDesigner?.email || 'Social Media Department'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {canManageGraphicDesignerAssignment && onAssignGraphicDesigner && (
-                      <div className="mt-3 pt-3 border-t border-stone-800 flex items-center gap-2">
-                        <select
-                          value={selectedGraphicDesignerId}
-                          onChange={(event) => setSelectedGraphicDesignerId(event.target.value)}
-                          className="flex-1 min-w-0 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
-                        >
-                          <option value="" disabled>Select a designer...</option>
-                          {getEligibleGraphicDesigners(users).map((designer) => {
-                            const count = graphicDesignerClientCounts.get(designer.id) || 0;
-                            return (
-                              <option key={designer.id} value={designer.id}>
-                                {designer.name} ({designer.email}) — {count} {count === 1 ? 'client' : 'clients'}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <button
-                          onClick={handleAssignGraphicDesignerClick}
-                          disabled={
-                            isAssigningGraphicDesigner ||
-                            !selectedGraphicDesignerId ||
-                            selectedGraphicDesignerId === assignedGraphicDesigner?.id
-                          }
-                          className="text-xs px-2.5 py-2 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all disabled:opacity-50"
-                        >
-                          {isAssigningGraphicDesigner ? 'Assigning...' : 'Assign'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {renderServiceAssignmentCard({
+                  serviceType: 'graphic_design',
+                  title: 'Graphic Designer',
+                  assignedUser: assignedGraphicDesigner,
+                  emptyLabel: 'Assigned per Content Plan',
+                  departmentLabel: 'Design (shared resource)',
+                  accentTextClass: 'text-fuchsia-400',
+                  avatarClass: 'bg-fuchsia-900/20 border-fuchsia-700/30 text-fuchsia-300',
+                  emptyInitial: 'G',
+                  canManage: canManageGraphicDesignerAssignment,
+                  showClientCounts: true,
+                  headerAction: canManageGraphicDesignerAssignment ? (
+                    <button
+                      onClick={() => setShowDesignerWorkloadModal(true)}
+                      className="text-[10px] font-semibold text-fuchsia-300 hover:text-fuchsia-200 underline underline-offset-2"
+                    >
+                      View all designers' workload
+                    </button>
+                  ) : undefined,
+                })}
 
                 {renderServiceAssignmentCard({
                   serviceType: 'interface',
