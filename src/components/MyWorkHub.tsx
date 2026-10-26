@@ -82,6 +82,12 @@ interface MyWorkHubProps {
     note_text: string;
     category: string;
   }) => Promise<void>;
+  // Edit/delete own extra_notes row (extra_notes_update_own_rls/extra_notes_delete_own_rls,
+  // 20261215200000_extra_notes_edit_own.sql) — same author-only, 7-day window as
+  // onUpdateDailyLog/onDeleteDailyLog above. Optional: a parent that doesn't pass these simply
+  // never shows the edit/delete controls on a note.
+  onUpdateExtraNote?: (noteId: string, updates: { date: string; note_text: string; category: string }) => Promise<void>;
+  onDeleteExtraNote?: (noteId: string) => Promise<void>;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
   onMarkTaskViewed?: (taskId: string) => Promise<void> | void;
   // Task hard delete (delete_tasks() RPC) — same handler App.tsx already passes into
@@ -159,6 +165,8 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   onUpdateDailyLog,
   onDeleteDailyLog,
   onCreateExtraNote,
+  onUpdateExtraNote,
+  onDeleteExtraNote,
   onNavigateToModule,
   onMarkTaskViewed,
   onHardDeleteTasks,
@@ -217,6 +225,15 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   // hardcoding today's date.
   const [extraEffortDate, setExtraEffortDate] = useState(() => getTodayStr());
   const [isSubmittingExtraEffort, setIsSubmittingExtraEffort] = useState(false);
+
+  // Inline edit of an existing extra_notes row (extra_notes_update_own_rls — self-only, 7-day
+  // window). editingExtraNoteId null = not editing; set to a note's id to swap that row's static
+  // text for an editable date + textarea in place.
+  const [editingExtraNoteId, setEditingExtraNoteId] = useState<string | null>(null);
+  const [editExtraNoteDate, setEditExtraNoteDate] = useState('');
+  const [editExtraNoteText, setEditExtraNoteText] = useState('');
+  const [isSavingExtraNoteEdit, setIsSavingExtraNoteEdit] = useState(false);
+  const [deletingExtraNoteId, setDeletingExtraNoteId] = useState<string | null>(null);
 
   const [clientMetricsPeriod, setClientMetricsPeriod] = useState<'month' | 'quarter' | 'all_time'>('month');
   const [clientSearchQuery, setClientSearchQuery] = useState('');
@@ -505,6 +522,50 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       showNotification('Unable to save the extra effort note.', 'error');
     } finally {
       setIsSubmittingExtraEffort(false);
+    }
+  };
+
+  const startEditingExtraNote = (note: ExtraNoteRecord) => {
+    setEditingExtraNoteId(note.id);
+    setEditExtraNoteDate(note.date);
+    setEditExtraNoteText(note.note_text);
+  };
+
+  const cancelEditingExtraNote = () => {
+    setEditingExtraNoteId(null);
+    setEditExtraNoteDate('');
+    setEditExtraNoteText('');
+  };
+
+  const handleSaveExtraNoteEdit = async (noteId: string) => {
+    if (!onUpdateExtraNote || !editExtraNoteText.trim()) return;
+    setIsSavingExtraNoteEdit(true);
+    try {
+      await onUpdateExtraNote(noteId, {
+        date: editExtraNoteDate,
+        note_text: editExtraNoteText.trim(),
+        category: 'initiative',
+      });
+      cancelEditingExtraNote();
+      showNotification('Extra effort note updated.');
+    } catch (err: any) {
+      showNotification(err?.message || 'Unable to update this note.', 'error');
+    } finally {
+      setIsSavingExtraNoteEdit(false);
+    }
+  };
+
+  const handleDeleteExtraNoteClick = async (noteId: string) => {
+    if (!onDeleteExtraNote) return;
+    if (!window.confirm('Delete this extra effort note? This cannot be undone.')) return;
+    setDeletingExtraNoteId(noteId);
+    try {
+      await onDeleteExtraNote(noteId);
+      showNotification('Extra effort note deleted.');
+    } catch (err: any) {
+      showNotification(err?.message || 'Unable to delete this note.', 'error');
+    } finally {
+      setDeletingExtraNoteId(null);
     }
   };
 
@@ -978,12 +1039,73 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
         <p className="text-xs text-stone-500 py-2 text-center">Nothing documented yet.</p>
       ) : (
         <div className="space-y-1.5">
-          {myRecentExtraNotes.map((note) => (
-            <div key={note.id} className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-800/60 text-xs">
-              <span className="text-stone-500 font-mono text-[10px]">{note.date}</span>
-              <p className="text-stone-200 mt-0.5">{note.note_text}</p>
-            </div>
-          ))}
+          {myRecentExtraNotes.map((note) =>
+            editingExtraNoteId === note.id ? (
+              <div key={note.id} className="p-2.5 rounded-lg bg-stone-900/70 border border-amber-800/40 text-xs space-y-2">
+                <input
+                  type="date"
+                  value={editExtraNoteDate}
+                  onChange={(e) => setEditExtraNoteDate(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-black/30 border border-stone-800 text-white outline-none focus:border-amber-400"
+                />
+                <textarea
+                  value={editExtraNoteText}
+                  onChange={(e) => setEditExtraNoteText(e.target.value)}
+                  rows={2}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-black/30 border border-stone-800 text-white outline-none focus:border-amber-400"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={cancelEditingExtraNote}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium text-stone-400 hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveExtraNoteEdit(note.id)}
+                    disabled={isSavingExtraNoteEdit || !editExtraNoteText.trim()}
+                    className="px-3 py-1 rounded-lg text-[11px] font-bold text-white bg-amber-700 hover:bg-amber-600 disabled:opacity-50"
+                  >
+                    {isSavingExtraNoteEdit ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div key={note.id} className="p-2.5 rounded-lg bg-stone-900/50 border border-stone-800/60 text-xs group">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-stone-500 font-mono text-[10px]">{note.date}</span>
+                  {(onUpdateExtraNote || onDeleteExtraNote) && (
+                    <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100">
+                      {onUpdateExtraNote && (
+                        <button
+                          type="button"
+                          onClick={() => startEditingExtraNote(note)}
+                          className="p-1 rounded-md text-stone-500 hover:text-amber-300 transition-colors"
+                          title="Edit this note"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                      )}
+                      {onDeleteExtraNote && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteExtraNoteClick(note.id)}
+                          disabled={deletingExtraNoteId === note.id}
+                          className="p-1 rounded-md text-stone-500 hover:text-red-400 transition-colors disabled:opacity-50"
+                          title="Delete this note"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <p className="text-stone-200 mt-0.5">{note.note_text}</p>
+              </div>
+            )
+          )}
         </div>
       )}
     </div>

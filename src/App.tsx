@@ -4750,6 +4750,52 @@ export default function App() {
     }
   };
 
+  // Edit own extra_notes row — same author-only, 7-day window as daily_logs
+  // (extra_notes_update_own_rls, 20261215200000_extra_notes_edit_own.sql).
+  const handleUpdateExtraNote = async (
+    noteId: string,
+    updates: { date: string; note_text: string; category: string }
+  ) => {
+    if (supabaseActive) {
+      const { data, error } = await supabaseRaw.from('extra_notes').update(updates).eq('id', noteId).select();
+      if (error) {
+        console.error('Supabase extra_notes update error:', error);
+        throw error;
+      }
+      // RLS silently filters out a row the caller isn't allowed to touch — a stale or
+      // someone-else's/past-the-window note UPDATE affects zero rows with no error at all. Only
+      // ever reflect what the database actually changed, never an optimistic local guess.
+      if (!data || data.length === 0) {
+        throw new Error(
+          'This note could not be updated. The 7-day edit window may have passed, or you are not its author.'
+        );
+      }
+      const updated = data[0] as ExtraNoteRecord;
+      setExtraNotes((prev) => prev.map((n) => (n.id === noteId ? updated : n)));
+    } else {
+      setExtraNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, ...updates } : n)));
+    }
+  };
+
+  // Delete own extra_notes row — same author-only, 7-day window as the update above.
+  const handleDeleteExtraNote = async (noteId: string) => {
+    if (supabaseActive) {
+      const { data, error } = await supabaseRaw.from('extra_notes').delete().eq('id', noteId).select();
+      if (error) {
+        console.error('Supabase extra_notes delete error:', error);
+        throw error;
+      }
+      // Same RLS-silently-filtered-zero-rows case as the update above — a DELETE outside the
+      // window or by a non-author matches nothing, succeeds with no error, and returns no rows.
+      if (!data || data.length === 0) {
+        throw new Error(
+          'This note could not be deleted. The 7-day window may have passed, or you are not its author.'
+        );
+      }
+    }
+    setExtraNotes((prev) => prev.filter((n) => n.id !== noteId));
+  };
+
   // 8b. Generate a period-over-period comparison (Reporting Engine) — either a single client, or
   // an agent's pooled client set (that agent's own "all my clients" report, or a team lead
   // generating one for a specific direct report).
@@ -6456,6 +6502,8 @@ export default function App() {
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
+                  onUpdateExtraNote={handleUpdateExtraNote}
+                  onDeleteExtraNote={handleDeleteExtraNote}
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
                   onHardDeleteTasks={handleHardDeleteTasks}
@@ -6695,6 +6743,8 @@ export default function App() {
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
                   onCreateExtraNote={handleCreateExtraNote}
+                  onUpdateExtraNote={handleUpdateExtraNote}
+                  onDeleteExtraNote={handleDeleteExtraNote}
                   onGetServerToday={getServerToday}
                   onHardDeleteTasks={handleHardDeleteTasks}
                 />
