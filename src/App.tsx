@@ -3982,6 +3982,71 @@ export default function App() {
     showNotification(`Service brief assigned to specialist: ${agent?.name || agentId}`);
   };
 
+  // Graphic Designer assignment: tied to service_type='social_media' (per explicit product
+  // decision — designers prepare the content plan's visuals, same subscription as the Social
+  // Media specialist), but deliberately NOT the same `existing` lookup as
+  // handleAssignServiceAgent above (`assignments.find(a => a.client_id && a.service_type)`) —
+  // that would find and silently overwrite the client's actual social_media_agent row. Instead
+  // this looks for the row that is CURRENTLY held by a graphic_designer specifically, so the two
+  // slots (social_media_agent vs. graphic_designer) never collide. One designer at a time,
+  // reassignable, same as any other service — see 20261217200000_graphic_designer_social_assignment.sql.
+  const handleAssignGraphicDesigner = async (clientId: string, agentId: string, reasonNotes?: string) => {
+    const existing = assignments.find(
+      (a) =>
+        a.client_id === clientId &&
+        a.service_type === 'social_media' &&
+        users.find((u) => u.id === a.agent_id)?.role === 'graphic_designer'
+    );
+    const assignedUser = users.find((u) => u.id === agentId);
+    const teamLeadId = assignedUser?.manager_id || currentUser.id;
+
+    if (existing) {
+      const viewedAt = existing.agent_id !== agentId ? null : existing.viewed_at;
+      if (supabaseActive) {
+        const { error } = await supabase
+          .from('assignments')
+          .update({ agent_id: agentId, reason_notes: reasonNotes || existing.reason_notes, viewed_at: viewedAt })
+          .eq('id', existing.id);
+        if (error) {
+          console.error('Supabase graphic designer assignment update error:', error);
+          showNotification('Unable to assign this graphic designer.', 'info');
+          return;
+        }
+      }
+      setAssignments((prev) =>
+        prev.map((a) =>
+          a.id === existing.id
+            ? { ...a, agent_id: agentId, reason_notes: reasonNotes || a.reason_notes, viewed_at: viewedAt }
+            : a
+        )
+      );
+    } else {
+      const newAssignment: AssignmentRecord = {
+        id: `asg-${Date.now().toString().slice(-4)}`,
+        client_id: clientId,
+        service_type: 'social_media',
+        team_lead_id: teamLeadId,
+        agent_id: agentId,
+        assigned_at: new Date().toISOString(),
+        reason_notes: reasonNotes || null,
+      };
+
+      if (supabaseActive) {
+        const { data, error } = await supabase.from('assignments').insert([newAssignment]).select();
+        if (error) {
+          console.error('Supabase graphic designer assignment insert error:', error);
+          showNotification('Unable to assign this graphic designer.', 'info');
+          return;
+        }
+        setAssignments((prev) => [(data?.[0] as AssignmentRecord) || newAssignment, ...prev]);
+      } else {
+        setAssignments((prev) => [newAssignment, ...prev]);
+      }
+    }
+
+    showNotification(`Graphic designer assigned: ${assignedUser?.name || agentId}`);
+  };
+
   // 3. Save the dynamic brief form (SEO, Social Media, Media Buying)
   const handleSaveBrief = async (briefData: {
     client_id: string;
@@ -7102,6 +7167,7 @@ export default function App() {
                     onAssignAMAgent={handleAssignAMAgent}
                     onAssignAMTeamLead={handleAssignAMTeamLead}
                     onAssignServiceAgent={handleAssignServiceAgent}
+                    onAssignGraphicDesigner={handleAssignGraphicDesigner}
                     onSaveBrief={handleSaveBrief}
                     onSubmitBrief={handleSubmitBrief}
                     briefFieldSchemas={briefFieldSchemas}
@@ -7174,6 +7240,7 @@ export default function App() {
                   seoInsights={seoInsights}
                   clientPortalUsers={clientPortalUsers}
                   onAssignServiceAgent={handleAssignServiceAgent}
+                  onAssignGraphicDesigner={handleAssignGraphicDesigner}
                   onSaveBrief={handleSaveBrief}
                   onSubmitBrief={handleSubmitBrief}
                   briefFieldSchemas={briefFieldSchemas}
@@ -7321,6 +7388,7 @@ export default function App() {
                   onCreateCampaign={handleCreateCampaign}
                   onUpdateCampaign={handleUpdateCampaign}
                   onAssignServiceAgent={handleAssignServiceAgent}
+                  onAssignGraphicDesigner={handleAssignGraphicDesigner}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
