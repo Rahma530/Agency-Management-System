@@ -48,7 +48,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-head-of-technical-tint)',
     badgeText: 'var(--role-head-of-technical-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -353,13 +353,16 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     description: 'AI-assisted automation, internal tooling, and technical support across cross-team task delivery.',
   },
   // NOT a team lead of graphic_designer/video_editor — that shared pool keeps its existing
-  // "no dedicated manager, visible to everyone but sales" model untouched. This role is a narrow,
+  // "no dedicated manager, visible to everyone but sales" model untouched. This role is a
   // cross-cutting exception: visibility into and task-assignment rights over ONLY those two
-  // roles' tasks, plus read-only capacity visibility for the same two — no employee-management
-  // rights (no 'employees' module, never added to any edit/deactivate-capable list). Lands
-  // directly on the Task Board (pre-filtered to Creative) rather than a dashboard, since they
-  // have no clients/employees of their own to manage — a TeamLeadDashboard-style landing would be
-  // mostly empty for them.
+  // roles' tasks, plus capacity visibility for the same two — no employee-management rights (no
+  // 'employees' module, never added to any edit/deactivate-capable list, and no mentorship/
+  // brief_templates either). allowedModules was widened at the owner's explicit request (initially
+  // just tasks/capacity) to everything else an operating role would use day to day — dashboard,
+  // my_work, onboarding, service_briefs, daily_operations, campaigns, reports. defaultModule stays
+  // 'tasks' (unchanged) rather than switching to 'dashboard' now that it's reachable — not asked
+  // for, and the Task Board (pre-filtered to Creative) is still the more useful landing page for a
+  // role with no clients/employees of their own.
   marketing_manager: {
     role: 'marketing_manager',
     englishTitle: 'Marketing Manager',
@@ -370,11 +373,17 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-marketing-manager-tint)',
     badgeText: 'var(--role-marketing-manager-ink)',
     defaultModule: 'tasks',
-    allowedModules: ['tasks', 'capacity'],
+    // Widened at the owner's explicit request — everything EXCEPT mentorship/employees/
+    // brief_templates (those three stay out: no employee-management reach, no mentorship
+    // oversight, no brief-field-schema editing). canCreateCampaign/canManageCapacity/canAssignAM
+    // are left as they were (false) — those are narrow, action-level gates (creating a new
+    // campaign row, editing someone's capacity, assigning an AM) distinct from module visibility,
+    // and weren't part of what was asked to open up; say if those should flip too.
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports'],
     canCreateCampaign: false,
     canManageCapacity: false,
     canAssignAM: false,
-    description: 'Cross-cutting oversight of the shared Creative pool (Graphic Design & Video Production) — task assignment and read-only capacity visibility only.',
+    description: 'Cross-cutting oversight of the shared Creative pool (Graphic Design & Video Production) — task assignment, capacity visibility, and day-to-day operating modules (no employee management, mentorship, or brief templates).',
   },
 };
 
