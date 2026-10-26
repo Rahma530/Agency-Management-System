@@ -229,6 +229,109 @@ function readImpersonationHandoff(): ImpersonationHandoff | null {
   } catch { return null; }
 }
 
+// Shared real-time sync hook — factored out once the Task Board pilot (tasks_global) proved the
+// invalidate-then-coalesced-refetch approach out. Every table wired up after the pilot reuses
+// this instead of a hand-copied ~90-line useEffect, so adding real-time coverage for one more
+// table/screen is now a single call instead of duplicated channel/poll boilerplate.
+//
+// Deliberately does NOT try to read the postgres_changes payload and merge it into state itself.
+// Several of these tables (tasks, clients, briefs…) sit behind layered, non-trivial RLS (role +
+// assignee + team-lead + am-agent + marketing_manager doors, in tasks' case), which is unsafe to
+// reconstruct client-side from a bare payload. Instead every change on the table just triggers a
+// re-run of `refresh` — the same already-RLS-scoped select() loadData() uses — so Postgres RLS
+// itself decides what comes back, never a wider set than loadData() would already fetch.
+//
+// Falls back to a 9s poll whenever the realtime channel isn't SUBSCRIBED (no session yet, the
+// channel times out, errors, or closes), so nothing breaks for a table whose
+// `alter publication supabase_realtime add table ...` hasn't been run yet in Supabase — it just
+// isn't instant until then.
+function useSupabaseRealtimeSync(
+  channelName: string,
+  table: string,
+  refresh: () => Promise<void>,
+  enabled: boolean
+): void {
+  useEffect(() => {
+    if (!enabled) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+    let refreshInFlight = false;
+    let refreshQueued = false;
+
+    const runCoalescedRefresh = async (): Promise<void> => {
+      if (cancelled) return;
+      if (refreshInFlight) {
+        refreshQueued = true;
+        return;
+      }
+      refreshInFlight = true;
+      try {
+        await refresh();
+      } finally {
+        refreshInFlight = false;
+        if (!cancelled && refreshQueued) {
+          refreshQueued = false;
+          void runCoalescedRefresh();
+        }
+      }
+    };
+
+    const startPollFallback = () => {
+      if (intervalId) return;
+      intervalId = setInterval(() => {
+        void runCoalescedRefresh();
+      }, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        startPollFallback();
+        return;
+      }
+
+      const invalidate = () => {
+        void runCoalescedRefresh();
+      };
+
+      channel = supabaseRaw
+        .channel(channelName)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table }, invalidate)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table }, invalidate)
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table }, invalidate)
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+            void runCoalescedRefresh();
+          } else {
+            console.warn(`Realtime channel "${channelName}" not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
+    })();
+
+    return () => {
+      cancelled = true;
+      stopPollFallback();
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelName, table, refresh, enabled]);
+}
+
 export default function App() {
   const [supabaseActive, setSupabaseActive] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -1491,6 +1594,119 @@ export default function App() {
     setTasks((data as TaskRecord[]) || []);
   }, []);
 
+  // Real-time batch 2 — same invalidate-then-refetch shape as refreshTasks/refreshAssignments
+  // above, one per table that loadData() already fetches. See useSupabaseRealtimeSync for why
+  // these re-run the real select() instead of merging the postgres_changes payload directly.
+  const refreshClients = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabaseRaw.from('clients').select(NON_SENSITIVE_CLIENT_COLUMNS);
+    if (error) {
+      console.error('Failed to refresh clients from Supabase:', error);
+      return;
+    }
+
+    setClients(((data as ClientRecord[]) || []).map((client) => ({
+      ...client, services: getClientServices(client),
+    })));
+  }, []);
+
+  const refreshBriefs = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('briefs').select('*');
+    if (error) {
+      console.error('Failed to refresh briefs from Supabase:', error);
+      return;
+    }
+
+    setBriefs((data as BriefRecord[]) || []);
+  }, []);
+
+  const refreshCampaigns = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabaseRaw.from('campaigns').select('*');
+    if (error) {
+      console.error('Failed to refresh campaigns from Supabase:', error);
+      return;
+    }
+
+    setCampaigns((data as CampaignRecord[]) || []);
+  }, []);
+
+  const refreshCapacityLogs = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('capacity_logs').select('*');
+    if (error) {
+      console.error('Failed to refresh capacity logs from Supabase:', error);
+      return;
+    }
+
+    setCapacityLogs((data as CapacityLogRecord[]) || []);
+  }, []);
+
+  const refreshDailyLogs = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('daily_logs').select('*');
+    if (error) {
+      console.error('Failed to refresh daily logs from Supabase:', error);
+      return;
+    }
+
+    setDailyLogs((data as DailyLogRecord[]) || []);
+  }, []);
+
+  const refreshExtraNotes = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('extra_notes').select('*');
+    if (error) {
+      console.error('Failed to refresh extra notes from Supabase:', error);
+      return;
+    }
+
+    setExtraNotes((data as ExtraNoteRecord[]) || []);
+  }, []);
+
+  const refreshReports = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('reports').select('*');
+    if (error) {
+      console.error('Failed to refresh reports from Supabase:', error);
+      return;
+    }
+
+    setReports((data as ReportRecord[]) || []);
+  }, []);
+
+  const refreshMeetings = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('meetings').select('*');
+    if (error) {
+      console.error('Failed to refresh meetings from Supabase:', error);
+      return;
+    }
+
+    setMeetings((data as MeetingRecord[]) || []);
+  }, []);
+
+  const refreshClientContracts = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('client_contracts').select('*');
+    if (error) {
+      console.error('Failed to refresh client contracts from Supabase:', error);
+      return;
+    }
+
+    setClientContracts((data as ClientContractRecord[]) || []);
+  }, []);
+
   const refreshClientLifecyclePeriods = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) {
       setClientLifecyclePeriods([]);
@@ -2554,99 +2770,46 @@ export default function App() {
     };
   }, [authenticatedUser?.id, supabaseActive, refreshAssignments]);
 
-  // Real-time Task Board (pilot) — keep `tasks` synced across open sessions without a manual
-  // refresh. Chosen as the first table for this because it's the most heavily multi-user screen
-  // (several people editing/assigning/completing the same board at once). Same
-  // invalidate-then-coalesced-refetch shape as assignments_global above, for the same reason:
-  // tasks_visible_v2's RLS (role + assignee + team-lead + am-agent + marketing_manager doors) is
-  // too layered to safely reconstruct client-side from a bare postgres_changes payload, so this
-  // re-runs refreshTasks's plain select('*') instead and lets RLS itself decide what comes back —
-  // never a wider set than this session's own loadData() already fetched.
-  //
-  // Requires the owner to run `alter publication supabase_realtime add table public.tasks;`
-  // (20261216000000_tasks_realtime.sql) once in Supabase — this effect degrades to the same
-  // 9s poll fallback as every other realtime effect here until that's done, so nothing breaks in
-  // the meantime, it just doesn't go instant.
-  useEffect(() => {
-    const userId = authenticatedUser?.id;
-    if (!userId || !supabaseActive) return;
+  // Real-time coverage, table by table — the Task Board pilot (tasks) proved the
+  // invalidate-then-coalesced-refetch approach out; this is that same approach rolled out to the
+  // rest of the day-to-day screens via the shared useSupabaseRealtimeSync hook above. Each one
+  // degrades to its own 9s poll fallback until its matching
+  // `alter publication supabase_realtime add table ...` migration has been run in Supabase, so
+  // nothing breaks for a table that isn't enabled yet — it just isn't instant until then.
+  const realtimeEnabled = !!authenticatedUser?.id && supabaseActive;
 
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
-    let cancelled = false;
-    let refreshInFlight = false;
-    let refreshQueued = false;
+  // Task Board — most heavily multi-user screen (several people editing/assigning/completing the
+  // same board at once). 20261216000000_tasks_realtime.sql
+  useSupabaseRealtimeSync('tasks_global', 'tasks', refreshTasks, realtimeEnabled);
 
-    const runCoalescedRefresh = async (): Promise<void> => {
-      if (cancelled) return;
-      if (refreshInFlight) {
-        refreshQueued = true;
-        return;
-      }
+  // Client Dashboard / AM Queue / Service Briefs Routing / Campaign Management — every screen that
+  // reads the `clients` list. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('clients_global', 'clients', refreshClients, realtimeEnabled);
 
-      refreshInFlight = true;
-      try {
-        await refreshTasks();
-      } finally {
-        refreshInFlight = false;
-        if (!cancelled && refreshQueued) {
-          refreshQueued = false;
-          void runCoalescedRefresh();
-        }
-      }
-    };
+  // Service Briefs — brief status/content changes as AMs and specialists hand briefs back and
+  // forth. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('briefs_global', 'briefs', refreshBriefs, realtimeEnabled);
 
-    const startPollFallback = () => {
-      if (intervalId) return;
-      intervalId = setInterval(() => {
-        void runCoalescedRefresh();
-      }, 9000);
-    };
-    const stopPollFallback = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
+  // Campaign Management. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('campaigns_global', 'campaigns', refreshCampaigns, realtimeEnabled);
 
-    (async () => {
-      const {
-        data: { session },
-      } = await supabaseRaw.auth.getSession();
-      if (cancelled) return;
+  // Capacity planning view. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('capacity_logs_global', 'capacity_logs', refreshCapacityLogs, realtimeEnabled);
 
-      if (!session) {
-        startPollFallback();
-        return;
-      }
+  // Daily Operations — "Log Today's Activity". 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('daily_logs_global', 'daily_logs', refreshDailyLogs, realtimeEnabled);
 
-      const invalidateTasks = () => {
-        void runCoalescedRefresh();
-      };
+  // My Work Hub — "Log Extra Effort" notes. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('extra_notes_global', 'extra_notes', refreshExtraNotes, realtimeEnabled);
 
-      channel = supabaseRaw
-        .channel('tasks_global')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tasks' }, invalidateTasks)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tasks' }, invalidateTasks)
-        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tasks' }, invalidateTasks)
-        .subscribe((status, err) => {
-          if (cancelled) return;
-          if (status === 'SUBSCRIBED') {
-            stopPollFallback();
-            void runCoalescedRefresh();
-          } else {
-            console.warn(`Tasks realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
-            startPollFallback();
-          }
-        });
-    })();
+  // Reporting Engine. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('reports_global', 'reports', refreshReports, realtimeEnabled);
 
-    return () => {
-      cancelled = true;
-      stopPollFallback();
-      if (channel) supabaseRaw.removeChannel(channel);
-    };
-  }, [authenticatedUser?.id, supabaseActive, refreshTasks]);
+  // AM meeting notes/transcripts. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('meetings_global', 'meetings', refreshMeetings, realtimeEnabled);
+
+  // Sales's signed-contract uploads. 20261217000000_screens_realtime_batch2.sql
+  useSupabaseRealtimeSync('client_contracts_global', 'client_contracts', refreshClientContracts, realtimeEnabled);
 
   // Real-time online users (Presence) & heartbeat
   useEffect(() => {
