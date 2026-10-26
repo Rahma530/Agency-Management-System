@@ -87,6 +87,7 @@ interface CampaignManagementModuleProps {
     agentId: string,
     reasonNotes?: string
   ) => Promise<void>;
+  onAssignGraphicDesigner?: (clientId: string, agentId: string, reasonNotes?: string) => Promise<void>;
   onGenerateComparison?: (
     scope: ReportScope,
     mode: ReportMode,
@@ -278,6 +279,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   onCreateCampaign,
   onUpdateCampaign,
   onAssignServiceAgent,
+  onAssignGraphicDesigner,
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
@@ -1922,6 +1924,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           onSetPlatformConnectionStatus={onSetPlatformConnectionStatus}
           onUpdatePaymentTracking={onUpdatePaymentTracking}
           onAssignServiceAgent={onAssignServiceAgent}
+          onAssignGraphicDesigner={onAssignGraphicDesigner}
           onUpdateClientDates={onUpdateClientDates}
           onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}

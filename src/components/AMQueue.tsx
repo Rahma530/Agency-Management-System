@@ -95,6 +95,7 @@ interface AMQueueProps {
     agentId: string,
     reasonNotes?: string
   ) => Promise<void>;
+  onAssignGraphicDesigner?: (clientId: string, agentId: string, reasonNotes?: string) => Promise<void>;
   onSaveBrief: (briefData: {
     client_id: string;
     service_type: ServiceType;
@@ -207,6 +208,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onAssignAMAgent,
   onAssignAMTeamLead,
   onAssignServiceAgent,
+  onAssignGraphicDesigner,
   onSaveBrief,
   onSubmitBrief,
   briefFieldSchemas,
@@ -856,6 +858,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onAssignAMAgent={onAssignAMAgent}
           onAssignAMTeamLead={onAssignAMTeamLead}
           onAssignServiceAgent={onAssignServiceAgent}
+          onAssignGraphicDesigner={onAssignGraphicDesigner}
           onUpdateTaskStatus={onUpdateTaskStatus}
           onUpdateClientStatus={onUpdateClientStatus}
           onConfirmClientRenewal={onConfirmClientRenewal}

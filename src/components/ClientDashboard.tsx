@@ -592,6 +592,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     return asg ? users.find((u) => u.id === asg.agent_id) : null;
   }, [clientAssignments, users]);
 
+  // How many clients each designer currently holds — shown right in the picker below so whoever
+  // is assigning (am_team_lead/executive/head_of_technical/am_agent) can see each designer's load
+  // at the point of deciding who to hand a new client to, without opening every client one by one.
+  // Counts across the full `assignments` array this viewer can see (not just this client) — for
+  // am_agent that's scoped to their own clients under RLS, so their count is a signal within their
+  // own portfolio, not a true agency-wide total. Does not exclude closed clients (ClientDashboard
+  // has no full client list to check status against), so it is a close approximation, not exact.
+  const graphicDesignerClientCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    assignments.forEach((a) => {
+      if (a.service_type !== 'social_media') return;
+      if (users.find((u) => u.id === a.agent_id)?.role !== 'graphic_designer') return;
+      counts.set(a.agent_id, (counts.get(a.agent_id) || 0) + 1);
+    });
+    return counts;
+  }, [assignments, users]);
+
   const assignedUiUxDesigner = useMemo(() => {
     const asg = clientAssignments.find((a) => a.service_type === 'interface');
     return asg ? users.find((u) => u.id === asg.agent_id) : null;
@@ -2342,11 +2359,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           className="flex-1 min-w-0 px-3 py-2 rounded-xl text-xs bg-[#100c1c] border border-purple-900/50 text-white focus:outline-none focus:border-purple-400"
                         >
                           <option value="" disabled>Select a designer...</option>
-                          {getEligibleGraphicDesigners(users).map((designer) => (
-                            <option key={designer.id} value={designer.id}>
-                              {designer.name} ({designer.email})
-                            </option>
-                          ))}
+                          {getEligibleGraphicDesigners(users).map((designer) => {
+                            const count = graphicDesignerClientCounts.get(designer.id) || 0;
+                            return (
+                              <option key={designer.id} value={designer.id}>
+                                {designer.name} ({designer.email}) — {count} {count === 1 ? 'client' : 'clients'}
+                              </option>
+                            );
+                          })}
                         </select>
                         <button
                           onClick={handleAssignGraphicDesignerClick}

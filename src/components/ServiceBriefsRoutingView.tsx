@@ -93,6 +93,7 @@ interface ServiceBriefsRoutingViewProps {
     agentId: string,
     reasonNotes?: string
   ) => Promise<void>;
+  onAssignGraphicDesigner?: (clientId: string, agentId: string, reasonNotes?: string) => Promise<void>;
   onMarkBriefViewed?: (briefId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
@@ -229,6 +230,7 @@ const AMServiceBriefsPanel: React.FC<{
   onUpdateClientDetails: (clientId: string, patch: Record<string, unknown>) => Promise<void>;
   onUpdateClientAccess?: (clientId: string, updates: Partial<ClientAccessFields>) => Promise<void>;
   onFetchClientAccess?: (clientId: string) => Promise<ClientAccessFields | null>;
+  onAssignGraphicDesigner?: (clientId: string, agentId: string, reasonNotes?: string) => Promise<void>;
 }> = ({
   currentUser,
   clients,
@@ -270,6 +272,7 @@ const AMServiceBriefsPanel: React.FC<{
   onUpdateClientDetails,
   onUpdateClientAccess,
   onFetchClientAccess,
+  onAssignGraphicDesigner,
 }) => {
   const isTeamLead = currentUser.role === 'am_team_lead';
 
@@ -410,6 +413,7 @@ const AMServiceBriefsPanel: React.FC<{
           onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
+          onAssignGraphicDesigner={onAssignGraphicDesigner}
         />
       )}
     </div>
@@ -436,6 +440,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   seoInsights = [],
   clientPortalUsers = [],
   onAssignServiceAgent,
+  onAssignGraphicDesigner,
   onMarkBriefViewed,
   onMarkAssignmentViewed,
   onNavigateToModule,
@@ -513,6 +518,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         onUpdateClientDetails={onUpdateClientDetails}
         onUpdateClientAccess={onUpdateClientAccess}
         onFetchClientAccess={onFetchClientAccess}
+        onAssignGraphicDesigner={onAssignGraphicDesigner}
       />
     );
   }
@@ -1246,6 +1252,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onUpdateClientDetails={onUpdateClientDetails}
           onUpdateClientAccess={onUpdateClientAccess}
           onFetchClientAccess={onFetchClientAccess}
+          onAssignGraphicDesigner={onAssignGraphicDesigner}
           onLogSocialMetrics={onLogSocialMetrics}
           onLogSeoMetrics={onLogSeoMetrics}
         />
