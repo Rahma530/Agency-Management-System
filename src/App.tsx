@@ -1707,6 +1707,173 @@ export default function App() {
     setClientContracts((data as ClientContractRecord[]) || []);
   }, []);
 
+  // Real-time batch 3 — the remaining tables loadData() fetches that batch 2 left out (admin/
+  // lookup tables, Reporting Engine's insight feeds, and task sub-records). Same shape as
+  // batches 1/2.
+  const refreshTaskTypes = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('task_types').select('*');
+    if (error) {
+      console.error('Failed to refresh task types from Supabase:', error);
+      return;
+    }
+
+    setTaskTypes((data as TaskTypeRecord[]) || []);
+  }, []);
+
+  const refreshPlatforms = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabaseRaw.from('platforms').select('*');
+    if (error) {
+      console.error('Failed to refresh platforms from Supabase:', error);
+      return;
+    }
+
+    setPlatforms((data as PlatformRecord[]) || []);
+  }, []);
+
+  const refreshTaskComments = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('task_comments').select('*');
+    if (error) {
+      console.error('Failed to refresh task comments from Supabase:', error);
+      return;
+    }
+
+    setTaskComments((data as TaskCommentRecord[]) || []);
+  }, []);
+
+  const refreshTaskAttachments = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('task_attachments').select('*');
+    if (error) {
+      console.error('Failed to refresh task attachments from Supabase:', error);
+      return;
+    }
+
+    setTaskAttachments((data as TaskAttachmentRecord[]) || []);
+  }, []);
+
+  const refreshTaskAssignees = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    try {
+      setTaskAssignees(await fetchTaskAssignees());
+    } catch (err) {
+      console.error('Failed to refresh task assignees from Supabase:', err);
+    }
+  }, []);
+
+  const refreshTaskPlatformLinks = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    try {
+      setTaskPlatformLinks(await fetchTaskPlatformLinks());
+    } catch (err) {
+      console.error('Failed to refresh task platform links from Supabase:', err);
+    }
+  }, []);
+
+  const refreshSocialInsights = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('social_insights').select('*');
+    if (error) {
+      console.error('Failed to refresh social insights from Supabase:', error);
+      return;
+    }
+
+    setSocialInsights((data as SocialInsightRecord[]) || []);
+  }, []);
+
+  const refreshSeoInsights = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('seo_insights').select('*');
+    if (error) {
+      console.error('Failed to refresh SEO insights from Supabase:', error);
+      return;
+    }
+
+    setSeoInsights((data as SeoInsightRecord[]) || []);
+  }, []);
+
+  const refreshClientComparisons = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('client_comparisons').select('*');
+    if (error) {
+      console.error('Failed to refresh client comparisons from Supabase:', error);
+      return;
+    }
+
+    setClientComparisons((data as ClientComparisonRecord[]) || []);
+  }, []);
+
+  const refreshClientPortalUsers = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('client_portal_users').select('*');
+    if (error) {
+      console.error('Failed to refresh client portal users from Supabase:', error);
+      return;
+    }
+
+    setClientPortalUsers((data as ClientPortalUserRecord[]) || []);
+  }, []);
+
+  const refreshBriefRevisions = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('brief_revisions').select('*');
+    if (error) {
+      console.error('Failed to refresh brief revisions from Supabase:', error);
+      return;
+    }
+
+    setBriefRevisions((data as BriefRevisionRecord[]) || []);
+  }, []);
+
+  const refreshBriefFieldSchemas = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('brief_field_schemas').select('*');
+    if (error) {
+      console.error('Failed to refresh brief field schemas from Supabase:', error);
+      return;
+    }
+
+    setBriefFieldSchemaRows((data as BriefFieldSchemaRow[]) || []);
+  }, []);
+
+  const refreshBriefAttachments = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('brief_attachments').select('*');
+    if (error) {
+      console.error('Failed to refresh brief attachments from Supabase:', error);
+      return;
+    }
+
+    setBriefAttachments((data as BriefAttachmentRecord[]) || []);
+  }, []);
+
+  const refreshPlatformConnections = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('platform_connections').select('*');
+    if (error) {
+      console.error('Failed to refresh platform connections from Supabase:', error);
+      return;
+    }
+
+    setPlatformConnections((data as PlatformConnectionRecord[]) || []);
+  }, []);
+
   const refreshClientLifecyclePeriods = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) {
       setClientLifecyclePeriods([]);
@@ -2810,6 +2977,35 @@ export default function App() {
 
   // Sales's signed-contract uploads. 20261217000000_screens_realtime_batch2.sql
   useSupabaseRealtimeSync('client_contracts_global', 'client_contracts', refreshClientContracts, realtimeEnabled);
+
+  // Batch 3 — remaining lookup/admin tables and the Reporting Engine's insight feeds/task
+  // sub-records. 20261218000000_screens_realtime_batch3.sql
+  useSupabaseRealtimeSync('task_types_global', 'task_types', refreshTaskTypes, realtimeEnabled);
+  useSupabaseRealtimeSync('platforms_global', 'platforms', refreshPlatforms, realtimeEnabled);
+  useSupabaseRealtimeSync('task_comments_global', 'task_comments', refreshTaskComments, realtimeEnabled);
+  useSupabaseRealtimeSync('task_attachments_global', 'task_attachments', refreshTaskAttachments, realtimeEnabled);
+  useSupabaseRealtimeSync('task_assignees_global', 'task_assignees', refreshTaskAssignees, realtimeEnabled);
+  useSupabaseRealtimeSync('task_platform_links_global', 'task_platform_links', refreshTaskPlatformLinks, realtimeEnabled);
+  useSupabaseRealtimeSync('social_insights_global', 'social_insights', refreshSocialInsights, realtimeEnabled);
+  useSupabaseRealtimeSync('seo_insights_global', 'seo_insights', refreshSeoInsights, realtimeEnabled);
+  useSupabaseRealtimeSync('client_comparisons_global', 'client_comparisons', refreshClientComparisons, realtimeEnabled);
+  useSupabaseRealtimeSync('client_portal_users_global', 'client_portal_users', refreshClientPortalUsers, realtimeEnabled);
+  useSupabaseRealtimeSync('brief_revisions_global', 'brief_revisions', refreshBriefRevisions, realtimeEnabled);
+  useSupabaseRealtimeSync('brief_field_schemas_global', 'brief_field_schemas', refreshBriefFieldSchemas, realtimeEnabled);
+  useSupabaseRealtimeSync('brief_attachments_global', 'brief_attachments', refreshBriefAttachments, realtimeEnabled);
+  useSupabaseRealtimeSync('platform_connections_global', 'platform_connections', refreshPlatformConnections, realtimeEnabled);
+  useSupabaseRealtimeSync('client_lifecycle_periods_global', 'client_lifecycle_periods', refreshClientLifecyclePeriods, realtimeEnabled);
+
+  // Custom roles & departments — the five tables feeding registerCustomRoleData()'s in-memory
+  // permissions cache. Any change to any of them re-runs the SAME combined fetch
+  // loadCustomRolesAndDepartments() already does on login, rather than patching the cache
+  // table-by-table.
+  useSupabaseRealtimeSync('departments_global', 'departments', loadCustomRolesAndDepartments, realtimeEnabled);
+  useSupabaseRealtimeSync('custom_roles_global', 'custom_roles', loadCustomRolesAndDepartments, realtimeEnabled);
+  useSupabaseRealtimeSync('custom_role_modules_global', 'custom_role_modules', loadCustomRolesAndDepartments, realtimeEnabled);
+  useSupabaseRealtimeSync('custom_role_permissions_global', 'custom_role_permissions', loadCustomRolesAndDepartments, realtimeEnabled);
+  useSupabaseRealtimeSync('department_permissions_global', 'department_permissions', loadCustomRolesAndDepartments, realtimeEnabled);
+  useSupabaseRealtimeSync('department_member_teams_global', 'department_member_teams', loadCustomRolesAndDepartments, realtimeEnabled);
 
   // Real-time online users (Presence) & heartbeat
   useEffect(() => {
