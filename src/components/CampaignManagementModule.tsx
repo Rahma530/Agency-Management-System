@@ -1889,6 +1889,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          allClients={clients}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}

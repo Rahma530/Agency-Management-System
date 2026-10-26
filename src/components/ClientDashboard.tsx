@@ -394,6 +394,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [assignmentError, setAssignmentError] = useState('');
   const [selectedGraphicDesignerId, setSelectedGraphicDesignerId] = useState('');
   const [isAssigningGraphicDesigner, setIsAssigningGraphicDesigner] = useState(false);
+  const [showDesignerWorkloadModal, setShowDesignerWorkloadModal] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showChurnConfirm, setShowChurnConfirm] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -608,6 +609,28 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     });
     return counts;
   }, [assignments, users]);
+
+  // Full per-designer breakdown with client NAMES (not just a count) — kept out of the assignment
+  // dropdown above on purpose (a long client list per option would break that menu's layout) and
+  // shown instead in its own modal (see showDesignerWorkloadModal below), so whoever is assigning
+  // can open "View all designers' workload" to actually see who's free before handing over a new
+  // client. Needs allClients to resolve client_id -> name; without it (a render path that doesn't
+  // pass allClients) each designer still shows with their count, just no names underneath.
+  const graphicDesignerWorkload = useMemo(() => {
+    return getEligibleGraphicDesigners(users)
+      .map((designer) => {
+        const designerAssignments = assignments.filter(
+          (a) => a.service_type === 'social_media' && a.agent_id === designer.id
+        );
+        const clientNames = allClients
+          ? designerAssignments
+              .map((a) => allClients.find((c) => c.id === a.client_id)?.name)
+              .filter((name): name is string => !!name)
+          : [];
+        return { designer, count: designerAssignments.length, clientNames };
+      })
+      .sort((a, b) => a.count - b.count);
+  }, [users, assignments, allClients]);
 
   const assignedUiUxDesigner = useMemo(() => {
     const asg = clientAssignments.find((a) => a.service_type === 'interface');
@@ -2334,9 +2357,19 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
                 {services.includes('social_media') && (
                   <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-                    <span className="text-xs font-semibold uppercase tracking-wider block mb-3 text-fuchsia-400">
-                      Graphic Designer
-                    </span>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-fuchsia-400">
+                        Graphic Designer
+                      </span>
+                      {canManageGraphicDesignerAssignment && (
+                        <button
+                          onClick={() => setShowDesignerWorkloadModal(true)}
+                          className="text-[10px] font-semibold text-fuchsia-300 hover:text-fuchsia-200 underline underline-offset-2"
+                        >
+                          View all designers' workload
+                        </button>
+                      )}
+                    </div>
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-lg border flex items-center justify-center font-bold text-sm bg-fuchsia-900/20 border-fuchsia-700/30 text-fuchsia-300">
                         {assignedGraphicDesigner?.name?.charAt(0) || 'G'}
@@ -3390,6 +3423,54 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           onMergeClients={onMergeClients}
           onClose={() => setIsMergeModalOpen(false)}
         />
+      )}
+
+      {showDesignerWorkloadModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div
+            className="w-full max-w-lg rounded-2xl p-5 space-y-4 max-h-[80vh] overflow-y-auto"
+            style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Graphic Designers — Current Workload</h3>
+              <button
+                onClick={() => setShowDesignerWorkloadModal(false)}
+                className="text-stone-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-stone-400">
+              Sorted by least busy first — use this to decide who to hand a new client to.
+            </p>
+            {graphicDesignerWorkload.length === 0 ? (
+              <p className="text-xs text-stone-400">No active Graphic Designers found.</p>
+            ) : (
+              <div className="space-y-3">
+                {graphicDesignerWorkload.map(({ designer, count, clientNames }) => (
+                  <div key={designer.id} className="p-3 rounded-xl border border-purple-900/30 bg-[#161224]/80">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-white">{designer.name}</p>
+                        <p className="text-xs text-stone-400">{designer.email}</p>
+                      </div>
+                      <span className="text-xs font-bold px-2 py-1 rounded-lg bg-fuchsia-900/30 text-fuchsia-300 border border-fuchsia-700/30 shrink-0">
+                        {count} {count === 1 ? 'client' : 'clients'}
+                      </span>
+                    </div>
+                    {clientNames.length > 0 && (
+                      <ul className="mt-2 pt-2 border-t border-stone-800 text-xs text-stone-300 list-disc list-inside space-y-0.5">
+                        {clientNames.map((name, idx) => (
+                          <li key={idx}>{name}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {deleteBlockers && (
