@@ -369,6 +369,7 @@ const AMServiceBriefsPanel: React.FC<{
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          allClients={clients}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
@@ -1205,6 +1206,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
       {activeDashboardClient && (
         <ClientDashboard
           client={activeDashboardClient}
+          allClients={clients}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}

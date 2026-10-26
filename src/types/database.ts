@@ -102,7 +102,7 @@ export interface DepartmentPermissionRecord {
   permission_key: string;
 }
 
-export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface' | 'creation' | 'branding';
+export type ServiceType = 'seo' | 'social_media' | 'media_buying' | 'interface' | 'creation' | 'branding' | 'graphic_design';
 export type ClientSector = 'E-Commerce' | 'Service';
 
 // Module 13: 5-value lifecycle, replacing the old 4-value 'lead'|'onboarding'|'active'|'renewal'|

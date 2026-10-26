@@ -3982,6 +3982,12 @@ export default function App() {
     showNotification(`Service brief assigned to specialist: ${agent?.name || agentId}`);
   };
 
+  // Graphic Design assignment: now a standalone service_type (per explicit product decision — a
+  // client can need design work without being subscribed to Social Media at all), so it's handled
+  // by the generic handleAssignServiceAgent above like any other service — no special-casing
+  // needed anymore (the earlier design, where the designer rode the social_media row and needed a
+  // dedicated handler to avoid colliding with the social_media_agent row, is superseded).
+
   // 3. Save the dynamic brief form (SEO, Social Media, Media Buying)
   const handleSaveBrief = async (briefData: {
     client_id: string;
