@@ -229,6 +229,24 @@ function readImpersonationHandoff(): ImpersonationHandoff | null {
   } catch { return null; }
 }
 
+// A table this client just wrote locally (its own handler already applied the optimistic
+// setX update with the real persisted row) gets a short grace window during which this
+// client's own realtime echo for that table is ignored — without this, every task
+// create/edit/status-move was triggering an *extra*, redundant full RLS-scoped refetch of
+// `tasks` (and often `task_assignees`/`task_platform_links` alongside it) milliseconds after
+// the action, which is what was producing the long visible freeze after creating or editing a
+// task before everything "came back". Other clients' changes to the same table still refetch
+// immediately — this only quiets the acting client's own loopback notification.
+const SELF_WRITE_SUPPRESS_MS = 4000;
+const recentSelfWrites = new Map<string, number>();
+function markSelfWrite(table: string): void {
+  recentSelfWrites.set(table, Date.now());
+}
+function isRecentSelfWrite(table: string): boolean {
+  const writtenAt = recentSelfWrites.get(table);
+  return !!writtenAt && Date.now() - writtenAt < SELF_WRITE_SUPPRESS_MS;
+}
+
 // Shared real-time sync hook — factored out once the Task Board pilot (tasks_global) proved the
 // invalidate-then-coalesced-refetch approach out. Every table wired up after the pilot reuses
 // this instead of a hand-copied ~90-line useEffect, so adding real-time coverage for one more
@@ -303,6 +321,7 @@ function useSupabaseRealtimeSync(
       }
 
       const invalidate = () => {
+        if (isRecentSelfWrite(table)) return;
         void runCoalescedRefresh();
       };
 
@@ -3845,11 +3864,13 @@ export default function App() {
           ? { ...row, viewed_at: viewedAt }
           : row
       ));
+      markSelfWrite('task_assignees');
       setTasks((prev) => prev.map((task) =>
         task.id === taskId && task.assigned_to === currentUser.id
           ? { ...task, assignee_viewed_at: task.assignee_viewed_at || viewedAt }
           : task
       ));
+      markSelfWrite('tasks');
     } catch (error) {
       console.error('Supabase mark task viewed error:', error);
     }
@@ -4435,6 +4456,7 @@ export default function App() {
     }
 
     setTasks((prev) => prev.map((t) => (t.assigned_to === userId ? { ...t, assigned_to: null } : t)));
+    markSelfWrite('tasks');
     setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, deactivated_at: deactivatedAt } : u)));
     showNotification(
       'Employee deactivated. Run `npm run deactivate-auth-users` to fully lock out their login.'
@@ -4568,6 +4590,7 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
     );
+    markSelfWrite('tasks');
 
     const taskTitle = existingTask?.title || 'Task';
     await logActivity('status_change', 'task', taskId, taskTitle, `Status updated to ${newStatus}`);
@@ -4637,6 +4660,7 @@ export default function App() {
         await persistTaskAssignees(taskId, requestedAssigneeIds);
         persistedAnyChange = true;
         setTaskAssignees(await fetchTaskAssignees());
+        markSelfWrite('task_assignees');
         const { data: refreshedTask, error: refreshError } = await supabaseRaw
           .from('tasks')
           .select('*')
@@ -4653,9 +4677,11 @@ export default function App() {
         await persistTaskPlatforms(taskId, platformIds);
         persistedAnyChange = true;
         setTaskPlatformLinks(await fetchTaskPlatformLinks());
+        markSelfWrite('task_platform_links');
       }
 
       setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
+      markSelfWrite('tasks');
 
       const addedAttachments: TaskAttachmentRecord[] = [];
       for (const staged of stagedAttachments) {
@@ -4669,6 +4695,7 @@ export default function App() {
           addedAttachments.forEach((row) => byId.set(row.id, row));
           return [...byId.values()];
         });
+        markSelfWrite('task_attachments');
       }
     } catch (err) {
       console.error('Supabase task update error:', err);
@@ -4746,6 +4773,7 @@ export default function App() {
         ...persistedTasks,
         ...previous.filter((task) => !persistedTasks.some((row) => row.id === task.id)),
       ]);
+      markSelfWrite('tasks');
     }
     updateTaskCreateRecovery(currentUser.id, batchId, (current) => ({
       ...current,
@@ -4756,6 +4784,7 @@ export default function App() {
     let assigneeRefreshError: string | null = null;
     try {
       setTaskAssignees(await fetchTaskAssignees());
+      markSelfWrite('task_assignees');
     } catch (refreshError) {
       assigneeRefreshError = refreshError instanceof Error ? refreshError.message : 'Unknown Supabase error.';
     }
@@ -4765,6 +4794,7 @@ export default function App() {
     let platformRefreshError: string | null = null;
     try {
       setTaskPlatformLinks(await fetchTaskPlatformLinks());
+      markSelfWrite('task_platform_links');
     } catch (refreshError) {
       platformRefreshError = refreshError instanceof Error ? refreshError.message : 'Unknown Supabase error.';
     }
@@ -4829,6 +4859,7 @@ export default function App() {
         addedAttachments.forEach((row) => byId.set(row.id, row));
         return [...byId.values()];
       });
+      markSelfWrite('task_attachments');
     } catch (attachmentError) {
       const detail = attachmentError instanceof Error ? attachmentError.message : 'Unknown Supabase error.';
       throw new Error(`${persistedTasks.length} task ${persistedTasks.length === 1 ? 'copy was' : 'copies were'} saved, but attachment processing did not finish: ${detail}`);
@@ -4875,6 +4906,7 @@ export default function App() {
         } else {
           setTaskComments((prev) => [...prev, newCommentPayload]);
         }
+        markSelfWrite('task_comments');
       } catch (err) {
         console.error('Supabase task comment insert error:', err);
         setTaskComments((prev) => [...prev, newCommentPayload]);
@@ -4905,6 +4937,7 @@ export default function App() {
     setTaskComments((prev) =>
       prev.map((c) => (c.id === commentId ? { ...c, ...updates } : c))
     );
+    markSelfWrite('task_comments');
   };
 
   // 6d. Soft-delete your own comment (sets deleted_at — never a real DELETE,
@@ -4924,6 +4957,7 @@ export default function App() {
     setTaskComments((prev) =>
       prev.map((c) => (c.id === commentId ? { ...c, ...updates } : c))
     );
+    markSelfWrite('task_comments');
   };
 
   // 6e. Upload a file attachment to a task. Unlike every other entity in
@@ -4941,6 +4975,7 @@ export default function App() {
       { id: crypto.randomUUID(), file }
     );
     setTaskAttachments((previous) => [...previous, ...rows]);
+    markSelfWrite('task_attachments');
     showNotification(`"${file.name}" attached successfully.`);
   };
 
@@ -4959,6 +4994,7 @@ export default function App() {
     try {
       const finalStoragePath = await deleteTaskAttachmentReference(attachmentId);
       setTaskAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+      markSelfWrite('task_attachments');
       if (finalStoragePath) await removeTaskAttachmentObject(finalStoragePath);
     } catch (error) {
       console.error('Supabase attachment delete error:', error);
@@ -4982,6 +5018,11 @@ export default function App() {
     setTaskAttachments((prev) => prev.filter((a) => !deletedIds.has(a.task_id)));
     setTaskAssignees((prev) => prev.filter((ta) => !deletedIds.has(ta.task_id)));
     setTaskPlatformLinks((prev) => prev.filter((link) => !deletedIds.has(link.task_id)));
+    markSelfWrite('tasks');
+    markSelfWrite('task_comments');
+    markSelfWrite('task_attachments');
+    markSelfWrite('task_assignees');
+    markSelfWrite('task_platform_links');
     for (const id of taskIds) {
       if (deletedIds.has(id)) await logActivity('delete', 'task', id, requestedTitles.get(id) || id);
     }
@@ -5047,10 +5088,13 @@ export default function App() {
       const newTask = result.tasks[0];
       idMap.set(sourceId, newTask.id);
       setTasks((prev) => [newTask, ...prev]);
+      markSelfWrite('tasks');
     }
 
     setTaskAssignees(await fetchTaskAssignees());
+    markSelfWrite('task_assignees');
     setTaskPlatformLinks(await fetchTaskPlatformLinks());
+    markSelfWrite('task_platform_links');
     await logActivity('create', 'task', idMap.get(taskId) || taskId, `Duplicate of: ${sourceTask.title}`);
   };
 
