@@ -142,6 +142,7 @@ interface ServiceBriefsRoutingViewProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onForceDeleteClient?: (clientId: string) => Promise<void>;
   onUpdatePaymentTracking?: (
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
@@ -216,6 +217,7 @@ const AMServiceBriefsPanel: React.FC<{
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onForceDeleteClient?: (clientId: string) => Promise<void>;
   onUpdatePaymentTracking?: (
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
@@ -262,6 +264,7 @@ const AMServiceBriefsPanel: React.FC<{
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onForceDeleteClient,
   onUpdatePaymentTracking,
   onUpdateClientDates,
   onUpdateClientDetails,
@@ -392,6 +395,7 @@ const AMServiceBriefsPanel: React.FC<{
           onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
           onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
           onDeleteClient={onDeleteClient}
+          onForceDeleteClient={onForceDeleteClient}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
           onGenerateAiSummary={onGenerateAiSummary}
@@ -454,6 +458,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onForceDeleteClient,
   onUpdatePaymentTracking,
   onUpdateClientDates,
   onUpdateClientDetails,
@@ -502,6 +507,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
         onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
         onDeleteClient={onDeleteClient}
+        onForceDeleteClient={onForceDeleteClient}
         onUpdatePaymentTracking={onUpdatePaymentTracking}
         onUpdateClientDates={onUpdateClientDates}
         onUpdateClientDetails={onUpdateClientDetails}
@@ -1225,6 +1231,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
           onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
           onDeleteClient={onDeleteClient}
+          onForceDeleteClient={onForceDeleteClient}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
           onGenerateAiSummary={onGenerateAiSummary}

@@ -1,9 +1,11 @@
 import { supabase } from './supabase';
 
-// Every table that references clients(id) — all 13 default to ON DELETE NO ACTION at the DB
+// Every table that references clients(id) — all default to ON DELETE NO ACTION at the DB
 // level (unchanged from the canonical schema), so a delete already fails outright if any of these
 // has a row. This list exists purely so the app can show WHICH ones before the user even tries,
 // rather than surfacing a raw Postgres foreign-key-violation error.
+// Kept in sync with the FK audit in 20261215000000_client_full_delete.sql's header comment —
+// update both together whenever a new table adds a clients(id) reference.
 const CLIENT_ACTIVITY_TABLES: { table: string; label: string }[] = [
   { table: 'tasks', label: 'Tasks' },
   { table: 'briefs', label: 'Briefs' },
@@ -18,6 +20,11 @@ const CLIENT_ACTIVITY_TABLES: { table: string; label: string }[] = [
   { table: 'analytics_insights', label: 'Analytics Insights' },
   { table: 'platform_connections', label: 'Platform Connections' },
   { table: 'daily_logs', label: 'Daily Logs' },
+  { table: 'seo_insights', label: 'SEO Insights' },
+  { table: 'media_buying_insights', label: 'Media Buying Insights' },
+  { table: 'client_lifecycle_periods', label: 'Lifecycle Periods' },
+  { table: 'client_renewal_events', label: 'Renewal Events' },
+  { table: 'client_access_attachments', label: 'Access Attachments' },
 ];
 
 export interface ClientActivitySummaryRow {

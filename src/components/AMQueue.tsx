@@ -110,6 +110,7 @@ interface AMQueueProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onForceDeleteClient?: (clientId: string) => Promise<void>;
   onOpenRegisterModal?: () => void;
   onOpenBulkUploadModal?: () => void;
   onUpdateTaskStatus?: (taskId: string, newStatus: TaskStatus) => Promise<void>;
@@ -214,6 +215,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onForceDeleteClient,
   onOpenRegisterModal,
   onOpenBulkUploadModal,
   onUpdateTaskStatus,
@@ -850,6 +852,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           onUpdateBriefFieldSchema={onUpdateBriefFieldSchema}
           onDeleteBriefFieldSchema={onDeleteBriefFieldSchema}
           onDeleteClient={onDeleteClient}
+          onForceDeleteClient={onForceDeleteClient}
           onAssignAMAgent={onAssignAMAgent}
           onAssignAMTeamLead={onAssignAMTeamLead}
           onAssignServiceAgent={onAssignServiceAgent}

@@ -102,7 +102,7 @@ import { BriefAttachmentsPanel } from './BriefAttachmentsPanel';
 import { ClientAccessAttachmentsPanel } from './ClientAccessAttachmentsPanel';
 import { ClientIntegrationsPanel } from './ClientIntegrationsPanel';
 import { EditClientModal } from './EditClientModal';
-import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient, canMergeClients } from '../lib/permissions';
+import { canSeeContractValue, isActiveEmployee, canManageEmployeesOrClients, canEditBriefFieldSchema, canAccessClientSensitiveInfo, canEditServiceBrief, canViewBriefContent, canEditClient, canMergeClients, canHardDeleteClients } from '../lib/permissions';
 import { MergeClientsModal } from './MergeClientsModal';
 import { CLIENT_STATUS_META, formatClientLifecycleDuration, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
@@ -161,6 +161,14 @@ interface ClientDashboardProps {
   onUpdateBriefFieldSchema?: (id: string, updates: Partial<BriefFieldSchemaRow>) => Promise<void>;
   onDeleteBriefFieldSchema?: (id: string) => Promise<void>;
   onDeleteClient?: (clientId: string) => Promise<void>;
+  // Full/force client delete (delete_clients() RPC) — gated below via canHardDeleteClients
+  // (lib/permissions.ts, executive/head_of_technical only). Separate, deliberately narrower
+  // capability from onDeleteClient above: that one only ever succeeds when the client already has
+  // zero activity in every referencing table; this one cascades through and erases everything —
+  // tasks, reports, briefs, daily logs, contracts, insights, and more — permanently. Shown as a
+  // second option inside the same delete-confirmation modal, only once onDeleteClient's own
+  // pre-check (getClientActivitySummary) has found real activity blocking the safe delete.
+  onForceDeleteClient?: (clientId: string) => Promise<void>;
   // Client merge (merge_clients()/merge_clients_preview() RPCs) — executive/head_of_technical
   // only, gated below via canMergeClients(currentUser.role). allClients is the full
   // roster (not just this one `client`) — needed so the shared MergeClientsModal can search for
@@ -311,6 +319,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onUpdateBriefFieldSchema,
   onDeleteBriefFieldSchema,
   onDeleteClient,
+  onForceDeleteClient,
   allClients,
   onPreviewMergeClients,
   onMergeClients,
@@ -358,6 +367,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isDeletingClient, setIsDeletingClient] = useState(false);
   const [deleteBlockers, setDeleteBlockers] = useState<ClientActivitySummaryRow[] | null>(null);
   const [isCheckingDeleteBlockers, setIsCheckingDeleteBlockers] = useState(false);
+  // Force-delete (delete_clients() RPC) — separate state from the safe-delete flow above since it
+  // needs its own "type the client's name to confirm" guard, given it erases real activity.
+  const [isForceDeletingClient, setIsForceDeletingClient] = useState(false);
+  const [forceDeleteConfirmText, setForceDeleteConfirmText] = useState('');
   const canShowMergeClients = !!allClients && !!onPreviewMergeClients && !!onMergeClients && canMergeClients(currentUser.role);
   const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
   const [isSchemaEditorOpen, setIsSchemaEditorOpen] = useState(false);
@@ -840,6 +853,24 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       onClose();
     } finally {
       setIsDeletingClient(false);
+    }
+  };
+
+  // Force-delete confirmation requires typing the client's exact name — same "make it hard to do
+  // by accident" bar as the task board's hard-delete flow, scaled up since this erases real,
+  // already-confirmed-to-exist activity rather than an empty client.
+  const canConfirmForceDelete = forceDeleteConfirmText.trim() === client.name;
+
+  const handleConfirmForceDelete = async () => {
+    if (!onForceDeleteClient || !canConfirmForceDelete) return;
+    setIsForceDeletingClient(true);
+    try {
+      await onForceDeleteClient(client.id);
+      setDeleteBlockers(null);
+      setForceDeleteConfirmText('');
+      onClose();
+    } finally {
+      setIsForceDeletingClient(false);
     }
   };
 
@@ -3295,9 +3326,39 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                     </li>
                   ))}
                 </ul>
+                {onForceDeleteClient && canHardDeleteClients(currentUser.role) && (
+                  <div className="pt-2 space-y-2 border-t border-red-900/40">
+                    <p className="text-xs text-red-300 font-bold">
+                      Force delete everything anyway — permanently erases all of the activity listed above. This
+                      cannot be undone.
+                    </p>
+                    <p className="text-xs text-stone-400">
+                      Type <span className="font-mono font-bold text-stone-200">{client.name}</span> to confirm.
+                    </p>
+                    <input
+                      type="text"
+                      value={forceDeleteConfirmText}
+                      onChange={(e) => setForceDeleteConfirmText(e.target.value)}
+                      placeholder={client.name}
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900/60 border border-red-800/40 text-white placeholder-stone-500 focus:outline-none focus:border-red-500"
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleConfirmForceDelete}
+                        disabled={!canConfirmForceDelete || isForceDeletingClient}
+                        className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-red-700 hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isForceDeletingClient ? 'Deleting Everything...' : 'Force Delete Everything'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-end">
                   <button
-                    onClick={() => setDeleteBlockers(null)}
+                    onClick={() => {
+                      setDeleteBlockers(null);
+                      setForceDeleteConfirmText('');
+                    }}
                     className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 transition-colors"
                   >
                     Close
