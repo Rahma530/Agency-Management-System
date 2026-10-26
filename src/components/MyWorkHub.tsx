@@ -212,6 +212,10 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
 
   const [isLoggingExtraEffort, setIsLoggingExtraEffort] = useState(false);
   const [extraEffortText, setExtraEffortText] = useState('');
+  // Mirrors logDate above (Log Today's Activity) — DailyOperationsModule.tsx's own "Log Extra
+  // Effort" form already lets the date be picked; this compact widget was the one place still
+  // hardcoding today's date.
+  const [extraEffortDate, setExtraEffortDate] = useState(() => getTodayStr());
   const [isSubmittingExtraEffort, setIsSubmittingExtraEffort] = useState(false);
 
   const [clientMetricsPeriod, setClientMetricsPeriod] = useState<'month' | 'quarter' | 'all_time'>('month');
@@ -489,11 +493,12 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
     try {
       await onCreateExtraNote({
         user_id: currentUser.id,
-        date: todayStr,
+        date: extraEffortDate,
         note_text: extraEffortText.trim(),
         category: 'initiative',
       });
       setExtraEffortText('');
+      setExtraEffortDate(todayStr);
       setIsLoggingExtraEffort(false);
       showNotification('Extra effort documented successfully.');
     } catch {
@@ -928,6 +933,16 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
 
       {isLoggingExtraEffort && (
         <form onSubmit={handleSubmitExtraEffort} className="p-3 rounded-xl bg-stone-900/60 border border-stone-800 space-y-2">
+          <div>
+            <label className="text-[11px] font-semibold text-stone-400 block mb-1">Date:</label>
+            <input
+              type="date"
+              required
+              value={extraEffortDate}
+              onChange={(e) => setExtraEffortDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg text-xs bg-black/30 border border-stone-800 text-white outline-none focus:border-amber-400"
+            />
+          </div>
           <textarea
             value={extraEffortText}
             onChange={(e) => setExtraEffortText(e.target.value)}
@@ -942,6 +957,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
               onClick={() => {
                 setIsLoggingExtraEffort(false);
                 setExtraEffortText('');
+                setExtraEffortDate(todayStr);
               }}
               className="px-3 py-1.5 rounded-lg text-xs font-medium text-stone-400 hover:text-white"
             >
