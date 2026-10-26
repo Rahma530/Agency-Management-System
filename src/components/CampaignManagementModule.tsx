@@ -122,6 +122,7 @@ interface CampaignManagementModuleProps {
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   briefFieldSchemaRows: BriefFieldSchemaRow[];
   onDeleteClient?: (clientId: string) => Promise<void>;
+  onForceDeleteClient?: (clientId: string) => Promise<void>;
   onUpdatePaymentTracking?: (
     clientId: string,
     updates: { due_value?: number | null; remaining_value?: number | null; contract_duration_months?: number | null }
@@ -292,6 +293,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   briefFieldSchemas,
   briefFieldSchemaRows,
   onDeleteClient,
+  onForceDeleteClient,
   onUpdatePaymentTracking,
   onUpdateClientDates,
   onUpdateClientDetails,
@@ -1906,6 +1908,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           briefFieldSchemas={briefFieldSchemas}
           briefFieldSchemaRows={briefFieldSchemaRows}
           onDeleteClient={onDeleteClient}
+          onForceDeleteClient={onForceDeleteClient}
           onGenerateComparison={onGenerateComparison}
           onGenerateReport={onGenerateReport}
           onGenerateAiSummary={onGenerateAiSummary}

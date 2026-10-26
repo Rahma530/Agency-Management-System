@@ -37,6 +37,16 @@ export const canHardDeleteTasks = (role: UserRole): boolean =>
 export const canMergeClients = (role: UserRole): boolean =>
   role === 'executive' || role === 'head_of_technical';
 
+// Client full/force delete (delete_clients() RPC, 20261215000000_client_full_delete.sql) — same
+// role set, same reasoning as canHardDeleteTasks/canMergeClients above. Deliberately NARROWER
+// than clients_delete_rls (the existing DB policy behind the safe "Delete Client" button already
+// in App.tsx/handleDeleteClient, which also allows every *_team_lead — but only ever succeeds
+// when the client already has zero activity left). This gate is for the separate, far more
+// destructive "force delete everything" capability and stays restricted to executive/
+// head_of_technical only.
+export const canHardDeleteClients = (role: UserRole): boolean =>
+  role === 'executive' || role === 'head_of_technical';
+
 // users.daily_task_target role-level gate (20261115000000_daily_task_target.sql) — mirrors
 // users_update_daily_task_target_rls exactly: executive/head_of_technical (deliberately NOT
 // ai_engineer, unlike canHardDeleteTasks/canMergeClients above — matches

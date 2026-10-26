@@ -3140,6 +3140,31 @@ export default function App() {
     showNotification('Client deleted permanently.');
   };
 
+  // 2a-3b. Full/force client delete (point 6/7 follow-up) — the owner's explicit "I generally want
+  // a full-delete capability for clients, just like exists for tasks" request. Unlike
+  // handleDeleteClient above (a plain DELETE that the DB itself blocks whenever any activity
+  // exists), this calls delete_clients() (20261215000000_client_full_delete.sql), a
+  // SECURITY DEFINER RPC that cascades through every table referencing this client — tasks (+
+  // comments/attachments), reports (+ versions/source items/AI suggestions/audit events), briefs,
+  // daily logs, assignments, contracts, insights, lifecycle/renewal history, access attachments —
+  // and writes one deletion_log row before doing so. Gated client-side by canHardDeleteClients
+  // (lib/permissions.ts, executive/head_of_technical only — deliberately narrower than
+  // clients_delete_rls's team-lead-inclusive safe-delete policy) in ClientDashboard.tsx, and
+  // gated again, for real, by the RPC's own role check — this still fails safely if that ever
+  // misses. Reloads all data afterward rather than trying to prune a dozen local state arrays by
+  // hand, since this one call can touch nearly every table in the app.
+  const handleHardDeleteClient = async (clientId: string) => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; the client was not deleted.');
+    const { error } = await supabaseRaw.rpc('delete_clients', { p_client_ids: [clientId] });
+    if (error) {
+      console.error('Supabase delete_clients error:', error);
+      showNotification(error.message || 'Unable to permanently delete this client.', 'info');
+      throw error;
+    }
+    await loadData();
+    showNotification('Client and all related data deleted permanently.');
+  };
+
   // 2a-2. AM Team Lead payment tracking (Module 12 Phase 7) — manually-editable, never
   // auto-computed from anything. Distinct handler from handleUpdateClientStatus since it edits
   // an unrelated field group and shouldn't carry that function's status-transition side effects.
@@ -6491,6 +6516,7 @@ export default function App() {
                     onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
                     onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                     onDeleteClient={handleDeleteClient}
+                    onForceDeleteClient={handleHardDeleteClient}
                     onOpenRegisterModal={canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
                     onOpenBulkUploadModal={canRegisterClients ? () => setIsBulkClientUploadOpen(true) : undefined}
                     onUpdateClientStatus={handleUpdateClientStatus}
@@ -6562,6 +6588,7 @@ export default function App() {
                   onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
                   onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
                   onDeleteClient={handleDeleteClient}
+                  onForceDeleteClient={handleHardDeleteClient}
                   onMarkBriefViewed={handleMarkBriefViewedByTeamLead}
                   onMarkAssignmentViewed={handleMarkAssignmentViewed}
                   onNavigateToModule={handleNavigateToModule}
@@ -6713,6 +6740,7 @@ export default function App() {
                   briefFieldSchemas={briefFieldSchemas}
                   briefFieldSchemaRows={briefFieldSchemaRows}
                   onDeleteClient={handleDeleteClient}
+                  onForceDeleteClient={handleHardDeleteClient}
                   onUpdatePaymentTracking={handleUpdatePaymentTracking}
                   onUpdateClientDates={handleUpdateClientDates}
                   onUpdateClientDetails={handleUpdateClientDetails}
