@@ -1473,6 +1473,24 @@ export default function App() {
     setAssignments((data as AssignmentRecord[]) || []);
   }, []);
 
+  // Real-time pilot (Task Board) — invalidate-then-refetch, same shape as refreshAssignments
+  // above: the realtime effect below only ever calls this to re-run the exact same RLS-scoped
+  // select() loadData() already uses, rather than trying to reconstruct tasks_visible_v2's own
+  // role/assignment/team-lead visibility logic from a bare postgres_changes payload. Silent by
+  // design — no notification toast — since this fires on someone else's change, not the caller's
+  // own action.
+  const refreshTasks = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    const { data, error } = await supabase.from('tasks').select('*');
+    if (error) {
+      console.error('Failed to refresh tasks from Supabase:', error);
+      return;
+    }
+
+    setTasks((data as TaskRecord[]) || []);
+  }, []);
+
   const refreshClientLifecyclePeriods = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) {
       setClientLifecyclePeriods([]);
@@ -2535,6 +2553,100 @@ export default function App() {
       if (channel) supabaseRaw.removeChannel(channel);
     };
   }, [authenticatedUser?.id, supabaseActive, refreshAssignments]);
+
+  // Real-time Task Board (pilot) — keep `tasks` synced across open sessions without a manual
+  // refresh. Chosen as the first table for this because it's the most heavily multi-user screen
+  // (several people editing/assigning/completing the same board at once). Same
+  // invalidate-then-coalesced-refetch shape as assignments_global above, for the same reason:
+  // tasks_visible_v2's RLS (role + assignee + team-lead + am-agent + marketing_manager doors) is
+  // too layered to safely reconstruct client-side from a bare postgres_changes payload, so this
+  // re-runs refreshTasks's plain select('*') instead and lets RLS itself decide what comes back —
+  // never a wider set than this session's own loadData() already fetched.
+  //
+  // Requires the owner to run `alter publication supabase_realtime add table public.tasks;`
+  // (20261216000000_tasks_realtime.sql) once in Supabase — this effect degrades to the same
+  // 9s poll fallback as every other realtime effect here until that's done, so nothing breaks in
+  // the meantime, it just doesn't go instant.
+  useEffect(() => {
+    const userId = authenticatedUser?.id;
+    if (!userId || !supabaseActive) return;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let channel: ReturnType<typeof supabaseRaw.channel> | null = null;
+    let cancelled = false;
+    let refreshInFlight = false;
+    let refreshQueued = false;
+
+    const runCoalescedRefresh = async (): Promise<void> => {
+      if (cancelled) return;
+      if (refreshInFlight) {
+        refreshQueued = true;
+        return;
+      }
+
+      refreshInFlight = true;
+      try {
+        await refreshTasks();
+      } finally {
+        refreshInFlight = false;
+        if (!cancelled && refreshQueued) {
+          refreshQueued = false;
+          void runCoalescedRefresh();
+        }
+      }
+    };
+
+    const startPollFallback = () => {
+      if (intervalId) return;
+      intervalId = setInterval(() => {
+        void runCoalescedRefresh();
+      }, 9000);
+    };
+    const stopPollFallback = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    (async () => {
+      const {
+        data: { session },
+      } = await supabaseRaw.auth.getSession();
+      if (cancelled) return;
+
+      if (!session) {
+        startPollFallback();
+        return;
+      }
+
+      const invalidateTasks = () => {
+        void runCoalescedRefresh();
+      };
+
+      channel = supabaseRaw
+        .channel('tasks_global')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tasks' }, invalidateTasks)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tasks' }, invalidateTasks)
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tasks' }, invalidateTasks)
+        .subscribe((status, err) => {
+          if (cancelled) return;
+          if (status === 'SUBSCRIBED') {
+            stopPollFallback();
+            void runCoalescedRefresh();
+          } else {
+            console.warn(`Tasks realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+            startPollFallback();
+          }
+        });
+    })();
+
+    return () => {
+      cancelled = true;
+      stopPollFallback();
+      if (channel) supabaseRaw.removeChannel(channel);
+    };
+  }, [authenticatedUser?.id, supabaseActive, refreshTasks]);
 
   // Real-time online users (Presence) & heartbeat
   useEffect(() => {
