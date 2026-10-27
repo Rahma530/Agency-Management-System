@@ -54,6 +54,7 @@ interface MentorshipSnapshotRow {
   current_profit: number | null;
   required_growth_pct: number | null;
   profit_growth_pct: number | null;
+  required_roas: number | null;
   status: string;
 }
 
@@ -139,6 +140,7 @@ const STATUS_TOKENS: Record<string, { bg: string; ink: string }> = {
   'Below Target': { bg: 'var(--pink-bg)', ink: 'var(--roas-bad)' },
   'No Data': { bg: 'rgba(168,155,184,0.15)', ink: 'var(--grey)' },
   'Setup Needed': { bg: 'rgba(168,155,184,0.15)', ink: 'var(--text-lo)' },
+  Breakeven: { bg: 'var(--info-bg)', ink: 'var(--info)' },
 };
 
 const inputClass =
@@ -197,10 +199,15 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
     description:
       '(Current Profit ÷ Avg 3M Profit) − 1. Left blank when Avg 3M Profit is zero or negative — there is no valid baseline to measure growth against.',
   },
+  requiredRoas: {
+    title: 'Required ROAS',
+    description:
+      "Only shown for a client with no spend history at all (Avg 3M Spent is empty — this would be their first real month): always 0, since there's nothing yet to require. Blank (—) for any client with spend history — their Current ROAS above is what to look at.",
+  },
   status: {
     title: 'Status',
     description:
-      "Based only on the selected month's own numbers — Start Date plays no role. Setup Needed: Margin not set yet. No Data: nothing logged for the selected month. With no Avg 3M baseline yet (a new client, or no history before this month): Successful once this month's Profit is 0 or positive. With a valid Avg 3M Profit baseline: Successful requires this month's Profit to meet or beat Avg 3M Profit × (1 + Required Growth); otherwise Below Target.",
+      "Based only on the selected month's own numbers — Start Date plays no role. Setup Needed: Margin not set yet. No Data: nothing logged for the selected month. Breakeven: no spend history at all yet (this is effectively their first real month) — too early to judge Successful/Below Target. With spend history: Successful requires this month's Profit to meet or beat Avg 3M Profit × (1 + Required Growth) when that comparison is valid, otherwise Successful once Profit is 0 or positive; Below Target otherwise.",
   },
 };
 
@@ -638,6 +645,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       <th className="py-3 px-4 text-right"><MetricHeader label="Current ROAS" metricKey="currentRoas" /></th>
                       <th className="py-3 px-4 text-right"><MetricHeader label="Required Growth" metricKey="requiredGrowth" /></th>
                       <th className="py-3 px-4 text-right"><MetricHeader label="Profit Growth" metricKey="profitGrowth" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Required ROAS" metricKey="requiredRoas" /></th>
                       <th className="py-3 px-4"><MetricHeader label="Status" metricKey="status" align="left" /></th>
                       {PLATFORMS.map((p) => (
                         <th key={`head-${p}`} className="py-3 px-4 text-center">
@@ -649,7 +657,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                   <tbody className="divide-y divide-purple-900/20 text-xs">
                     {filteredBuyerRows.length === 0 && (
                       <tr>
-                        <td colSpan={18} className="py-6 text-center" style={{ color: 'var(--text-lo)' }}>
+                        <td colSpan={19} className="py-6 text-center" style={{ color: 'var(--text-lo)' }}>
                           No clients match "{overviewSearch}".
                         </td>
                       </tr>
@@ -729,6 +737,9 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                           </td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.required_growth_pct)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.profit_growth_pct)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">
+                            {r.required_roas != null ? r.required_roas.toFixed(2) : '—'}
+                          </td>
                           <td className="py-3.5 px-4">
                             <span
                               className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
