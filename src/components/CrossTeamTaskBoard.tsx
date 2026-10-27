@@ -74,6 +74,7 @@ import {
   canCloseTask,
   canSubmitTaskForClosing,
   canShowDoneLink,
+  parseDoneLinks,
   canEditTaskAssignees,
   resolveTaskAssigneeIds,
   resolveOrderedTaskAssigneeIds,
@@ -2579,19 +2580,29 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                             : '—'}
                         </td>
                         <td className="p-3.5 text-center" onClick={(e) => e.stopPropagation()}>
-                          {task.done_link ? (
-                            <a
-                              href={task.done_link}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-purple-300 hover:text-white"
-                              title={task.done_link}
-                            >
-                              <Link2 className="w-3.5 h-3.5" />
-                            </a>
-                          ) : (
-                            <span className="text-stone-600">—</span>
-                          )}
+                          {(() => {
+                            // done_link can hold more than one link (one per line, see
+                            // parseDoneLinks) — this quick-access icon opens the first one and
+                            // shows a "+N" badge for the rest; the Task Details modal lists all
+                            // of them individually.
+                            const links = parseDoneLinks(task.done_link);
+                            return links.length > 0 ? (
+                              <a
+                                href={links[0]}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-purple-300 hover:text-white"
+                                title={task.done_link || undefined}
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                                {links.length > 1 && (
+                                  <span className="text-[10px] font-bold">+{links.length - 1}</span>
+                                )}
+                              </a>
+                            ) : (
+                              <span className="text-stone-600">—</span>
+                            );
+                          })()}
                         </td>
                         <td className="p-3.5 text-center" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-center gap-1.5">
@@ -3261,14 +3272,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <Link2 className="w-3.5 h-3.5" />
                     <span>Done Link:</span>
                   </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="url"
+                  <div className="flex items-start gap-2">
+                    {/* One link per line, not a single-line input — a task's finished work is
+                        often more than one link (a Drive folder AND a Figma file, say). Stored
+                        as plain newline-separated text in the same done_link column (see
+                        parseDoneLinks in lib/taskLifecycle.ts), so a task with only one link
+                        (everything saved before this existed) keeps working unchanged. */}
+                    <textarea
                       value={doneLinkDraft}
                       onChange={(e) => setDoneLinkDraft(e.target.value)}
-                      placeholder="Link to the finished work (Drive, Figma, ...)"
+                      placeholder="Link(s) to the finished work (Drive, Figma, ...) — one per line"
                       disabled={selectedTaskDetails.status === 'closed'}
-                      className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 disabled:opacity-60"
+                      rows={3}
+                      className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 disabled:opacity-60 resize-y"
                     />
                     {onUpdateTask && selectedTaskDetails.status !== 'closed' && doneLinkDraft !== (selectedTaskDetails.done_link || '') && (
                       <button
@@ -3279,18 +3295,24 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                         {isSavingDoneLink ? 'Saving...' : 'Save'}
                       </button>
                     )}
-                    {selectedTaskDetails.done_link && (
-                      <a
-                        href={selectedTaskDetails.done_link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2 rounded-xl bg-stone-900/80 border border-stone-800 text-purple-300 hover:text-white shrink-0"
-                        title="Open in new tab"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                      </a>
-                    )}
                   </div>
+                  {parseDoneLinks(selectedTaskDetails.done_link).length > 0 && (
+                    <div className="mt-1.5 flex flex-col gap-1">
+                      {parseDoneLinks(selectedTaskDetails.done_link).map((link, i) => (
+                        <a
+                          key={`${link}-${i}`}
+                          href={link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1.5 text-[11px] text-purple-300 hover:text-white truncate"
+                          title={link}
+                        >
+                          <Eye className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{link}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   {selectedTaskDetails.status === 'completed' && currentUser && canCloseTask(selectedTaskDetails, currentUser, taskAssignees) && (
                     <button
                       onClick={() => handleMoveStatus(selectedTaskDetails.id, 'closed')}

@@ -25,6 +25,7 @@ import {
 } from '../lib/reportingEngine';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
+import { parseDoneLinks } from '../lib/taskLifecycle';
 import { getTodayStr } from '../lib/employeeWork';
 import { TEAM_LEAD_TO_AGENT_ROLE } from '../data/roles';
 import { canSelectAnyReportAgent, getReportClientServiceLock, isSelectableReportAgent } from '../lib/reportAgentEligibility';
@@ -1190,7 +1191,11 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
                   <div key={task.id} className="rounded-xl border border-stone-800 bg-stone-950/30 p-3 text-[11px]">
                     <div className="flex items-center justify-between gap-2"><span className="font-bold text-white">{task.title}</span><span className="uppercase text-purple-300">{task.status.replace('_', ' ')}</span></div>
                     <p className="text-stone-400 mt-1">Due {task.due_date || 'not set'} · {task.priority} priority{task.completed_at ? ` · completed ${new Date(task.completed_at).toLocaleString()}` : ''}</p>
-                    {task.done_link && <a href={task.done_link} target="_blank" rel="noreferrer" className="text-purple-300 hover:text-purple-200 mt-1 inline-block">Open submitted work</a>}
+                    {parseDoneLinks(task.done_link).map((link, i) => (
+                      <a key={`${link}-${i}`} href={link} target="_blank" rel="noreferrer" className="text-purple-300 hover:text-purple-200 mt-1 block truncate">
+                        {parseDoneLinks(task.done_link).length > 1 ? `Open submitted work (${i + 1})` : 'Open submitted work'}
+                      </a>
+                    ))}
                   </div>
                 ))}
                 {missingTaskCount > 0 && linkedTasks.length > 0 && <p className="text-[11px] text-amber-300">{missingTaskCount} saved task reference(s) are outside the currently visible task set.</p>}

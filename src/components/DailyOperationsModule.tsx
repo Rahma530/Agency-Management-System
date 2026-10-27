@@ -52,7 +52,7 @@ import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOp
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
-import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
+import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, parseDoneLinks, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { computeTaskDeletionPreview } from '../lib/taskOperations';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
@@ -2076,14 +2076,16 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     <Link2 className="w-3.5 h-3.5" />
                     <span>Done Link:</span>
                   </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="url"
+                  <div className="flex items-start gap-2">
+                    {/* One link per line, not a single-line input — see parseDoneLinks in
+                        lib/taskLifecycle.ts and the matching comment in CrossTeamTaskBoard.tsx. */}
+                    <textarea
                       value={doneLinkDraft}
                       onChange={(e) => setDoneLinkDraft(e.target.value)}
-                      placeholder="Link to the finished work (Drive, Figma, ...)"
+                      placeholder="Link(s) to the finished work (Drive, Figma, ...) — one per line"
                       disabled={selectedTaskDetails.status === 'closed'}
-                      className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-950/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 disabled:opacity-60"
+                      rows={3}
+                      className="flex-1 px-3 py-2 rounded-xl text-xs bg-stone-950/80 border border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-purple-400 disabled:opacity-60 resize-y"
                     />
                     {selectedTaskDetails.status !== 'closed' && doneLinkDraft !== (selectedTaskDetails.done_link || '') && (
                       <button
@@ -2094,18 +2096,24 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         {isSavingDoneLink ? 'Saving...' : 'Save'}
                       </button>
                     )}
-                    {selectedTaskDetails.done_link && (
-                      <a
-                        href={selectedTaskDetails.done_link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2 rounded-xl bg-stone-950/80 border border-stone-800 text-purple-300 hover:text-white shrink-0"
-                        title="Open in new tab"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    )}
                   </div>
+                  {parseDoneLinks(selectedTaskDetails.done_link).length > 0 && (
+                    <div className="mt-1.5 flex flex-col gap-1">
+                      {parseDoneLinks(selectedTaskDetails.done_link).map((link, i) => (
+                        <a
+                          key={`${link}-${i}`}
+                          href={link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1.5 text-[11px] text-purple-300 hover:text-white truncate"
+                          title={link}
+                        >
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{link}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   {selectedTaskDetails.status === 'completed' && canCloseTask(selectedTaskDetails, currentUser, taskAssignees) && (
                     <button
                       onClick={() => handleCloseTask(selectedTaskDetails)}

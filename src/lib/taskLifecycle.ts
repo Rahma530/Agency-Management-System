@@ -51,6 +51,18 @@ export const canShowDoneLink = (task: Pick<TaskRecord, 'status' | 'done_link'>):
   !!task.done_link?.trim() ||
   task.status === 'in_progress' || task.status === 'in_review' || isTaskDone(task.status);
 
+// done_link stays a single text column (no schema change needed) — more than one finished-work
+// link is just stored as one-per-line text in that same column, and this splits it back out for
+// display. Blank lines are dropped so stray newlines from pasting never become empty links; order
+// is preserved (first line = first link). A plain single-link value (every done_link written
+// before this feature existed) parses the same way, as a one-item array, so nothing else needs a
+// migration or a format check.
+export const parseDoneLinks = (doneLink: string | null | undefined): string[] =>
+  (doneLink || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
 // The real, multi-assignee membership for a task — task_assignees rows when any exist, falling
 // back to the legacy single `assigned_to` column only for an older task that predates the
 // task_assignees table (set_task_assignees always keeps both in sync going forward, via the
