@@ -35,6 +35,7 @@ import {
   setSupabaseSessionUser,
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
+  fetchAllRows,
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
@@ -1630,13 +1631,17 @@ export default function App() {
   const refreshTasks = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
-    const { data, error } = await supabaseRaw.from('tasks').select('*');
+    // Paginated: tasks has already grown past Supabase's 1000-row-per-request default (a bare
+    // .select('*') here silently dropped every row past that cutoff — see fetchAllRows's own
+    // comment in supabase.ts). Newer tasks, being the ones most likely to land past row 1000, were
+    // the ones most likely to silently vanish from the board.
+    const { data, error } = await fetchAllRows<TaskRecord>(supabaseRaw, 'tasks');
     if (error) {
       console.error('Failed to refresh tasks from Supabase:', error);
       return;
     }
 
-    setTasks((data as TaskRecord[]) || []);
+    setTasks(data || []);
   }, []);
 
   // Real-time batch 2 — same invalidate-then-refetch shape as refreshTasks/refreshAssignments
@@ -2093,13 +2098,17 @@ export default function App() {
           setBriefFieldSchemaRows(briefFieldSchemaData as BriefFieldSchemaRow[]);
         }
 
-        // Fetch tasks
-        const { data: taskData, error: taskErr } = await supabaseRaw.from('tasks').select('*');
+        // Fetch tasks — paginated: tasks has already grown past Supabase's 1000-row-per-request
+        // default (a bare .select('*') here silently dropped every row past that cutoff — see
+        // fetchAllRows's own comment in supabase.ts). Newer tasks, being the ones most likely to
+        // land past row 1000, were the ones most likely to silently vanish from the board on
+        // initial load, independent of (and on top of) the realtime-sync bug fixed earlier.
+        const { data: taskData, error: taskErr } = await fetchAllRows<TaskRecord>(supabaseRaw, 'tasks');
         if (taskErr) {
           console.error('Failed to load tasks from Supabase:', taskErr);
           showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
         } else {
-          setTasks((taskData as TaskRecord[]) || []);
+          setTasks(taskData || []);
         }
 
         // Multi-assignee membership is independent from tasks.assigned_to. The latter remains a
