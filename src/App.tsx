@@ -38,6 +38,7 @@ import {
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
+import { hasNewVersionDeployed } from './lib/versionCheck';
 import { isTaskDone, resolveTaskAssigneeIds } from './lib/taskLifecycle';
 import { collectDescendantTaskIds } from './lib/bulkTaskActions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
@@ -589,6 +590,7 @@ export default function App() {
   const [testHandoff, setTestHandoff] = useState<TestHandoff | null>(readTestHandoff);
   const [verifiedTestAuthId, setVerifiedTestAuthId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
+  const [isNewVersionAvailable, setIsNewVersionAvailable] = useState(false);
 
   // TEMPORARY TRANSITION FEATURE — see the constants above and EmployeeImpersonation.tsx.
   const [verifiedImpersonatorId, setVerifiedImpersonatorId] = useState<string | null>(null);
@@ -2497,6 +2499,33 @@ export default function App() {
 
     checkRenewalAlerts();
   }, [clients, users, supabaseActive, usersLoadedFromSupabase]);
+
+  // "New version deployed" banner — distinct from the real-time data sync above: that keeps
+  // *data* fresh in an already-open tab; this detects when the *code itself* (the deployed
+  // JS/HTML) has moved on, which a browser never notices on its own in an already-open tab (see
+  // src/lib/versionCheck.ts for how, with zero deploy.yml/CI changes). Checked once on mount, then
+  // every 5 minutes, and immediately whenever the tab regains focus (covers "left it open
+  // overnight/over a deploy" faster than waiting out the interval). Stops polling once an update
+  // is found — no point checking again until the person reloads.
+  useEffect(() => {
+    if (isNewVersionAvailable) return;
+    let cancelled = false;
+    const check = async () => {
+      const found = await hasNewVersionDeployed();
+      if (!cancelled && found) setIsNewVersionAvailable(true);
+    };
+    void check();
+    const intervalId = setInterval(check, 5 * 60 * 1000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isNewVersionAvailable]);
 
   // Real-time chat delivery (Phase 2). A demo-mode login never calls
   // supabase.auth.signInWithPassword, so there's no real JWT to open an authenticated
@@ -6449,6 +6478,27 @@ export default function App() {
 
   return (
     <div className="min-h-screen pb-16" dir="ltr" style={{ background: 'var(--gradient-page)', color: 'var(--lilac)' }}>
+      {/* "New version deployed" banner — see the isNewVersionAvailable effect above. Rendered
+          above the sticky header, in normal flow (not itself sticky, to avoid fighting the
+          header's own `sticky top-0`) — visible immediately on load/reload from every
+          tab/module. No dismiss button: the whole point is this tab is running stale code until
+          it reloads, so the nag should stay until that happens rather than let someone click it
+          away and forget. */}
+      {isNewVersionAvailable && (
+        <div
+          className="flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 text-xs font-semibold text-white"
+          style={{ background: 'var(--gradient-badge)' }}
+        >
+          <span>A new version of the system is available — refresh to get the latest fixes and updates.</span>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+          >
+            Refresh Now
+          </button>
+        </div>
+      )}
       {/* Top Navigation Bar adhering to Kesra Brand Identity */}
       <header
         className="sticky top-0 z-40 backdrop-blur-md px-6 py-3.5 border-b"
