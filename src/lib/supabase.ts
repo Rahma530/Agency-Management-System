@@ -1304,6 +1304,60 @@ export const supabase = getSupabase();
 // on Postgres RLS (clients_select_portal_rls) the same way every unwrapped table already does.
 export const supabaseRaw: SupabaseClient = getRawSupabase();
 
+// Supabase/PostgREST silently caps any single `.select()` at a server-side default row limit
+// (1000 rows on this project — nothing in supabase/config.toml overrides it) with NO error and NO
+// indication in the response that rows were left out. A plain `.from(table).select('*')` with no
+// `.range()` therefore looks identical whether the table has 10 rows or 10,000 — until the table
+// crosses that 1000-row line, at which point whichever rows fall outside the returned page just
+// silently vanish from every screen that depends on that fetch. This is exactly what happened to
+// `tasks` (1038 rows) and `task_assignees` (1392 rows) once the agency's real usage history grew
+// past it: newer rows (new tasks, newly-added assignees) were the ones most likely to land past
+// row 1000 and disappear, while anyone staring at the code saw nothing wrong — the request
+// "succeeded" and returned data, just not all of it.
+//
+// Fix: page through with `.range()` until a page comes back shorter than the page size, which is
+// the only way to know you've reached the real end of the table (a short/empty page) rather than
+// an arbitrary server-side cutoff. `.order('id', { ascending: true })` makes the row ordering
+// deterministic across pages — without it, Postgres offers no guarantee that two separate
+// `.range()` calls against an un-ordered query see the same row order, which could silently skip
+// or duplicate rows exactly like the bug this is fixing. Every table this project stores tasks/
+// users/clients/etc. in uses a text `id` primary key, so ordering by it is safe everywhere this is
+// used.
+//
+// Use this (not a bare `.select()`) for any fetch that is meant to load an ENTIRE table's rows into
+// app state with no filter narrowing it to a bounded set — `fetchTaskAssignees()` and the global
+// `tasks` fetches in src/App.tsx are the two confirmed-affected call sites fixed alongside this
+// helper. A `.select()` already narrowed with `.eq()/.in()` to a known-small, bounded set (a single
+// task's comments, one client's campaigns, etc.) doesn't need this.
+export async function fetchAllRows<T>(
+  client: SupabaseClient,
+  table: string,
+  select: string = '*'
+): Promise<{ data: T[] | null; error: { message?: string } | null }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await client
+      .from(table)
+      .select(select)
+      .order('id', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) return { data: null, error };
+
+    const rows = (data as T[] | null) || [];
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
 // Dev-only: expose supabase globally for browser verification and direct security testing
 if (viteEnv.DEV && typeof window !== 'undefined') {
   (window as any).supabase = supabase;

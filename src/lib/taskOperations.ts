@@ -1,5 +1,5 @@
 import { ActivityRecord, TaskAssigneeLogRecord, TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord, TeamTaskActivityFeedRow } from '../types/database';
-import { buildAttachmentStoragePath, supabaseRaw } from './supabase';
+import { buildAttachmentStoragePath, fetchAllRows, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
 export interface CapacitySnapshotRow {
@@ -127,9 +127,14 @@ const asTaskRow = (data: unknown): TaskRecord | null => {
 };
 
 export const fetchTaskAssignees = async (): Promise<TaskAssigneeRecord[]> => {
-  const { data, error } = await supabaseRaw.from('task_assignees').select('*');
+  // Paginated: task_assignees has already grown past Supabase's 1000-row-per-request default (a
+  // bare .select('*') here silently dropped every row past that cutoff — see fetchAllRows's own
+  // comment in supabase.ts for the full story). This was the confirmed root cause of a task's
+  // newest assignee intermittently not appearing for some viewers while still correctly present in
+  // the database for others.
+  const { data, error } = await fetchAllRows<TaskAssigneeRecord>(supabaseRaw, 'task_assignees');
   throwIfError(error, 'Unable to load task assignees.');
-  return (data as TaskAssigneeRecord[] | null) || [];
+  return data || [];
 };
 
 export const setTaskAssignees = async (taskId: string, userIds: string[]): Promise<void> => {
@@ -199,9 +204,12 @@ export const fetchLegacyTaskAssigneeLog = async (taskId: string): Promise<TaskAs
 };
 
 export const fetchTaskPlatformLinks = async (): Promise<TaskPlatformLinkRecord[]> => {
-  const { data, error } = await supabaseRaw.from('task_platform_links').select('*');
+  // Paginated for the same reason as fetchTaskAssignees() above: one row per task per linked
+  // platform, so this table grows at least as fast as `tasks` (already past the 1000-row default
+  // cap) and was exposed to the exact same silent-truncation bug.
+  const { data, error } = await fetchAllRows<TaskPlatformLinkRecord>(supabaseRaw, 'task_platform_links');
   throwIfError(error, 'Unable to load task platforms.');
-  return (data as TaskPlatformLinkRecord[] | null) || [];
+  return data || [];
 };
 
 export const setTaskPlatforms = async (taskId: string, platformIds: string[]): Promise<void> => {
