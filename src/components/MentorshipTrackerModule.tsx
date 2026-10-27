@@ -339,10 +339,13 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
       setMarginError(rpcError.message);
       return;
     }
-    setRows((prev) =>
-      prev.map((row) => (row.client_id === clientId ? { ...row, profit_margin_pct: fraction } : row))
-    );
+    // Margin drives target_roas, status, current_roas, profit_growth_pct, required_growth_pct — all
+    // computed server-side in get_mentorship_snapshot(). A local patch of profit_margin_pct alone
+    // left every one of those stale until the next manual page refresh, which wasn't obvious to the
+    // user (owner report: "Target ROAS doesn't show until I refresh"). Re-fetch the whole snapshot
+    // instead so every derived column updates immediately.
     setEditingMarginClientId(null);
+    await loadSnapshot();
   };
 
   // Inline per-platform Sales/Spend editing directly from the Overview checkbox cell — same
