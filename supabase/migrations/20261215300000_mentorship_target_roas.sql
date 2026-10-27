@@ -11,12 +11,15 @@
 -- hit exactly 0. Null (shown as "—") for a client with real spend history, or if Margin isn't set
 -- (division by a null/zero margin is meaningless).
 --
--- New output column target_roas is appended at the END of the return table (after status), same
--- reasoning as before — CREATE OR REPLACE FUNCTION only allows appending new OUT columns, never
--- inserting or reordering.
+-- New output column target_roas is appended at the END of the return table (after status).
+-- CREATE OR REPLACE FUNCTION cannot change a TABLE return's row type at all — not even by
+-- appending a column — so this drops the function first (Postgres: "cannot change return type of
+-- existing function... Use DROP FUNCTION get_mentorship_snapshot(date) first").
 begin;
 
-create or replace function public.get_mentorship_snapshot(p_reporting_month date)
+drop function if exists public.get_mentorship_snapshot(date);
+
+create function public.get_mentorship_snapshot(p_reporting_month date)
 returns table (
   media_buyer_id text,
   media_buyer_name text,
