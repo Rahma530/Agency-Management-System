@@ -1317,22 +1317,26 @@ export const supabaseRaw: SupabaseClient = getRawSupabase();
 //
 // Fix: page through with `.range()` until a page comes back shorter than the page size, which is
 // the only way to know you've reached the real end of the table (a short/empty page) rather than
-// an arbitrary server-side cutoff. `.order('id', { ascending: true })` makes the row ordering
-// deterministic across pages — without it, Postgres offers no guarantee that two separate
-// `.range()` calls against an un-ordered query see the same row order, which could silently skip
-// or duplicate rows exactly like the bug this is fixing. Every table this project stores tasks/
-// users/clients/etc. in uses a text `id` primary key, so ordering by it is safe everywhere this is
-// used.
+// an arbitrary server-side cutoff. Ordering by orderColumns makes the row ordering deterministic
+// across pages — without it, Postgres offers no guarantee that two separate `.range()` calls
+// against an un-ordered query see the same row order, which could silently skip or duplicate rows
+// exactly like the bug this is fixing.
+//
+// orderColumns defaults to ['id'], which fits most tables in this project (tasks, users, clients,
+// ...), but NOT every table has a single `id` primary key — task_assignees and task_platform_links,
+// for instance, use a composite primary key (task_id, user_id) / (task_id, platform_id) with no
+// `id` column at all, so ordering by 'id' there throws ("column ... does not exist"), not silently
+// — always pass the table's real primary-key column(s) explicitly when it isn't a plain `id`.
 //
 // Use this (not a bare `.select()`) for any fetch that is meant to load an ENTIRE table's rows into
-// app state with no filter narrowing it to a bounded set — `fetchTaskAssignees()` and the global
-// `tasks` fetches in src/App.tsx are the two confirmed-affected call sites fixed alongside this
-// helper. A `.select()` already narrowed with `.eq()/.in()` to a known-small, bounded set (a single
-// task's comments, one client's campaigns, etc.) doesn't need this.
+// app state with no filter narrowing it to a bounded set. A `.select()` already narrowed with
+// `.eq()/.in()` to a known-small, bounded set (a single task's comments, one client's campaigns,
+// etc.) doesn't need this.
 export async function fetchAllRows<T>(
   client: SupabaseClient,
   table: string,
-  select: string = '*'
+  select: string = '*',
+  orderColumns: string[] = ['id']
 ): Promise<{ data: T[] | null; error: { message?: string } | null }> {
   const PAGE_SIZE = 1000;
   const allRows: T[] = [];
@@ -1340,11 +1344,11 @@ export async function fetchAllRows<T>(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { data, error } = await client
-      .from(table)
-      .select(select)
-      .order('id', { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
+    let query = client.from(table).select(select);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
 
     if (error) return { data: null, error };
 
