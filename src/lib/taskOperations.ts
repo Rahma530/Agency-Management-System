@@ -132,7 +132,15 @@ export const fetchTaskAssignees = async (): Promise<TaskAssigneeRecord[]> => {
   // comment in supabase.ts for the full story). This was the confirmed root cause of a task's
   // newest assignee intermittently not appearing for some viewers while still correctly present in
   // the database for others.
-  const { data, error } = await fetchAllRows<TaskAssigneeRecord>(supabaseRaw, 'task_assignees');
+  //
+  // task_assignees has no `id` column — its primary key is the composite (task_id, user_id) — so
+  // the order columns must be passed explicitly (fetchAllRows's own default of 'id' throws here).
+  const { data, error } = await fetchAllRows<TaskAssigneeRecord>(
+    supabaseRaw,
+    'task_assignees',
+    '*',
+    ['task_id', 'user_id']
+  );
   throwIfError(error, 'Unable to load task assignees.');
   return data || [];
 };
@@ -207,7 +215,15 @@ export const fetchTaskPlatformLinks = async (): Promise<TaskPlatformLinkRecord[]
   // Paginated for the same reason as fetchTaskAssignees() above: one row per task per linked
   // platform, so this table grows at least as fast as `tasks` (already past the 1000-row default
   // cap) and was exposed to the exact same silent-truncation bug.
-  const { data, error } = await fetchAllRows<TaskPlatformLinkRecord>(supabaseRaw, 'task_platform_links');
+  //
+  // task_platform_links has no `id` column either — its primary key is the composite (task_id,
+  // platform_id) — so the order columns must be passed explicitly, same as task_assignees above.
+  const { data, error } = await fetchAllRows<TaskPlatformLinkRecord>(
+    supabaseRaw,
+    'task_platform_links',
+    '*',
+    ['task_id', 'platform_id']
+  );
   throwIfError(error, 'Unable to load task platforms.');
   return data || [];
 };
