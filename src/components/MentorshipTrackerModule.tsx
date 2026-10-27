@@ -191,7 +191,7 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   requiredGrowth: {
     title: 'Required Growth',
     description:
-      "Looked up from Avg 3M Spent against the Growth Tiers table (Growth Tiers tab) — a client spending more recently needs a lower growth % to stay on track, and vice versa.",
+      "Looked up from Avg 3M Spent against the Growth Tiers table (Growth Tiers tab) — a client spending more recently needs a lower growth % to stay on track, and vice versa. Blank (—) for a client with no spend history at all (Avg 3M Sales is empty) — that client's target is Target ROAS instead, never both.",
   },
   profitGrowth: {
     title: 'Profit Growth',
