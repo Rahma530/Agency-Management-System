@@ -277,6 +277,13 @@ function useSupabaseRealtimeSync(
     let cancelled = false;
     let refreshInFlight = false;
     let refreshQueued = false;
+    // Tracks whether this hook instance has already reached SUBSCRIBED once since mount. loadData()
+    // already fetches every table fresh right before these hooks are wired up, so the very first
+    // SUBSCRIBED event has nothing new to fetch — refreshing there was firing a redundant refetch for
+    // all ~29 realtime-wired tables at once on every page load (the cause of the long initial load
+    // time). We still refresh on every SUBSCRIBED *after* the first, since that only happens on a
+    // genuine reconnect (channel dropped and came back), where data may really have gone stale.
+    let hasSubscribedOnce = false;
 
     const runCoalescedRefresh = async (): Promise<void> => {
       if (cancelled) return;
@@ -285,11 +292,8 @@ function useSupabaseRealtimeSync(
         return;
       }
       refreshInFlight = true;
-      const startedAt = performance.now();
       try {
         await refresh();
-        // Temporary diagnostic logging — remove once the task-save lag report is resolved.
-        console.log(`[RT] ${channelName} refresh took ${Math.round(performance.now() - startedAt)}ms`);
       } finally {
         refreshInFlight = false;
         if (!cancelled && refreshQueued) {
@@ -324,12 +328,7 @@ function useSupabaseRealtimeSync(
       }
 
       const invalidate = () => {
-        // Temporary diagnostic logging — remove once the task-save lag report is resolved.
-        if (isRecentSelfWrite(table)) {
-          console.log(`[RT] ${channelName} event ignored (self-write suppression active)`);
-          return;
-        }
-        console.log(`[RT] ${channelName} event -> triggering refresh`);
+        if (isRecentSelfWrite(table)) return;
         void runCoalescedRefresh();
       };
 
@@ -342,7 +341,11 @@ function useSupabaseRealtimeSync(
           if (cancelled) return;
           if (status === 'SUBSCRIBED') {
             stopPollFallback();
-            void runCoalescedRefresh();
+            // Skip the refresh on the first SUBSCRIBED since mount — see hasSubscribedOnce above.
+            if (hasSubscribedOnce) {
+              void runCoalescedRefresh();
+            }
+            hasSubscribedOnce = true;
           } else {
             console.warn(`Realtime channel "${channelName}" not subscribed (status: ${status}); polling as fallback.`, err);
             startPollFallback();
@@ -4575,9 +4578,6 @@ export default function App() {
 
   // 5. Update task status on the shared board
   const handleUpdateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
-    // Temporary diagnostic logging — remove once the task-save lag report is resolved.
-    const __diagStart = performance.now();
-    console.log(`[SAVE] handleUpdateTaskStatus(${taskId} -> ${newStatus}) started`);
     const existingTask = tasks.find((t) => t.id === taskId);
     // completed_at is the only reliable signal for "completed today" (the Daily Work Log's
     // auto-suggestion) and for every completion-rate/performance metric in reportingEngine.ts —
@@ -4608,14 +4608,11 @@ export default function App() {
       prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
     );
     markSelfWrite('tasks');
-    console.log(`[SAVE] handleUpdateTaskStatus: DB update + local state done at +${Math.round(performance.now() - __diagStart)}ms`);
 
     const taskTitle = existingTask?.title || 'Task';
     await logActivity('status_change', 'task', taskId, taskTitle, `Status updated to ${newStatus}`);
-    console.log(`[SAVE] handleUpdateTaskStatus: logActivity done at +${Math.round(performance.now() - __diagStart)}ms`);
 
     showNotification('Task status moved and the shared board updated.');
-    console.log(`[SAVE] handleUpdateTaskStatus finished, total +${Math.round(performance.now() - __diagStart)}ms`);
   };
 
   const assertRealTaskClient = async (clientId: string) => {
@@ -4637,9 +4634,6 @@ export default function App() {
     stagedAttachments: StagedTaskAttachment[] = [],
     platformIds?: string[]
   ) => {
-    // Temporary diagnostic logging — remove once the task-save lag report is resolved.
-    const __diagStart = performance.now();
-    console.log(`[SAVE] handleUpdateTask(${taskId}) started`);
     const existingTask = tasks.find((t) => t.id === taskId);
     // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
     // actually touches status — editing title/description/done_link alone shouldn't disturb it.
@@ -4673,7 +4667,6 @@ export default function App() {
         if (!data) throw new Error('Task update returned no persisted row.');
         persistedTask = data as TaskRecord;
         persistedAnyChange = true;
-        console.log(`[SAVE] handleUpdateTask: main UPDATE done at +${Math.round(performance.now() - __diagStart)}ms`);
       } else if (existingTask) {
         persistedTask = existingTask;
       } else {
@@ -4682,10 +4675,8 @@ export default function App() {
 
       if (requestedAssigneeIds) {
         await persistTaskAssignees(taskId, requestedAssigneeIds);
-        console.log(`[SAVE] handleUpdateTask: persistTaskAssignees done at +${Math.round(performance.now() - __diagStart)}ms`);
         persistedAnyChange = true;
         setTaskAssignees(await fetchTaskAssignees());
-        console.log(`[SAVE] handleUpdateTask: fetchTaskAssignees done at +${Math.round(performance.now() - __diagStart)}ms`);
         markSelfWrite('task_assignees');
         const { data: refreshedTask, error: refreshError } = await supabaseRaw
           .from('tasks')
@@ -4694,7 +4685,6 @@ export default function App() {
           .single();
         if (refreshError) throw refreshError;
         persistedTask = refreshedTask as TaskRecord;
-        console.log(`[SAVE] handleUpdateTask: task re-fetch done at +${Math.round(performance.now() - __diagStart)}ms`);
       }
 
       // Platform membership is persisted only through set_task_platforms. An explicit empty array
@@ -4705,7 +4695,6 @@ export default function App() {
         persistedAnyChange = true;
         setTaskPlatformLinks(await fetchTaskPlatformLinks());
         markSelfWrite('task_platform_links');
-        console.log(`[SAVE] handleUpdateTask: platform persist+refetch done at +${Math.round(performance.now() - __diagStart)}ms`);
       }
 
       setTasks((prev) => prev.map((t) => (t.id === taskId ? persistedTask : t)));
@@ -4716,9 +4705,6 @@ export default function App() {
         const rows = await addTaskAttachmentForCopies([taskId], staged);
         addedAttachments.push(...rows);
         if (rows.length > 0) persistedAnyChange = true;
-      }
-      if (stagedAttachments.length > 0) {
-        console.log(`[SAVE] handleUpdateTask: attachments done at +${Math.round(performance.now() - __diagStart)}ms`);
       }
       if (addedAttachments.length > 0) {
         setTaskAttachments((previous) => {
@@ -4777,15 +4763,11 @@ export default function App() {
     await logActivity('update', 'task', taskId, taskTitle, 'Task details updated');
 
     showNotification('Task data updated successfully.');
-    console.log(`[SAVE] handleUpdateTask finished, total +${Math.round(performance.now() - __diagStart)}ms`);
   };
 
   // 6. Create one task copy per selected client. create_task_copy owns assignee notifications and
   // idempotency; the UI must not duplicate either behavior.
   const handleCreateTask = async (taskData: CreateTaskFormInput) => {
-    // Temporary diagnostic logging — remove once the task-save lag report is resolved.
-    const __diagStart = performance.now();
-    console.log('[SAVE] handleCreateTask started');
     if (!supabaseActive) {
       throw new Error('Supabase is not configured; the task was not created.');
     }
@@ -4802,7 +4784,6 @@ export default function App() {
     }
 
     const batchResult = await createTaskCopies(taskData);
-    console.log(`[SAVE] handleCreateTask: createTaskCopies done at +${Math.round(performance.now() - __diagStart)}ms`);
     const persistedTasks = batchResult.tasks;
     if (persistedTasks.length > 0) {
       setTasks((previous) => [
@@ -4912,7 +4893,6 @@ export default function App() {
     await Promise.all(persistedTasks.map((task) =>
       logActivity('create', 'task', task.id, task.title, `Created task for team: ${task.team}`)
     ));
-    console.log(`[SAVE] handleCreateTask finished, total +${Math.round(performance.now() - __diagStart)}ms`);
   };
 
   // 6b. Post a task comment or reply (parent_comment_id set for a reply,
