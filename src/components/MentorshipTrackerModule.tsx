@@ -201,7 +201,7 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
   targetRoas: {
     title: 'Target ROAS',
     description:
-      "Only shown for a client with no spend history at all (Avg 3M Sales is empty — this would be their first real month): the breakeven ROAS, 1 ÷ Margin — the ROAS needed to just cover Spend (Profit = 0). Blank (—) for any client with spend history, or if Margin isn't set.",
+      "Only shown for a client with no spend history at all (Avg 3M Sales is empty — this would be their first real month): a placeholder 0.00, since there's no baseline yet to set a real ROAS target from. Required Growth is blank at the same time — once they build up 3 months of history, Required Growth takes over as their target instead. Blank (—) for any client with spend history, or if Margin isn't set.",
   },
   status: {
     title: 'Status',
