@@ -19,6 +19,14 @@ interface SearchableMultiSelectProps {
   disabled?: boolean;
   /** Max chips shown in the closed trigger before collapsing to "first +N". Default 2. */
   maxVisibleChips?: number;
+  /**
+   * Ids that must stay selected and can't be unchecked or removed here — e.g. a task's creator,
+   * who the set_task_assignees RPC always rejects removing (raises "The task's creator cannot be
+   * removed from its assignee list."). Locking it in the picker itself means that server-side
+   * rule is never hit through this control: the checkbox/chip for a locked id is still shown
+   * (and can carry a sublabel like "(creator)") but can't be toggled off.
+   */
+  lockedIds?: string[];
 }
 
 // Closed-by-default searchable multi-select: the trigger looks like a normal <select> (same
@@ -38,6 +46,7 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
   emptyMessage = 'No options available.',
   disabled = false,
   maxVisibleChips = 2,
+  lockedIds = [],
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -119,6 +128,7 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
 
   const toggleOption = (id: string) => {
     if (selectedIds.includes(id)) {
+      if (lockedIds.includes(id)) return;
       onChange(selectedIds.filter((existing) => existing !== id));
     } else {
       onChange([...selectedIds, id]);
@@ -127,6 +137,7 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
 
   const removeChip = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (lockedIds.includes(id)) return;
     onChange(selectedIds.filter((existing) => existing !== id));
   };
 
@@ -154,7 +165,7 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
                 className="flex items-center gap-1 rounded-full bg-purple-900/40 px-2 py-0.5 text-[11px] font-semibold text-purple-200"
               >
                 <span className="max-w-[140px] truncate">{option.label}</span>
-                {!disabled && (
+                {!disabled && !lockedIds.includes(option.id) && (
                   <span
                     role="button"
                     tabIndex={-1}
@@ -207,14 +218,16 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
             )}
             {filteredOptions.map((option) => {
               const checked = selectedIds.includes(option.id);
+              const locked = checked && lockedIds.includes(option.id);
               return (
                 <label
                   key={option.id}
                   role="option"
                   aria-selected={checked}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 hover:bg-white/5"
+                  title={locked ? "Required — can't be removed here." : undefined}
+                  className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-stone-200 ${locked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer hover:bg-white/5'}`}
                 >
-                  <input type="checkbox" checked={checked} onChange={() => toggleOption(option.id)} />
+                  <input type="checkbox" checked={checked} disabled={locked} onChange={() => toggleOption(option.id)} />
                   <span className="min-w-0 flex-1 truncate">
                     {option.label}
                     {option.sublabel && <span className="text-stone-500"> ({option.sublabel})</span>}

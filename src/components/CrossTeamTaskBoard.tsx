@@ -3917,7 +3917,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     options={editAssigneeOptions.map((user) => ({
                       id: user.id,
                       label: user.name,
-                      sublabel: user.team || user.role,
+                      sublabel: user.id === editingTask?.created_by
+                        ? `${user.team || user.role} · creator`
+                        : (user.team || user.role),
                       badge: capacityIndicator(user),
                     }))}
                     selectedIds={editAssigneeIds}
@@ -3925,6 +3927,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     placeholder="Select assignees…"
                     searchPlaceholder="Search by name…"
                     emptyMessage="No assignable employees."
+                    // set_task_assignees always rejects removing the task's creator from its
+                    // assignee list — lock it here so that server error can never be hit from
+                    // this form (matches the inline details panel's `isCreatorChip`/`removable`
+                    // handling above).
+                    lockedIds={editingTask?.created_by ? [editingTask.created_by] : []}
                   />
                   {(isCapacityLoading || capacityError) && (
                     <p className={`mt-1 text-[10px] ${capacityError ? 'text-amber-400' : 'text-stone-500'}`}>
