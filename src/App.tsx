@@ -1612,10 +1612,23 @@ export default function App() {
   // role/assignment/team-lead visibility logic from a bare postgres_changes payload. Silent by
   // design — no notification toast — since this fires on someone else's change, not the caller's
   // own action.
+  //
+  // Must use supabaseRaw, not supabase: 'tasks' is one of the 4 table names
+  // (users/clients/campaigns/tasks) the legacy `supabase` client-side RLS-emulation proxy
+  // (src/lib/supabase.ts, createTasksRLSQueryBuilder) specially intercepts — its select() reads
+  // from a disconnected in-memory demo array (inMemoryTasks, seeded once from INITIAL_TASKS),
+  // never the real database. Every other refresh*() above falls through that proxy harmlessly for
+  // tables it doesn't special-case, but this one was silently serving stale/fake data on every
+  // realtime 'tasks' event (any task created/updated/deleted by anyone, company-wide) and
+  // clobbering the correctly-loaded real state loadData() had just set — explaining reports of a
+  // task showing up in its "New Task Assigned" notification (a real insert, via supabaseRaw) but
+  // never appearing on the Task Board even after a hard refresh (loadData()'s correct initial
+  // fetch gets overwritten again within moments by the next 'tasks' realtime event anywhere in the
+  // company).
   const refreshTasks = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
-    const { data, error } = await supabase.from('tasks').select('*');
+    const { data, error } = await supabaseRaw.from('tasks').select('*');
     if (error) {
       console.error('Failed to refresh tasks from Supabase:', error);
       return;
