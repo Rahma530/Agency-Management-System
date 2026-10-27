@@ -54,6 +54,7 @@ interface MentorshipSnapshotRow {
   current_profit: number | null;
   required_growth_pct: number | null;
   profit_growth_pct: number | null;
+  target_roas: number | null;
   status: string;
 }
 
@@ -196,6 +197,11 @@ const METRIC_INFO: Record<string, { title: string; description: string }> = {
     title: 'Profit Growth',
     description:
       '(Current Profit ÷ Avg 3M Profit) − 1. Left blank when Avg 3M Profit is zero or negative — there is no valid baseline to measure growth against.',
+  },
+  targetRoas: {
+    title: 'Target ROAS',
+    description:
+      "Only shown for a client with no spend history at all (Avg 3M Sales is empty — this would be their first real month): the breakeven ROAS, 1 ÷ Margin — the ROAS needed to just cover Spend (Profit = 0). Blank (—) for any client with spend history, or if Margin isn't set.",
   },
   status: {
     title: 'Status',
@@ -638,6 +644,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                       <th className="py-3 px-4 text-right"><MetricHeader label="Current ROAS" metricKey="currentRoas" /></th>
                       <th className="py-3 px-4 text-right"><MetricHeader label="Required Growth" metricKey="requiredGrowth" /></th>
                       <th className="py-3 px-4 text-right"><MetricHeader label="Profit Growth" metricKey="profitGrowth" /></th>
+                      <th className="py-3 px-4 text-right"><MetricHeader label="Target ROAS" metricKey="targetRoas" /></th>
                       <th className="py-3 px-4"><MetricHeader label="Status" metricKey="status" align="left" /></th>
                       {PLATFORMS.map((p) => (
                         <th key={`head-${p}`} className="py-3 px-4 text-center">
@@ -649,7 +656,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                   <tbody className="divide-y divide-purple-900/20 text-xs">
                     {filteredBuyerRows.length === 0 && (
                       <tr>
-                        <td colSpan={18} className="py-6 text-center" style={{ color: 'var(--text-lo)' }}>
+                        <td colSpan={19} className="py-6 text-center" style={{ color: 'var(--text-lo)' }}>
                           No clients match "{overviewSearch}".
                         </td>
                       </tr>
@@ -729,6 +736,9 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                           </td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.required_growth_pct)}</td>
                           <td className="py-3.5 px-4 text-right text-stone-300">{fmtPct(r.profit_growth_pct)}</td>
+                          <td className="py-3.5 px-4 text-right text-stone-300">
+                            {r.target_roas != null ? r.target_roas.toFixed(2) : '—'}
+                          </td>
                           <td className="py-3.5 px-4">
                             <span
                               className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
