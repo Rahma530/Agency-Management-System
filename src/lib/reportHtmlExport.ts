@@ -48,60 +48,8 @@ const TOKENS = `
   --radius-lg:20px;--radius-md:16px;--radius-sm:12px;--radius-pill:30px;
 `;
 
-// Kesra brand fonts (KESRA_BRAND_BOOK's own Typography page: Aloevera is the primary English
-// typeface, Graphik Arabic ensures Arabic readability/consistency) — embedded as base64 data: URIs
-// directly in the exported file's <style>, same reasoning resolveEmbeddableImages already documents
-// for screenshots: a downloaded/emailed copy of this HTML must keep rendering correctly with no
-// network access at all, so a `/fonts/...` URL (which would resolve against the LOCAL file:// path
-// once saved, not this site) is not an option here the way it is for the live app's own index.css.
-// Only Regular + Bold are embedded (the only two weights this file's own CSS actually uses below),
-// not Graphik Arabic's full 8-weight family, to keep the exported file's size reasonable.
-const FONT_FILES: { family: string; weight: number; url: string }[] = [
-  { family: 'Aloevera', weight: 400, url: '/fonts/Aloevera-Regular.ttf' },
-  { family: 'GraphikArabic', weight: 400, url: '/fonts/GraphikArabic-Regular.otf' },
-  { family: 'GraphikArabic', weight: 700, url: '/fonts/GraphikArabic-Bold.otf' },
-];
-
-async function fetchFontDataUrl(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
-let fontFaceCssPromise: Promise<string> | null = null;
-
-// Fetched once per page load and cached, same pattern as pdfExport.ts's loadArabicFontBundle. A
-// font that fails to fetch is simply left out of the @font-face block (never throws, never blocks
-// the export) — the exported page's `font-family` list already ends in `sans-serif`, so a missing
-// brand font just degrades to the browser's default rather than breaking the export.
-function loadFontFaceCss(): Promise<string> {
-  if (!fontFaceCssPromise) {
-    fontFaceCssPromise = (async () => {
-      const faces = await Promise.all(
-        FONT_FILES.map(async ({ family, weight, url }) => {
-          const dataUrl = await fetchFontDataUrl(url);
-          if (!dataUrl) return '';
-          return `@font-face{font-family:'${family}';src:url(${dataUrl});font-weight:${weight};font-style:normal;font-display:swap}`;
-        })
-      );
-      return faces.join('');
-    })();
-  }
-  return fontFaceCssPromise;
-}
-
 const BASE_STYLE = `
-:root{${TOKENS}--font-main:'Aloevera','GraphikArabic',Tahoma,Arial,sans-serif;}
+:root{${TOKENS}--font-main:'Segoe UI',Tahoma,Arial,sans-serif;}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;font-family:var(--font-main);background:var(--gradient-page);color:var(--lilac);line-height:1.7}
@@ -246,7 +194,6 @@ function pageShell(opts: {
   subtitleHtml?: string;
   metaItems: { label: string; value: string }[];
   bodyHtml: string;
-  fontFaceCss: string;
 }): string {
   const metaHtml = opts.metaItems
     .map((item) => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`)
@@ -257,7 +204,7 @@ function pageShell(opts: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(opts.title)}</title>
-<style>${opts.fontFaceCss}${BASE_STYLE}</style>
+<style>${BASE_STYLE}</style>
 </head>
 <body class="kesra-report">
 <header class="hero">
@@ -458,7 +405,6 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
   // period; falls back to the old plain subtitle (or nothing) otherwise so a call site that hasn't
   // been updated to pass `period` yet keeps working exactly as before.
   const dateRangeHtml = renderDateRangeHtml(options.period || '');
-  const fontFaceCss = await loadFontFaceCss();
 
   return pageShell({
     // options.eyebrow was added to the interface but never actually read here — every export
@@ -474,7 +420,6 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
     // repeating it here as a meta item duplicated it on the page for no reason.
     metaItems: [],
     bodyHtml: parts.join(''),
-    fontFaceCss,
   });
 }
 
@@ -512,8 +457,6 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
     </section>
   `;
 
-  const fontFaceCss = await loadFontFaceCss();
-
   return pageShell({
     eyebrow: 'Unified Client Report — KESRA Management System',
     title: options.title,
@@ -523,7 +466,6 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
     // buildIndividualReportHtml above).
     metaItems: [],
     bodyHtml,
-    fontFaceCss,
   });
 }
 

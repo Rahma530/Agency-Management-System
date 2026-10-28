@@ -55,12 +55,11 @@
     <meta property="og:description" content="Internal agency operational platform for client management, multi-service workflows, capacity, and campaigns" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <!-- Plus Jakarta Sans (Google Fonts) dropped in favor of the Kesra brand fonts (Aloevera +
-         Graphik Arabic, @font-face'd in src/index.css from public/fonts/) — this app is bilingual
-         and Plus Jakarta Sans has no Arabic glyphs at all, so Arabic text was silently falling back
-         to the browser's own default system font the whole time, not any brand font. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   </head>
-  <body class="font-['Aloevera',_'GraphikArabic',_sans-serif] antialiased selection:bg-[#7b2ff7]/30 selection:text-[#ffffff]">
+  <body class="font-['Plus_Jakarta_Sans',sans-serif] antialiased selection:bg-[#7b2ff7]/30 selection:text-[#ffffff]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
