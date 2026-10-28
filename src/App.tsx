@@ -2300,51 +2300,57 @@ export default function App() {
         ],
         [
           // Fetch task comments
+          // Paginated: grows one row per comment, and will keep growing faster as the client/task
+          // count grows — the exact same silent-truncation-past-1000-rows risk fetchAllRows's own
+          // comment (supabase.ts) already documents for tasks/task_assignees/task_platform_links,
+          // just not yet hit here in practice. Applying it preemptively rather than waiting for a
+          // repeat of that bug once this table also crosses 1000 rows.
           task('taskComments', async () => {
-            const { data: taskCommentData, error: taskCommentErr } = await supabase
-              .from('task_comments')
-              .select('*');
+            const { data: taskCommentData, error: taskCommentErr } = await fetchAllRows<TaskCommentRecord>(supabase, 'task_comments');
             if (!taskCommentErr && taskCommentData) {
-              setTaskComments(taskCommentData as TaskCommentRecord[]);
+              setTaskComments(taskCommentData);
             }
           }),
-          // Fetch task attachment metadata (the files themselves stay in Storage)
+          // Fetch task attachment metadata (the files themselves stay in Storage) — paginated for
+          // the same preemptive reason as task_comments above.
           task('taskAttachments', async () => {
-            const { data: taskAttachmentData, error: taskAttachmentErr } = await supabase
-              .from('task_attachments')
-              .select('*');
+            const { data: taskAttachmentData, error: taskAttachmentErr } = await fetchAllRows<TaskAttachmentRecord>(supabase, 'task_attachments');
             if (!taskAttachmentErr && taskAttachmentData) {
-              setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
+              setTaskAttachments(taskAttachmentData);
             }
           }),
-          // Fetch capacity_logs
+          // Fetch capacity_logs — paginated for the same preemptive reason as task_comments above
+          // (one row per agent per day, so it grows with both headcount and time).
           task('capacityLogs', async () => {
-            const { data: capData, error: capErr } = await supabase.from('capacity_logs').select('*');
+            const { data: capData, error: capErr } = await fetchAllRows<CapacityLogRecord>(supabase, 'capacity_logs');
             if (capErr) {
               console.error('Failed to load capacity logs from Supabase:', capErr);
               showNotification(`Failed to load capacity logs from the server: ${capErr.message}`, 'info');
             } else {
-              setCapacityLogs((capData as CapacityLogRecord[]) || []);
+              setCapacityLogs(capData || []);
             }
           }),
           // Fetch daily_logs
+          // Paginated — one row per employee per day, so this is the fastest-growing table of the
+          // bunch and the most likely to hit the 1000-row default cutoff first as headcount grows.
           task('dailyLogs', async () => {
-            const { data: logData, error: logErr } = await supabase.from('daily_logs').select('*');
+            const { data: logData, error: logErr } = await fetchAllRows<DailyLogRecord>(supabase, 'daily_logs');
             if (logErr) {
               console.error('Failed to load daily logs from Supabase:', logErr);
               showNotification(`Failed to load daily logs from the server: ${logErr.message}`, 'info');
             } else {
-              setDailyLogs((logData as DailyLogRecord[]) || []);
+              setDailyLogs(logData || []);
             }
           }),
           // Fetch extra_notes
+          // Paginated — same preemptive reason as daily_logs above (one row per employee per day).
           task('extraNotes', async () => {
-            const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
+            const { data: noteData, error: noteErr } = await fetchAllRows<ExtraNoteRecord>(supabase, 'extra_notes');
             if (noteErr) {
               console.error('Failed to load extra notes from Supabase:', noteErr);
               showNotification(`Failed to load extra notes from the server: ${noteErr.message}`, 'info');
             } else {
-              setExtraNotes((noteData as ExtraNoteRecord[]) || []);
+              setExtraNotes(noteData || []);
             }
           }),
         ],
