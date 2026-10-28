@@ -629,6 +629,17 @@ export function buildClientAccessAttachmentStoragePath(
   return `${clientId}/${attachmentId}-${sanitizeAttachmentFilename(rawFilename)}`;
 }
 
+// Same convention, for the 'daily-log-attachments' bucket. First path segment MUST be the daily
+// log's own id — the storage.objects RLS policies (20261222100000_daily_log_attachments.sql) read
+// (storage.foldername(name))[1] as the daily_log_id directly (no join needed, unlike briefs).
+export function buildDailyLogAttachmentStoragePath(
+  dailyLogId: string,
+  attachmentId: string,
+  rawFilename: string
+): string {
+  return `${dailyLogId}/${attachmentId}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
 let rawClientInstance: SupabaseClient | null = null;
 
 /**
