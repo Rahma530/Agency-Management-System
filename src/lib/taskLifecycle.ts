@@ -101,6 +101,26 @@ export const resolveOrderedTaskAssigneeIds = (
     .map((row) => row.user_id);
 };
 
+// Auto-computed actual_hours (replaces the old manual "Quick time logging" box in
+// DailyOperationsModule.tsx): elapsed wall-clock time between a task's started_at (set once, the
+// first time status becomes 'in_progress' — see tasks.started_at's own comment in
+// types/database.ts) and completed_at (same "first time only" bookkeeping, pre-existing). Returns
+// null when either timestamp is missing (e.g. a task moved straight from 'todo' to 'completed'
+// without ever passing through 'in_progress' — nothing to measure) rather than a misleading 0,
+// so callers can render "—" instead of a false zero. Rounded to 2 decimal places; doesn't account
+// for time spent 'blocked' in between — this is total elapsed time since work first started, not
+// active working time, matching exactly what was asked for.
+export const computeActualHours = (
+  startedAt: string | null | undefined,
+  completedAt: string | null | undefined
+): number | null => {
+  if (!startedAt || !completedAt) return null;
+  const startMs = new Date(startedAt).getTime();
+  const endMs = new Date(completedAt).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
+  return Math.round(((endMs - startMs) / 3600000) * 100) / 100;
+};
+
 // Client-side UI mirror of set_task_assignees' permission gate
 // (supabase/migrations/20261105000000_task_assignees_rpcs.sql, PR 4a — not yet merged/applied,
 // read there for the authoritative SQL). Deliberately only decides whether to SHOW the "Add

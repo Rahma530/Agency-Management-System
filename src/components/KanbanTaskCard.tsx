@@ -246,14 +246,15 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
         </div>
       )}
 
-      {/* Hours Info: Estimated vs Actual */}
-      {(task.estimated_hours || task.actual_hours !== undefined) && (
+      {/* Hours Info: Estimated vs Actual. Actual is auto-computed (started_at -> completed_at) —
+          "—" when not yet measurable, rather than a misleading "0h". */}
+      {(task.estimated_hours || task.actual_hours != null) && (
         <div className="flex items-center justify-between text-[10px] text-stone-400 bg-stone-900/60 px-2 py-1 rounded-md border border-stone-800">
           <span className="flex items-center gap-1">
             <Timer className="w-3 h-3 text-purple-300" />
             <span>Est: {task.estimated_hours || 0}h</span>
           </span>
-          <span>Act: {task.actual_hours || 0}h</span>
+          <span>Act: {task.actual_hours != null ? `${task.actual_hours}h` : '—'}</span>
         </div>
       )}
 
@@ -305,6 +306,15 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
             Created {task.created_at.split('T')[0]}
             {creatorName && ` by ${creatorName}`}
           </span>
+        </div>
+      )}
+
+      {/* Done Date — actual completion date+time (tasks.completed_at), shown alongside Due Date
+          above once the task is actually done, not instead of it. */}
+      {task.completed_at && (
+        <div className="flex items-center gap-1 text-[9px] text-emerald-400 -mt-1">
+          <Calendar className="w-2.5 h-2.5" />
+          <span>Done {new Date(task.completed_at).toLocaleString()}</span>
         </div>
       )}
 

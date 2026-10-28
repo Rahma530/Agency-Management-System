@@ -40,6 +40,7 @@ import {
   ClientRecord,
   BriefRecord,
   DailyLogRecord,
+  DailyLogAttachmentRecord,
   ExtraNoteRecord,
   TaskStatus,
   TaskPriority,
@@ -53,11 +54,13 @@ import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, parseDoneLinks, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
-import { computeTaskDeletionPreview } from '../lib/taskOperations';
+import { computeTaskDeletionPreview, StagedTaskAttachment } from '../lib/taskOperations';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
 import { DailyLogAttachmentsPreview } from './DailyLogAttachmentsPreview';
+import { DailyLogAttachmentsList } from './DailyLogAttachmentsList';
+import { TaskAttachmentPicker } from './TaskAttachmentPicker';
 import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal';
 
 interface DailyOperationsModuleProps {
@@ -77,22 +80,30 @@ interface DailyOperationsModuleProps {
   clients: ClientRecord[];
   briefs: BriefRecord[];
   dailyLogs: DailyLogRecord[];
+  // The daily log's OWN attachments (whoever filled in the log attached these directly) — distinct
+  // from DailyLogAttachmentsPreview above, which shows attachments already on the log's LINKED
+  // tasks. Optional: a parent that doesn't pass these simply never shows the picker/list.
+  dailyLogAttachments?: DailyLogAttachmentRecord[];
   extraNotes?: ExtraNoteRecord[];
   currentUser: UserRecord;
   onUpdateTaskStatus: (taskId: string, newStatus: TaskStatus) => Promise<void>;
   onUpdateTask: (taskId: string, updates: Partial<TaskRecord>) => Promise<void>;
+  // Returns the persisted row's id — needed to then attach any staged files to this specific log
+  // via onUploadDailyLogAttachment, which must happen AFTER the row exists.
   onCreateDailyLog: (logData: {
     user_id: string;
     date: string;
     summary_text: string;
     linked_task_ids: string[];
     client_id?: string | null;
-  }) => Promise<void>;
+  }) => Promise<string>;
   onUpdateDailyLog: (
     logId: string,
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
   ) => Promise<void>;
   onDeleteDailyLog: (logId: string) => Promise<void>;
+  onUploadDailyLogAttachment?: (dailyLogId: string, file: File) => Promise<void>;
+  onDeleteDailyLogAttachment?: (attachmentId: string) => Promise<void>;
   onCreateExtraNote?: (noteData: {
     user_id: string;
     date: string;
@@ -126,6 +137,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   clients,
   briefs,
   dailyLogs,
+  dailyLogAttachments = [],
   extraNotes = [],
   currentUser,
   onUpdateTaskStatus,
@@ -133,6 +145,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   onCreateDailyLog,
   onUpdateDailyLog,
   onDeleteDailyLog,
+  onUploadDailyLogAttachment,
+  onDeleteDailyLogAttachment,
   onCreateExtraNote,
   onGetServerToday,
   onHardDeleteTasks,
@@ -218,6 +232,9 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Editing an existing log opens DailyLogEditModal (a separate single-row form, rendered below)
   // rather than reusing this multi-client create modal.
   const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
+  // Files staged in the create form before the log row(s) exist — uploaded to every newly-created
+  // log id right after handleSubmitDailyLog's rows succeed. Same pattern as MyWorkHub.tsx.
+  const [dailyLogStagedAttachments, setDailyLogStagedAttachments] = useState<StagedTaskAttachment[]>([]);
 
   // Extra Effort Log Form State — the genuine "document initiative beyond
   // normal task scope" entry point. Distinct category from the incidental
@@ -228,10 +245,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const [extraEffortText, setExtraEffortText] = useState('');
   const [extraEffortDate, setExtraEffortDate] = useState(getTodayStr());
   const [isSubmittingExtraEffort, setIsSubmittingExtraEffort] = useState(false);
-
-  // Quick Time Logging Modal / Popover State
-  const [timeLoggingTaskId, setTimeLoggingTaskId] = useState<string | null>(null);
-  const [additionalHours, setAdditionalHours] = useState<number>(1);
 
   // Notification toast
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -599,22 +612,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     }
   };
 
-  // Quick time logging handler
-  const handleLogActualHours = async (task: TaskRecord) => {
-    if (additionalHours <= 0) return;
-    try {
-      const updatedHours = (task.actual_hours || 0) + Number(additionalHours);
-      await onUpdateTask(task.id, {
-        actual_hours: updatedHours,
-      });
-      setTimeLoggingTaskId(null);
-      setAdditionalHours(1);
-      showNotification(`Logged ${additionalHours} additional hour(s) for the task.`);
-    } catch (err) {
-      showNotification('An error occurred while logging hours.', 'error');
-    }
-  };
-
   // Daily Activity Submission Handler — writes one daily_logs row per selected client (or a
   // single client_id: null row when none are selected). Each insert is awaited independently
   // (Promise.allSettled) so a partial failure never silently drops a client: the form stays open
@@ -641,9 +638,29 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       const failed = targets.filter((_, i) => results[i].status === 'rejected');
 
       if (failed.length === 0) {
+        // Attachments are uploaded AFTER every row exists (each target client gets its own
+        // daily_logs row, so the same staged files are uploaded once per row — see
+        // handleUploadDailyLogAttachment's own comment in App.tsx). A failure here doesn't
+        // reopen the form or mark the log save itself as failed; the log is already saved, so
+        // this just surfaces as its own notification.
+        if (dailyLogStagedAttachments.length > 0 && onUploadDailyLogAttachment) {
+          const newLogIds = results
+            .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
+            .map((r) => r.value);
+          const uploadResults = await Promise.allSettled(
+            newLogIds.flatMap((logId) =>
+              dailyLogStagedAttachments.map((staged) => onUploadDailyLogAttachment(logId, staged.file))
+            )
+          );
+          if (uploadResults.some((r) => r.status === 'rejected')) {
+            showNotification('Daily log saved, but one or more attachments failed to upload.', 'error');
+          }
+        }
+
         setDailySummary('');
         setSelectedLinkedTasks([]);
         setSelectedLogClientIds([]);
+        setDailyLogStagedAttachments([]);
         setIsLoggingDailyActivity(false);
         showNotification(
           targets.length > 1
@@ -1229,15 +1246,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
                           {/* Quick Workflow Action Buttons */}
                           <div className="flex items-center gap-1.5 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-stone-800">
-                            {/* Fast Time Log Button */}
-                            <button
-                              onClick={() => setTimeLoggingTaskId(task.id)}
-                              className="p-1.5 rounded-lg bg-stone-800 text-stone-300 hover:text-white hover:bg-stone-700 transition-colors"
-                              title="Log actual hours worked"
-                            >
-                              <Clock className="w-3.5 h-3.5" />
-                            </button>
-
                             {/* Status Advancement Button */}
                             {!isTaskDone(task.status) && task.status !== 'blocked' && (
                               <button
@@ -1440,6 +1448,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     <th className="p-3.5">Team & Service</th>
                     <th className="p-3.5 text-center">Priority</th>
                     <th className="p-3.5 text-center">Due Date</th>
+                    <th className="p-3.5 text-center">Done Date</th>
                     <th className="p-3.5 text-center">Est. Hours</th>
                     <th className="p-3.5 text-center">Actual Hours</th>
                     <th className="p-3.5 text-center">Status</th>
@@ -1449,7 +1458,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <tbody className="divide-y divide-stone-800/60">
                   {filteredEmployeeTasks.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center text-stone-400">
+                      <td colSpan={10} className="p-8 text-center text-stone-400">
                         No tasks match the current search criteria for the selected employee.
                       </td>
                     </tr>
@@ -1513,11 +1522,15 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                           </td>
 
                           <td className="p-3.5 text-center font-mono text-stone-300">
+                            {task.completed_at ? new Date(task.completed_at).toLocaleString() : '—'}
+                          </td>
+
+                          <td className="p-3.5 text-center font-mono text-stone-300">
                             {task.estimated_hours || 0}h
                           </td>
 
                           <td className="p-3.5 text-center font-mono text-stone-300">
-                            {task.actual_hours || 0}h
+                            {task.actual_hours != null ? `${task.actual_hours}h` : '—'}
                           </td>
 
                           <td className="p-3.5 text-center">
@@ -1547,15 +1560,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                                 <option value="completed" className="bg-stone-900 text-white">Completed</option>
                                 <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
                               </select>
-
-                              {/* Quick Time Log Button */}
-                              <button
-                                onClick={() => setTimeLoggingTaskId(task.id)}
-                                className="p-1 rounded bg-stone-800 text-stone-300 hover:text-white"
-                                title="Log hours"
-                              >
-                                <Clock className="w-3.5 h-3.5" />
-                              </button>
 
                               {canDeleteTasks && (
                                 <button
@@ -1835,6 +1839,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     <p className="text-xs text-stone-200 leading-relaxed whitespace-pre-wrap break-words">
                       {log.summary_text}
                     </p>
+
+                    <DailyLogAttachmentsList
+                      dailyLogId={log.id}
+                      attachments={dailyLogAttachments}
+                      users={users}
+                      canDelete={canEditThisLog}
+                      onDelete={onDeleteDailyLogAttachment}
+                    />
 
                     {linkedTasksList.length > 0 && (
                       <div className="pt-2 border-t border-stone-800/80">
@@ -2161,11 +2173,20 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 );
               })()}
 
-              {/* Dates & Hours Tracker */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              {/* Dates & Hours Tracker. Actual Hours is auto-computed (started_at -> completed_at,
+                  see computeActualHours in lib/taskLifecycle.ts) — no manual entry anymore. Done
+                  Date is the real completion date+time (completed_at), shown alongside Due Date. */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
                 <div className="p-2.5 rounded-xl bg-stone-900/60 border border-stone-800">
                   <span className="text-[10px] text-stone-400 block">Due Date</span>
                   <span className="font-bold text-white font-mono">{selectedTaskDetails.due_date || '—'}</span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-stone-900/60 border border-stone-800">
+                  <span className="text-[10px] text-stone-400 block">Done Date (actual)</span>
+                  <span className="font-bold text-stone-300 font-mono text-[10px]">
+                    {selectedTaskDetails.completed_at ? new Date(selectedTaskDetails.completed_at).toLocaleString() : 'Not completed yet'}
+                  </span>
                 </div>
 
                 <div className="p-2.5 rounded-xl bg-stone-900/60 border border-stone-800">
@@ -2174,8 +2195,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
 
                 <div className="p-2.5 rounded-xl bg-stone-900/60 border border-stone-800">
-                  <span className="text-[10px] text-stone-400 block">Actual Hours</span>
-                  <span className="font-bold text-emerald-400 font-mono">{selectedTaskDetails.actual_hours || 0}h</span>
+                  <span className="text-[10px] text-stone-400 block">Actual Hours (auto)</span>
+                  <span className="font-bold text-emerald-400 font-mono">
+                    {selectedTaskDetails.actual_hours != null ? `${selectedTaskDetails.actual_hours}h` : '—'}
+                  </span>
                 </div>
 
                 <div className="p-2.5 rounded-xl bg-stone-900/60 border border-stone-800">
@@ -2471,12 +2494,24 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
               </div>
 
+              {onUploadDailyLogAttachment && (
+                <div>
+                  <label className="text-[11px] font-semibold text-stone-400 block mb-1">Attachments (optional):</label>
+                  <TaskAttachmentPicker
+                    files={dailyLogStagedAttachments}
+                    onChange={setDailyLogStagedAttachments}
+                    disabled={isSubmittingLog}
+                  />
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
                 <button
                   type="button"
                   onClick={() => {
                     setIsLoggingDailyActivity(false);
                     setCreateLogError(null);
+                    setDailyLogStagedAttachments([]);
                   }}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-stone-400 hover:text-white"
                 >
@@ -2578,79 +2613,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 4: QUICK TIME LOGGING                                               */}
-      {/* ========================================================================= */}
-      {timeLoggingTaskId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div
-            className="w-full max-w-sm rounded-[20px] p-5 space-y-4 border shadow-2xl relative"
-            style={{ background: 'var(--surface-dark)', borderColor: 'var(--border-strong)' }}
-          >
-            {(() => {
-              const targetTask = tasks.find((t) => t.id === timeLoggingTaskId);
-              if (!targetTask) return null;
-
-              return (
-                <>
-                  <div className="flex items-start justify-between pb-2 border-b border-stone-800">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-purple-400" />
-                      <h4 className="text-xs font-bold text-white">Log Actual Hours Worked</h4>
-                    </div>
-                    <button
-                      onClick={() => setTimeLoggingTaskId(null)}
-                      className="p-1 rounded text-stone-400 hover:text-white"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold text-white line-clamp-1">{targetTask.title}</p>
-                    <p className="text-[11px] text-stone-400">
-                      Currently logged hours: <strong className="text-purple-300 font-mono">{targetTask.actual_hours || 0}h</strong>
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-semibold text-stone-300 block mb-1">
-                      Additional hours completed:
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0.5"
-                      max="24"
-                      value={additionalHours}
-                      onChange={(e) => setAdditionalHours(parseFloat(e.target.value) || 0)}
-                      className="w-full p-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
-                    <button
-                      type="button"
-                      onClick={() => setTimeLoggingTaskId(null)}
-                      className="px-3 py-1.5 rounded-lg text-xs text-stone-400 hover:text-white"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleLogActualHours(targetTask)}
-                      className="px-4 py-1.5 rounded-lg text-xs font-bold text-white shadow-md hover:opacity-90"
-                      style={{ background: 'var(--gradient-badge)' }}
-                    >
-                      Add Hours
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      )}
 
       {deleteModalTaskIds && (() => {
         const preview = computeTaskDeletionPreview(deleteModalTaskIds, tasks, taskComments, taskAttachments);

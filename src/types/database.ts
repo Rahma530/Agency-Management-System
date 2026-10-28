@@ -413,6 +413,12 @@ export interface TaskRecord {
   // finished, independent of the separate manual closing action. Needed to filter "completed
   // today" — status alone carries no timing information.
   completed_at?: string | null;
+  // Set once, the first time status becomes 'in_progress' — never cleared or overwritten by a
+  // later re-entry into 'in_progress' (e.g. after a blocked detour), same "first time only"
+  // bookkeeping as completed_at above. Used to auto-compute actual_hours (elapsed wall-clock time
+  // from started_at to completed_at) in handleUpdateTaskStatus/handleUpdateTask in App.tsx —
+  // replaces the old manual "Quick time logging" box in DailyOperationsModule.tsx.
+  started_at?: string | null;
   // Module 12 Phase 5: notification-badge equivalent of assignments.viewed_at
   // for roles with no AssignmentRecord relationship (programming_agent).
   // Cleared to null whenever assigned_to changes, set when the assignee
@@ -851,6 +857,20 @@ export interface DailyLogRecord {
   created_at?: string;
 }
 
+// 11b. daily_log_attachments — same shape as TaskAttachmentRecord/BriefAttachmentRecord, one
+// level up (daily log instead of task/brief). Bytes live in the private
+// 'daily-log-attachments' Storage bucket at storage_path; this row is just the metadata index.
+export interface DailyLogAttachmentRecord {
+  id: string;
+  daily_log_id: string;
+  storage_path: string;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
 export interface KpiRecord {
   id: string;
   user_id?: string | null;
@@ -1106,6 +1126,7 @@ export interface Database {
       report_audit_events: { Row: ReportAuditEventRecord; Insert: Partial<ReportAuditEventRecord>; Update: Partial<ReportAuditEventRecord>; Relationships: any[] };
       capacity_logs: { Row: CapacityLogRecord; Insert: Partial<CapacityLogRecord>; Update: Partial<CapacityLogRecord>; Relationships: any[] };
       daily_logs: { Row: DailyLogRecord; Insert: Partial<DailyLogRecord>; Update: Partial<DailyLogRecord>; Relationships: any[] };
+      daily_log_attachments: { Row: DailyLogAttachmentRecord; Insert: Partial<DailyLogAttachmentRecord>; Update: Partial<DailyLogAttachmentRecord>; Relationships: any[] };
       extra_notes: { Row: ExtraNoteRecord; Insert: Partial<ExtraNoteRecord>; Update: Partial<ExtraNoteRecord>; Relationships: any[] };
       performance_reviews: { Row: PerformanceReviewRecord; Insert: Partial<PerformanceReviewRecord>; Update: Partial<PerformanceReviewRecord>; Relationships: any[] };
       meetings: { Row: MeetingRecord; Insert: Partial<MeetingRecord>; Update: Partial<MeetingRecord>; Relationships: any[] };

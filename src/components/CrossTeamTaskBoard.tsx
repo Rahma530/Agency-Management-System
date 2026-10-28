@@ -679,7 +679,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [editPriority, setEditPriority] = useState<TaskPriority>('medium');
   const [editStatus, setEditStatus] = useState<TaskStatus>('todo');
   const [editEstimatedHours, setEditEstimatedHours] = useState<number>(0);
-  const [editActualHours, setEditActualHours] = useState<number>(0);
   const [editTaskType, setEditTaskType] = useState<string>('');
   const [editTaskTypeOther, setEditTaskTypeOther] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -1592,7 +1591,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setEditPriority(task.priority);
     setEditStatus(task.status);
     setEditEstimatedHours(task.estimated_hours || 0);
-    setEditActualHours(task.actual_hours || 0);
     setEditTaskType(task.task_type || '');
     setEditTaskTypeOther(task.task_type_other || '');
   };
@@ -1647,7 +1645,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         priority: editPriority,
         status: editStatus,
         estimated_hours: editEstimatedHours,
-        actual_hours: editActualHours,
         task_type: finalTaskType,
         task_type_other: finalTaskTypeOther,
       }, editAssigneeIds, editAttachments, editPlatformIds);
@@ -1665,7 +1662,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           priority: editPriority,
           status: editStatus,
           estimated_hours: editEstimatedHours,
-          actual_hours: editActualHours,
           task_type: finalTaskType,
           task_type_other: finalTaskTypeOther,
         });
@@ -2410,6 +2406,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <th className="p-3.5 text-center">Status</th>
                   <th className="p-3.5 text-center">Created</th>
                   <th className="p-3.5 text-center">Due Date</th>
+                  <th className="p-3.5 text-center">Done Date</th>
                   <th className="p-3.5 text-center">Est. Hours</th>
                   <th className="p-3.5 text-center">Act. Hours</th>
                   <th className="p-3.5 text-center">Done Link</th>
@@ -2570,6 +2567,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                               Overdue!
                             </span>
                           )}
+                        </td>
+                        <td className="p-3.5 text-center font-mono text-stone-400">
+                          {task.completed_at ? new Date(task.completed_at).toLocaleString() : '—'}
                         </td>
                         <td className="p-3.5 text-center font-bold text-purple-300">
                           {task.estimated_hours ? `${task.estimated_hours}h` : '—'}
@@ -3229,8 +3229,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 );
               })()}
 
-              {/* Hours Tracking, Created & Due Date */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-stone-900/60 border border-stone-800 text-center">
+              {/* Hours Tracking, Created, Due Date & Done Date. Actual Hours is auto-computed
+                  (started_at -> completed_at, see computeActualHours in lib/taskLifecycle.ts) — no
+                  manual entry anymore, and shows "—" rather than a misleading "0 hrs" when the
+                  task never passed through 'in_progress' or isn't completed yet. */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-3 rounded-xl bg-stone-900/60 border border-stone-800 text-center">
                 <div>
                   <p className="text-[10px] text-stone-400">Estimated Hours</p>
                   <p className="text-sm font-bold text-purple-300 mt-0.5">
@@ -3238,9 +3241,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-stone-400">Actual Hours</p>
+                  <p className="text-[10px] text-stone-400">Actual Hours (auto)</p>
                   <p className="text-sm font-bold text-emerald-400 mt-0.5">
-                    {selectedTaskDetails.actual_hours || 0} hrs
+                    {selectedTaskDetails.actual_hours != null ? `${selectedTaskDetails.actual_hours} hrs` : '—'}
                   </p>
                 </div>
                 <div>
@@ -3257,6 +3260,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     }`}
                   >
                     {selectedTaskDetails.due_date || 'None'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-stone-400">Done Date (actual)</p>
+                  <p className="text-sm font-bold text-stone-300 mt-0.5 font-mono">
+                    {selectedTaskDetails.completed_at ? new Date(selectedTaskDetails.completed_at).toLocaleString() : 'Not completed yet'}
                   </p>
                 </div>
               </div>
@@ -4116,7 +4125,21 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               </div>
 
-              {/* Hours: Estimated vs Actual */}
+              {/* Done Date — read-only, the actual completion date+time (tasks.completed_at), set
+                  automatically the moment the task first reaches 'completed'/'closed'. Shown
+                  alongside Due Date (the planned deadline), not instead of it. */}
+              <div>
+                <label className="text-xs font-semibold text-stone-300 block mb-1">
+                  Done Date (actual delivery):
+                </label>
+                <div className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900/60 border border-stone-800 text-stone-300">
+                  {editingTask?.completed_at ? new Date(editingTask.completed_at).toLocaleString() : 'Not completed yet'}
+                </div>
+              </div>
+
+              {/* Hours: Estimated vs Actual. Actual is read-only now — auto-computed from
+                  started_at (first time this task entered 'in_progress') to completed_at, see
+                  computeActualHours() in lib/taskLifecycle.ts. Replaces the old manual input. */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
@@ -4134,16 +4157,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
-                    Actual Hours:
+                    Actual Hours (auto):
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={editActualHours}
-                    onChange={(e) => setEditActualHours(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-                  />
+                  <div className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900/60 border border-stone-800 text-stone-300">
+                    {editingTask?.actual_hours != null ? `${editingTask.actual_hours}h` : '—'}
+                  </div>
                 </div>
               </div>
 

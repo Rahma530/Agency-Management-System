@@ -34,12 +34,15 @@ import {
   setSupabaseSessionUser,
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
+  buildBriefAttachmentStoragePath,
+  buildClientAccessAttachmentStoragePath,
+  buildDailyLogAttachmentStoragePath,
   fetchAllRows,
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
 import { hasNewVersionDeployed } from './lib/versionCheck';
-import { isTaskDone, resolveTaskAssigneeIds } from './lib/taskLifecycle';
+import { computeActualHours, isTaskDone, resolveTaskAssigneeIds } from './lib/taskLifecycle';
 import { collectDescendantTaskIds } from './lib/bulkTaskActions';
 import { groupBriefFieldSchemas } from './data/briefFieldSchemas';
 import { normalizeClientServices, getClientServices, SERVICE_LABELS } from './lib/clientServices';
@@ -107,6 +110,7 @@ import {
   MeetingRecord,
   ClientContractRecord,
   BriefAttachmentRecord,
+  DailyLogAttachmentRecord,
   ClientAccessAttachmentRecord,
   PlatformConnectionRecord,
   BriefFieldDef,
@@ -553,6 +557,7 @@ export default function App() {
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [clientContracts, setClientContracts] = useState<ClientContractRecord[]>([]);
   const [briefAttachments, setBriefAttachments] = useState<BriefAttachmentRecord[]>([]);
+  const [dailyLogAttachments, setDailyLogAttachments] = useState<DailyLogAttachmentRecord[]>([]);
   const [platformConnections, setPlatformConnections] = useState<PlatformConnectionRecord[]>([]);
   const [taskBoardAssigneePrefill, setTaskBoardAssigneePrefill] = useState<string | null>(null);
   // Set by handleNotificationClick when a task notification's link_url ('task:<id>') is clicked —
@@ -2029,6 +2034,20 @@ export default function App() {
     setBriefAttachments((data as BriefAttachmentRecord[]) || []);
   }, []);
 
+  const refreshDailyLogAttachments = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+
+    // Paginated — grows with headcount * days logged, same proportional-growth reasoning already
+    // applied to daily_logs itself and its sibling tables (see fetchAllRows's own comment).
+    const { data, error } = await fetchAllRows<DailyLogAttachmentRecord>(supabase, 'daily_log_attachments');
+    if (error) {
+      console.error('Failed to refresh daily log attachments from Supabase:', error);
+      return;
+    }
+
+    setDailyLogAttachments(data || []);
+  }, []);
+
   const refreshPlatformConnections = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2378,6 +2397,16 @@ export default function App() {
           .select('*');
         if (!briefAttachmentErr && briefAttachmentData) {
           setBriefAttachments(briefAttachmentData as BriefAttachmentRecord[]);
+        }
+
+        // Fetch daily_log_attachments — paginated (fetchAllRows), same proportional-growth
+        // reasoning as daily_logs itself (grows with headcount * days logged).
+        const { data: dailyLogAttachmentData, error: dailyLogAttachmentErr } = await fetchAllRows<DailyLogAttachmentRecord>(
+          supabase,
+          'daily_log_attachments'
+        );
+        if (!dailyLogAttachmentErr && dailyLogAttachmentData) {
+          setDailyLogAttachments(dailyLogAttachmentData);
         }
 
         // Fetch platform_connections (Module 6 scaffolding: manual integration status tracker)
@@ -2881,6 +2910,7 @@ export default function App() {
       { table: 'brief_revisions', refresh: refreshBriefRevisions },
       { table: 'brief_field_schemas', refresh: refreshBriefFieldSchemas },
       { table: 'brief_attachments', refresh: refreshBriefAttachments },
+      { table: 'daily_log_attachments', refresh: refreshDailyLogAttachments },
       { table: 'platform_connections', refresh: refreshPlatformConnections },
       { table: 'client_lifecycle_periods', refresh: refreshClientLifecyclePeriods },
       // Custom roles & departments — the five tables feeding registerCustomRoleData()'s in-memory
@@ -4446,7 +4476,19 @@ export default function App() {
     // (never overwritten or cleared by that transition), and cleared only by a real regression
     // back to a not-done status.
     const completedAt = isTaskDone(newStatus) ? existingTask?.completed_at || new Date().toISOString() : null;
-    const updates = { status: newStatus, completed_at: completedAt };
+    // started_at: same "set once, first time only" bookkeeping as completed_at above, triggered by
+    // first entering 'in_progress' instead. Never cleared by a later status change (including a
+    // regression back to 'todo'/'blocked') — actual_hours below needs the ORIGINAL start time, not
+    // whenever work most recently resumed.
+    const startedAt = newStatus === 'in_progress' ? existingTask?.started_at || new Date().toISOString() : existingTask?.started_at || null;
+    // actual_hours is now fully auto-computed (replaces the old manual "Quick time logging" box) —
+    // only (re)computed at the moment completed_at is first set; preserved as-is on every other
+    // transition, including completed -> closed, so it's never silently recalculated/cleared by a
+    // later, unrelated status change.
+    const actualHours = completedAt && !existingTask?.completed_at
+      ? computeActualHours(startedAt, completedAt)
+      : existingTask?.actual_hours ?? null;
+    const updates = { status: newStatus, completed_at: completedAt, started_at: startedAt, actual_hours: actualHours };
 
     // Was previously `supabase` (the client-side RLS-emulation proxy) — for the 'tasks' table
     // that proxy's update branch never forwards to the real database at all; it just mutates a
@@ -4495,13 +4537,24 @@ export default function App() {
     platformIds?: string[]
   ) => {
     const existingTask = tasks.find((t) => t.id === taskId);
-    // Same completed_at bookkeeping as handleUpdateTaskStatus above, but only when this edit
-    // actually touches status — editing title/description/done_link alone shouldn't disturb it.
+    // Same completed_at/started_at/actual_hours bookkeeping as handleUpdateTaskStatus above, but
+    // only when this edit actually touches status — editing title/description/done_link alone
+    // shouldn't disturb any of it. actual_hours is never accepted from the caller here (it's fully
+    // auto-computed now — see tasks.actual_hours's comment in types/database.ts); any actual_hours
+    // the caller passed in `updates` is discarded in favor of the computed value below.
     const finalUpdates: Partial<TaskRecord> = { ...updates };
+    delete finalUpdates.actual_hours;
     if ('status' in updates) {
-      finalUpdates.completed_at = isTaskDone(updates.status as TaskStatus)
+      const newStatus = updates.status as TaskStatus;
+      finalUpdates.completed_at = isTaskDone(newStatus)
         ? existingTask?.completed_at || new Date().toISOString()
         : null;
+      finalUpdates.started_at = newStatus === 'in_progress'
+        ? existingTask?.started_at || new Date().toISOString()
+        : existingTask?.started_at || null;
+      finalUpdates.actual_hours = finalUpdates.completed_at && !existingTask?.completed_at
+        ? computeActualHours(finalUpdates.started_at, finalUpdates.completed_at)
+        : existingTask?.actual_hours ?? null;
     }
     // Assignee membership is persisted only through set_task_assignees. Keep compatibility with
     // any older caller that still passes assigned_to, but never write that mirror column directly.
@@ -5022,13 +5075,17 @@ export default function App() {
   };
 
   // 7. Document a daily activity report (Daily Log)
+  // Returns the persisted row's id — needed by the caller (DailyOperationsModule.tsx/
+  // MyWorkHub.tsx) to then attach any staged files to this specific row via
+  // handleUploadDailyLogAttachment, which must happen AFTER the row exists (daily_log_attachments'
+  // own FK + RLS both require it).
   const handleCreateDailyLog = async (logData: {
     user_id: string;
     date: string;
     summary_text: string;
     linked_task_ids: string[];
     client_id?: string | null;
-  }) => {
+  }): Promise<string> => {
     const newLogPayload: DailyLogRecord = {
       // Date.now() alone collides when the multi-client create form fires several inserts in the
       // same Promise.allSettled batch (DailyOperationsModule.tsx/MyWorkHub.tsx) — those calls
@@ -5049,12 +5106,15 @@ export default function App() {
         console.error('Supabase daily_logs insert error:', error);
         throw error;
       }
-      setDailyLogs((prev) => [(data?.[0] as DailyLogRecord) || newLogPayload, ...prev]);
-    } else {
-      setDailyLogs((prev) => [newLogPayload, ...prev]);
+      const persisted = (data?.[0] as DailyLogRecord) || newLogPayload;
+      setDailyLogs((prev) => [persisted, ...prev]);
+      showNotification('Daily activity report logged and saved successfully.');
+      return persisted.id;
     }
 
+    setDailyLogs((prev) => [newLogPayload, ...prev]);
     showNotification('Daily activity report logged and saved successfully.');
+    return newLogPayload.id;
   };
 
   // Edit own daily_logs row — the column-level grant (20261101200000_daily_logs_edit_own.sql)
@@ -5762,6 +5822,78 @@ export default function App() {
     }
 
     setBriefAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    showNotification('Attachment removed.');
+  };
+
+  // 8g2b. Upload an attachment on a daily work log (daily_log_attachments) — same private-bucket
+  // upload-then-insert-metadata pattern as handleUploadBriefAttachment, one level down (daily log
+  // instead of brief). daily_log_attachments_insert_rls (20261222100000_daily_log_attachments.sql)
+  // requires the log's own author, so this is only ever offered to whoever is submitting/owns that
+  // log entry (see DailyOperationsModule.tsx/MyWorkHub.tsx).
+  const handleUploadDailyLogAttachment = async (dailyLogId: string, file: File) => {
+    if (!supabaseActive) {
+      showNotification('File attachments require a connected Supabase backend.', 'info');
+      return;
+    }
+
+    const attachmentId = `dla-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6)}`;
+    const storagePath = buildDailyLogAttachmentStoragePath(dailyLogId, attachmentId, file.name);
+
+    const { error: uploadError } = await supabase.storage
+      .from('daily-log-attachments')
+      .upload(storagePath, file, { contentType: file.type });
+    if (uploadError) {
+      console.error('Supabase daily log attachment upload error:', uploadError);
+      throw uploadError;
+    }
+
+    const newAttachmentPayload: DailyLogAttachmentRecord = {
+      id: attachmentId,
+      daily_log_id: dailyLogId,
+      storage_path: storagePath,
+      filename: file.name,
+      file_size: file.size,
+      mime_type: file.type,
+      uploaded_by: currentUser.id,
+      uploaded_at: new Date().toISOString(),
+    };
+
+    const { data, error: insertError } = await supabase
+      .from('daily_log_attachments')
+      .insert([newAttachmentPayload])
+      .select();
+    if (insertError) {
+      console.error('Supabase daily log attachment metadata insert error:', insertError);
+      await supabase.storage.from('daily-log-attachments').remove([storagePath]);
+      throw insertError;
+    }
+
+    setDailyLogAttachments((prev) => [...prev, (data?.[0] as DailyLogAttachmentRecord) || newAttachmentPayload]);
+  };
+
+  // Delete a daily log attachment — removes the Storage object FIRST, then the metadata row,
+  // matching daily_log_attachments_objects_delete_rls's own documented ordering requirement (that
+  // policy is keyed off the still-existing daily_log_attachments row).
+  const handleDeleteDailyLogAttachment = async (attachmentId: string) => {
+    const attachment = dailyLogAttachments.find((a) => a.id === attachmentId);
+    if (!attachment) return;
+
+    if (supabaseActive) {
+      const { error: storageError } = await supabase.storage.from('daily-log-attachments').remove([attachment.storage_path]);
+      if (storageError) {
+        console.error('Supabase daily log attachment storage delete error:', storageError);
+        showNotification('Unable to remove this attachment.', 'info');
+        return;
+      }
+      const { error } = await supabase.from('daily_log_attachments').delete().eq('id', attachmentId);
+      if (error) {
+        console.error('Supabase daily log attachment delete error:', error);
+        showNotification('Unable to remove this attachment.', 'info');
+        return;
+      }
+    }
+
+    setDailyLogAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
     showNotification('Attachment removed.');
   };
 
@@ -6908,12 +7040,16 @@ export default function App() {
                   taskComments={taskComments}
                   taskAttachments={taskAttachments}
                   dailyLogs={dailyLogs}
+                  dailyLogAttachments={dailyLogAttachments}
+                  users={users}
                   extraNotes={extraNotes}
                   capacityLogs={capacityLogs}
                   onUpdateTaskStatus={handleUpdateTaskStatus}
                   onCreateDailyLog={handleCreateDailyLog}
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
+                  onUploadDailyLogAttachment={handleUploadDailyLogAttachment}
+                  onDeleteDailyLogAttachment={handleDeleteDailyLogAttachment}
                   onCreateExtraNote={handleCreateExtraNote}
                   onUpdateExtraNote={handleUpdateExtraNote}
                   onDeleteExtraNote={handleDeleteExtraNote}
@@ -7148,6 +7284,7 @@ export default function App() {
                   clients={clients}
                   briefs={briefs}
                   dailyLogs={dailyLogs}
+                  dailyLogAttachments={dailyLogAttachments}
                   extraNotes={extraNotes}
                   currentUser={currentUser}
                   onUpdateTaskStatus={handleUpdateTaskStatus}
@@ -7155,6 +7292,8 @@ export default function App() {
                   onCreateDailyLog={handleCreateDailyLog}
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
+                  onUploadDailyLogAttachment={handleUploadDailyLogAttachment}
+                  onDeleteDailyLogAttachment={handleDeleteDailyLogAttachment}
                   onCreateExtraNote={handleCreateExtraNote}
                   onUpdateExtraNote={handleUpdateExtraNote}
                   onDeleteExtraNote={handleDeleteExtraNote}

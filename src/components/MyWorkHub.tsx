@@ -27,6 +27,7 @@ import {
   TaskCommentRecord,
   TaskAttachmentRecord,
   DailyLogRecord,
+  DailyLogAttachmentRecord,
   ExtraNoteRecord,
   CapacityLogRecord,
   TaskStatus,
@@ -38,7 +39,9 @@ import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, getSortedEmploye
 import { TASK_STATUS_ORDER, isTaskDone, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
 import { canSeeContractValue, canAccessClientOnboarding, canHardDeleteTasks } from '../lib/permissions';
-import { computeTaskDeletionPreview } from '../lib/taskOperations';
+import { computeTaskDeletionPreview, StagedTaskAttachment } from '../lib/taskOperations';
+import { TaskAttachmentPicker } from './TaskAttachmentPicker';
+import { DailyLogAttachmentsList } from './DailyLogAttachmentsList';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
@@ -61,21 +64,30 @@ interface MyWorkHubProps {
   taskComments?: TaskCommentRecord[];
   taskAttachments?: TaskAttachmentRecord[];
   dailyLogs: DailyLogRecord[];
+  // Optional: a parent that doesn't pass these simply never shows the attachment picker/list on
+  // the daily log form (same optional-prop convention as onUpdateExtraNote/onDeleteExtraNote
+  // below).
+  dailyLogAttachments?: DailyLogAttachmentRecord[];
+  users?: UserRecord[];
   extraNotes: ExtraNoteRecord[];
   capacityLogs: CapacityLogRecord[];
   onUpdateTaskStatus: (taskId: string, newStatus: TaskStatus) => Promise<void>;
+  // Returns the persisted row's id — needed to then attach any staged files to this specific log
+  // via onUploadDailyLogAttachment, which must happen AFTER the row exists.
   onCreateDailyLog: (logData: {
     user_id: string;
     date: string;
     summary_text: string;
     linked_task_ids: string[];
     client_id?: string | null;
-  }) => Promise<void>;
+  }) => Promise<string>;
   onUpdateDailyLog: (
     logId: string,
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
   ) => Promise<void>;
   onDeleteDailyLog: (logId: string) => Promise<void>;
+  onUploadDailyLogAttachment?: (dailyLogId: string, file: File) => Promise<void>;
+  onDeleteDailyLogAttachment?: (attachmentId: string) => Promise<void>;
   onCreateExtraNote: (noteData: {
     user_id: string;
     date: string;
@@ -158,12 +170,16 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   taskComments = [],
   taskAttachments = [],
   dailyLogs,
+  dailyLogAttachments = [],
+  users = [],
   extraNotes,
   capacityLogs,
   onUpdateTaskStatus,
   onCreateDailyLog,
   onUpdateDailyLog,
   onDeleteDailyLog,
+  onUploadDailyLogAttachment,
+  onDeleteDailyLogAttachment,
   onCreateExtraNote,
   onUpdateExtraNote,
   onDeleteExtraNote,
@@ -217,6 +233,10 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   const [logDateFilter, setLogDateFilter] = useState('');
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
   const [editingDailyLog, setEditingDailyLog] = useState<DailyLogRecord | null>(null);
+  // Staged files for the daily log form below — uploaded only AFTER the daily_logs row(s) exist
+  // (see handleSubmitDailyLog), same StagedTaskAttachment shape/picker TaskAttachmentPicker
+  // already uses for tasks (it's generic — just {id, file} — so it's reused here as-is).
+  const [dailyLogStagedAttachments, setDailyLogStagedAttachments] = useState<StagedTaskAttachment[]>([]);
 
   const [isLoggingExtraEffort, setIsLoggingExtraEffort] = useState(false);
   const [extraEffortText, setExtraEffortText] = useState('');
@@ -455,8 +475,28 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
       const failed = targets.filter((_, i) => results[i].status === 'rejected');
 
       if (failed.length === 0) {
+        // Attachments are uploaded AFTER every row exists (each target client gets its own
+        // daily_logs row, so the same staged files are uploaded once per row — see
+        // handleUploadDailyLogAttachment's own comment in App.tsx). A failure here doesn't
+        // reopen the form or mark the log save itself as failed; the log is already saved, so
+        // this just surfaces as its own notification.
+        if (dailyLogStagedAttachments.length > 0 && onUploadDailyLogAttachment) {
+          const newLogIds = results
+            .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
+            .map((r) => r.value);
+          const uploadResults = await Promise.allSettled(
+            newLogIds.flatMap((logId) =>
+              dailyLogStagedAttachments.map((staged) => onUploadDailyLogAttachment(logId, staged.file))
+            )
+          );
+          if (uploadResults.some((r) => r.status === 'rejected')) {
+            showNotification('Daily log saved, but one or more attachments failed to upload.', 'error');
+          }
+        }
+
         setDailySummary('');
         setSelectedLogClientIds([]);
+        setDailyLogStagedAttachments([]);
         setIsLoggingDailyActivity(false);
         showNotification(
           targets.length > 1
@@ -890,6 +930,17 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
             />
           </div>
 
+          {onUploadDailyLogAttachment && (
+            <div>
+              <label className="text-[11px] font-semibold text-stone-400 block mb-1">Attachments (optional):</label>
+              <TaskAttachmentPicker
+                files={dailyLogStagedAttachments}
+                onChange={setDailyLogStagedAttachments}
+                disabled={isSubmittingLog}
+              />
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
@@ -897,6 +948,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                 setIsLoggingDailyActivity(false);
                 setDailySummary('');
                 setCreateLogError(null);
+                setDailyLogStagedAttachments([]);
               }}
               className="px-3 py-1.5 rounded-lg text-xs font-medium text-stone-400 hover:text-white"
             >
@@ -957,6 +1009,13 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                   )}
                 </div>
                 <p className="text-stone-200 mt-0.5 whitespace-pre-wrap break-words">{log.summary_text}</p>
+                <DailyLogAttachmentsList
+                  dailyLogId={log.id}
+                  attachments={dailyLogAttachments}
+                  users={users}
+                  canDelete={canEditThisLog}
+                  onDelete={onDeleteDailyLogAttachment}
+                />
               </div>
             );
           })}
