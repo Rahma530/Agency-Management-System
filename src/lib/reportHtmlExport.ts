@@ -26,6 +26,7 @@ import { ClientComparisonRecord } from '../types/database';
 import { extractLinks } from './textLinks';
 import { resolveEmbeddableImages, EmbeddedImageAsset } from './embeddableImages';
 import { parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS, buildUnifiedReportMetricsTable, PdfParagraph } from './pdfExport';
+import { parseReportPeriodRange, resolveReportTypeLabel } from './reportPeriods';
 
 // Mirrors pdfExport.ts's BRAND_PURPLE/BRAND_PURPLE_DEEP/BRAND_WHITE (src/index.css's "Kesra Brand
 // Tokens") — duplicated as plain hex literals here rather than imported, same reasoning pdfExport.ts
@@ -75,6 +76,8 @@ p{margin:0 0 12px}
 .kpi strong{display:block;font-size:24px;color:var(--white);line-height:1.2;direction:ltr;text-align:right}
 .kpi small{display:block;margin-top:8px;color:var(--grey);font-size:12px}
 .note{border-right:4px solid var(--purple);background:rgba(123,47,247,.1);border-radius:var(--radius-sm);padding:14px 18px;font-size:14px;margin-bottom:12px}
+.service-block{border:1px solid var(--border-medium);background:rgba(123,47,247,.06);border-radius:var(--radius-md);padding:18px 20px;margin-bottom:16px}
+.service-block h3{color:var(--white);font-weight:800;font-size:16px;margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid var(--border-soft)}
 table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;border-radius:var(--radius-sm);overflow:hidden}
 th{background:var(--purple-deep);color:var(--white);text-align:right;padding:10px 12px;font-weight:700}
 td{padding:10px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top}
@@ -170,10 +173,25 @@ function noteCard(heading: string, bodyHtml: string): string {
   return `<section class="kesra-section"><h2>${escapeHtml(heading)}</h2><div class="note">${bodyHtml}</div></section>`;
 }
 
+// "<strong>From</strong> 10/22/2026 <strong>To</strong> 10/26/2026" — the exact wording/weighting
+// requested: From/To bold to set them apart from the dates, with a real space (not just the one
+// inline-block gives) before and after each date. <bdi> isolates the whole thing from the
+// surrounding RTL paragraph direction so the browser's bidi algorithm can't interleave/reorder the
+// digits and words (the scrambled "to 2026-10-25 22-10-2026" shape the agency owner originally
+// flagged) — same reasoning the plain-text version this replaces already used, just now wrapping
+// two bold spans instead of one plain string. Returns null when the period string doesn't parse
+// (same "don't render a half-broken line" posture parseReportPeriodRange's own comment describes).
+function renderDateRangeHtml(period: string): string | null {
+  const parsed = parseReportPeriodRange(period);
+  if (!parsed) return null;
+  return `<p><bdi><strong>${parsed.from.label}</strong> ${escapeHtml(parsed.from.date)} <strong>${parsed.to.label}</strong> ${escapeHtml(parsed.to.date)}</bdi></p>`;
+}
+
 function pageShell(opts: {
   eyebrow: string;
   title: string;
   subtitle?: string;
+  subtitleHtml?: string;
   metaItems: { label: string; value: string }[];
   bodyHtml: string;
 }): string {
@@ -192,14 +210,7 @@ function pageShell(opts: {
 <header class="hero">
   <div class="eyebrow">${escapeHtml(opts.eyebrow)}</div>
   <h1>${escapeHtml(opts.title)}</h1>
-  ${opts.subtitle
-    // subtitle is always a plain date range ("22-10 to 25-10") built by the caller — <bdi> isolates
-    // it from the surrounding RTL paragraph direction so the browser's bidi algorithm can't
-    // interleave/reorder its digits and the word "to" (the scrambled "to 2026-10-25 22-10-2026"
-    // shape the agency owner flagged). Kept as its own paragraph, not forced dir="ltr" on <p>
-    // itself, so this still degrades gracefully if a future caller ever passes non-date text here.
-    ? `<p><bdi>${escapeHtml(opts.subtitle)}</bdi></p>`
-    : ''}
+  ${opts.subtitleHtml || (opts.subtitle ? `<p><bdi>${escapeHtml(opts.subtitle)}</bdi></p>` : '')}
   <div class="meta">${metaHtml}</div>
 </header>
 <main class="wrap">
@@ -251,7 +262,7 @@ function renderWorkLogsSection(sections: PdfParagraph[], imageAssets: Map<string
   const parsedSections = sections.map((section) => ({ ...section, entries: parseWorkLogEntries(section.body) }));
 
   const cardsHtml = parsedSections
-    .map((section, i) => {
+    .map((section) => {
       const entriesHtml = section.entries
         .map((entry) => {
           const images = entry.attachmentUrls.map((url) => imageAssets.get(url)).filter((a): a is NonNullable<typeof a> => !!a);
@@ -267,8 +278,17 @@ function renderWorkLogsSection(sections: PdfParagraph[], imageAssets: Map<string
           return `<div class="kesra-card" style="margin-bottom:10px"><p>${escapeHtml(entry.text)}</p>${shotsHtml}${linksHtml}</div>`;
         })
         .join('');
-      const dividerStyle = section.divider && i > 0 ? 'border-top:1px solid var(--border-soft);padding-top:18px;margin-top:18px' : '';
-      return `<div style="${dividerStyle}">${section.heading !== REPORT_SECTION_HEADINGS.workLogs ? `<h3 style="color:var(--purple-light);margin:0 0 10px">${escapeHtml(section.heading)}</h3>` : ''}${entriesHtml}</div>`;
+      // Per-service sub-section (client-scope report: "Social Media", "Media Buying", ...) gets its
+      // own bordered block with a bold header, so each service's results read as a clearly separate
+      // unit rather than being told apart only by a thin divider line — exactly what the agency
+      // owner asked for ("كل واحدة فيهم طبعا هتكون في block لوحدها ... اسم القسم نفسه يكون bold").
+      // An employee-scope report never produces a sub-heading here (REPORT_SECTION_HEADINGS.workLogs
+      // is its own internal marker, never rendered — see this function's trailing comment), so it
+      // keeps rendering as plain stacked entry cards with no extra block wrapper.
+      if (section.heading !== REPORT_SECTION_HEADINGS.workLogs) {
+        return `<div class="service-block"><h3>${escapeHtml(section.heading)}</h3>${entriesHtml}</div>`;
+      }
+      return `<div>${entriesHtml}</div>`;
     })
     .join('');
 
@@ -319,6 +339,11 @@ export interface IndividualReportHtmlOptions {
   subtitle?: string;
   eyebrow?: string;
   contentText: string;
+  // Raw "<fromIso>_<toIso>" period string (ReportDraftWorkspace's selectedReport.period). Optional
+  // and additive: when present it drives the bold "From … To …" date line (replacing a plain-text
+  // subtitle) and the dynamic Weekly/Monthly/Period fallback heading below; when absent, behaviour
+  // is unchanged from before this field existed (plain subtitle, literal "Final Report" heading).
+  period?: string;
 }
 
 // Built entirely from the already-APPROVED, saved `content_text` — the exact same parsed
@@ -344,6 +369,12 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
   const workLogSections = sections.filter((s) => !NON_WORKLOG_HEADINGS.has(s.heading));
   const otherSections = sections.filter((s) => NON_WORKLOG_HEADINGS.has(s.heading));
 
+  // Dynamic replacement for the literal "Final Report" fallback heading — "Weekly Report"/"Monthly
+  // Report"/"Period Report" depending on how long options.period actually spans. Resolved once
+  // here (rather than inside the render loop below) since every "Final Report" section in a given
+  // export shares the same period.
+  const dynamicReportTypeLabel = resolveReportTypeLabel(options.period || '');
+
   // Resolved ONCE across every section's body (not just work-log entries) — otherwise a
   // screenshot link sitting in "Final Report"/"Additional employee context"/"Context and
   // observations" would never get embedded at all. Harmless and cheap to include the creative-
@@ -361,9 +392,19 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
     } else if (section.heading === REPORT_SECTION_HEADINGS.taskLedger) {
       parts.push(renderTaskLedgerSection(section.body));
     } else {
-      parts.push(noteCard(section.heading, renderPlainTextWithAttachments(section.body, imageAssets)));
+      // section.heading === 'Final Report' is the fallback shape's literal heading (set in
+      // pdfExport.ts, shared across both export paths); swap in the period-derived label for
+      // display while leaving the NON_WORKLOG_HEADINGS membership check above matching the
+      // original literal string, since that's the shape parseReportContentIntoParagraphs produces.
+      const displayHeading = section.heading === 'Final Report' ? dynamicReportTypeLabel : section.heading;
+      parts.push(noteCard(displayHeading, renderPlainTextWithAttachments(section.body, imageAssets)));
     }
   });
+
+  // Bold "From … To …" date line replaces the plain-text subtitle whenever we have a parseable
+  // period; falls back to the old plain subtitle (or nothing) otherwise so a call site that hasn't
+  // been updated to pass `period` yet keeps working exactly as before.
+  const dateRangeHtml = renderDateRangeHtml(options.period || '');
 
   return pageShell({
     // options.eyebrow was added to the interface but never actually read here — every export
@@ -372,7 +413,8 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
     // added that doesn't set it.
     eyebrow: options.eyebrow || 'Employee Report — KESRA Management System',
     title: options.title,
-    subtitle: options.subtitle,
+    subtitle: dateRangeHtml ? undefined : options.subtitle,
+    subtitleHtml: dateRangeHtml || undefined,
     // No separate "Period / Subject" meta box: options.subtitle (now just the period range, see
     // the ReportDraftWorkspace.tsx call site) already renders once, directly under the title —
     // repeating it here as a meta item duplicated it on the page for no reason.

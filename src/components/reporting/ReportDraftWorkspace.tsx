@@ -15,7 +15,7 @@ import {
   UserRecord,
 } from '../../types/database';
 import { supabase, supabaseRaw } from '../../lib/supabase';
-import { formatLocalCalendarDate, resolveReportPeriod } from '../../lib/reportPeriods';
+import { formatLocalCalendarDate, parseReportPeriodRange, resolveReportPeriod, resolveReportTypeLabel } from '../../lib/reportPeriods';
 import {
   collectClientReportSources, collectEmployeeReportSources, dedupeIdenticalWorkLogs, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
@@ -174,19 +174,21 @@ function toDayMonth(isoDate: string): string {
   return `${day}/${month}`;
 }
 
-// Report header's period range — "22 - 10  to  25 - 10" per the agency owner's exact request,
-// replacing the raw "2026-10-22 to 2026-10-25" ISO pair, which the browser's bidi algorithm used
-// to visibly scramble (digits/"to" reordered) once it sat inside this RTL-dir page. selectedReport
-// .period is always "<fromIso>_<toIso>" (resolveReportPeriod's own format) or empty — periodTo
-// falsy covers both "no period at all" and a malformed one with no underscore.
+// Report header's period range — "From 10/22/2026 To 10/26/2026" per the agency owner's latest,
+// more specific request (superseding the earlier "22 - 10  to  25 - 10" shape): MM/DD/YYYY with
+// the year included, and "From"/"To" spelled out so each date reads unambiguously next to the
+// other. Plain text here (no bold) — this is the degraded/fallback path: the PDF header has no
+// safe way to mix bold and normal runs within one right-aligned Arabic-shaped line (see
+// pdfExport.ts's own header-drawing comment), and the HTML export only falls back to this string
+// when buildIndividualReportHtml's own renderDateRangeHtml (reportHtmlExport.ts), which DOES
+// render true bold "From"/"To" spans, can't parse the period at all. Delegates the actual
+// parsing/formatting to parseReportPeriodRange so both export paths agree on what "the date part"
+// looks like. selectedReport.period is always "<fromIso>_<toIso>" (resolveReportPeriod's own
+// format) or empty.
 function formatReportPeriodRange(period: string): string {
-  const [periodFrom, periodTo] = (period || '').split('_');
-  if (!periodTo) return period || '';
-  const dayMonthSpaced = (isoDate: string) => {
-    const [, month, day] = isoDate.split('-');
-    return `${day} - ${month}`;
-  };
-  return `${dayMonthSpaced(periodFrom)}  to  ${dayMonthSpaced(periodTo)}`;
+  const parsed = parseReportPeriodRange(period);
+  if (!parsed) return period || '';
+  return `${parsed.from.label} ${parsed.from.date} ${parsed.to.label} ${parsed.to.date}`;
 }
 
 function renderWorkLogSection(
@@ -1026,17 +1028,23 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
       : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
     const periodRange = formatReportPeriodRange(selectedReport.period || '');
+    // parseReportContentIntoParagraphs falls back to the literal heading "Final Report" whenever a
+    // report's content_text doesn't match the recognized section shape (see its own comment).
+    // Swap that literal for the period-derived Weekly/Monthly/Period label here, right before it's
+    // drawn — same resolveReportTypeLabel() the HTML export uses, kept as a display-only rename so
+    // parseReportContentIntoParagraphs itself (shared with the HTML path) still produces the
+    // original literal string everywhere else that checks for it.
+    const dynamicReportTypeLabel = resolveReportTypeLabel(selectedReport.period || '');
+    const paragraphs = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) =>
+      p.heading === 'Final Report' ? { ...p, heading: dynamicReportTypeLabel } : p
+    );
     await downloadReportPdf({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
       title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
       subtitle: `${subjectName} — ${periodRange}`,
       // No "Report Details" block (scope/responsible/evidence count) — the header above already
       // carries everything this PDF is meant to show: client/employee name + period.
-      // parseReportContentIntoParagraphs recovers composeManifestContent's own section structure
-      // (and, inside Work logs for a client-scope report, each subscribed service's own
-      // sub-section with a decorative divider) back out of the saved text — see its own comment
-      // for the conservative fallback when a report doesn't match that shape.
-      paragraphs: parseReportContentIntoParagraphs(currentVersion.content_text),
+      paragraphs,
     });
   };
 
@@ -1060,8 +1068,12 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       // the eyebrow line just above it already says which kind of report this is.
       title: subjectName,
       eyebrow: `${selectedReport.type === 'client' ? 'Client Report' : 'Employee Report'} — KESRA Management System`,
+      // Plain-text fallback only — buildIndividualReportHtml prefers the bold "From … To …" line it
+      // derives itself from `period` whenever that parses, and falls back to this string otherwise
+      // (e.g. a legacy report whose period field is somehow empty).
       subtitle: periodRange,
       contentText: currentVersion.content_text,
+      period: selectedReport.period || '',
     });
     downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
   };

@@ -77,3 +77,53 @@ export function isDateInReportPeriod(date: string, period: ReportPeriod): boolea
   if (period.startInclusive >= period.endExclusive) throw new Error('Report period must be non-empty.');
   return date >= period.startInclusive && date < period.endExclusive && isReportWorkDate(date);
 }
+
+// Report header date formatting — "From 10/22/2026" (MM/DD/YYYY, per the agency owner's exact
+// request). Split into a part/whole pair ({ label: 'From', date: '10/22/2026' }) rather than one
+// joined string so each caller can render the two with different weights (bold label vs regular
+// date) in whatever way its own output format allows — jsPDF needs separate text() calls with a
+// font-weight switch in between; HTML can just wrap the label in <strong>.
+export interface ReportDateLabel {
+  label: 'From' | 'To';
+  date: string;
+}
+
+function formatMonthDayYear(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-');
+  return `${month}/${day}/${year}`;
+}
+
+// selectedReport.period is always "<fromIso>_<toIso>" (resolveReportPeriod's own storage format,
+// via ReportDraftWorkspace) or empty. Returns null for anything that doesn't parse, so callers can
+// fall back to not rendering a date line at all rather than printing a half-broken one.
+export function parseReportPeriodRange(period: string): { from: ReportDateLabel; to: ReportDateLabel } | null {
+  const [periodFrom, periodTo] = (period || '').split('_');
+  if (!periodFrom || !periodTo) return null;
+  return {
+    from: { label: 'From', date: formatMonthDayYear(periodFrom) },
+    to: { label: 'To', date: formatMonthDayYear(periodTo) },
+  };
+}
+
+// Replaces the old literal "Final Report" fallback heading — see pdfExport.ts/reportHtmlExport.ts
+// for where it's used. Derived purely from the period's own length, so no new "report type" field
+// or UI control is needed anywhere upstream (ReportDraftWorkspace has no granularity selector
+// today, only free-form start/end date inputs): a 7-day span reads as a weekly report, a 28-31 day
+// span as a monthly one, and anything else (a half week, a custom multi-month range, ...) falls
+// back to the generic "Period Report" rather than guessing a cadence that isn't there. Counts days
+// inclusively (both endpoints count), matching how the date range itself reads to someone looking
+// at it ("22 to 26" is 5 days, not 4).
+export function resolveReportTypeLabel(period: string): string {
+  const [periodFrom, periodTo] = (period || '').split('_');
+  if (!periodFrom || !periodTo) return 'Period Report';
+  try {
+    const days = Math.round(
+      (parseIsoDateUtc(periodTo).getTime() - parseIsoDateUtc(periodFrom).getTime()) / DAY_MS
+    ) + 1;
+    if (days === 7) return 'Weekly Report';
+    if (days >= 28 && days <= 31) return 'Monthly Report';
+    return 'Period Report';
+  } catch {
+    return 'Period Report';
+  }
+}
