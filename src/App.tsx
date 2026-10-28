@@ -264,6 +264,51 @@ function isRecentSelfWrite(table: string): boolean {
 // ever created. Slightly less than instant (changes land within ~9s instead of immediately), but
 // correctness is unchanged: every poll still re-runs the exact same RLS-scoped `refresh()`
 // loadData() itself already uses, so Postgres RLS alone still decides what comes back.
+// Base poll interval for every table/feed polled below. Raised from the original 9s fallback
+// cadence — that number made sense for a handful of channels falling back occasionally, but once
+// EVERY table polls unconditionally (see useSupabaseRealtimeSync's own comment on why realtime
+// was removed), 9s across ~29 tables means ~29 requests every 9 seconds PER LOGGED-IN SESSION,
+// all day, for as long as a tab is open — company-wide, that is a sustained, constant load on
+// Postgres that was never there before (most of those requests used to be answered without a
+// query at all, only when a table's realtime channel actually changed). Confirmed via the
+// Supabase dashboard: the Postgres error rate spiked hard right after that change went out.
+// 20s cuts the steady-state request rate by more than half; combined with
+// startVisibilityAwarePoll below (which stops entirely for a backgrounded tab — the common case
+// for a company tool people leave open all day) the real-world load should drop far more than
+// that in practice.
+const POLL_INTERVAL_MS = 20000;
+
+// Wraps setInterval with two changes that matter a lot at this request volume:
+// 1. Skips every tick while the tab is in the background (document.hidden) — nobody is watching a
+//    backgrounded tab update in real time, so polling it is pure wasted load. Catches up with one
+//    immediate run the moment the tab becomes visible again, instead of waiting out the rest of
+//    the interval.
+// 2. Delays the FIRST interval start by a small random amount (0-4s) instead of starting it
+//    exactly at mount, so the ~29 tables wired through useSupabaseRealtimeSync (plus the bespoke
+//    feeds further down) don't all land on the exact same 20s cadence — a synchronized burst of
+//    ~29+ requests at once is worse for Postgres than the same total request volume spread out
+//    evenly. This delay does NOT itself trigger a callback (callers that already fetched fresh
+//    data on mount, e.g. right after loadData(), would otherwise get one redundant refetch right
+//    away) — it only staggers when each table's own recurring interval begins.
+function startVisibilityAwarePoll(callback: () => void, intervalMs: number): () => void {
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  const tick = () => {
+    if (!document.hidden) callback();
+  };
+  const jitterId = setTimeout(() => {
+    intervalId = setInterval(tick, intervalMs);
+  }, Math.random() * 4000);
+  const onVisible = () => {
+    if (!document.hidden) callback();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    clearTimeout(jitterId);
+    if (intervalId) clearInterval(intervalId);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
 function useSupabaseRealtimeSync(
   channelName: string,
   table: string,
@@ -296,17 +341,19 @@ function useSupabaseRealtimeSync(
     };
 
     // loadData() already fetched this table fresh right before this hook was wired up, so the
-    // first poll tick (not an immediate refresh on mount) is the right starting point — avoids a
-    // redundant refetch of all ~29 tables at once on every page load, same reasoning the previous
-    // realtime version's "skip the first SUBSCRIBED" guard used to document.
-    const intervalId = setInterval(() => {
+    // first poll tick genuinely checking for changes (not an immediate refresh on mount) is the
+    // right starting point — avoids a redundant refetch of all ~29 tables at once on every page
+    // load, same reasoning the previous realtime version's "skip the first SUBSCRIBED" guard used
+    // to document. startVisibilityAwarePoll's own jitter already delays that first tick slightly,
+    // which doubles as spreading the ~29 tables' first requests apart instead of bursting together.
+    const stopPolling = startVisibilityAwarePoll(() => {
       if (isRecentSelfWrite(table)) return;
       void runCoalescedRefresh();
-    }, 9000);
+    }, POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelName, table, refresh, enabled]);
@@ -2555,13 +2602,14 @@ export default function App() {
     };
   }, [isNewVersionAvailable]);
 
-  // Chat message delivery — polls every 9s, no Realtime WebSocket channel (removed; see
-  // useSupabaseRealtimeSync's own comment above for why: too many channels opening at once on
-  // login was the actual cause of the reported hangs). Loses the "near-instant" delivery the old
-  // channel gave when it worked, but that's the tradeoff asked for — and it never truly delivered
-  // reliably anyway: real-world testing (Toqa -> Shahd) once found a message that persisted
-  // correctly but never arrived in Shahd's already-open session, a silent Realtime delivery
-  // failure, so a flat ~9s poll is actually more predictable than the channel it replaces.
+  // Chat message delivery — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
+  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above for why: too many
+  // channels opening at once on login was the actual cause of the reported hangs). Loses the
+  // "near-instant" delivery the old channel gave when it worked, but that's the tradeoff asked
+  // for — and it never truly delivered reliably anyway: real-world testing (Toqa -> Shahd) once
+  // found a message that persisted correctly but never arrived in Shahd's already-open session, a
+  // silent Realtime delivery failure, so a flat poll is actually more predictable than the channel
+  // it replaces.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -2579,11 +2627,11 @@ export default function App() {
       }
     };
 
-    const intervalId = setInterval(refetchChatMessages, 9000);
+    const stopPolling = startVisibilityAwarePoll(() => void refetchChatMessages(), POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
     };
     // authenticatedUser?.id (not the whole object) — loadData's own refresh cycle produces a
     // new authenticatedUser reference on every reload even when the id is unchanged, and using
@@ -2592,8 +2640,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Notification delivery — polls every 9s, no Realtime WebSocket channel (removed; see
-  // useSupabaseRealtimeSync's own comment above).
+  // Notification delivery — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
+  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above).
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -2613,19 +2661,20 @@ export default function App() {
       }
     };
 
-    const intervalId = setInterval(refetchNotifications, 9000);
+    const stopPolling = startVisibilityAwarePoll(() => void refetchNotifications(), POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Activities feed — polls every 9s, no Realtime WebSocket channel (removed; see
-  // useSupabaseRealtimeSync's own comment above). Same admin-only gate as the initial fetch above
-  // (and the Live Activity Feed buttons themselves) — this whole effect simply never runs for
-  // anyone else, so a task participant's own activities_select_task_participants-visible rows
+  // Activities feed — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
+  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above). Same admin-only
+  // gate as the initial fetch above (and the Live Activity Feed buttons themselves) — this whole
+  // effect simply never runs for anyone else, so a task participant's own
+  // activities_select_task_participants-visible rows
   // (20261117000000_activities_task_participants_select.sql) never reach this system-wide feed.
   useEffect(() => {
     const userId = authenticatedUser?.id;
@@ -2645,20 +2694,21 @@ export default function App() {
       }
     };
 
-    const intervalId = setInterval(refetchActivities, 9000);
+    const stopPolling = startVisibilityAwarePoll(() => void refetchActivities(), POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
     };
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Users table sync — polls every 9s, no Realtime WebSocket channel (removed; see
-  // useSupabaseRealtimeSync's own comment above). Keeps EmployeeAdminHub's "Awaiting Setup" view
-  // (and anything else reading `users`) from staying frozen at whatever loadData() fetched once at
-  // this session's own login — e.g. another employee's last_seen_at update, from completing setup
-  // via either the admin-invitation link or the self-service "Forgot Password" flow, now reaches
-  // an already-open admin tab within ~9s instead of needing a manual reload.
+  // Users table sync — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
+  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above). Keeps
+  // EmployeeAdminHub's "Awaiting Setup" view (and anything else reading `users`) from staying
+  // frozen at whatever loadData() fetched once at this session's own login — e.g. another
+  // employee's last_seen_at update, from completing setup via either the admin-invitation link or
+  // the self-service "Forgot Password" flow, now reaches an already-open admin tab without a
+  // manual reload.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -2672,17 +2722,18 @@ export default function App() {
       }
     };
 
-    const intervalId = setInterval(refetchUsers, 9000);
+    const stopPolling = startVisibilityAwarePoll(() => void refetchUsers(), POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
     };
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Keep the shared assignments snapshot synchronized across employee sessions — polls every 9s,
-  // no Realtime WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above). The
-  // RLS-filtered SELECT in refreshAssignments remains the source of truth either way.
+  // Keep the shared assignments snapshot synchronized across employee sessions — polls
+  // (visibility-aware, see startVisibilityAwarePoll), no Realtime WebSocket channel (removed; see
+  // useSupabaseRealtimeSync's own comment above). The RLS-filtered SELECT in refreshAssignments
+  // remains the source of truth either way.
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -2710,22 +2761,18 @@ export default function App() {
       }
     };
 
-    const intervalId = setInterval(() => {
-      void runCoalescedRefresh();
-    }, 9000);
+    const stopPolling = startVisibilityAwarePoll(() => void runCoalescedRefresh(), POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
     };
   }, [authenticatedUser?.id, supabaseActive, refreshAssignments]);
 
-  // Real-time coverage, table by table — the Task Board pilot (tasks) proved the
-  // invalidate-then-coalesced-refetch approach out; this is that same approach rolled out to the
-  // rest of the day-to-day screens via the shared useSupabaseRealtimeSync hook above. Each one
-  // degrades to its own 9s poll fallback until its matching
-  // `alter publication supabase_realtime add table ...` migration has been run in Supabase, so
-  // nothing breaks for a table that isn't enabled yet — it just isn't instant until then.
+  // Table-by-table sync — the Task Board pilot (tasks) proved the invalidate-then-coalesced-
+  // refetch approach out; this is that same approach rolled out to the rest of the day-to-day
+  // screens via the shared useSupabaseRealtimeSync hook above (visibility-aware poll, no Realtime
+  // channel — see that hook's own comment).
   const realtimeEnabled = !!authenticatedUser?.id && supabaseActive;
 
   // Task Board — most heavily multi-user screen (several people editing/assigning/completing the
