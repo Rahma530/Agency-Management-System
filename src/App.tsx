@@ -312,6 +312,60 @@ function useSupabaseRealtimeSync(
   }, [channelName, table, refresh, enabled]);
 }
 
+// Resolves the public.users row linked to a Supabase Auth user id — used by every session
+// rehydration path (hard refresh, tab restore, post-recovery completion). Retries a few times
+// with a short backoff before giving up.
+//
+// Confirmed root cause of reports of being logged out entirely on every hard refresh: every
+// caller of this lookup used to destructure only `data` and ignore `error` entirely, so a plain
+// network blip or a transient 5xx on this ONE request was indistinguishable from "this auth
+// session genuinely has no matching employee row" — both silently ended up calling
+// setAuthenticatedUser(null), even though the real Supabase Auth session (the JWT already sitting
+// in localStorage) was completely fine. Retrying first removes most of that — a one-off blip
+// during a hard refresh (lots of requests firing at once) no longer costs the whole session.
+//
+// Distinguishes two outcomes so callers can react differently:
+// - 'not_found': the lookup genuinely completed with no matching (or a deactivated) row — a real
+//   reason to end the session.
+// - 'error': the lookup itself failed (network/timeout/5xx) after every retry — NOT a reason to
+//   log anyone out. Callers should leave the existing session state untouched and let the next
+//   opportunity (the other listener, the next hard refresh) resolve it instead of guessing.
+async function resolveEmployeeForAuthUser(
+  authUserId: string,
+  attempts = 3
+): Promise<{ status: 'found'; user: UserRecord } | { status: 'not_found' } | { status: 'error' }> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+    }
+    try {
+      const { data, error } = await supabaseRaw
+        .from('users')
+        .select('*')
+        .eq('auth_id', authUserId)
+        .single();
+      if (!error) {
+        if (data && !(data as UserRecord).deactivated_at) {
+          return { status: 'found', user: data as UserRecord };
+        }
+        return { status: 'not_found' };
+      }
+      // PGRST116 ("JSON object requested, multiple (or no) rows returned") is PostgREST's own
+      // signal that .single() genuinely matched zero rows — a confirmed "no such employee", not
+      // a transient failure, so there is nothing to gain from retrying it.
+      if ((error as { code?: string }).code === 'PGRST116') {
+        return { status: 'not_found' };
+      }
+      lastError = error;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  console.warn('Employee lookup by auth_id failed after retries:', lastError);
+  return { status: 'error' };
+}
+
 export default function App() {
   const [supabaseActive, setSupabaseActive] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -760,20 +814,30 @@ export default function App() {
           if (session?.user) {
             // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or()
             // lookup only matches the hardcoded demo seed array, never a real Postgres row.
-            const { data: dbUser } = await supabaseRaw
-              .from('users')
-              .select('*')
-              .eq('auth_id', session.user.id)
-              .single();
-            if (dbUser && !dbUser.deactivated_at) {
-              setAuthenticatedUser(dbUser as UserRecord);
+            // Retries internally and distinguishes "no such employee" from "the lookup itself
+            // failed" — see resolveEmployeeForAuthUser's own comment for why that distinction
+            // matters here specifically (a hard refresh firing many requests at once used to
+            // turn one transient failure on this single lookup into a full, wrongful logout).
+            const result = await resolveEmployeeForAuthUser(session.user.id);
+            if (result.status === 'found') {
+              setAuthenticatedUser(result.user);
               return;
             }
+            if (result.status === 'error') {
+              // Couldn't confirm either way — leave the current state alone rather than
+              // guessing a logout. The onAuthStateChange listener below gets its own chance to
+              // resolve this moments later.
+              return;
+            }
+            // status === 'not_found': confirmed, falls through to the real logout below.
           }
         } catch (err) {
           console.warn('Session check warning:', err);
+          // getSession() itself failing is unusual and not clearly "no session" either — same
+          // "don't guess a logout" reasoning as the 'error' branch above.
+          return;
         }
-        // A cached employee ID cannot replace a real Supabase Auth session.
+        // No session at all, or a confirmed not-found/deactivated employee row.
         setAuthenticatedUser(null);
         return;
       }
@@ -814,16 +878,16 @@ export default function App() {
         if (session?.user) {
           // supabaseRaw bypasses the legacy client-side users proxy — that proxy's .or()
           // lookup only matches the hardcoded demo seed array, never a real Postgres row.
-          const { data: dbUser } = await supabaseRaw
-            .from('users')
-            .select('*')
-            .eq('auth_id', session.user.id)
-            .single();
-          if (dbUser && !dbUser.deactivated_at) {
-            setAuthenticatedUser(dbUser as UserRecord);
-          } else {
+          const result = await resolveEmployeeForAuthUser(session.user.id);
+          if (result.status === 'found') {
+            setAuthenticatedUser(result.user);
+          } else if (result.status === 'not_found') {
             setAuthenticatedUser(null);
           }
+          // status === 'error': leave authenticatedUser exactly as it is. This event fires on
+          // every hard refresh of an already-logged-in session — treating a transient lookup
+          // failure here as a logout is the confirmed cause of reports of being signed out
+          // entirely just from refreshing the page.
         } else if (event === 'SIGNED_OUT') {
           setAuthenticatedUser(null);
         }
@@ -1499,15 +1563,22 @@ export default function App() {
         // This lookup happens before the employee-shaped client-side session
         // has been established. Use the raw client so the legacy users proxy
         // cannot fall back to INITIAL_USERS and miss a real production user.
-        const { data: dbUser } = await supabaseRaw
-          .from('users')
-          .select('*')
-          .eq('auth_id', session.user.id)
-          .single();
-        if (dbUser && !dbUser.deactivated_at) {
-          handleLoginSuccess(dbUser as UserRecord);
+        const result = await resolveEmployeeForAuthUser(session.user.id);
+        if (result.status === 'found') {
+          handleLoginSuccess(result.user);
           return;
         }
+        if (result.status === 'error') {
+          // Couldn't confirm the employee row (network/timeout) right after a successful
+          // password set. Signing out here would strand them needing the one-time recovery
+          // link again, which may already be consumed — surface a retry instead.
+          showNotification(
+            'Password was set, but your account could not be loaded right now. Please reload the page.',
+            'info'
+          );
+          return;
+        }
+        // status === 'not_found': falls through to the real sign-out below.
       }
     } catch (err) {
       console.warn('Post-recovery session lookup warning:', err);
