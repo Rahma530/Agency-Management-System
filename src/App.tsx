@@ -147,15 +147,12 @@ import {
   readTaskCreateRecovery,
   updateTaskCreateRecovery,
 } from './lib/taskCreateRecovery';
-import {
-  INITIAL_USERS,
-  INITIAL_BRIEFS,
-  INITIAL_CAPACITY_LOGS,
-  INITIAL_DAILY_LOGS,
-  INITIAL_EXTRA_NOTES,
-  INITIAL_CAMPAIGNS,
-  INITIAL_ASSIGNMENTS,
-} from './data/initialData';
+// Only INITIAL_USERS is still used (as a deliberate, guarded fallback — see usersLoadedFromSupabase
+// throughout this file). The other INITIAL_* seed exports used to double as live state defaults for
+// briefs/capacity_logs/daily_logs/extra_notes/campaigns/assignments; that was removed (now [] — see
+// each state hook's own comment below) so a failed/slow fetch can no longer leave fake sample rows
+// on screen looking like real data.
+import { INITIAL_USERS } from './data/initialData';
 import {
   getRoleInfo,
   isModuleAllowed,
@@ -513,7 +510,7 @@ export default function App() {
       }, {}),
     [clientLifecyclePeriods]
   );
-  const [briefs, setBriefs] = useState<BriefRecord[]>(INITIAL_BRIEFS);
+  const [briefs, setBriefs] = useState<BriefRecord[]>([]);
   const [briefRevisions, setBriefRevisions] = useState<BriefRevisionRecord[]>([]);
   // Global per-service brief question list — moved here from a static import (data/briefFieldSchemas.ts)
   // so it can be edited from the app. briefFieldSchemas below is the grouped Record<ServiceType,
@@ -534,11 +531,20 @@ export default function App() {
   const [taskPlatformLinks, setTaskPlatformLinks] = useState<TaskPlatformLinkRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
-  const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>(INITIAL_CAPACITY_LOGS);
-  const [dailyLogs, setDailyLogs] = useState<DailyLogRecord[]>(INITIAL_DAILY_LOGS);
-  const [extraNotes, setExtraNotes] = useState<ExtraNoteRecord[]>(INITIAL_EXTRA_NOTES);
-  const [campaigns, setCampaigns] = useState<CampaignRecord[]>(INITIAL_CAMPAIGNS);
-  const [assignments, setAssignments] = useState<AssignmentRecord[]>(INITIAL_ASSIGNMENTS);
+  // Deliberately NOT seeded from INITIAL_CAPACITY_LOGS/INITIAL_DAILY_LOGS/INITIAL_EXTRA_NOTES/
+  // INITIAL_CAMPAIGNS/INITIAL_ASSIGNMENTS (unlike this file's much older demo-mode defaults) —
+  // those are canned sample rows meant only for a true offline/unconfigured-Supabase preview.
+  // Defaulting live state to them meant a slow or failed fetch in loadData() below (e.g. during a
+  // Postgres overload) silently left the screen showing fake sample data with no error, since the
+  // original fetch code only ever called setX(...) on SUCCESS and had no else branch — exactly the
+  // "loads fake data" reports from production. Starting empty means a failed/slow fetch now shows
+  // nothing (and, after the loadData fix below, a visible failure notice) instead of fake rows that
+  // look real. Same fix already applied to clients/tasks/taskTypes/platforms above.
+  const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>([]);
+  const [dailyLogs, setDailyLogs] = useState<DailyLogRecord[]>([]);
+  const [extraNotes, setExtraNotes] = useState<ExtraNoteRecord[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignRecord[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
   const [socialInsights, setSocialInsights] = useState<SocialInsightRecord[]>([]);
   const [seoInsights, setSeoInsights] = useState<SeoInsightRecord[]>([]);
   const [reports, setReports] = useState<ReportRecord[]>([]);
@@ -2189,8 +2195,11 @@ export default function App() {
 
         // Fetch briefs
         const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
-        if (!briefErr && briefData) {
-          setBriefs(briefData as BriefRecord[]);
+        if (briefErr) {
+          console.error('Failed to load briefs from Supabase:', briefErr);
+          showNotification(`Failed to load briefs from the server: ${briefErr.message}`, 'info');
+        } else {
+          setBriefs((briefData as BriefRecord[]) || []);
         }
 
         // Fetch brief revision history
@@ -2271,20 +2280,29 @@ export default function App() {
 
         // Fetch capacity_logs
         const { data: capData, error: capErr } = await supabase.from('capacity_logs').select('*');
-        if (!capErr && capData) {
-          setCapacityLogs(capData as CapacityLogRecord[]);
+        if (capErr) {
+          console.error('Failed to load capacity logs from Supabase:', capErr);
+          showNotification(`Failed to load capacity logs from the server: ${capErr.message}`, 'info');
+        } else {
+          setCapacityLogs((capData as CapacityLogRecord[]) || []);
         }
 
         // Fetch daily_logs
         const { data: logData, error: logErr } = await supabase.from('daily_logs').select('*');
-        if (!logErr && logData) {
-          setDailyLogs(logData as DailyLogRecord[]);
+        if (logErr) {
+          console.error('Failed to load daily logs from Supabase:', logErr);
+          showNotification(`Failed to load daily logs from the server: ${logErr.message}`, 'info');
+        } else {
+          setDailyLogs((logData as DailyLogRecord[]) || []);
         }
 
         // Fetch extra_notes
         const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
-        if (!noteErr && noteData) {
-          setExtraNotes(noteData as ExtraNoteRecord[]);
+        if (noteErr) {
+          console.error('Failed to load extra notes from Supabase:', noteErr);
+          showNotification(`Failed to load extra notes from the server: ${noteErr.message}`, 'info');
+        } else {
+          setExtraNotes((noteData as ExtraNoteRecord[]) || []);
         }
 
         // Fetch campaigns directly from Postgres (bypassing the legacy client-side campaigns
@@ -2292,8 +2310,11 @@ export default function App() {
         // select path reads from an in-memory array seeded once from INITIAL_CAMPAIGNS and never
         // synced with the real table, so it could never reflect a real, empty campaigns table).
         const { data: campaignData, error: campaignErr } = await supabaseRaw.from('campaigns').select('*');
-        if (!campaignErr && campaignData) {
-          setCampaigns(campaignData as CampaignRecord[]);
+        if (campaignErr) {
+          console.error('Failed to load campaigns from Supabase:', campaignErr);
+          showNotification(`Failed to load campaigns from the server: ${campaignErr.message}`, 'info');
+        } else {
+          setCampaigns((campaignData as CampaignRecord[]) || []);
         }
 
         // Fetch assignments (service specialist delegation records)
