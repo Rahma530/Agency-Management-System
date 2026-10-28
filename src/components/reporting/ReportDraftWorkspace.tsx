@@ -212,7 +212,13 @@ function renderWorkLogSection(
   // that text already describes several days' worth of entries at once ("posted X times"-style),
   // so a single date would misrepresent it. A single-log entry, grouped or not, always gets one.
   const renderLine = (_employeeName: string, text: string, attachmentLines: string[], date?: string): string => {
-    const firstLine = date ? `${text} بتاريخ ${toDayMonth(date)}` : text;
+    // A log the employee attached a file/link to without typing any description used to render as
+    // a bare "بتاريخ D/M" line once the date clause below was appended to the (empty) text — a
+    // card with no content of its own, reading in the export as a stray, disconnected date next to
+    // its attachment. Falling back to a short placeholder keeps every entry self-contained: the
+    // date and attachment(s) always anchor to real visible text, never to nothing.
+    const baseText = text || (attachmentLines.length ? 'مرفق' : text);
+    const firstLine = date ? `${baseText} بتاريخ ${toDayMonth(date)}` : baseText;
     return attachmentLines.length ? [firstLine, ...attachmentLines].join('\n') : firstLine;
   };
 
@@ -1140,10 +1146,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           produce (real image thumbnails, short "View attachment" links) instead of the raw
           150+ character signed URLs the textarea itself displays. See ReportContentPreview.tsx. */}
       {!isLoadingDetails && !detailsError && draftText.trim() && (
-        <div className="rounded-xl border border-purple-900/30 bg-stone-950/30 p-3">
-          <p className="text-[11px] font-bold text-purple-200 mb-2">Live preview (as it will appear in the export)</p>
-          <ReportContentPreview contentText={draftText} />
-        </div>
+        <details className="rounded-xl border border-purple-900/30 bg-stone-950/30 p-3">
+          <summary className="cursor-pointer text-[11px] font-bold text-purple-200">Live preview (as it will appear in the export)</summary>
+          <div className="mt-2"><ReportContentPreview contentText={draftText} /></div>
+        </details>
       )}
 
       <div className="flex flex-wrap gap-2">
