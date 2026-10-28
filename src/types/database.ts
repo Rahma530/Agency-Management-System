@@ -393,6 +393,12 @@ export interface AssignmentRecord {
 // 6. tasks
 export interface TaskRecord {
   id: string;
+  // Global, sequential, human-facing task number ("#42") — assigned by a DB sequence
+  // (public.tasks.task_number default, 20261222300000_task_number.sql), never per-client and
+  // never reusing a deleted task's number. Shown next to the title everywhere a task appears
+  // (Kanban cards, tables, Task Details). Optional only because older in-memory/mocked
+  // TaskRecord values built before the migration ran may not carry it.
+  task_number?: number | null;
   client_id: string;
   title: string;
   description: string;

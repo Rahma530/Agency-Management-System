@@ -1118,6 +1118,9 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                             onClick={() => setSelectedTaskDetails(task)}
                             className="text-xs font-bold text-white hover:text-purple-300 cursor-pointer transition-colors"
                           >
+                            {task.task_number != null && (
+                              <span className="text-stone-500 font-mono font-normal">#{task.task_number} </span>
+                            )}
                             {task.title}
                           </h4>
                           <p className="text-[11px] text-stone-400 flex items-center gap-1.5 mt-1">
@@ -1229,6 +1232,9 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                               onClick={() => setSelectedTaskDetails(task)}
                               className="text-xs font-bold text-white hover:text-purple-300 cursor-pointer transition-colors"
                             >
+                              {task.task_number != null && (
+                                <span className="text-stone-500 font-mono font-normal">#{task.task_number} </span>
+                              )}
                               {task.title}
                             </h4>
 
@@ -1313,7 +1319,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                       onClick={() => setSelectedTaskDetails(task)}
                       className="p-2.5 rounded-xl border border-stone-800 hover:border-purple-500/40 bg-stone-900/60 transition-all cursor-pointer flex items-center justify-between gap-2"
                     >
-                      <span className="text-xs font-semibold text-white truncate">{task.title}</span>
+                      <span className="text-xs font-semibold text-white truncate">
+                        {task.task_number != null && (
+                          <span className="text-stone-500 font-mono">#{task.task_number} </span>
+                        )}
+                        {task.title}
+                      </span>
                       <span className="text-[10px] text-stone-400 font-mono shrink-0">Due: {task.due_date || 'Not set'}</span>
                     </div>
                   ))}
@@ -1344,7 +1355,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                       onClick={() => setSelectedTaskDetails(task)}
                       className="p-2.5 rounded-xl border border-stone-800 hover:border-purple-500/40 bg-stone-900/60 transition-all cursor-pointer flex items-center justify-between gap-2"
                     >
-                      <span className="text-xs font-semibold text-white truncate">{task.title}</span>
+                      <span className="text-xs font-semibold text-white truncate">
+                        {task.task_number != null && (
+                          <span className="text-stone-500 font-mono">#{task.task_number} </span>
+                        )}
+                        {task.title}
+                      </span>
                       <span className="flex items-center gap-2 shrink-0">
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400">
                           Revision #{task.revision_count}
@@ -1478,6 +1494,9 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         >
                           <td className="p-3.5">
                             <p className="font-bold text-white hover:text-purple-300 transition-colors">
+                              {task.task_number != null && (
+                                <span className="text-stone-500 font-mono font-normal">#{task.task_number} </span>
+                              )}
                               {task.title}
                             </p>
                             {task.description && (
@@ -1642,6 +1661,9 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         onClick={() => setSelectedTaskDetails(task)}
                         className="text-xs font-bold text-white hover:text-purple-300 cursor-pointer transition-colors leading-snug"
                       >
+                        {task.task_number != null && (
+                          <span className="text-stone-500 font-mono font-normal">#{task.task_number} </span>
+                        )}
                         {task.title}
                       </h4>
 
@@ -2056,7 +2078,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     {getStatusLabel(selectedTaskDetails.status)}
                   </span>
                 </div>
-                <h3 className="text-base font-bold text-white mt-1">{selectedTaskDetails.title}</h3>
+                <h3 className="text-base font-bold text-white mt-1">
+                  {selectedTaskDetails.task_number != null && (
+                    <span className="text-stone-500 font-mono font-normal">#{selectedTaskDetails.task_number} </span>
+                  )}
+                  {selectedTaskDetails.title}
+                </h3>
               </div>
 
               <button
