@@ -19,7 +19,21 @@ import {
 } from 'lucide-react';
 import { BriefFieldDef, BriefRecord, BriefRevisionRecord, ServiceType } from '../types/database';
 import { SHORT_TEXT_MIN_LENGTH } from '../lib/briefReview';
+import { toUrlHref } from '../lib/urlLink';
 import { BriefEditHistory } from './BriefEditHistory';
+
+// Fixed, always-present field on every brief regardless of service_type — a free-form catch-all
+// that doesn't belong to any one question. Kept out of brief_field_schemas (the admin-editable
+// global question list) on purpose: it's not a "question" with a required/optional toggle, just a
+// place for anything else worth recording. Deliberately namespaced (not the bare "extra_notes")
+// so it can never collide with a real field key someone adds via BriefFieldSchemaEditor.
+const EXTRA_NOTES_KEY = '__brief_extra_notes';
+
+const isFieldValueEmpty = (value: any): boolean => {
+  if (value == null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return String(value).trim().length === 0;
+};
 
 interface DynamicBriefFormProps {
   clientId: string;
@@ -175,9 +189,23 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
 
   const handleSave = async () => {
     if (!canEdit) return;
-    setIsSaving(true);
     setErrorMsg('');
     setSaveSuccess(false);
+
+    // Every global question is client data, and client data is too important to leave blank —
+    // all of fieldDefs is now mandatory, regardless of each field's own `required` toggle in
+    // brief_field_schemas (that flag still drives the advisory reviewBrief()/completeness-score
+    // checks elsewhere, but saving this form is hard-blocked here). Custom (ad hoc, this-brief-
+    // only) questions and the free-form Extra Notes box stay optional, as before.
+    const missingFields = fieldDefs.filter((def) => isFieldValueEmpty(formData[def.key]));
+    if (missingFields.length > 0) {
+      setErrorMsg(
+        `Please fill in all fields before saving — missing: ${missingFields.map((f) => f.label).join(', ')}`
+      );
+      return;
+    }
+
+    setIsSaving(true);
 
     try {
       await onSaveBrief({
@@ -434,7 +462,7 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
                 <label className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-xs font-semibold" dir="auto" style={{ color: 'var(--lilac)' }}>
                     {field.label}
-                    {field.required && <span className="ml-1.5 text-[10px] text-red-400">*</span>}
+                    {!isCustom && <span className="ml-1.5 text-[10px] text-red-400">*</span>}
                     {isCustom && (
                       <span
                         className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
@@ -538,6 +566,34 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
             })}
           </div>
 
+          {/* Always-present catch-all note, separate from the structured question list above —
+              optional on purpose (see isFieldValueEmpty check in handleSave, which only validates
+              fieldDefs). */}
+          <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+            <label className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-semibold" style={{ color: 'var(--lilac)' }}>
+                Extra Notes
+              </span>
+              <span className="text-[10px]" style={{ color: 'var(--grey)' }}>
+                (optional — anything else worth recording about this brief)
+              </span>
+            </label>
+            <textarea
+              rows={3}
+              dir="auto"
+              placeholder="Any additional notes..."
+              value={formData[EXTRA_NOTES_KEY] || ''}
+              readOnly={!canEdit}
+              onChange={(e) => handleFieldChange(EXTRA_NOTES_KEY, e.target.value)}
+              className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"
+              style={{
+                background: 'rgba(10, 10, 13, 0.85)',
+                border: '1px solid var(--border-soft)',
+                color: 'var(--white)',
+              }}
+            />
+          </div>
+
           {canEdit && (
             <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-soft)' }}>
               {isAddingCustomQuestion ? (
@@ -586,55 +642,84 @@ export const DynamicBriefForm: React.FC<DynamicBriefFormProps> = ({
         </fieldset>
       )}
 
-      {/* VIEW 2: Spreadsheet Tabular Review View */}
+      {/* VIEW 2: Spreadsheet Tabular Review View — one row per actual question (not per key
+          present in formData), so an unanswered question still shows up as a row ("—") instead
+          of silently disappearing from the review view. */}
       {activeView === 'spreadsheet' && (
         <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--border-soft)' }}>
-          <table className="w-full text-right text-xs">
+          <table className="w-full text-right text-xs table-fixed">
+            <colgroup>
+              <col style={{ width: '32%' }} />
+              <col />
+            </colgroup>
             <thead>
               <tr style={{ background: 'rgba(59, 21, 96, 0.4)', borderBottom: '1px solid var(--border-soft)' }}>
-                <th className="p-3 font-bold" style={{ color: 'var(--purple-light)', width: '30%' }}>
-                  Field
+                <th className="p-3 font-bold" style={{ color: 'var(--purple-light)' }}>
+                  Question
                 </th>
                 <th className="p-3 font-bold" style={{ color: 'var(--white)' }}>
-                  Recorded Value
+                  Answer
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y" style={{ borderColor: 'rgba(123, 47, 247, 0.15)' }}>
-              {Object.keys(formData).length === 0 ? (
-                <tr>
-                  <td colSpan={2} className="p-6 text-center text-stone-400">
-                    No data entered yet for this brief. Switch to "Edit Form" to fill in the fields.
-                  </td>
-                </tr>
-              ) : (
-                Object.entries(formData).map(([key, value]) => (
-                  <tr key={key} className="hover:bg-purple-950/20 transition-colors">
-                    <td className="p-3 font-medium font-mono text-[11px]" dir="auto" style={{ color: 'var(--lilac)' }}>
-                      {key}
+              {[
+                ...allFieldDefs,
+                { key: EXTRA_NOTES_KEY, label: 'Extra Notes', type: 'textarea' } as BriefFieldDef,
+              ].map((field) => {
+                const value = formData[field.key];
+                const urlHref = field.type === 'url' && typeof value === 'string' ? toUrlHref(value) : null;
+                return (
+                  <tr key={field.key} className="hover:bg-purple-950/20 transition-colors align-top">
+                    <td
+                      className="p-3 font-medium text-[11px] break-words"
+                      dir="auto"
+                      style={{ color: 'var(--lilac)' }}
+                    >
+                      {field.label}
                     </td>
-                    <td className="p-3" dir="auto" style={{ color: 'var(--white)' }}>
-                      {Array.isArray(value) ? (
+                    <td
+                      className="p-3"
+                      dir="auto"
+                      style={{ color: 'var(--white)', overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                    >
+                      {Array.isArray(value) && value.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {value.map((item, idx) => (
                             <span
                               key={idx}
-                              className="px-2 py-0.5 rounded-md text-[10px]"
+                              className="px-2 py-0.5 rounded-md text-[10px] break-all"
                               style={{ background: 'rgba(123, 47, 247, 0.25)', color: 'var(--purple-light)' }}
                             >
                               {item}
                             </span>
                           ))}
                         </div>
-                      ) : typeof value === 'object' ? (
-                        <pre className="text-[10px] text-stone-300 font-mono">{JSON.stringify(value, null, 2)}</pre>
+                      ) : urlHref ? (
+                        // Any link gets forced wrapping (break-all), not just overflow-x scroll —
+                        // a long, unspaced site URL would otherwise stretch the row off-screen.
+                        <a
+                          href={urlHref}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="hover:underline break-all"
+                          style={{ color: 'var(--purple-light)' }}
+                        >
+                          {value}
+                        </a>
+                      ) : typeof value === 'object' && value !== null ? (
+                        <pre className="text-[10px] text-stone-300 font-mono whitespace-pre-wrap break-all">
+                          {JSON.stringify(value, null, 2)}
+                        </pre>
                       ) : (
-                        <span className="leading-relaxed whitespace-pre-wrap">{String(value || '—')}</span>
+                        <span className="leading-relaxed whitespace-pre-wrap break-all">
+                          {value != null && String(value).trim() ? String(value) : '—'}
+                        </span>
                       )}
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })}
             </tbody>
           </table>
         </div>

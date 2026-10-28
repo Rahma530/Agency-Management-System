@@ -1,20 +1,7 @@
 import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { BriefFieldDef } from '../types/database';
-
-// Fixes a url-typed field's raw saved value into a working href. Nothing stops an employee from
-// typing a bare domain ("google.com") or non-URL text into a url-typed question — saving is never
-// blocked regardless of answer type (see DynamicBriefForm.tsx) — so this is the one place that
-// decides what actually happens when someone clicks it. A value that already carries a scheme is
-// used as-is; a bare domain-shaped value (no whitespace) gets https:// prepended so it resolves as
-// a real external link instead of a broken relative path within this app; a value with no usable
-// host at all (empty after trimming, or containing whitespace — no real URL does) isn't linkified.
-// The displayed text is always exactly what was typed — only the underlying href is adjusted.
-const toUrlHref = (rawValue: string): string | null => {
-  const trimmed = rawValue.trim();
-  if (!trimmed || /\s/.test(trimmed)) return null;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-};
+import { toUrlHref } from '../lib/urlLink';
 
 interface BriefFieldsReadOnlyProps {
   fields: Record<string, any>;
