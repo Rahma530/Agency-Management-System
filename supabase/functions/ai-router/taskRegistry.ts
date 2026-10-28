@@ -429,18 +429,20 @@ function buildAnalyzeSystemPrompt(language: SupportedLanguage, detail: DetailLev
     `completely independently of every other item: keep it its own separate entry, never merge, ` +
     `group, combine, or summarize two or more items into one, and never add section headings — ` +
     `grouping/headings are handled elsewhere, outside your output. For each item on its own, turn ` +
-    `its raw wording into one clear, well-ordered ${languageName} sentence (or two short ones if the ` +
-    `original genuinely covers two separate actions), using natural logical connectors between its ` +
-    `parts (e.g. "و"/"ثم"/"كما" as appropriate) instead of a flat list of disconnected fragments. ` +
-    `Rephrase for clarity and flow ONLY: never shorten, summarize away, or drop any detail the item ` +
-    `already states, and — most importantly — never add, infer, or imply any fact, number, name, ` +
-    `date, cause, outcome, or conclusion that is not already explicitly written in that exact ` +
-    `item's own "text". If an item's original text is short, vague, or incomplete (e.g. just a ` +
-    `title with no detail), your rephrased version must stay exactly as short and vague — filling ` +
-    `in plausible-sounding detail that was never stated is a fabrication, not a rephrase. Do not ` +
-    `change any number, date, or proper name that appears in an item's text. Your output must ` +
-    `include exactly one entry per input work_items entry, in the same order, each keeping its ` +
-    `original "id" unchanged.\n\n`;
+    `its raw wording (often a short, informal note) into one clear, complete, professional ` +
+    `${languageName} sentence (or two short ones if the original genuinely covers two separate ` +
+    `actions), using natural logical connectors between its parts (e.g. "و"/"ثم"/"كما" as ` +
+    `appropriate) instead of a flat list of disconnected fragments. You may — and should — ` +
+    `elaborate the PHRASING: write it as a fuller, more natural sentence than the raw note, with ` +
+    `the normal professional framing a reader would reasonably understand from the action itself ` +
+    `(e.g. "بوست 9" may become "تم نشر البوست رقم 9 الخاص بالعميل"). The line you must not cross is ` +
+    `adding a NEW fact: never invent or imply any number, date, name, platform, outcome, result, ` +
+    `cause, or additional action that is not already explicitly present in that exact item's own ` +
+    `"text" — phrasing it more fully is expected, but claiming something happened, worked well, ` +
+    `reached an audience, or involved a detail the note never mentioned is fabrication and is ` +
+    `forbidden even if it sounds plausible. Do not change any number, date, or proper name that ` +
+    `already appears in an item's text. Your output must include exactly one entry per input ` +
+    `work_items entry, in the same order, each keeping its original "id" unchanged.\n\n`;
 
   if (detail === 'detailed') {
     return (
