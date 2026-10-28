@@ -532,7 +532,19 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
   ): Promise<
-    | { ok: true; text: string; partial?: boolean; items?: { id: string; text: string }[] }
+    | {
+        ok: true;
+        text: string;
+        partial?: boolean;
+        items?: { id: string; text: string }[];
+        // The metrics-comparison prose only (summaryResult.summary + its by-service breakdown) —
+        // kept separate from `text`'s flat, structure-less join of every rephrased work item so
+        // ReportDraftWorkspace.tsx's requestAiSummary can prepend just this part onto a FULL
+        // re-render of the work-logs section (headings, service buckets, trailing "بتاريخ D/M"
+        // clauses all restored — see that function's own comment for why `text` itself can't be
+        // used as the new draft content when work items were involved).
+        summaryOverview?: string;
+      }
     | { ok: false; message: string }
   > => {
     if (!onGenerateAiSummary) return { ok: false, message: 'AI Summary is not available.' };
@@ -562,16 +574,20 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     const { items, anyBatchFellBack, summaryResult } = await runWorkItemBatches(workItems, (batch) =>
       onGenerateAiSummary(buildCampaignSummaryPayload(comparison, viewerServiceFilter, creatorNote, batch))
     );
-    const sections = [
-      ...(summaryResult ? [summaryResult.summary, ...summaryResult.by_service.map((entry) => entry.text)] : []),
-      ...items.map((item) => item.text),
-    ];
+    const summaryOverview = summaryResult
+      ? [summaryResult.summary, ...summaryResult.by_service.map((entry) => entry.text)].join('\n\n')
+      : undefined;
+    const sections = [...(summaryOverview ? [summaryOverview] : []), ...items.map((item) => item.text)];
     if (sections.length === 0) return { ok: false, message: 'The AI Summary could not be generated for any batch.' };
     // items: the same {id, text} pairs used to build `sections` above, kept structured (not just
     // flattened into the joined string) so the Draft workspace can carry each rephrased line's
     // wording forward onto whatever work-log grouping was active — see
-    // ReportDraftWorkspace.tsx's requestAiSummary/activeWorkLogGroups for why.
-    return { ok: true, text: sections.join('\n\n'), partial: anyBatchFellBack, items };
+    // ReportDraftWorkspace.tsx's requestAiSummary/activeWorkLogGroups for why. `text` (the flat
+    // join) is kept too as the fallback for the no-work-items (pure campaign metrics) branch above,
+    // and as a last resort if a caller ever gets `items` but not the manifest needed to properly
+    // re-render — but ReportDraftWorkspace.tsx's own requestAiSummary now prefers
+    // summaryOverview + a full composeManifestContent re-render over `text` whenever items exist.
+    return { ok: true, text: sections.join('\n\n'), partial: anyBatchFellBack, items, summaryOverview };
   };
 
   const visibleReports = useMemo(

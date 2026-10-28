@@ -85,7 +85,13 @@ interface Props {
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
   ) => Promise<
-    | { ok: true; text: string; partial?: boolean; items?: { id: string; text: string }[] }
+    | {
+        ok: true;
+        text: string;
+        partial?: boolean;
+        items?: { id: string; text: string }[];
+        summaryOverview?: string;
+      }
     | { ok: false; message: string }
   >;
   // "Group similar entries" — a separate, narrower AI action from AI Summary above. It never
@@ -825,7 +831,36 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       // AI Summary click still sees (and keeps) this same merge.
       const rephrasedById = new Map<string, string>((result.items || []).map((item) => [item.id, item.text]));
       const nextGroups = effectiveGroups.map((group) => ({ ids: group.ids, text: rephrasedById.get(group.ids[0]) ?? group.text }));
-      setDraftTextWithUndo(result.text, nextGroups);
+      // result.text is the AI's own flat `summaryOverview + rephrased lines, all joined by blank
+      // lines` string — it has no section headings ("Social Media"/"Media Buying"/...), no
+      // per-service grouping, and no trailing "بتاريخ D/M" clause on any line (workItemsFromOriginalSources
+      // never sends the date to the AI in the first place — composeManifestContent only adds it at
+      // render time). Using it directly as the new draft silently dropped every heading and date.
+      // Whenever work items were actually involved, re-render the SAME structured shape "Group
+      // similar entries" already uses (composeManifestContent/renderWorkLogSection, keyed off
+      // nextGroups) with the freshly rephrased wording substituted in, and only prepend the AI's
+      // own metrics-overview prose (summaryOverview) above it. Fall back to result.text verbatim
+      // only for the no-work-items (pure campaign-metrics) case, where there's no work-logs
+      // structure to regenerate at all.
+      let finalText = result.text;
+      if (workItems.length) {
+        const attachmentLinksByTask = await fetchTaskAttachmentLinks(
+          manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
+        );
+        const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
+        const regenerated = composeManifestContent(
+          manifest,
+          creatorNote,
+          names,
+          creativeSubject,
+          attachmentLinksByTask,
+          nextGroups,
+          workLogServiceGrouping,
+          effectiveScopeType === 'employee'
+        );
+        finalText = result.summaryOverview ? `${result.summaryOverview}\n\n${regenerated}` : regenerated;
+      }
+      setDraftTextWithUndo(finalText, nextGroups);
       setPreviewManifest(null);
       setMessage(
         result.partial
