@@ -264,18 +264,16 @@ function isRecentSelfWrite(table: string): boolean {
 // ever created. Slightly less than instant (changes land within ~9s instead of immediately), but
 // correctness is unchanged: every poll still re-runs the exact same RLS-scoped `refresh()`
 // loadData() itself already uses, so Postgres RLS alone still decides what comes back.
-// Base poll interval for every table/feed polled below. Raised from the original 9s fallback
-// cadence — that number made sense for a handful of channels falling back occasionally, but once
-// EVERY table polls unconditionally (see useSupabaseRealtimeSync's own comment on why realtime
-// was removed), 9s across ~29 tables means ~29 requests every 9 seconds PER LOGGED-IN SESSION,
-// all day, for as long as a tab is open — company-wide, that is a sustained, constant load on
-// Postgres that was never there before (most of those requests used to be answered without a
-// query at all, only when a table's realtime channel actually changed). Confirmed via the
-// Supabase dashboard: the Postgres error rate spiked hard right after that change went out.
-// 20s cuts the steady-state request rate by more than half; combined with
-// startVisibilityAwarePoll below (which stops entirely for a backgrounded tab — the common case
-// for a company tool people leave open all day) the real-world load should drop far more than
-// that in practice.
+// Base poll interval used as a FALLBACK only — by useConsolidatedRealtimeSync's single shared
+// channel below when it isn't SUBSCRIBED, and by the handful of smaller bespoke feeds further
+// down this file (chat, notifications, activities, users, assignments) which still poll
+// unconditionally rather than sharing that one channel. Earlier history worth remembering here:
+// this file went through one channel PER table (~29 WebSocket channels opening at once on every
+// login — caused login hangs) and then, briefly, an unconditional poll per table with no channel
+// at all (a constant REST request stream that overloaded Postgres — confirmed via the Supabase
+// dashboard showing a 93% Postgres error rate right after that shipped). 20s plus
+// startVisibilityAwarePoll's background-tab pause below keeps whatever still polls unconditionally
+// cheap even on its own.
 const POLL_INTERVAL_MS = 20000;
 
 // Wraps setInterval with two changes that matter a lot at this request volume:
@@ -284,12 +282,13 @@ const POLL_INTERVAL_MS = 20000;
 //    immediate run the moment the tab becomes visible again, instead of waiting out the rest of
 //    the interval.
 // 2. Delays the FIRST interval start by a small random amount (0-4s) instead of starting it
-//    exactly at mount, so the ~29 tables wired through useSupabaseRealtimeSync (plus the bespoke
-//    feeds further down) don't all land on the exact same 20s cadence — a synchronized burst of
-//    ~29+ requests at once is worse for Postgres than the same total request volume spread out
-//    evenly. This delay does NOT itself trigger a callback (callers that already fetched fresh
-//    data on mount, e.g. right after loadData(), would otherwise get one redundant refetch right
-//    away) — it only staggers when each table's own recurring interval begins.
+//    exactly at mount, so the several independent pollers in this file (the consolidated
+//    channel's own fallback, plus the bespoke chat/notifications/activities/users/assignments
+//    feeds) don't all land on the exact same 20s cadence — a synchronized burst of requests at
+//    once is worse for Postgres than the same total request volume spread out evenly. This delay
+//    does NOT itself trigger a callback (callers that already fetched fresh data on mount, e.g.
+//    right after loadData(), would otherwise get one redundant refetch right away) — it only
+//    staggers when each poller's own recurring interval begins.
 function startVisibilityAwarePoll(callback: () => void, intervalMs: number): () => void {
   let intervalId: ReturnType<typeof setInterval> | null = null;
   const tick = () => {
@@ -309,54 +308,100 @@ function startVisibilityAwarePoll(callback: () => void, intervalMs: number): () 
   };
 }
 
-function useSupabaseRealtimeSync(
-  channelName: string,
-  table: string,
-  refresh: () => Promise<void>,
-  enabled: boolean
-): void {
+interface RealtimeSyncEntry {
+  table: string;
+  refresh: () => Promise<void>;
+}
+
+// Single consolidated Realtime channel for every table listed below, replacing two designs that
+// each turned out to have their own cost: one channel PER table (~29 separate WebSocket channel
+// subscriptions opening at once on every login — the confirmed cause of the original login-time
+// slowdown/hangs) and, after that, no channel at all and an unconditional poll per table instead
+// (a constant REST request stream that then overloaded Postgres — the Supabase dashboard showed a
+// 93% Postgres error rate right after that went out). This gets back what real Realtime is
+// supposed to give: the server pushes a change only when one actually happens, so in steady state
+// this makes close to zero extra requests — while still only ever opening ONE channel per session,
+// not 29. Falls back to the same visibility-aware poll (see startVisibilityAwarePoll), covering
+// every table in one shared timer, only for as long as this one channel isn't SUBSCRIBED.
+function useConsolidatedRealtimeSync(entries: RealtimeSyncEntry[], enabled: boolean): void {
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || entries.length === 0) return;
 
     let cancelled = false;
-    let refreshInFlight = false;
-    let refreshQueued = false;
+    const refreshInFlight = new Set<string>();
+    const refreshQueued = new Set<string>();
 
-    const runCoalescedRefresh = async (): Promise<void> => {
+    const runCoalescedRefresh = async (table: string, refresh: () => Promise<void>): Promise<void> => {
       if (cancelled) return;
-      if (refreshInFlight) {
-        refreshQueued = true;
+      if (refreshInFlight.has(table)) {
+        refreshQueued.add(table);
         return;
       }
-      refreshInFlight = true;
+      refreshInFlight.add(table);
       try {
         await refresh();
       } finally {
-        refreshInFlight = false;
-        if (!cancelled && refreshQueued) {
-          refreshQueued = false;
-          void runCoalescedRefresh();
+        refreshInFlight.delete(table);
+        if (!cancelled && refreshQueued.has(table)) {
+          refreshQueued.delete(table);
+          void runCoalescedRefresh(table, refresh);
         }
       }
     };
 
-    // loadData() already fetched this table fresh right before this hook was wired up, so the
-    // first poll tick genuinely checking for changes (not an immediate refresh on mount) is the
-    // right starting point — avoids a redundant refetch of all ~29 tables at once on every page
-    // load, same reasoning the previous realtime version's "skip the first SUBSCRIBED" guard used
-    // to document. startVisibilityAwarePoll's own jitter already delays that first tick slightly,
-    // which doubles as spreading the ~29 tables' first requests apart instead of bursting together.
-    const stopPolling = startVisibilityAwarePoll(() => {
+    const invalidate = (table: string, refresh: () => Promise<void>) => {
       if (isRecentSelfWrite(table)) return;
-      void runCoalescedRefresh();
-    }, POLL_INTERVAL_MS);
+      void runCoalescedRefresh(table, refresh);
+    };
+
+    // loadData() already fetched every one of these tables fresh right before this hook was
+    // wired up, so a poll tick genuinely re-checking for changes (not an immediate refresh on
+    // mount) is the right starting point — same reasoning the single-table version of this hook
+    // used to document.
+    let stopPolling: (() => void) | null = null;
+    const startPolling = () => {
+      if (stopPolling) return;
+      stopPolling = startVisibilityAwarePoll(() => {
+        entries.forEach(({ table, refresh }) => invalidate(table, refresh));
+      }, POLL_INTERVAL_MS);
+    };
+    const stopPollingNow = () => {
+      if (stopPolling) {
+        stopPolling();
+        stopPolling = null;
+      }
+    };
+
+    let channel: ReturnType<typeof supabaseRaw.channel> = supabaseRaw.channel('app_sync_all');
+    entries.forEach(({ table, refresh }) => {
+      channel = channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table },
+        () => invalidate(table, refresh)
+      );
+    });
+    channel.subscribe((status, err) => {
+      if (cancelled) return;
+      if (status === 'SUBSCRIBED') {
+        stopPollingNow();
+      } else {
+        console.warn(`Consolidated realtime channel not subscribed (status: ${status}); polling as fallback.`, err);
+        startPolling();
+      }
+    });
 
     return () => {
       cancelled = true;
-      stopPolling();
+      stopPollingNow();
+      supabaseRaw.removeChannel(channel);
     };
+    // entries is intentionally excluded: it's a fresh array literal built at the single call site
+    // below on every render, and its entries' own `refresh` functions are already stable
+    // (useCallback) — re-subscribing the channel on every render over an array-identity change
+    // that carries no real difference would itself reintroduce a form of channel churn. `enabled`
+    // (flips once per login/logout) is the only thing that should tear this down and rebuild it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelName, table, refresh, enabled]);
+  }, [enabled]);
 }
 
 // Resolves the public.users row linked to a Supabase Auth user id — used by every session
@@ -1711,7 +1756,7 @@ export default function App() {
   }, []);
 
   // Real-time batch 2 — same invalidate-then-refetch shape as refreshTasks/refreshAssignments
-  // above, one per table that loadData() already fetches. See useSupabaseRealtimeSync for why
+  // above, one per table that loadData() already fetches. See useConsolidatedRealtimeSync for why
   // these re-run the real select() instead of merging the postgres_changes payload directly.
   const refreshClients = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -2603,7 +2648,7 @@ export default function App() {
   }, [isNewVersionAvailable]);
 
   // Chat message delivery — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above for why: too many
+  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above for why: too many
   // channels opening at once on login was the actual cause of the reported hangs). Loses the
   // "near-instant" delivery the old channel gave when it worked, but that's the tradeoff asked
   // for — and it never truly delivered reliably anyway: real-world testing (Toqa -> Shahd) once
@@ -2641,7 +2686,7 @@ export default function App() {
   }, [authenticatedUser?.id, supabaseActive]);
 
   // Notification delivery — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above).
+  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above).
   useEffect(() => {
     const userId = authenticatedUser?.id;
     if (!userId || !supabaseActive) return;
@@ -2671,7 +2716,7 @@ export default function App() {
   }, [authenticatedUser?.id, supabaseActive]);
 
   // Activities feed — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above). Same admin-only
+  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above). Same admin-only
   // gate as the initial fetch above (and the Live Activity Feed buttons themselves) — this whole
   // effect simply never runs for anyone else, so a task participant's own
   // activities_select_task_participants-visible rows
@@ -2703,7 +2748,7 @@ export default function App() {
   }, [authenticatedUser?.id, supabaseActive]);
 
   // Users table sync — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useSupabaseRealtimeSync's own comment above). Keeps
+  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above). Keeps
   // EmployeeAdminHub's "Awaiting Setup" view (and anything else reading `users`) from staying
   // frozen at whatever loadData() fetched once at this session's own login — e.g. another
   // employee's last_seen_at update, from completing setup via either the admin-invitation link or
@@ -2732,7 +2777,7 @@ export default function App() {
 
   // Keep the shared assignments snapshot synchronized across employee sessions — polls
   // (visibility-aware, see startVisibilityAwarePoll), no Realtime WebSocket channel (removed; see
-  // useSupabaseRealtimeSync's own comment above). The RLS-filtered SELECT in refreshAssignments
+  // useConsolidatedRealtimeSync's own comment above). The RLS-filtered SELECT in refreshAssignments
   // remains the source of truth either way.
   useEffect(() => {
     const userId = authenticatedUser?.id;
@@ -2771,71 +2816,65 @@ export default function App() {
 
   // Table-by-table sync — the Task Board pilot (tasks) proved the invalidate-then-coalesced-
   // refetch approach out; this is that same approach rolled out to the rest of the day-to-day
-  // screens via the shared useSupabaseRealtimeSync hook above (visibility-aware poll, no Realtime
-  // channel — see that hook's own comment).
+  // screens, all sharing the single consolidated Realtime channel useConsolidatedRealtimeSync
+  // opens below (see that hook's own comment for why one shared channel, not one per table).
   const realtimeEnabled = !!authenticatedUser?.id && supabaseActive;
 
-  // Task Board — most heavily multi-user screen (several people editing/assigning/completing the
-  // same board at once). 20261216000000_tasks_realtime.sql
-  useSupabaseRealtimeSync('tasks_global', 'tasks', refreshTasks, realtimeEnabled);
-
-  // Client Dashboard / AM Queue / Service Briefs Routing / Campaign Management — every screen that
-  // reads the `clients` list. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('clients_global', 'clients', refreshClients, realtimeEnabled);
-
-  // Service Briefs — brief status/content changes as AMs and specialists hand briefs back and
-  // forth. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('briefs_global', 'briefs', refreshBriefs, realtimeEnabled);
-
-  // Campaign Management. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('campaigns_global', 'campaigns', refreshCampaigns, realtimeEnabled);
-
-  // Capacity planning view. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('capacity_logs_global', 'capacity_logs', refreshCapacityLogs, realtimeEnabled);
-
-  // Daily Operations — "Log Today's Activity". 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('daily_logs_global', 'daily_logs', refreshDailyLogs, realtimeEnabled);
-
-  // My Work Hub — "Log Extra Effort" notes. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('extra_notes_global', 'extra_notes', refreshExtraNotes, realtimeEnabled);
-
-  // Reporting Engine. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('reports_global', 'reports', refreshReports, realtimeEnabled);
-
-  // AM meeting notes/transcripts. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('meetings_global', 'meetings', refreshMeetings, realtimeEnabled);
-
-  // Sales's signed-contract uploads. 20261217000000_screens_realtime_batch2.sql
-  useSupabaseRealtimeSync('client_contracts_global', 'client_contracts', refreshClientContracts, realtimeEnabled);
-
-  // Batch 3 — remaining lookup/admin tables and the Reporting Engine's insight feeds/task
-  // sub-records. 20261218000000_screens_realtime_batch3.sql
-  useSupabaseRealtimeSync('task_types_global', 'task_types', refreshTaskTypes, realtimeEnabled);
-  useSupabaseRealtimeSync('platforms_global', 'platforms', refreshPlatforms, realtimeEnabled);
-  useSupabaseRealtimeSync('task_comments_global', 'task_comments', refreshTaskComments, realtimeEnabled);
-  useSupabaseRealtimeSync('task_attachments_global', 'task_attachments', refreshTaskAttachments, realtimeEnabled);
-  useSupabaseRealtimeSync('task_assignees_global', 'task_assignees', refreshTaskAssignees, realtimeEnabled);
-  useSupabaseRealtimeSync('task_platform_links_global', 'task_platform_links', refreshTaskPlatformLinks, realtimeEnabled);
-  useSupabaseRealtimeSync('social_insights_global', 'social_insights', refreshSocialInsights, realtimeEnabled);
-  useSupabaseRealtimeSync('seo_insights_global', 'seo_insights', refreshSeoInsights, realtimeEnabled);
-  useSupabaseRealtimeSync('client_comparisons_global', 'client_comparisons', refreshClientComparisons, realtimeEnabled);
-  useSupabaseRealtimeSync('client_portal_users_global', 'client_portal_users', refreshClientPortalUsers, realtimeEnabled);
-  useSupabaseRealtimeSync('brief_revisions_global', 'brief_revisions', refreshBriefRevisions, realtimeEnabled);
-  useSupabaseRealtimeSync('brief_field_schemas_global', 'brief_field_schemas', refreshBriefFieldSchemas, realtimeEnabled);
-  useSupabaseRealtimeSync('brief_attachments_global', 'brief_attachments', refreshBriefAttachments, realtimeEnabled);
-  useSupabaseRealtimeSync('platform_connections_global', 'platform_connections', refreshPlatformConnections, realtimeEnabled);
-  useSupabaseRealtimeSync('client_lifecycle_periods_global', 'client_lifecycle_periods', refreshClientLifecyclePeriods, realtimeEnabled);
-
-  // Custom roles & departments — the five tables feeding registerCustomRoleData()'s in-memory
-  // permissions cache. Any change to any of them re-runs the SAME combined fetch
-  // loadCustomRolesAndDepartments() already does on login, rather than patching the cache
-  // table-by-table.
-  useSupabaseRealtimeSync('departments_global', 'departments', loadCustomRolesAndDepartments, realtimeEnabled);
-  useSupabaseRealtimeSync('custom_roles_global', 'custom_roles', loadCustomRolesAndDepartments, realtimeEnabled);
-  useSupabaseRealtimeSync('custom_role_modules_global', 'custom_role_modules', loadCustomRolesAndDepartments, realtimeEnabled);
-  useSupabaseRealtimeSync('custom_role_permissions_global', 'custom_role_permissions', loadCustomRolesAndDepartments, realtimeEnabled);
-  useSupabaseRealtimeSync('department_permissions_global', 'department_permissions', loadCustomRolesAndDepartments, realtimeEnabled);
-  useSupabaseRealtimeSync('department_member_teams_global', 'department_member_teams', loadCustomRolesAndDepartments, realtimeEnabled);
+  useConsolidatedRealtimeSync(
+    [
+      // Task Board — most heavily multi-user screen (several people editing/assigning/completing
+      // the same board at once). 20261216000000_tasks_realtime.sql
+      { table: 'tasks', refresh: refreshTasks },
+      // Client Dashboard / AM Queue / Service Briefs Routing / Campaign Management — every screen
+      // that reads the `clients` list. 20261217000000_screens_realtime_batch2.sql
+      { table: 'clients', refresh: refreshClients },
+      // Service Briefs — brief status/content changes as AMs and specialists hand briefs back and
+      // forth. 20261217000000_screens_realtime_batch2.sql
+      { table: 'briefs', refresh: refreshBriefs },
+      // Campaign Management. 20261217000000_screens_realtime_batch2.sql
+      { table: 'campaigns', refresh: refreshCampaigns },
+      // Capacity planning view. 20261217000000_screens_realtime_batch2.sql
+      { table: 'capacity_logs', refresh: refreshCapacityLogs },
+      // Daily Operations — "Log Today's Activity". 20261217000000_screens_realtime_batch2.sql
+      { table: 'daily_logs', refresh: refreshDailyLogs },
+      // My Work Hub — "Log Extra Effort" notes. 20261217000000_screens_realtime_batch2.sql
+      { table: 'extra_notes', refresh: refreshExtraNotes },
+      // Reporting Engine. 20261217000000_screens_realtime_batch2.sql
+      { table: 'reports', refresh: refreshReports },
+      // AM meeting notes/transcripts. 20261217000000_screens_realtime_batch2.sql
+      { table: 'meetings', refresh: refreshMeetings },
+      // Sales's signed-contract uploads. 20261217000000_screens_realtime_batch2.sql
+      { table: 'client_contracts', refresh: refreshClientContracts },
+      // Batch 3 — remaining lookup/admin tables and the Reporting Engine's insight feeds/task
+      // sub-records. 20261218000000_screens_realtime_batch3.sql
+      { table: 'task_types', refresh: refreshTaskTypes },
+      { table: 'platforms', refresh: refreshPlatforms },
+      { table: 'task_comments', refresh: refreshTaskComments },
+      { table: 'task_attachments', refresh: refreshTaskAttachments },
+      { table: 'task_assignees', refresh: refreshTaskAssignees },
+      { table: 'task_platform_links', refresh: refreshTaskPlatformLinks },
+      { table: 'social_insights', refresh: refreshSocialInsights },
+      { table: 'seo_insights', refresh: refreshSeoInsights },
+      { table: 'client_comparisons', refresh: refreshClientComparisons },
+      { table: 'client_portal_users', refresh: refreshClientPortalUsers },
+      { table: 'brief_revisions', refresh: refreshBriefRevisions },
+      { table: 'brief_field_schemas', refresh: refreshBriefFieldSchemas },
+      { table: 'brief_attachments', refresh: refreshBriefAttachments },
+      { table: 'platform_connections', refresh: refreshPlatformConnections },
+      { table: 'client_lifecycle_periods', refresh: refreshClientLifecyclePeriods },
+      // Custom roles & departments — the five tables feeding registerCustomRoleData()'s in-memory
+      // permissions cache. Any change to any of them re-runs the SAME combined fetch
+      // loadCustomRolesAndDepartments() already does on login, rather than patching the cache
+      // table-by-table.
+      { table: 'departments', refresh: loadCustomRolesAndDepartments },
+      { table: 'custom_roles', refresh: loadCustomRolesAndDepartments },
+      { table: 'custom_role_modules', refresh: loadCustomRolesAndDepartments },
+      { table: 'custom_role_permissions', refresh: loadCustomRolesAndDepartments },
+      { table: 'department_permissions', refresh: loadCustomRolesAndDepartments },
+      { table: 'department_member_teams', refresh: loadCustomRolesAndDepartments },
+    ],
+    realtimeEnabled
+  );
 
   // Real-time online users (Presence) & heartbeat
   useEffect(() => {
