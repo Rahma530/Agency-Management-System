@@ -2175,221 +2175,285 @@ export default function App() {
     }
 
     if (configured) {
-      try {
-        // Fetch clients
-        const { data: clientData, error: clientErr } = await supabaseRaw
-          .from('clients')
-          .select(NON_SENSITIVE_CLIENT_COLUMNS);
-        if (clientErr) {
-          console.error('Failed to load clients from Supabase:', clientErr);
-          showNotification(`Failed to load clients from the server: ${clientErr.message}`, 'info');
-        } else {
-          setClients(((clientData as ClientRecord[]) || []).map((client) => ({
-            ...client, services: getClientServices(client),
-          })));
-        }
-
-        // A single RLS-scoped read supplies lifecycle history for every visible client; this
-        // intentionally avoids a per-client query loop.
-        await refreshClientLifecyclePeriods();
-
-        // Fetch briefs
-        const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
-        if (briefErr) {
-          console.error('Failed to load briefs from Supabase:', briefErr);
-          showNotification(`Failed to load briefs from the server: ${briefErr.message}`, 'info');
-        } else {
-          setBriefs((briefData as BriefRecord[]) || []);
-        }
-
-        // Fetch brief revision history
-        const { data: briefRevisionData, error: briefRevisionErr } = await supabase
-          .from('brief_revisions')
-          .select('*');
-        if (!briefRevisionErr && briefRevisionData) {
-          setBriefRevisions(briefRevisionData as BriefRevisionRecord[]);
-        }
-
-        // Fetch the global brief field schema (source of truth moved here from a static import)
-        const { data: briefFieldSchemaData, error: briefFieldSchemaErr } = await supabase
-          .from('brief_field_schemas')
-          .select('*');
-        if (!briefFieldSchemaErr && briefFieldSchemaData) {
-          setBriefFieldSchemaRows(briefFieldSchemaData as BriefFieldSchemaRow[]);
-        }
-
-        // Fetch tasks — paginated: tasks has already grown past Supabase's 1000-row-per-request
-        // default (a bare .select('*') here silently dropped every row past that cutoff — see
-        // fetchAllRows's own comment in supabase.ts). Newer tasks, being the ones most likely to
-        // land past row 1000, were the ones most likely to silently vanish from the board on
-        // initial load, independent of (and on top of) the realtime-sync bug fixed earlier.
-        const { data: taskData, error: taskErr } = await fetchAllRows<TaskRecord>(supabaseRaw, 'tasks');
-        if (taskErr) {
-          console.error('Failed to load tasks from Supabase:', taskErr);
-          showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
-        } else {
-          setTasks(taskData || []);
-        }
-
-        // Multi-assignee membership is independent from tasks.assigned_to. The latter remains a
-        // compatibility mirror only; Create/Edit Task reads this table as the source of truth.
+      // Every fetch below reads into its OWN state slice and never reads another fetch's result,
+      // so they have no real dependency on one another — the only reason they used to run one
+      // after another (each `await`ed in turn) was that they were written in a line, not because
+      // the data needed it. On every single page load/hard refresh this meant 20+ sequential
+      // network round trips end-to-end before the screen had anything real on it, which is most of
+      // what made "opening the app" feel slow even once the Postgres-overload issue was fixed.
+      //
+      // Run them in small concurrent batches instead of either all-27-at-once (which would throw
+      // a burst of ~27 simultaneous connections at the DB on every single load — exactly the kind
+      // of spike that caused today's earlier incidents) or fully sequential (slow). Each batch runs
+      // in parallel, batches run one after another, so a session's own peak concurrent load stays
+      // small and bounded (at most ~6 at a time) while still cutting end-to-end load time by
+      // roughly the number of batches instead of the number of queries.
+      //
+      // `task(label, fn)` wraps each fetch's own try/catch so one query throwing (a real network
+      // error, not a normal {error} response — every fetch below already handles that itself)
+      // can't abort its batch-mates; behavior matches the single outer catch this replaces.
+      const task = (label: string, fn: () => Promise<void>) => async () => {
         try {
-          setTaskAssignees(await fetchTaskAssignees());
-        } catch (taskAssigneeError) {
-          console.error('Failed to load task assignees from Supabase:', taskAssigneeError);
-          setTaskAssignees([]);
+          await fn();
+        } catch (err) {
+          console.warn(`Supabase query error (${label}), relying on local cached state:`, err);
         }
+      };
 
-        // Task-platform links — same posture as task_assignees above: source of truth for the
-        // Create/Edit Task forms and the board's chips/filter, independent of any other column.
-        try {
-          setTaskPlatformLinks(await fetchTaskPlatformLinks());
-        } catch (taskPlatformLinkError) {
-          console.error('Failed to load task platform links from Supabase:', taskPlatformLinkError);
-          setTaskPlatformLinks([]);
-        }
+      const batches: Array<Array<() => Promise<void>>> = [
+        [
+          task('clients', async () => {
+            const { data: clientData, error: clientErr } = await supabaseRaw
+              .from('clients')
+              .select(NON_SENSITIVE_CLIENT_COLUMNS);
+            if (clientErr) {
+              console.error('Failed to load clients from Supabase:', clientErr);
+              showNotification(`Failed to load clients from the server: ${clientErr.message}`, 'info');
+            } else {
+              setClients(((clientData as ClientRecord[]) || []).map((client) => ({
+                ...client, services: getClientServices(client),
+              })));
+            }
+          }),
+          // A single RLS-scoped read supplies lifecycle history for every visible client; this
+          // intentionally avoids a per-client query loop.
+          task('clientLifecyclePeriods', refreshClientLifecyclePeriods),
+          // Fetch tasks — paginated: tasks has already grown past Supabase's 1000-row-per-request
+          // default (a bare .select('*') here silently dropped every row past that cutoff — see
+          // fetchAllRows's own comment in supabase.ts). Newer tasks, being the ones most likely to
+          // land past row 1000, were the ones most likely to silently vanish from the board on
+          // initial load, independent of (and on top of) the realtime-sync bug fixed earlier.
+          task('tasks', async () => {
+            const { data: taskData, error: taskErr } = await fetchAllRows<TaskRecord>(supabaseRaw, 'tasks');
+            if (taskErr) {
+              console.error('Failed to load tasks from Supabase:', taskErr);
+              showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
+            } else {
+              setTasks(taskData || []);
+            }
+          }),
+          // Multi-assignee membership is independent from tasks.assigned_to. The latter remains a
+          // compatibility mirror only; Create/Edit Task reads this table as the source of truth.
+          task('taskAssignees', async () => {
+            try {
+              setTaskAssignees(await fetchTaskAssignees());
+            } catch (taskAssigneeError) {
+              console.error('Failed to load task assignees from Supabase:', taskAssigneeError);
+              setTaskAssignees([]);
+            }
+          }),
+          // Task-platform links — same posture as task_assignees above: source of truth for the
+          // Create/Edit Task forms and the board's chips/filter, independent of any other column.
+          task('taskPlatformLinks', async () => {
+            try {
+              setTaskPlatformLinks(await fetchTaskPlatformLinks());
+            } catch (taskPlatformLinkError) {
+              console.error('Failed to load task platform links from Supabase:', taskPlatformLinkError);
+              setTaskPlatformLinks([]);
+            }
+          }),
+        ],
+        [
+          // Fetch briefs
+          task('briefs', async () => {
+            const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
+            if (briefErr) {
+              console.error('Failed to load briefs from Supabase:', briefErr);
+              showNotification(`Failed to load briefs from the server: ${briefErr.message}`, 'info');
+            } else {
+              setBriefs((briefData as BriefRecord[]) || []);
+            }
+          }),
+          // Fetch brief revision history
+          task('briefRevisions', async () => {
+            const { data: briefRevisionData, error: briefRevisionErr } = await supabase
+              .from('brief_revisions')
+              .select('*');
+            if (!briefRevisionErr && briefRevisionData) {
+              setBriefRevisions(briefRevisionData as BriefRevisionRecord[]);
+            }
+          }),
+          // Fetch the global brief field schema (source of truth moved here from a static import)
+          task('briefFieldSchemas', async () => {
+            const { data: briefFieldSchemaData, error: briefFieldSchemaErr } = await supabase
+              .from('brief_field_schemas')
+              .select('*');
+            if (!briefFieldSchemaErr && briefFieldSchemaData) {
+              setBriefFieldSchemaRows(briefFieldSchemaData as BriefFieldSchemaRow[]);
+            }
+          }),
+          // Fetch task types (all rows, including inactive — an existing task may still reference
+          // a deactivated type and needs it resolvable for display/editing)
+          task('taskTypes', async () => {
+            const { data: taskTypeData, error: taskTypeErr } = await supabase.from('task_types').select('*');
+            if (!taskTypeErr && taskTypeData) {
+              setTaskTypes(taskTypeData as TaskTypeRecord[]);
+            }
+          }),
+          // Fetch platforms (all rows, including inactive — same reasoning as task types above)
+          task('platforms', async () => {
+            const { data: platformData, error: platformErr } = await supabaseRaw.from('platforms').select('*');
+            if (!platformErr && platformData) {
+              setPlatforms(platformData as PlatformRecord[]);
+            }
+          }),
+        ],
+        [
+          // Fetch task comments
+          // Paginated: grows one row per comment, and will keep growing faster as the client/task
+          // count grows — the exact same silent-truncation-past-1000-rows risk fetchAllRows's own
+          // comment (supabase.ts) already documents for tasks/task_assignees/task_platform_links,
+          // just not yet hit here in practice. Applying it preemptively rather than waiting for a
+          // repeat of that bug once this table also crosses 1000 rows.
+          task('taskComments', async () => {
+            const { data: taskCommentData, error: taskCommentErr } = await fetchAllRows<TaskCommentRecord>(supabase, 'task_comments');
+            if (!taskCommentErr && taskCommentData) {
+              setTaskComments(taskCommentData);
+            }
+          }),
+          // Fetch task attachment metadata (the files themselves stay in Storage) — paginated for
+          // the same preemptive reason as task_comments above.
+          task('taskAttachments', async () => {
+            const { data: taskAttachmentData, error: taskAttachmentErr } = await fetchAllRows<TaskAttachmentRecord>(supabase, 'task_attachments');
+            if (!taskAttachmentErr && taskAttachmentData) {
+              setTaskAttachments(taskAttachmentData);
+            }
+          }),
+          // Fetch capacity_logs — paginated for the same preemptive reason as task_comments above
+          // (one row per agent per day, so it grows with both headcount and time).
+          task('capacityLogs', async () => {
+            const { data: capData, error: capErr } = await fetchAllRows<CapacityLogRecord>(supabase, 'capacity_logs');
+            if (capErr) {
+              console.error('Failed to load capacity logs from Supabase:', capErr);
+              showNotification(`Failed to load capacity logs from the server: ${capErr.message}`, 'info');
+            } else {
+              setCapacityLogs(capData || []);
+            }
+          }),
+          // Fetch daily_logs
+          // Paginated — one row per employee per day, so this is the fastest-growing table of the
+          // bunch and the most likely to hit the 1000-row default cutoff first as headcount grows.
+          task('dailyLogs', async () => {
+            const { data: logData, error: logErr } = await fetchAllRows<DailyLogRecord>(supabase, 'daily_logs');
+            if (logErr) {
+              console.error('Failed to load daily logs from Supabase:', logErr);
+              showNotification(`Failed to load daily logs from the server: ${logErr.message}`, 'info');
+            } else {
+              setDailyLogs(logData || []);
+            }
+          }),
+          // Fetch extra_notes
+          // Paginated — same preemptive reason as daily_logs above (one row per employee per day).
+          task('extraNotes', async () => {
+            const { data: noteData, error: noteErr } = await fetchAllRows<ExtraNoteRecord>(supabase, 'extra_notes');
+            if (noteErr) {
+              console.error('Failed to load extra notes from Supabase:', noteErr);
+              showNotification(`Failed to load extra notes from the server: ${noteErr.message}`, 'info');
+            } else {
+              setExtraNotes(noteData || []);
+            }
+          }),
+        ],
+        [
+          // Fetch campaigns directly from Postgres (bypassing the legacy client-side campaigns
+          // proxy in lib/supabase.ts, same reasoning as the users fetch above — that proxy's
+          // select path reads from an in-memory array seeded once from INITIAL_CAMPAIGNS and never
+          // synced with the real table, so it could never reflect a real, empty campaigns table).
+          task('campaigns', async () => {
+            const { data: campaignData, error: campaignErr } = await supabaseRaw.from('campaigns').select('*');
+            if (campaignErr) {
+              console.error('Failed to load campaigns from Supabase:', campaignErr);
+              showNotification(`Failed to load campaigns from the server: ${campaignErr.message}`, 'info');
+            } else {
+              setCampaigns((campaignData as CampaignRecord[]) || []);
+            }
+          }),
+          // Fetch assignments (service specialist delegation records)
+          task('assignments', refreshAssignments),
+          // Fetch social_insights (Reporting Engine: social media comparison indicators)
+          task('socialInsights', async () => {
+            const { data: socialInsightData, error: socialInsightErr } = await supabase
+              .from('social_insights')
+              .select('*');
+            if (!socialInsightErr && socialInsightData) {
+              setSocialInsights(socialInsightData as SocialInsightRecord[]);
+            }
+          }),
+          // Fetch seo_insights (Reporting Engine: weekly SEO comparison indicators)
+          task('seoInsights', async () => {
+            const { data: seoInsightData, error: seoInsightErr } = await supabase
+              .from('seo_insights')
+              .select('*');
+            if (!seoInsightErr && seoInsightData) {
+              setSeoInsights(seoInsightData as SeoInsightRecord[]);
+            }
+          }),
+          // Fetch reports (Reporting Engine)
+          task('reports', async () => {
+            const { data: reportData, error: reportErr } = await supabase.from('reports').select('*');
+            if (!reportErr && reportData) {
+              setReports(reportData as ReportRecord[]);
+            }
+          }),
+        ],
+        [
+          // Fetch client_comparisons (Reporting Engine)
+          task('clientComparisons', async () => {
+            const { data: comparisonData, error: comparisonErr } = await supabase
+              .from('client_comparisons')
+              .select('*');
+            if (!comparisonErr && comparisonData) {
+              setClientComparisons(comparisonData as ClientComparisonRecord[]);
+            }
+          }),
+          // Fetch client_portal_users (Client Portal: invite/claim status for the AM-side UI)
+          task('clientPortalUsers', async () => {
+            const { data: portalUserData, error: portalUserErr } = await supabase
+              .from('client_portal_users')
+              .select('*');
+            if (!portalUserErr && portalUserData) {
+              setClientPortalUsers(portalUserData as ClientPortalUserRecord[]);
+            }
+          }),
+          // Fetch meetings (Module 9 scaffolding: AM meeting recordings/manual transcript notes)
+          task('meetings', async () => {
+            const { data: meetingData, error: meetingErr } = await supabase.from('meetings').select('*');
+            if (!meetingErr && meetingData) {
+              setMeetings(meetingData as MeetingRecord[]);
+            }
+          }),
+          // Fetch client_contracts (Module 12 Phase 6: Sales's signed-contract upload)
+          task('clientContracts', async () => {
+            const { data: contractData, error: contractErr } = await supabase.from('client_contracts').select('*');
+            if (!contractErr && contractData) {
+              setClientContracts(contractData as ClientContractRecord[]);
+            }
+          }),
+          // Fetch brief_attachments — RLS already scopes this to whatever briefs the caller can
+          // see (brief_attachments_select_rls mirrors briefs_select_rls exactly), so a plain
+          // select('*') never over-fetches beyond what briefs itself already returned above.
+          task('briefAttachments', async () => {
+            const { data: briefAttachmentData, error: briefAttachmentErr } = await supabase
+              .from('brief_attachments')
+              .select('*');
+            if (!briefAttachmentErr && briefAttachmentData) {
+              setBriefAttachments(briefAttachmentData as BriefAttachmentRecord[]);
+            }
+          }),
+          // Fetch platform_connections (Module 6 scaffolding: manual integration status tracker)
+          task('platformConnections', async () => {
+            const { data: platformConnectionData, error: platformConnectionErr } = await supabase
+              .from('platform_connections')
+              .select('*');
+            if (!platformConnectionErr && platformConnectionData) {
+              setPlatformConnections(platformConnectionData as PlatformConnectionRecord[]);
+            }
+          }),
+        ],
+      ];
 
-        // Fetch task types (all rows, including inactive — an existing task may still reference a
-        // deactivated type and needs it resolvable for display/editing)
-        const { data: taskTypeData, error: taskTypeErr } = await supabase.from('task_types').select('*');
-        if (!taskTypeErr && taskTypeData) {
-          setTaskTypes(taskTypeData as TaskTypeRecord[]);
-        }
-
-        // Fetch platforms (all rows, including inactive — same reasoning as task types above)
-        const { data: platformData, error: platformErr } = await supabaseRaw.from('platforms').select('*');
-        if (!platformErr && platformData) {
-          setPlatforms(platformData as PlatformRecord[]);
-        }
-
-        // Fetch task comments
-        const { data: taskCommentData, error: taskCommentErr } = await supabase
-          .from('task_comments')
-          .select('*');
-        if (!taskCommentErr && taskCommentData) {
-          setTaskComments(taskCommentData as TaskCommentRecord[]);
-        }
-
-        // Fetch task attachment metadata (the files themselves stay in Storage)
-        const { data: taskAttachmentData, error: taskAttachmentErr } = await supabase
-          .from('task_attachments')
-          .select('*');
-        if (!taskAttachmentErr && taskAttachmentData) {
-          setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
-        }
-
-        // Fetch capacity_logs
-        const { data: capData, error: capErr } = await supabase.from('capacity_logs').select('*');
-        if (capErr) {
-          console.error('Failed to load capacity logs from Supabase:', capErr);
-          showNotification(`Failed to load capacity logs from the server: ${capErr.message}`, 'info');
-        } else {
-          setCapacityLogs((capData as CapacityLogRecord[]) || []);
-        }
-
-        // Fetch daily_logs
-        const { data: logData, error: logErr } = await supabase.from('daily_logs').select('*');
-        if (logErr) {
-          console.error('Failed to load daily logs from Supabase:', logErr);
-          showNotification(`Failed to load daily logs from the server: ${logErr.message}`, 'info');
-        } else {
-          setDailyLogs((logData as DailyLogRecord[]) || []);
-        }
-
-        // Fetch extra_notes
-        const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
-        if (noteErr) {
-          console.error('Failed to load extra notes from Supabase:', noteErr);
-          showNotification(`Failed to load extra notes from the server: ${noteErr.message}`, 'info');
-        } else {
-          setExtraNotes((noteData as ExtraNoteRecord[]) || []);
-        }
-
-        // Fetch campaigns directly from Postgres (bypassing the legacy client-side campaigns
-        // proxy in lib/supabase.ts, same reasoning as the users fetch above — that proxy's
-        // select path reads from an in-memory array seeded once from INITIAL_CAMPAIGNS and never
-        // synced with the real table, so it could never reflect a real, empty campaigns table).
-        const { data: campaignData, error: campaignErr } = await supabaseRaw.from('campaigns').select('*');
-        if (campaignErr) {
-          console.error('Failed to load campaigns from Supabase:', campaignErr);
-          showNotification(`Failed to load campaigns from the server: ${campaignErr.message}`, 'info');
-        } else {
-          setCampaigns((campaignData as CampaignRecord[]) || []);
-        }
-
-        // Fetch assignments (service specialist delegation records)
-        await refreshAssignments();
-
-        // Fetch social_insights (Reporting Engine: social media comparison indicators)
-        const { data: socialInsightData, error: socialInsightErr } = await supabase
-          .from('social_insights')
-          .select('*');
-        if (!socialInsightErr && socialInsightData) {
-          setSocialInsights(socialInsightData as SocialInsightRecord[]);
-        }
-
-        // Fetch seo_insights (Reporting Engine: weekly SEO comparison indicators)
-        const { data: seoInsightData, error: seoInsightErr } = await supabase
-          .from('seo_insights')
-          .select('*');
-        if (!seoInsightErr && seoInsightData) {
-          setSeoInsights(seoInsightData as SeoInsightRecord[]);
-        }
-
-        // Fetch reports (Reporting Engine)
-        const { data: reportData, error: reportErr } = await supabase.from('reports').select('*');
-        if (!reportErr && reportData) {
-          setReports(reportData as ReportRecord[]);
-        }
-
-        // Fetch client_comparisons (Reporting Engine)
-        const { data: comparisonData, error: comparisonErr } = await supabase
-          .from('client_comparisons')
-          .select('*');
-        if (!comparisonErr && comparisonData) {
-          setClientComparisons(comparisonData as ClientComparisonRecord[]);
-        }
-
-        // Fetch client_portal_users (Client Portal: invite/claim status for the AM-side UI)
-        const { data: portalUserData, error: portalUserErr } = await supabase
-          .from('client_portal_users')
-          .select('*');
-        if (!portalUserErr && portalUserData) {
-          setClientPortalUsers(portalUserData as ClientPortalUserRecord[]);
-        }
-
-        // Fetch meetings (Module 9 scaffolding: AM meeting recordings/manual transcript notes)
-        const { data: meetingData, error: meetingErr } = await supabase.from('meetings').select('*');
-        if (!meetingErr && meetingData) {
-          setMeetings(meetingData as MeetingRecord[]);
-        }
-
-        // Fetch client_contracts (Module 12 Phase 6: Sales's signed-contract upload)
-        const { data: contractData, error: contractErr } = await supabase.from('client_contracts').select('*');
-        if (!contractErr && contractData) {
-          setClientContracts(contractData as ClientContractRecord[]);
-        }
-
-        // Fetch brief_attachments — RLS already scopes this to whatever briefs the caller can see
-        // (brief_attachments_select_rls mirrors briefs_select_rls exactly), so a plain select('*')
-        // never over-fetches beyond what briefs itself already returned above.
-        const { data: briefAttachmentData, error: briefAttachmentErr } = await supabase
-          .from('brief_attachments')
-          .select('*');
-        if (!briefAttachmentErr && briefAttachmentData) {
-          setBriefAttachments(briefAttachmentData as BriefAttachmentRecord[]);
-        }
-
-        // Fetch platform_connections (Module 6 scaffolding: manual integration status tracker)
-        const { data: platformConnectionData, error: platformConnectionErr } = await supabase
-          .from('platform_connections')
-          .select('*');
-        if (!platformConnectionErr && platformConnectionData) {
-          setPlatformConnections(platformConnectionData as PlatformConnectionRecord[]);
-        }
-
-      } catch (err) {
-        console.warn('Supabase query error, relying on local cached state:', err);
+      for (const batch of batches) {
+        await Promise.all(batch.map((run) => run()));
       }
     }
     setLoading(false);
