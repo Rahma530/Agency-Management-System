@@ -1,5 +1,90 @@
 @import "tailwindcss";
 
+/* ---- Kesra Brand Fonts (from KESRA_BRAND_BOOK) ----
+   Per the brand book's own "Typography" page: Aloevera is the primary English typeface, Graphik
+   Arabic ensures readability/consistency for Arabic content, and Zain PC V2 Mob 100 is used
+   SELECTIVELY for headlines/high-impact visual elements only — never as a body font. Files live in
+   public/fonts/ (served as static assets, same as the existing Amiri/Noto Naskh Arabic PDF fonts).
+   Aloevera has zero Arabic glyphs (confirmed with fontTools) and Graphik Arabic covers both Latin
+   and Arabic, so a single `font-family: 'Aloevera','GraphikArabic',...` stack lets the browser's
+   normal per-character font fallback do the right thing automatically — Aloevera for Latin runs,
+   Graphik Arabic for Arabic runs — with no separate ar/en class needed anywhere. */
+@font-face {
+  font-family: 'Aloevera';
+  src: url('/fonts/Aloevera-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-Thin.otf') format('opentype');
+  font-weight: 100;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-ExtraLight.otf') format('opentype');
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-Light.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-SemiBold.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GraphikArabic';
+  src: url('/fonts/GraphikArabic-Black.otf') format('opentype');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+/* Selective headline/display face — apply with the `.font-brand-headline` utility below, never on
+   body text (per the brand book's own "used selectively" guidance). */
+@font-face {
+  font-family: 'ZainHeadline';
+  src: url('/fonts/ZainPCV2-Mob100.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+.font-brand-headline {
+  font-family: 'ZainHeadline', 'GraphikArabic', 'Aloevera', sans-serif;
+}
+
 :root {
   /* ---- الألوان الأساسية - Kesra Brand Tokens ---- */
   --black: #0a0a0d;
