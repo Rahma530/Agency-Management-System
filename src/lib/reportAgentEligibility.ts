@@ -34,7 +34,12 @@ export function getReportClientServiceLock(role: UserRole | undefined): ReportCl
   if (!role) return 'own_entries';
   if (REPORT_CLIENT_SERVICE_CHOICE_ROLES.has(role)) return 'choice';
   const classified = classifyWorkLogService(role);
-  return classified || 'own_entries';
+  // 'creative' (graphic_designer/video_editor) is a classifyWorkLogService sentinel for THAT
+  // function's own export-grouping concern only (workLogServiceClassification.ts) — it is not a
+  // real ServiceType and ReportClientServiceLock has no 'creative' value, so this behaves exactly
+  // as it did before 'creative' existed: those roles still fall back to 'own_entries', same as any
+  // other role with no classifiable real client service.
+  return classified && classified !== 'creative' ? classified : 'own_entries';
 }
 
 // Organization-wide report viewers may choose an agent, but they are not themselves agent

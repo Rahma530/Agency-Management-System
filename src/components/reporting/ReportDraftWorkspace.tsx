@@ -19,7 +19,7 @@ import { formatLocalCalendarDate, parseReportPeriodRange, resolveReportPeriod, r
 import {
   collectClientReportSources, collectEmployeeReportSources, dedupeIdenticalWorkLogs, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
-import { downloadReportPdf, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
+import { downloadReportPdf, CREATIVE_BUCKET_LABEL, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
 import { buildIndividualReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
@@ -258,7 +258,7 @@ function renderWorkLogSection(
 
   if (!serviceGrouping) return lines.map((entry) => entry.line).join('\n');
 
-  type ServiceBucketKey = ServiceType | 'other';
+  type ServiceBucketKey = ServiceType | 'creative' | 'other';
   const buckets = new Map<ServiceBucketKey, string[]>();
   lines.forEach((entry) => {
     const role = serviceGrouping.usersById.get(entry.userId)?.role;
@@ -269,10 +269,16 @@ function renderWorkLogSection(
   const orderedKeys: ServiceBucketKey[] = [
     ...subscribedServices.filter((service) => buckets.has(service)),
     ...CLIENT_SERVICES.filter((service) => !subscribedServices.includes(service) && buckets.has(service)),
+    // graphic_designer/video_editor's dedicated bucket (classifyWorkLogService) — ordered right
+    // before the fully-uncategorized "Other updates" catch-all, after every real client service.
+    ...(buckets.has('creative') ? (['creative'] as ServiceBucketKey[]) : []),
     ...(buckets.has('other') ? (['other'] as ServiceBucketKey[]) : []),
   ];
   return orderedKeys
-    .map((key) => `${key === 'other' ? OTHER_SERVICE_BUCKET_LABEL : SERVICE_LABELS[key]}\n${buckets.get(key)!.join('\n')}`)
+    .map((key) => {
+      const heading = key === 'other' ? OTHER_SERVICE_BUCKET_LABEL : key === 'creative' ? CREATIVE_BUCKET_LABEL : SERVICE_LABELS[key];
+      return `${heading}\n${buckets.get(key)!.join('\n')}`;
+    })
     .join('\n\n');
 }
 
