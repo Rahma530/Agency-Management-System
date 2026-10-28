@@ -9,14 +9,16 @@ import type { ServiceType, UserRole } from '../types/database';
 // entirely). This mapping needs full BuiltInRole coverage for exactly one purpose: "which service
 // did this daily-log entry's author do that work for."
 //
-// Known, accepted limitation: 'branding' and the graphic_designer/video_editor roles have no
-// reliable mapping here. Per BuiltInRole's own comments (types/database.ts), graphic_designer and
-// video_editor are an explicitly SHARED creative resource pool with no dedicated owning team —
-// they produce both social-media creatives and branding/identity deliverables, so guessing either
-// one would misclassify real work more often than a grouping feature should. Their work logs (and
-// any other role not listed below — am_team_lead/am_agent/sales/executive/head_of_technical/
-// ai_engineer/marketing_manager, or any admin-created custom role) fall into an "Other updates"
-// bucket in the exported PDF instead of being forced into the wrong service section.
+// Known, accepted limitation: 'branding' has no reliable mapping here, and neither does a single
+// real ServiceType for graphic_designer/video_editor — per BuiltInRole's own comments
+// (types/database.ts), they're an explicitly SHARED creative resource pool with no dedicated
+// owning team, producing both social-media creatives and branding/identity deliverables, so
+// guessing either ServiceType would misclassify real work more often than a grouping feature
+// should. Their work logs get the dedicated 'creative' bucket below instead (CREATIVE_BUCKET_LABEL,
+// pdfExport.ts) — its own sub-heading, separate from any real client-subscribed service. Any other
+// role not listed below — am_team_lead/am_agent/sales/executive/head_of_technical/ai_engineer/
+// marketing_manager, or any admin-created custom role — still falls into the fully-uncategorized
+// "Other updates" bucket in the exported PDF/HTML instead of being forced into the wrong section.
 const ROLE_TO_SERVICE: Partial<Record<UserRole, ServiceType>> = {
   seo_team_lead: 'seo',
   seo_agent: 'seo',
@@ -31,6 +33,12 @@ const ROLE_TO_SERVICE: Partial<Record<UserRole, ServiceType>> = {
   programming_agent: 'creation',
 };
 
-export function classifyWorkLogService(role: UserRole | undefined): ServiceType | null {
-  return (role && ROLE_TO_SERVICE[role]) || null;
+// Roles mapped to the dedicated 'creative' bucket rather than ROLE_TO_SERVICE above — see this
+// file's top comment for why they can't safely share a real ServiceType mapping.
+const CREATIVE_POOL_ROLES = new Set<UserRole>(['graphic_designer', 'video_editor']);
+
+export function classifyWorkLogService(role: UserRole | undefined): ServiceType | 'creative' | null {
+  if (!role) return null;
+  if (CREATIVE_POOL_ROLES.has(role)) return 'creative';
+  return ROLE_TO_SERVICE[role] || null;
 }

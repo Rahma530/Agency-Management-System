@@ -191,14 +191,24 @@ export const REPORT_SECTION_HEADINGS = {
   creatorContext: 'Context and observations',
 } as const;
 
+// The label for the graphic_designer/video_editor shared creative-pool bucket (classifyWorkLogService,
+// workLogServiceClassification.ts) — these two roles produce both social-media creatives and
+// branding/identity deliverables with no reliable way to tell which from the role alone, so their
+// work-log lines get their own "Creative" sub-heading instead of either a (possibly wrong)
+// SERVICE_LABELS entry or the fully-uncategorized OTHER_SERVICE_BUCKET_LABEL below.
+export const CREATIVE_BUCKET_LABEL = 'Creative';
+
 // The label for a client-scope report's work-log lines whose author's role has no reliable
-// service mapping (classifyWorkLogService, workLogServiceClassification.ts) — see that file's own
-// comment for why (the graphic_designer/video_editor shared creative pool, branding, AM/sales/
-// executive roles, custom roles, etc.).
+// service mapping at all (classifyWorkLogService, workLogServiceClassification.ts) — AM/sales/
+// executive/head_of_technical/ai_engineer/marketing_manager roles, custom admin-created roles, etc.
 export const OTHER_SERVICE_BUCKET_LABEL = 'Other updates';
 
 const KNOWN_TOP_HEADINGS = new Set<string>(Object.values(REPORT_SECTION_HEADINGS));
-const KNOWN_SERVICE_SUBHEADINGS = new Set<string>([...Object.values(SERVICE_LABELS), OTHER_SERVICE_BUCKET_LABEL]);
+const KNOWN_SERVICE_SUBHEADINGS = new Set<string>([
+  ...Object.values(SERVICE_LABELS),
+  CREATIVE_BUCKET_LABEL,
+  OTHER_SERVICE_BUCKET_LABEL,
+]);
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
