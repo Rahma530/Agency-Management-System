@@ -1,4 +1,4 @@
-import { TaskRecord, TaskPriority, TaskStatus, TaskAssigneeRecord } from '../types/database';
+import { TaskRecord, TaskPriority, TaskStatus, TaskAssigneeRecord, TaskEventRecord } from '../types/database';
 import { isTaskDone, resolveTaskAssigneeIds } from './taskLifecycle';
 
 // Shared by DailyOperationsModule.tsx and MyWorkHub.tsx so both compute
@@ -51,6 +51,37 @@ export const countDeliveredToday = (
       toCairoDateStr(t.delivered_at) === todayStr &&
       resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(userId)
   ).length;
+
+// Delivered today, by ACTOR (the Delivered-today card's current rule). countDeliveredToday above
+// counts the FIRST delivery only (tasks.delivered_at is set once), so a task that was delivered
+// before, sent back for revision and delivered again today never counts today. This version reads
+// task_events instead: every status_changed event that moved a task INTO in_review or completed
+// from a non-delivered status, dated today in Africa/Cairo, and performed by this user. A task is
+// counted at most once per day, even if it was delivered more than once that day. When an event
+// has no actor_id, it falls back to the task's current assignees.
+export type DeliveryEventRow = Pick<TaskEventRecord, 'task_id' | 'actor_id' | 'old_value' | 'new_value' | 'created_at'>;
+
+const DELIVERED_STATUSES: ReadonlySet<string> = new Set(['in_review', 'completed']);
+
+export const countDeliveredTodayByActor = (
+  userId: string,
+  events: DeliveryEventRow[],
+  taskAssignees: Pick<TaskAssigneeRecord, 'task_id' | 'user_id'>[],
+  todayStr: string
+): number => {
+  const counted = new Set<string>();
+  for (const event of events) {
+    if (!event.new_value || !DELIVERED_STATUSES.has(event.new_value)) continue;
+    // in_review <-> completed is not a new delivery; only a move from a non-delivered status is.
+    if (event.old_value && DELIVERED_STATUSES.has(event.old_value)) continue;
+    if (toCairoDateStr(event.created_at) !== todayStr) continue;
+    const doneByUser = event.actor_id
+      ? event.actor_id === userId
+      : taskAssignees.some((a) => a.task_id === event.task_id && a.user_id === userId);
+    if (doneByUser) counted.add(event.task_id);
+  }
+  return counted.size;
+};
 
 export const isTaskOverdue = (task: TaskRecord, todayStr: string): boolean => {
   if (!task.due_date) return false;

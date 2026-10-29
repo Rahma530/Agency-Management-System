@@ -41,6 +41,7 @@ import {
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isTeamLeadRole } from './lib/capacity';
+import type { DeliveryEventRow } from './lib/employeeWork';
 import { hasNewVersionDeployed } from './lib/versionCheck';
 import { computeActualHours, isTaskDone, resolveTaskAssigneeIds } from './lib/taskLifecycle';
 import { collectDescendantTaskIds } from './lib/bulkTaskActions';
@@ -532,6 +533,10 @@ export default function App() {
   const [platforms, setPlatforms] = useState<PlatformRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [taskAssignees, setTaskAssignees] = useState<TaskAssigneeRecord[]>([]);
+  // Recent transitions into in_review/completed, for the Delivered-today card (see
+  // countDeliveredTodayByActor). A 36-hour window always covers the current Cairo day; the module
+  // does the exact Cairo-day filter itself.
+  const [taskDeliveryEvents, setTaskDeliveryEvents] = useState<DeliveryEventRow[]>([]);
   const [taskPlatformLinks, setTaskPlatformLinks] = useState<TaskPlatformLinkRecord[]>([]);
   const [taskComments, setTaskComments] = useState<TaskCommentRecord[]>([]);
   const [taskAttachments, setTaskAttachments] = useState<TaskAttachmentRecord[]>([]);
@@ -1929,6 +1934,29 @@ export default function App() {
 
     setTaskAttachments((data as TaskAttachmentRecord[]) || []);
   }, []);
+
+  // Delivered-today events (see taskDeliveryEvents above). Re-read whenever the task list changes,
+  // i.e. after this client's own status moves and after realtime/table refreshes of tasks.
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    let cancelled = false;
+    const since = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+    (async () => {
+      const { data, error } = await supabaseRaw
+        .from('task_events')
+        .select('task_id, actor_id, old_value, new_value, created_at')
+        .eq('event_type', 'status_changed')
+        .in('new_value', ['in_review', 'completed'])
+        .gte('created_at', since);
+      if (cancelled) return;
+      if (error) {
+        console.error('Failed to load delivery events from Supabase:', error);
+        return;
+      }
+      setTaskDeliveryEvents((data as DeliveryEventRow[]) || []);
+    })();
+    return () => { cancelled = true; };
+  }, [tasks]);
 
   const refreshTaskAssignees = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -7277,6 +7305,7 @@ export default function App() {
                 <DailyOperationsModule
                   tasks={tasks}
                   taskAssignees={taskAssignees}
+                  taskDeliveryEvents={taskDeliveryEvents}
                   taskAttachments={taskAttachments}
                   taskComments={taskComments}
                   users={users}
