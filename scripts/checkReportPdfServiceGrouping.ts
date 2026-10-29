@@ -6,9 +6,12 @@ import {
 } from '../src/lib/pdfExport';
 
 // 1) classifyWorkLogService: the roles with a confident, exclusive mapping go to their service;
-// everything else (the shared graphic_designer/video_editor creative pool, am/sales/executive/
-// custom roles, undefined) falls back to null (the "Other updates" bucket upstream), never a
-// guessed service.
+// the shared graphic_designer/video_editor creative pool goes to the dedicated 'creative' bucket
+// (see CREATIVE_BUCKET_LABEL — this predates the Creative tab/bucket feature and used to wrongly
+// expect null here); everything else (am/sales/executive/an UNREGISTERED custom role, undefined)
+// falls back to null (the "Other updates" bucket upstream), never a guessed service. A custom role
+// that IS registered with a real department is covered separately in
+// checkReportBucketCustomRoles.ts.
 {
   const expectConfident: [string, string][] = [
     ['seo_team_lead', 'seo'], ['seo_agent', 'seo'], ['store_manager', 'seo'],
@@ -21,9 +24,13 @@ import {
   expectConfident.forEach(([role, service]) => {
     if (classifyWorkLogService(role) !== service) throw new Error(`${role} must classify as ${service}.`);
   });
-  const expectNull = ['graphic_designer', 'video_editor', 'am_team_lead', 'am_agent', 'sales', 'executive', 'head_of_technical', 'ai_engineer', 'marketing_manager', 'some_custom_role', undefined];
+  const expectCreative = ['graphic_designer', 'video_editor'];
+  expectCreative.forEach((role) => {
+    if (classifyWorkLogService(role) !== 'creative') throw new Error(`${role} must classify into the dedicated 'creative' bucket.`);
+  });
+  const expectNull = ['am_team_lead', 'am_agent', 'sales', 'executive', 'head_of_technical', 'ai_engineer', 'marketing_manager', 'some_custom_role', undefined];
   expectNull.forEach((role) => {
-    if (classifyWorkLogService(role) !== null) throw new Error(`${role} must never be guessed into a service (shared pool or no dedicated role) — got a service instead of null.`);
+    if (classifyWorkLogService(role) !== null) throw new Error(`${role} must never be guessed into a service (no dedicated role, or an unregistered custom role) — got a service instead of null.`);
   });
 }
 

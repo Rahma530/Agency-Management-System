@@ -796,8 +796,16 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       setSelectedReportId(report.id);
       creationKey.current = null;
       setMessage('Draft saved with an immutable source snapshot.');
-    } catch {
-      setMessage('Unable to save the draft. Confirm the reports migration is applied and your scope is authorized.');
+    } catch (err) {
+      // Surface the server's own reason (PostgrestError.message, e.g. "Invalid service filter." or
+      // "Not authorized to create this report.") instead of one blanket guess — this failure can
+      // have several unrelated causes (migration not applied, scope not authorized, a stale source
+      // snapshot after someone else changed the client's data mid-edit, ...) and guessing wrong
+      // sends whoever's debugging it down the wrong path.
+      const detail = err && typeof err === 'object' && 'message' in err && typeof (err as { message?: unknown }).message === 'string'
+        ? (err as { message: string }).message
+        : null;
+      setMessage(detail ? `Unable to save the draft: ${detail}` : 'Unable to save the draft. Confirm the reports migration is applied and your scope is authorized.');
     } finally {
       setBusy(false);
     }
