@@ -198,6 +198,26 @@ function formatReportPeriodRange(period: string): string {
   return `${parsed.from.label} ${parsed.from.date} ${parsed.to.label} ${parsed.to.date}`;
 }
 
+// Priority sections of a client report's work logs, in the order they must appear.
+const PRIORITY_SERVICE_ORDER: ServiceType[] = ['media_buying', 'social_media', 'seo'];
+
+// Removes an author's name from one work-log line. Reports say what was done, never who did it
+// ("تم عمل كذا", not "SHAHD عملت كذا"). Matches the full name first, then each name part of 3+
+// characters, whole-word and case-insensitive, Arabic- and Latin-aware (the lookarounds use
+// Unicode letter classes, so a name never matches inside a longer word).
+function stripEmployeeNames(text: string, employeeName: string | undefined): string {
+  const fullName = (employeeName || '').trim();
+  if (!fullName) return text;
+  const parts = [fullName, ...fullName.split(/\s+/)]
+    .filter((part, index, all) => part.length >= 3 && all.indexOf(part) === index);
+  let result = text;
+  for (const part of parts) {
+    const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu'), '');
+  }
+  return result.replace(/[ \t]{2,}/g, ' ').replace(/\s+([،,.!؟?:])/g, '$1').trim();
+}
+
 function renderWorkLogSection(
   logs: Array<Omit<ReportSourceItemRecord, 'id' | 'report_id'>>,
   names: Map<string, string>,
@@ -218,24 +238,35 @@ function renderWorkLogSection(
   // a separate line above the text. Omitted (undefined) for a merged multi-log group (2+ ids):
   // that text already describes several days' worth of entries at once ("posted X times"-style),
   // so a single date would misrepresent it. A single-log entry, grouped or not, always gets one.
-  const renderLine = (_employeeName: string, text: string, attachmentLines: string[], date?: string): string => {
+  const renderLine = (employeeName: string | undefined, text: string, attachmentLines: string[], date?: string): string => {
     // A log the employee attached a file/link to without typing any description used to render as
     // a bare "بتاريخ D/M" line once the date clause below was appended to the (empty) text — a
     // card with no content of its own, reading in the export as a stray, disconnected date next to
     // its attachment. Falling back to a short placeholder keeps every entry self-contained: the
     // date and attachment(s) always anchor to real visible text, never to nothing.
-    const baseText = text || (attachmentLines.length ? 'مرفق' : text);
+    // The author's name never appears in the line: an AI rewrite or a merged group may still
+    // have written "SHAHD posted ..." into the text, so the name is stripped here, at the one place
+    // every line passes through.
+    const cleanText = stripEmployeeNames(text, employeeName);
+    const baseText = cleanText || (attachmentLines.length ? 'مرفق' : cleanText);
     const firstLine = date ? `${baseText} بتاريخ ${toDayMonth(date)}` : baseText;
     return attachmentLines.length ? [firstLine, ...attachmentLines].join('\n') : firstLine;
   };
 
-  type RenderedLine = { userId: string; line: string };
+  // Every line carries its own sort key (its source date, then its source id as a tie-breaker), so
+  // entries read oldest-first inside each section no matter what order the manifest or a merged
+  // group arrived in. A merged group sorts by its earliest member.
+  type RenderedLine = { userId: string; sortDate: string; sortId: string; line: string };
+  const byDateThenId = (a: { sortDate: string; sortId: string }, b: { sortDate: string; sortId: string }) =>
+    a.sortDate.localeCompare(b.sortDate) || a.sortId.localeCompare(b.sortId);
   let lines: RenderedLine[];
   if (!workLogGroups || !workLogGroups.length) {
     lines = logs.map((source) => ({
       userId: source.user_id,
+      sortDate: source.source_date,
+      sortId: source.source_id,
       line: renderLine(
-        names.get(source.user_id) || 'Employee',
+        names.get(source.user_id),
         String(source.snapshot.summary_text || '').trim(),
         linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []),
         source.source_date
@@ -245,17 +276,27 @@ function renderWorkLogSection(
     const logsById = new Map(logs.map((source) => [source.source_id, source]));
     lines = workLogGroups
       .map((group) => {
-        const first = logsById.get(group.ids[0]);
-        if (!first) return null; // a stale group referencing a log no longer in this manifest
+        const members = group.ids
+          .map((id) => logsById.get(id))
+          .filter((source): source is NonNullable<typeof source> => !!source);
+        if (members.length === 0) return null; // a stale group referencing a log no longer in this manifest
+        const earliest = [...members].sort((a, b) => a.source_date.localeCompare(b.source_date) || a.source_id.localeCompare(b.source_id))[0];
+        const first = logsById.get(group.ids[0]) ?? earliest;
         const attachmentLines = group.ids.flatMap((id) => {
           const source = logsById.get(id);
           return source ? linkedTaskIdsOf(source).flatMap((taskId) => attachmentLinksByTask.get(taskId) || []) : [];
         });
         const date = group.ids.length === 1 ? first.source_date : undefined;
-        return { userId: first.user_id, line: renderLine(names.get(first.user_id) || 'Employee', group.text, attachmentLines, date) };
+        return {
+          userId: first.user_id,
+          sortDate: earliest.source_date,
+          sortId: earliest.source_id,
+          line: renderLine(names.get(first.user_id), group.text, attachmentLines, date),
+        };
       })
       .filter((entry): entry is RenderedLine => entry !== null);
   }
+  lines.sort(byDateThenId);
 
   if (!serviceGrouping) return lines.map((entry) => entry.line).join('\n');
 
@@ -266,12 +307,12 @@ function renderWorkLogSection(
     const key: ServiceBucketKey = classifyWorkLogService(role) ?? 'other';
     buckets.set(key, [...(buckets.get(key) || []), entry.line]);
   });
-  const subscribedServices = getClientServices(serviceGrouping.client);
+  // Fixed section order, not the client's subscription order: the priority services first
+  // (Media Buying, Social Media, SEO), then every other real service, then the Creative pool, and
+  // "Other updates" always last. Only sections that actually have entries are emitted.
   const orderedKeys: ServiceBucketKey[] = [
-    ...subscribedServices.filter((service) => buckets.has(service)),
-    ...CLIENT_SERVICES.filter((service) => !subscribedServices.includes(service) && buckets.has(service)),
-    // graphic_designer/video_editor's dedicated bucket (classifyWorkLogService) — ordered right
-    // before the fully-uncategorized "Other updates" catch-all, after every real client service.
+    ...PRIORITY_SERVICE_ORDER.filter((service) => buckets.has(service)),
+    ...CLIENT_SERVICES.filter((service) => !PRIORITY_SERVICE_ORDER.includes(service) && buckets.has(service)),
     ...(buckets.has('creative') ? (['creative'] as ServiceBucketKey[]) : []),
     ...(buckets.has('other') ? (['other'] as ServiceBucketKey[]) : []),
   ];
