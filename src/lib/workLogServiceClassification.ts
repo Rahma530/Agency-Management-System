@@ -1,4 +1,6 @@
 import type { ServiceType, UserRole } from '../types/database';
+import { isBuiltInRole } from '../data/roles';
+import { getCustomRoleDepartmentId } from '../data/customRoles';
 
 // Maps a work-log author's role to one of the client's subscribed ServiceType categories, for
 // grouping a CLIENT-scope report's PDF export by service (ReportDraftWorkspace.tsx /
@@ -37,8 +39,31 @@ const ROLE_TO_SERVICE: Partial<Record<UserRole, ServiceType>> = {
 // file's top comment for why they can't safely share a real ServiceType mapping.
 const CREATIVE_POOL_ROLES = new Set<UserRole>(['graphic_designer', 'video_editor']);
 
+// An admin-created CUSTOM role (data/customRoles.ts, 20261101400000_custom_roles_departments_
+// foundation.sql) has no entry in ROLE_TO_SERVICE above — it is never a BuiltInRole string, so it
+// used to always fall through to the fully-uncategorized "Other updates" bucket, regardless of
+// which real department it was actually created under. That misclassified every custom-role
+// employee's work logs under whichever client they worked on. Mirrors
+// reportingEngine.ts's getDepartmentMappedServiceType (same department ids, same reasoning for
+// what's left unmapped), plus the department ids are seeded by
+// 20261101400000_custom_roles_departments_foundation.sql — 'creative_design' is this app's one
+// other shared-resource pool, so it gets the same 'creative' bucket graphic_designer/video_editor
+// do rather than a guessed ServiceType. 'programming'/'account_management'/'ai_engineering' stay
+// unmapped (null -> 'other') on purpose: a custom role there has no single client-facing service
+// to attribute a work log to, same as their built-in counterparts (am_agent, ai_engineer) do today.
+const DEPARTMENT_ID_TO_BUCKET: Partial<Record<string, ServiceType | 'creative'>> = {
+  seo: 'seo',
+  media_buying: 'media_buying',
+  social_media: 'social_media',
+  creative_design: 'creative',
+};
+
 export function classifyWorkLogService(role: UserRole | undefined): ServiceType | 'creative' | null {
   if (!role) return null;
   if (CREATIVE_POOL_ROLES.has(role)) return 'creative';
-  return ROLE_TO_SERVICE[role] || null;
+  const builtIn = ROLE_TO_SERVICE[role];
+  if (builtIn) return builtIn;
+  if (isBuiltInRole(role)) return null;
+  const departmentId = getCustomRoleDepartmentId(role);
+  return (departmentId && DEPARTMENT_ID_TO_BUCKET[departmentId]) || null;
 }
