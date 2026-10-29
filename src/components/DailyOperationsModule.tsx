@@ -49,7 +49,7 @@ import {
   TaskCommentRecord,
   UserRole,
 } from '../types/database';
-import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate, countDeliveredToday } from '../lib/employeeWork';
+import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, isTaskWorkloadOpen, sortTasksByPriorityThenDueDate, countDeliveredTodayByActor, DeliveryEventRow } from '../lib/employeeWork';
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
@@ -69,6 +69,9 @@ interface DailyOperationsModuleProps {
   // employee's" filter below must go through it, never tasks.assigned_to alone (visibility
   // audit finding: a co-assignee added after the first was invisible to every filter here).
   taskAssignees?: TaskAssigneeRecord[];
+  // Recent in_review/completed transitions (see App.tsx's taskDeliveryEvents). Drives the
+  // Delivered-today count by actor, so a re-delivery on a later day still counts that day.
+  taskDeliveryEvents?: DeliveryEventRow[];
   // Already RLS-scoped (App.tsx's global state, loaded once via loadData()) — handed straight to
   // DailyLogAttachmentsPreview per log, never re-fetched here.
   taskAttachments?: TaskAttachmentRecord[];
@@ -130,6 +133,7 @@ export type OperationSubTab = 'daily_view' | 'my_tasks' | 'blockers' | 'daily_ac
 export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   tasks,
   taskAssignees = [],
+  taskDeliveryEvents = [],
   taskAttachments = [],
   taskComments = [],
   users,
@@ -280,8 +284,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // browser-local fallback above (see onGetServerToday's own comment).
   const effectiveTodayStr = serverTodayStr || todayStr;
   const deliveredToday = useMemo(
-    () => countDeliveredToday(effectiveEmployee.id, tasks, taskAssignees, effectiveTodayStr),
-    [tasks, taskAssignees, effectiveEmployee.id, effectiveTodayStr]
+    () => countDeliveredTodayByActor(effectiveEmployee.id, taskDeliveryEvents, taskAssignees, effectiveTodayStr),
+    [taskDeliveryEvents, taskAssignees, effectiveEmployee.id, effectiveTodayStr]
   );
   const dailyTaskTarget = useMemo(() => resolveDailyTaskTarget(effectiveEmployee), [effectiveEmployee]);
 
@@ -469,7 +473,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
       // an error, just nothing to compute a rate against.
       const isUntracked = limit === 0;
       const rate = isUntracked ? 0 : Math.round((active.length / limit) * 100);
-      const deliveredToday = countDeliveredToday(member.id, tasks, taskAssignees, effectiveTodayStr);
+      const deliveredToday = countDeliveredTodayByActor(member.id, taskDeliveryEvents, taskAssignees, effectiveTodayStr);
       const dailyTarget = resolveDailyTaskTarget(member);
 
       return {
@@ -487,7 +491,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         rate,
       };
     });
-  }, [teamMembers, tasks, taskAssignees, todayStr, effectiveTodayStr]);
+  }, [teamMembers, tasks, taskAssignees, taskDeliveryEvents, todayStr, effectiveTodayStr]);
 
   // Daily Logs filtered for current employee or team — sorted by the log's own `date` (newest
   // first), then by `created_at` as a tiebreaker for logs sharing the same date, so a backdated
