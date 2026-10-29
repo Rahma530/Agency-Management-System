@@ -428,7 +428,10 @@ function buildAnalyzeSystemPrompt(language: SupportedLanguage, detail: DetailLev
     `and "text" (and optionally "client"/"employee"). If present, rewrite EACH item's "text" ` +
     `completely independently of every other item: keep it its own separate entry, never merge, ` +
     `group, combine, or summarize two or more items into one, and never add section headings — ` +
-    `grouping/headings are handled elsewhere, outside your output. For each item on its own, turn ` +
+    `grouping/headings are handled elsewhere, outside your output. NEVER write the employee's name ` +
+    `(or any person's name) into "text", not even if the raw note or the optional "employee" field ` +
+    `contains one: rephrase the action without a subject, e.g. "تم نشر بوست" rather than "<name> نشر ` +
+    `بوست". For each item on its own, turn ` +
     `its raw wording (often a short, informal note) into one clear, complete, professional ` +
     `${languageName} sentence (or two short ones if the original genuinely covers two separate ` +
     `actions), using natural logical connectors between its parts (e.g. "و"/"ثم"/"كما" as ` +
@@ -862,7 +865,8 @@ function buildWorkItemGroupSystemPrompt(language: SupportedLanguage): string {
   return (
     `You will receive a JSON object with an "items" array: each item has an "id", an optional ` +
     `"employee", and "text" — one employee's own original work-log line for a reporting period, ` +
-    `in Arabic, English, or a mix of both.\n\n` +
+    `in Arabic, English, or a mix of both. The "employee" field is only for deciding which items ` +
+    `belong together; NEVER write a person's name into any output text.\n\n` +
     `Your only job is to decide which items, by the SAME employee, clearly describe the exact ` +
     `same recurring practical activity repeated on different days (e.g., several lines that each ` +
     `just mean "posted a story" said by the same person on different days) — including when one ` +
