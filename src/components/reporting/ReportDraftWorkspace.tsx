@@ -67,8 +67,9 @@ interface Props {
   // effectiveScopeType === 'client' — the server recomputes and enforces its own effective filter
   // regardless (see report_caller_client_service_lock() /
   // 20261125000000_report_client_service_filter.sql), so this can only narrow what a "Choice" role
-  // asks for, never widen a Locked role's access.
-  clientServiceFilter: ServiceType | null;
+  // asks for, never widen a Locked role's access. A comma-separated list of buckets (see
+  // lib/reportServiceFilter.ts and 20261127000000_report_service_bucket_filter.sql), or null.
+  clientServiceFilter: string | null;
   periodStart: string;
   onPeriodStartChange: (value: string) => void;
   periodEnd: string;
