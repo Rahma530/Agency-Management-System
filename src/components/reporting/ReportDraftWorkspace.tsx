@@ -132,15 +132,20 @@ async function fetchTaskAttachmentLinks(taskIds: string[]): Promise<Map<string, 
   const result = new Map<string, string[]>();
   const ids = [...new Set(taskIds.filter(Boolean))];
   if (!ids.length) return result;
-  const { data, error } = await supabaseRaw.from('task_attachments').select('*').in('task_id', ids);
+  const { data, error } = await supabaseRaw.from('task_attachments').select('task_id, storage_path').in('task_id', ids);
   if (error || !data) return result;
-  await Promise.all((data as TaskAttachmentRecord[]).map(async (attachment) => {
-    const { data: signed } = await supabase.storage
-      .from('task-attachments')
-      .createSignedUrl(attachment.storage_path, ATTACHMENT_LINK_TTL_SECONDS);
-    if (!signed?.signedUrl) return;
-    result.set(attachment.task_id, [...(result.get(attachment.task_id) || []), signed.signedUrl]);
-  }));
+  const attachments = data as TaskAttachmentRecord[];
+  if (!attachments.length) return result;
+  // One batched signing request for every path, instead of one storage round trip per attachment.
+  const { data: signedRows, error: signError } = await supabase.storage
+    .from('task-attachments')
+    .createSignedUrls(attachments.map((attachment) => attachment.storage_path), ATTACHMENT_LINK_TTL_SECONDS);
+  if (signError || !signedRows) return result;
+  attachments.forEach((attachment, index) => {
+    const signedUrl = signedRows[index]?.signedUrl;
+    if (!signedUrl) return;
+    result.set(attachment.task_id, [...(result.get(attachment.task_id) || []), signedUrl]);
+  });
   return result;
 }
 
