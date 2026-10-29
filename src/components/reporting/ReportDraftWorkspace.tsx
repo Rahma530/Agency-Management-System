@@ -252,7 +252,10 @@ function renderWorkLogSection(
     // The author's name never appears in the line: an AI rewrite or a merged group may still
     // have written "SHAHD posted ..." into the text, so the name is stripped here, at the one place
     // every line passes through.
-    const cleanText = stripEmployeeNames(text, employeeName);
+    // Each work-log entry is exactly one line. An AI rewrite (or a merged group) can return its
+    // sentence with line breaks in it, which pushed "بتاريخ D/M" onto a line of its own. Collapse
+    // every line break inside the entry into a space so the sentence and its date stay together.
+    const cleanText = stripEmployeeNames(text.replace(/\s*\n\s*/g, ' '), employeeName);
     const baseText = cleanText || (attachmentLines.length ? 'مرفق' : cleanText);
     const firstLine = date ? `${baseText} بتاريخ ${toDayMonth(date)}` : baseText;
     return attachmentLines.length ? [firstLine, ...attachmentLines].join('\n') : firstLine;
