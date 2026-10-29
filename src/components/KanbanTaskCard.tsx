@@ -213,6 +213,9 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
 
       {/* Task Title */}
       <h5 className="text-xs font-bold text-white line-clamp-2 leading-snug group-hover:text-purple-300 transition-colors">
+        {task.task_number != null && (
+          <span className="text-stone-500 font-mono font-normal">#{task.task_number} </span>
+        )}
         {task.title}
       </h5>
 
