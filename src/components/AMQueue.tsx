@@ -677,30 +677,23 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 Merge Selected ({selectedClientIds.size})
               </button>
             )}
-            <div className="flex items-center gap-1 flex-wrap">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as ClientStatus | 'all')}
+              className="px-3 py-1.5 rounded-xl text-xs bg-black/30 border border-purple-900/40 text-white outline-none focus:border-purple-400"
+            >
               {STATUS_FILTER_OPTIONS.map((opt) => {
                 const count =
                   opt.key === 'all'
                     ? visibleClients.length
                     : visibleClients.filter((c) => c.status === opt.key).length;
-                const isActive = statusFilter === opt.key;
                 return (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={() => setStatusFilter(opt.key)}
-                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all whitespace-nowrap"
-                    style={
-                      isActive
-                        ? { background: 'var(--purple-light)', color: '#1a1226', borderColor: 'var(--purple-light)' }
-                        : { background: 'rgba(0,0,0,0.2)', color: 'var(--ink-soft)', borderColor: 'var(--border-soft)' }
-                    }
-                  >
+                  <option key={opt.key} value={opt.key}>
                     {opt.label} ({count})
-                  </button>
+                  </option>
                 );
               })}
-            </div>
+            </select>
             <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -856,6 +849,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                               {client.status === 'onboarding' && (
                                 <span className="block text-[10px] mt-1" style={{ color: lifecycle.color }}>
                                   {lifecycle.label}
+                                </span>
+                              )}
+                              {client.status === 'renewal' && (
+                                <span className="block text-[10px] mt-1" style={{ color: statusMeta.color }}>
+                                  Needs confirmation
                                 </span>
                               )}
 
