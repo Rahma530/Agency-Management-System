@@ -3,6 +3,7 @@ import {
   Inbox,
   UserCheck,
   ChevronRight,
+  ChevronDown,
   FileText,
   Building2,
   Calendar,
@@ -61,6 +62,7 @@ import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding, canMergeClients } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { CLIENT_STATUS_META } from '../lib/clientStatus';
 import { ClientDashboard } from './ClientDashboard';
 import { MergeClientsModal } from './MergeClientsModal';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
@@ -308,6 +310,15 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const [assignMessage, setAssignMessage] = useState<{ id: string; text: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMissingDatesOnly, setShowMissingDatesOnly] = useState(false);
+  // Status filter pills next to search — defaults to 'all' (every status shown, same as before
+  // this feature existed). 'all' is not a real ClientStatus value, just this filter's own default.
+  const [statusFilter, setStatusFilter] = useState<ClientStatus | 'all'>('all');
+  // Inline quick-status dropdown (Client Portfolio table, Status column) — which row's menu is
+  // open, and which row currently has a status-change request in flight. Same permission rule as
+  // ClientDashboard's canManageLifecycle (kept in sync deliberately): AM Team Lead/Executive/Head
+  // of Technical can manage any client, an AM Agent only the client assigned to them.
+  const [statusMenuClientId, setStatusMenuClientId] = useState<string | null>(null);
+  const [quickStatusUpdatingId, setQuickStatusUpdatingId] = useState<string | null>(null);
   const canShowMergeClients = !!onMergeClients && !!onPreviewMergeClients && canMergeClients(currentRole);
   const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
   const [mergeModalInitialIds, setMergeModalInitialIds] = useState<string[] | null>(null);
@@ -320,9 +331,19 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     () =>
       visibleClients
         .filter((c) => matchesClientQuery(c, searchQuery))
-        .filter((c) => !showMissingDatesOnly || !c.start_date || !c.renewal_date),
-    [visibleClients, searchQuery, showMissingDatesOnly]
+        .filter((c) => !showMissingDatesOnly || !c.start_date || !c.renewal_date)
+        .filter((c) => statusFilter === 'all' || c.status === statusFilter),
+    [visibleClients, searchQuery, showMissingDatesOnly, statusFilter]
   );
+
+  const STATUS_FILTER_OPTIONS: { key: ClientStatus | 'all'; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'onboarding', label: 'Onboarding' },
+    { key: 'active', label: 'Active' },
+    { key: 'paused', label: 'Paused' },
+    { key: 'renewal', label: 'Renewal' },
+    { key: 'closed', label: 'Closed' },
+  ];
 
   const amAgents = users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u));
   const amTeamLeaders = users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u));
@@ -352,6 +373,45 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   };
 
   const getClientBriefs = (clientId: string) => briefs.filter((b) => b.client_id === clientId);
+
+  // Same rule as ClientDashboard.tsx's canManageLifecycle — kept in sync deliberately: AM Team
+  // Lead/Executive/Head of Technical can change any client's status; an AM Agent only the client
+  // currently assigned to them.
+  const canManageClientStatus = (client: ClientRecord) =>
+    currentRole === 'am_team_lead' ||
+    currentRole === 'executive' ||
+    currentRole === 'head_of_technical' ||
+    (currentRole === 'am_agent' && client.am_agent_id === effectiveUserId);
+
+  // Quick, single-click transitions only (no extra required fields) — Active/Paused/Renewal.
+  // Closing (needs a required reason + stop date) and Reopening (needs a reopen date) stay behind
+  // the full Client Dashboard form below, same validation ClientDashboard.tsx already enforces —
+  // deliberately not duplicated here.
+  const handleQuickStatusChange = async (clientId: string, newStatus: ClientStatus) => {
+    if (!onUpdateClientStatus) return;
+    setQuickStatusUpdatingId(clientId);
+    try {
+      await onUpdateClientStatus(clientId, newStatus);
+      setStatusMenuClientId(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setQuickStatusUpdatingId(null);
+    }
+  };
+
+  const handleQuickConfirmRenewal = async (clientId: string) => {
+    if (!onConfirmClientRenewal) return;
+    setQuickStatusUpdatingId(clientId);
+    try {
+      await onConfirmClientRenewal(clientId);
+      setStatusMenuClientId(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setQuickStatusUpdatingId(null);
+    }
+  };
 
   const getClientLifecycleStatus = (client: ClientRecord) => {
     if (!client.am_agent_id) {
@@ -617,6 +677,30 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 Merge Selected ({selectedClientIds.size})
               </button>
             )}
+            <div className="flex items-center gap-1 flex-wrap">
+              {STATUS_FILTER_OPTIONS.map((opt) => {
+                const count =
+                  opt.key === 'all'
+                    ? visibleClients.length
+                    : visibleClients.filter((c) => c.status === opt.key).length;
+                const isActive = statusFilter === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setStatusFilter(opt.key)}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all whitespace-nowrap"
+                    style={
+                      isActive
+                        ? { background: 'var(--purple-light)', color: '#1a1226', borderColor: 'var(--purple-light)' }
+                        : { background: 'rgba(0,0,0,0.2)', color: 'var(--ink-soft)', borderColor: 'var(--border-soft)' }
+                    }
+                  >
+                    {opt.label} ({count})
+                  </button>
+                );
+              })}
+            </div>
             <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -735,17 +819,129 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4">
-                        <span
-                          className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold inline-block"
-                          style={{
-                            background: lifecycle.bg,
-                            color: lifecycle.color,
-                            border: `1px solid ${lifecycle.border}`,
-                          }}
-                        >
-                          {lifecycle.label}
-                        </span>
+                      <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                        {(() => {
+                          const statusMeta = CLIENT_STATUS_META[client.status] || CLIENT_STATUS_META.onboarding;
+                          const canManage = canManageClientStatus(client) && !!onUpdateClientStatus;
+                          const isMenuOpen = statusMenuClientId === client.id;
+                          const isUpdating = quickStatusUpdatingId === client.id;
+                          return (
+                            <div className="relative inline-block">
+                              <button
+                                type="button"
+                                disabled={!canManage || isUpdating}
+                                onClick={() => canManage && setStatusMenuClientId(isMenuOpen ? null : client.id)}
+                                className="flex items-center gap-1 disabled:cursor-default group/status"
+                              >
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold inline-block"
+                                  style={{
+                                    background: statusMeta.bg,
+                                    color: statusMeta.color,
+                                    border: `1px solid ${statusMeta.border}`,
+                                  }}
+                                >
+                                  {statusMeta.label}
+                                </span>
+                                {canManage && (
+                                  <ChevronDown className="w-3 h-3 text-stone-500 group-hover/status:text-white transition-colors" />
+                                )}
+                              </button>
+
+                              {/* Onboarding-only context: whether an AM is assigned yet / briefs are in, same
+                                  info the old badge always showed — now scoped to onboarding, since for an
+                                  already-active/paused/closed client this is long settled and not worth
+                                  repeating (per Rahma's request — the old badge showed this everywhere,
+                                  including for established clients where it no longer applies). */}
+                              {client.status === 'onboarding' && (
+                                <span className="block text-[10px] mt-1" style={{ color: lifecycle.color }}>
+                                  {lifecycle.label}
+                                </span>
+                              )}
+
+                              {isMenuOpen && (
+                                <>
+                                  <div
+                                    className="fixed inset-0 z-10"
+                                    onClick={() => setStatusMenuClientId(null)}
+                                  />
+                                  <div
+                                    className="absolute z-20 mt-1 w-48 rounded-xl border py-1 shadow-2xl"
+                                    style={{ background: '#17101f', borderColor: 'var(--border-medium)' }}
+                                  >
+                                    {client.status === 'onboarding' && (
+                                      <button
+                                        onClick={() => handleQuickStatusChange(client.id, 'active')}
+                                        disabled={isUpdating}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                                      >
+                                        Mark as Active
+                                      </button>
+                                    )}
+                                    {client.status === 'active' && (
+                                      <>
+                                        <button
+                                          onClick={() => handleQuickStatusChange(client.id, 'renewal')}
+                                          disabled={isUpdating}
+                                          className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-amber-300 hover:bg-amber-900/30 disabled:opacity-50"
+                                        >
+                                          Move to Renewal
+                                        </button>
+                                        <button
+                                          onClick={() => handleQuickStatusChange(client.id, 'paused')}
+                                          disabled={isUpdating}
+                                          className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-lilac hover:bg-stone-800/60 disabled:opacity-50"
+                                        >
+                                          Pause Client
+                                        </button>
+                                      </>
+                                    )}
+                                    {client.status === 'paused' && (
+                                      <button
+                                        onClick={() => handleQuickStatusChange(client.id, 'active')}
+                                        disabled={isUpdating}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                                      >
+                                        Resume Client
+                                      </button>
+                                    )}
+                                    {client.status === 'renewal' && onConfirmClientRenewal && (
+                                      <button
+                                        onClick={() => handleQuickConfirmRenewal(client.id)}
+                                        disabled={isUpdating}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                                      >
+                                        Confirm Renewal
+                                      </button>
+                                    )}
+                                    {client.status !== 'closed' ? (
+                                      <button
+                                        onClick={() => {
+                                          setStatusMenuClientId(null);
+                                          setDashboardClientId(client.id);
+                                        }}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-red-300 hover:bg-red-950/30 border-t mt-1 pt-1.5"
+                                        style={{ borderColor: 'var(--border-soft)' }}
+                                      >
+                                        Close Client…
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setStatusMenuClientId(null);
+                                          setDashboardClientId(client.id);
+                                        }}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/30"
+                                      >
+                                        Reopen Client…
+                                      </button>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       <td className="py-3.5 px-4" onClick={(e) => isAMTeamLead && e.stopPropagation()}>
