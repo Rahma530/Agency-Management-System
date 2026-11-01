@@ -650,7 +650,10 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div>
             <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Documented Briefs</p>
             <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--stat-success)' }}>
-              {briefs.filter((b) => visibleClients.some((c) => c.id === b.client_id)).length}
+              {/* Count of CLIENTS with >=1 submitted brief — not raw brief rows — so this number
+                  matches exactly what clicking the card filters the table below to. A client can
+                  have several briefs (one per service), so the two counts aren't the same thing. */}
+              {visibleClients.filter((c) => getClientBriefs(c.id).length > 0).length}
             </p>
             <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
               {showDocumentedBriefsOnly ? 'Showing only these — click to clear' : 'Click to filter the list below'}
