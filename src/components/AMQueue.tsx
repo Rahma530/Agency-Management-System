@@ -337,6 +337,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
   const [mergeModalInitialIds, setMergeModalInitialIds] = useState<string[] | null>(null);
 
+  const getClientBriefs = (clientId: string) => briefs.filter((b) => b.client_id === clientId);
+
   // Module 14: search narrows only the rendered list below — the stats bar and Renewal Queue
   // above stay scoped to the full visibleClients portfolio, same precedent as SalesPortalView's
   // stat cards staying on personalClients while only its table rows use filteredClients. The
@@ -408,8 +410,6 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       setIsAssigning(null);
     }
   };
-
-  const getClientBriefs = (clientId: string) => briefs.filter((b) => b.client_id === clientId);
 
   // Same rule as ClientDashboard.tsx's canManageLifecycle — kept in sync deliberately: AM Team
   // Lead/Executive/Head of Technical can change any client's status; an AM Agent only the client
