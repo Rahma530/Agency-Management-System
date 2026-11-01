@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Inbox,
   UserCheck,
@@ -310,8 +310,22 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   const [assignMessage, setAssignMessage] = useState<{ id: string; text: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMissingDatesOnly, setShowMissingDatesOnly] = useState(false);
+  // The other two Overview Stats Bar cards that aren't a plain status ("Pending Briefs" /
+  // "Awaiting Assignment" and "Documented Briefs") follow the exact same click-to-filter pattern
+  // as showMissingDatesOnly above — each toggles the Client Portfolio table below to show only
+  // the clients that card is counting, instead of just being a static number.
+  const [showPendingBriefsOnly, setShowPendingBriefsOnly] = useState(false);
+  const [showDocumentedBriefsOnly, setShowDocumentedBriefsOnly] = useState(false);
+  // Scroll target for every stats-bar card click, so clicking one doesn't just silently filter a
+  // table the user may have scrolled away from — it also brings the filtered list into view.
+  const clientPortfolioRef = useRef<HTMLDivElement | null>(null);
+  const scrollToClientPortfolio = () => {
+    clientPortfolioRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   // Status filter pills next to search — defaults to 'all' (every status shown, same as before
   // this feature existed). 'all' is not a real ClientStatus value, just this filter's own default.
+  // The "Total In Onboarding" stats card reuses this same state (set to 'onboarding') rather than
+  // its own boolean, since it's just another status filter.
   const [statusFilter, setStatusFilter] = useState<ClientStatus | 'all'>('all');
   // Inline quick-status dropdown (Client Portfolio table, Status column) — which row's menu is
   // open, and which row currently has a status-change request in flight. Same permission rule as
@@ -333,11 +347,30 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         .filter((c) => matchesClientQuery(c, searchQuery))
         .filter((c) => !showMissingDatesOnly || !c.start_date || !c.renewal_date)
         .filter((c) => statusFilter === 'all' || c.status === statusFilter)
+        // "Pending Briefs" / "Awaiting Assignment" card filter — same underlying condition as that
+        // card's own count, just applied as a filter instead of only displayed as a number.
+        .filter((c) => {
+          if (!showPendingBriefsOnly) return true;
+          if (isAMTeamLead) return !c.am_agent_id;
+          const brfs = getClientBriefs(c.id);
+          return getClientServices(c).some((s) => !brfs.some((b) => b.service_type === s));
+        })
+        // "Documented Briefs" card filter — clients that have at least one submitted brief.
+        .filter((c) => !showDocumentedBriefsOnly || getClientBriefs(c.id).length > 0)
         // Onboarding clients (need attention now) first, closed ones last — see
         // compareByClientStatus's own comment (lib/clientStatus.ts) for the full ordering.
         .slice()
         .sort(compareByClientStatus),
-    [visibleClients, searchQuery, showMissingDatesOnly, statusFilter]
+    [
+      visibleClients,
+      searchQuery,
+      showMissingDatesOnly,
+      statusFilter,
+      showPendingBriefsOnly,
+      showDocumentedBriefsOnly,
+      isAMTeamLead,
+      briefs,
+    ]
   );
 
   const STATUS_FILTER_OPTIONS: { key: ClientStatus | 'all'; label: string }[] = [
@@ -534,28 +567,51 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         </div>
       </div>
 
-      {/* Overview Stats Bar */}
+      {/* Overview Stats Bar — every card below is clickable: it filters the Client Portfolio
+          table to exactly what it's counting and scrolls it into view, instead of being a plain
+          number. "Total In Onboarding" reuses the statusFilter dropdown's own state; the other
+          two new toggles follow the same click-to-filter pattern "Clients with Missing Dates"
+          already used before this change. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div
-          className="p-4 rounded-xl flex items-center justify-between"
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter((prev) => (prev === 'onboarding' ? 'all' : 'onboarding'));
+            scrollToClientPortfolio();
+          }}
+          className="p-4 rounded-xl flex items-center justify-between text-left transition-all"
           data-accent="neutral"
-          style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
+          style={{
+            background: 'var(--gradient-card)',
+            border: statusFilter === 'onboarding' ? '1px solid var(--purple-light)' : '1px solid var(--border-soft)',
+          }}
         >
           <div>
             <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Total In Onboarding</p>
             <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--ink)' }}>
               {visibleClients.filter((c) => c.status === 'onboarding').length}
             </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
+              {statusFilter === 'onboarding' ? 'Showing only these — click to clear' : 'Click to filter the list below'}
+            </p>
           </div>
           <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-purple-900/30 text-purple-300 border border-purple-800/30">
             <Inbox className="w-4 h-4" />
           </div>
-        </div>
+        </button>
 
-        <div
-          className="p-4 rounded-xl flex items-center justify-between"
+        <button
+          type="button"
+          onClick={() => {
+            setShowPendingBriefsOnly((prev) => !prev);
+            scrollToClientPortfolio();
+          }}
+          className="p-4 rounded-xl flex items-center justify-between text-left transition-all"
           data-accent="warning"
-          style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
+          style={{
+            background: 'var(--gradient-card)',
+            border: showPendingBriefsOnly ? '1px solid var(--stat-warning-alt)' : '1px solid var(--border-soft)',
+          }}
         >
           <div>
             <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>
@@ -569,31 +625,48 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                     return getClientServices(c).some((s) => !brfs.some((b) => b.service_type === s));
                   }).length}
             </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
+              {showPendingBriefsOnly ? 'Showing only these — click to clear' : 'Click to filter the list below'}
+            </p>
           </div>
           <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-950/30 text-amber-300 border border-amber-800/30">
             <Clock className="w-4 h-4" />
           </div>
-        </div>
+        </button>
 
-        <div
-          className="p-4 rounded-xl flex items-center justify-between"
+        <button
+          type="button"
+          onClick={() => {
+            setShowDocumentedBriefsOnly((prev) => !prev);
+            scrollToClientPortfolio();
+          }}
+          className="p-4 rounded-xl flex items-center justify-between text-left transition-all"
           data-accent="success"
-          style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-soft)' }}
+          style={{
+            background: 'var(--gradient-card)',
+            border: showDocumentedBriefsOnly ? '1px solid var(--stat-success)' : '1px solid var(--border-soft)',
+          }}
         >
           <div>
             <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Documented Briefs</p>
             <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--stat-success)' }}>
               {briefs.filter((b) => visibleClients.some((c) => c.id === b.client_id)).length}
             </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
+              {showDocumentedBriefsOnly ? 'Showing only these — click to clear' : 'Click to filter the list below'}
+            </p>
           </div>
           <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-emerald-950/30 text-emerald-300 border border-emerald-800/30">
             <FileText className="w-4 h-4" />
           </div>
-        </div>
+        </button>
 
         <button
           type="button"
-          onClick={() => setShowMissingDatesOnly((prev) => !prev)}
+          onClick={() => {
+            setShowMissingDatesOnly((prev) => !prev);
+            scrollToClientPortfolio();
+          }}
           className="p-4 rounded-xl flex items-center justify-between text-left transition-all"
           data-accent="warning"
           style={{
@@ -660,6 +733,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
 
       {/* Lightweight Client List */}
       <div
+        ref={clientPortfolioRef}
         className="rounded-2xl border overflow-hidden"
         style={{
           background: 'var(--gradient-card)',
