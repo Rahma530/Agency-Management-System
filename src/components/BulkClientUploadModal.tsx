@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import { X, Download, FileSpreadsheet, Upload, AlertCircle, Loader2, UploadCloud, AlertTriangle } from 'lucide-react';
 import { ClientRecord, ClientSector, ServiceType, UserRecord } from '../types/database';
 import { isActiveEmployee } from '../lib/permissions';
@@ -140,10 +139,13 @@ const parseFile = (file: File): Promise<{ rows: Record<string, string>[]; unreco
       });
     });
   }
-  return file.arrayBuffer().then((buffer) => {
+  // xlsx (SheetJS) is large and only needed for this one .xlsx-reading branch, so it's loaded on
+  // demand here instead of being imported at module scope — keeps it out of the app's initial
+  // bundle for the (vast majority of) sessions that never open this modal at all.
+  return Promise.all([file.arrayBuffer(), import('xlsx')]).then(([buffer, XLSX]) => {
     const workbook = XLSX.read(buffer, { type: 'array' });
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(firstSheet, { defval: '' });
+    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' }) as Record<string, any>[];
     return normalizeRows(rows);
   });
 };
