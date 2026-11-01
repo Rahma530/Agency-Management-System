@@ -62,6 +62,7 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
+import { compareByClientStatus, isWoundDownClient } from '../lib/clientStatus';
 import {
   computeTaskDeletionPreview,
   fetchTaskEvents,
@@ -248,6 +249,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [selectedTeam, setSelectedTeam] = useState<string>(
     currentUser?.role === 'marketing_manager' ? 'Creative' : 'all'
   );
+  // Shared ordering for every plain client <select> in this component (filter, bulk move,
+  // create/edit task): onboarding/active/renewal clients first, paused/closed last — never
+  // removed or disabled, a paused/closed client still needs to stay pickable since existing
+  // tasks/history reference it (see compareByClientStatus's own comment).
+  const sortedClientsForPicker = useMemo(() => [...clients].sort(compareByClientStatus), [clients]);
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -2239,8 +2245,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
             >
               <option value="all" className="bg-stone-900 text-white">All Clients</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id} className="bg-stone-900 text-white">
+              {sortedClientsForPicker.map((c) => (
+                <option
+                  key={c.id}
+                  value={c.id}
+                  className="bg-stone-900"
+                  style={{ color: isWoundDownClient(c) ? 'var(--grey)' : 'var(--white)' }}
+                >
                   {c.name}
                 </option>
               ))}
@@ -2873,8 +2884,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
                 >
                   <option value="">Client: no change</option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={client.id}>{client.name}</option>
+                  {sortedClientsForPicker.map((client) => (
+                    <option
+                      key={client.id}
+                      value={client.id}
+                      style={{ color: isWoundDownClient(client) ? 'var(--grey)' : undefined }}
+                    >
+                      {client.name}
+                    </option>
                   ))}
                 </select>
                 <select
@@ -3922,8 +3939,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     onChange={(e) => setEditClientId(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-xs bg-stone-900 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
                   >
-                    {clients.map((c) => (
-                      <option key={c.id} value={c.id} className="bg-stone-900 text-white">
+                    {sortedClientsForPicker.map((c) => (
+                      <option
+                        key={c.id}
+                        value={c.id}
+                        className="bg-stone-900"
+                        style={{ color: isWoundDownClient(c) ? 'var(--grey)' : 'var(--white)' }}
+                      >
                         {c.name}
                       </option>
                     ))}

@@ -122,6 +122,14 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setErrorMsg('Please select at least one service.');
       return;
     }
+    // Required even when the client has no store yet — any link that identifies them (a social
+    // media profile, a Drive folder, anything) so the account isn't created as a dead end with no
+    // way to verify who they are. Editable later from the client dashboard like everything else
+    // here, never locked in at registration.
+    if (!websiteOrSocialLink.trim()) {
+      setErrorMsg('Please add a link for this client (website, social media profile, Drive folder — anything that identifies them).');
+      return;
+    }
 
     setIsSubmitting(true);
     setErrorMsg('');
@@ -334,15 +342,16 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
-                Website / Social Link (optional)
+                Website / Social Link <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <Globe className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
                 <input
                   type="text"
+                  required
                   value={websiteOrSocialLink}
                   onChange={(e) => setWebsiteOrSocialLink(e.target.value)}
-                  placeholder="Website URL, or a social media handle/link"
+                  placeholder="No store yet? Add any link that identifies them — a social media profile, a Drive folder..."
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
                   style={{
                     background: 'rgba(10, 10, 13, 0.8)',

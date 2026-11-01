@@ -62,7 +62,7 @@ import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding, canMergeClients } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
-import { CLIENT_STATUS_META } from '../lib/clientStatus';
+import { CLIENT_STATUS_META, compareByClientStatus } from '../lib/clientStatus';
 import { ClientDashboard } from './ClientDashboard';
 import { MergeClientsModal } from './MergeClientsModal';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
@@ -332,7 +332,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       visibleClients
         .filter((c) => matchesClientQuery(c, searchQuery))
         .filter((c) => !showMissingDatesOnly || !c.start_date || !c.renewal_date)
-        .filter((c) => statusFilter === 'all' || c.status === statusFilter),
+        .filter((c) => statusFilter === 'all' || c.status === statusFilter)
+        // Onboarding clients (need attention now) first, closed ones last — see
+        // compareByClientStatus's own comment (lib/clientStatus.ts) for the full ordering.
+        .slice()
+        .sort(compareByClientStatus),
     [visibleClients, searchQuery, showMissingDatesOnly, statusFilter]
   );
 
