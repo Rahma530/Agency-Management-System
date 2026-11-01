@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import {
   UserPlus,
   Upload,
@@ -396,12 +395,16 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
         });
       });
     }
-    return file.arrayBuffer().then((buffer) => {
+    // xlsx (SheetJS) is a genuinely large library and, before this, was imported at the top of
+    // this file unconditionally — so every visitor's very first page load downloaded and parsed
+    // it, even though it's used for exactly one thing (reading a .xlsx bulk-upload file), which
+    // most sessions never touch. Loading it on demand here, only once someone actually picks an
+    // .xlsx file, keeps it out of the app's initial bundle entirely — meaningful on mobile data.
+    return Promise.all([file.arrayBuffer(), import('xlsx')]).then(([buffer, XLSX]) => {
       const workbook = XLSX.read(buffer, { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(firstSheet, { defval: '' });
-      const normalized = normalizeRows(rows);
-      return normalized;
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' }) as Record<string, any>[];
+      return normalizeRows(rows);
     });
   };
 
@@ -649,7 +652,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Full Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} disabled={isSubmitting} className={inputClass} placeholder="e.g. Fatima Al-Sayed" required />
@@ -660,7 +663,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Role *</label>
               <select
@@ -717,7 +720,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Manager (optional)</label>
               <select value={managerId} onChange={(e) => setManagerId(e.target.value)} disabled={isSubmitting} className={`${inputClass} cursor-pointer`}>
@@ -806,8 +809,8 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                 <span className="text-amber-400 font-bold">{bulkResults.filter((r) => r.status === 'skipped').length} skipped</span>
                 <span className="text-red-400 font-bold">{bulkResults.filter((r) => r.status === 'failed').length} failed</span>
               </div>
-              <div className="max-h-72 overflow-y-auto rounded-xl border border-purple-900/30 custom-scrollbar">
-                <table className="w-full text-[11px]">
+              <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-xl border border-purple-900/30 custom-scrollbar">
+                <table className="w-full min-w-[560px] text-[11px]">
                   <thead className="sticky top-0 bg-[#1a1428]">
                     <tr className="text-left text-stone-400">
                       <th className="px-3 py-2">Row</th>
@@ -851,12 +854,12 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           </h3>
           <div className="space-y-1.5">
             {pendingEmployees.map((u) => (
-              <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/20 text-xs">
-                <div>
+              <div key={u.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 px-3 py-2 rounded-lg bg-black/20 text-xs">
+                <div className="min-w-0">
                   <span className="text-white font-semibold">{u.name}</span>
-                  <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
+                  <span className="text-stone-500 sm:ml-2 block sm:inline break-all">{u.email}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-amber-400 bg-amber-500/10">Pending</span>
                   {canAddEmployees && (
@@ -885,12 +888,12 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           </h3>
           <div className="space-y-1.5">
             {awaitingSetupEmployees.map((u) => (
-              <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/20 text-xs">
-                <div>
+              <div key={u.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 px-3 py-2 rounded-lg bg-black/20 text-xs">
+                <div className="min-w-0">
                   <span className="text-white font-semibold">{u.name}</span>
-                  <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
+                  <span className="text-stone-500 sm:ml-2 block sm:inline break-all">{u.email}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-sky-400 bg-sky-500/10">Awaiting Setup</span>
                   {canAddEmployees && (
@@ -926,12 +929,12 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           </h3>
           <div className="space-y-1.5">
             {completedSetupEmployees.map((u) => (
-              <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/20 text-xs">
-                <div>
+              <div key={u.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 px-3 py-2 rounded-lg bg-black/20 text-xs">
+                <div className="min-w-0">
                   <span className="text-white font-semibold">{u.name}</span>
-                  <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
+                  <span className="text-stone-500 sm:ml-2 block sm:inline break-all">{u.email}</span>
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center sm:justify-end gap-2">
                   <span className="text-stone-400">{getRoleInfo(u.role).englishTitle}</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-400 bg-emerald-500/10">Done</span>
                   {canManageEmployees && (
@@ -1034,7 +1037,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                           <span>{roleChangeWarning}</span>
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <input
                           type="text"
                           value={editDraft.name || ''}
@@ -1051,7 +1054,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                           placeholder="Email"
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <select
                           value={editDraft.role || u.role}
                           onChange={(e) => setEditDraft((d) => ({ ...d, role: e.target.value as UserRole }))}
@@ -1133,13 +1136,13 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-between">
-                      <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2">
+                      <div className="min-w-0">
                         <span className="text-white font-semibold">{u.name}</span>
-                        <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
-                        <span className="text-stone-400 ml-2">{getRoleInfo(u.role).englishTitle}</span>
+                        <span className="text-stone-500 sm:ml-2 block sm:inline break-all">{u.email}</span>
+                        <span className="text-stone-400 sm:ml-2 block sm:inline">{getRoleInfo(u.role).englishTitle}</span>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 shrink-0">
                         {/* Mirrors employee_manageable() (20261101700000_users_edit_scope_hardening.sql) —
                             a team lead only edits/deactivates within their own department's set; exec/HoT
                             unaffected (canManageEmployee returns true for them unconditionally). */}
@@ -1179,12 +1182,12 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
           </h3>
           <div className="space-y-1.5">
             {deactivatedEmployees.map((u) => (
-              <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/20 text-xs opacity-60">
-                <div>
+              <div key={u.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 px-3 py-2 rounded-lg bg-black/20 text-xs opacity-60">
+                <div className="min-w-0">
                   <span className="text-stone-300 font-semibold">{u.name}</span>
-                  <span className="text-stone-500 ml-2 font-mono">{u.email}</span>
+                  <span className="text-stone-500 sm:ml-2 block sm:inline break-all">{u.email}</span>
                 </div>
-                <span className="text-stone-500">{getRoleInfo(u.role).englishTitle}</span>
+                <span className="text-stone-500 shrink-0">{getRoleInfo(u.role).englishTitle}</span>
               </div>
             ))}
           </div>

@@ -254,7 +254,7 @@ export const TaskTypeManager: React.FC<TaskTypeManagerProps> = ({ taskTypes, onC
 
         {isAddingNew ? (
           <div className="p-3 rounded-xl border border-dashed border-purple-700/40 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
                 value={newScopeType}
                 onChange={(e) => {

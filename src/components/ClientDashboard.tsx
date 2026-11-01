@@ -3084,7 +3084,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             </span>
                           </div>
 
-                          <div className="grid grid-cols-4 gap-2 pt-2 border-t border-purple-900/20 text-center">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-purple-900/20 text-center">
                             <div>
                               <span className="text-[10px] text-stone-400 block">Spend</span>
                               <span className="text-xs font-mono font-bold text-white">

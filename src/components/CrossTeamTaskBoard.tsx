@@ -3745,7 +3745,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               )}
 
               {/* Priority & Due Date */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Priority:
@@ -3929,7 +3929,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
 
               {/* Client and Team */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Client:
@@ -4124,7 +4124,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               )}
 
               {/* Priority & Due Date */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Priority:
@@ -4170,7 +4170,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               {/* Hours: Estimated vs Actual. Actual is read-only now — auto-computed from
                   started_at (first time this task entered 'in_progress') to completed_at, see
                   computeActualHours() in lib/taskLifecycle.ts. Replaces the old manual input. */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Estimated Hours:

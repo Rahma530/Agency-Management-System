@@ -653,7 +653,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div className="flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5" style={{ color: 'var(--roas-good)' }} />
               <span className="text-sm font-bold font-mono" style={{ color: 'var(--roas-good)' }}>

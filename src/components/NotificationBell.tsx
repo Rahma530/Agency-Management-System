@@ -105,8 +105,8 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div 
-          className="absolute top-full left-0 mt-2 w-80 rounded-2xl border shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200"
+        <div
+          className="absolute top-full right-0 mt-2 w-[calc(100vw-2rem)] max-w-80 rounded-2xl border shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200"
           style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-soft)' }}
           dir="rtl"
         >
