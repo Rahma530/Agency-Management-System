@@ -235,7 +235,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Contact Person (optional)
@@ -380,7 +380,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Monthly Retainer (optional)</label>
               <div className="relative">
@@ -432,7 +432,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Due Value (optional)</label>
               <div className="relative">
@@ -464,7 +464,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Contract Duration (months, optional)</label>
               <div className="relative">

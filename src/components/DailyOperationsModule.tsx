@@ -1996,7 +1996,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     </div>
 
                     {/* Metric Badges Grid */}
-                    <div className="grid grid-cols-4 gap-2 text-center text-xs pt-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs pt-1">
                       <div className="p-2 rounded-xl bg-stone-900 border border-stone-800">
                         <p className="text-[10px] text-stone-400">Completed</p>
                         <p className="text-sm font-bold text-emerald-400 mt-0.5">{item.completedCount}</p>
@@ -2434,7 +2434,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             )}
 
             <form onSubmit={handleSubmitDailyLog} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[11px] font-semibold text-stone-400 block mb-1">Employee:</label>
                   <input

@@ -256,7 +256,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
           ) : (
             <div>
               <label className="text-[10px] font-semibold text-stone-400 block mb-1.5">Task Status Breakdown</label>
-              <div className="grid grid-cols-5 gap-1.5 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-center">
                 {Object.entries(tasksByStatus).map(([status, count]) => (
                   <div key={status} className="p-2 rounded-lg bg-stone-900/60 border border-stone-800">
                     <p className="text-sm font-bold text-white">{count}</p>

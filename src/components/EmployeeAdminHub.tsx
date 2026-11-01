@@ -649,7 +649,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Full Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} disabled={isSubmitting} className={inputClass} placeholder="e.g. Fatima Al-Sayed" required />
@@ -660,7 +660,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Role *</label>
               <select
@@ -717,7 +717,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Manager (optional)</label>
               <select value={managerId} onChange={(e) => setManagerId(e.target.value)} disabled={isSubmitting} className={`${inputClass} cursor-pointer`}>
@@ -806,8 +806,8 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                 <span className="text-amber-400 font-bold">{bulkResults.filter((r) => r.status === 'skipped').length} skipped</span>
                 <span className="text-red-400 font-bold">{bulkResults.filter((r) => r.status === 'failed').length} failed</span>
               </div>
-              <div className="max-h-72 overflow-y-auto rounded-xl border border-purple-900/30 custom-scrollbar">
-                <table className="w-full text-[11px]">
+              <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-xl border border-purple-900/30 custom-scrollbar">
+                <table className="w-full min-w-[560px] text-[11px]">
                   <thead className="sticky top-0 bg-[#1a1428]">
                     <tr className="text-left text-stone-400">
                       <th className="px-3 py-2">Row</th>
@@ -1034,7 +1034,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                           <span>{roleChangeWarning}</span>
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <input
                           type="text"
                           value={editDraft.name || ''}
@@ -1051,7 +1051,7 @@ export const EmployeeAdminHub: React.FC<EmployeeAdminHubProps> = ({
                           placeholder="Email"
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <select
                           value={editDraft.role || u.role}
                           onChange={(e) => setEditDraft((d) => ({ ...d, role: e.target.value as UserRole }))}

@@ -318,7 +318,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Contact Person (optional)
@@ -497,7 +497,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Total Contract Value
@@ -553,7 +553,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Monthly Retainer (USD/SAR) (optional)
@@ -604,7 +604,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
                 Remaining Amount (optional)

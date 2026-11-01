@@ -1585,7 +1585,8 @@ const GrowthTiersPanel: React.FC = () => {
             Loading…
           </div>
         ) : (
-          <table className="w-full text-left border-collapse text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left border-collapse text-sm">
             <thead>
               <tr
                 className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider"
@@ -1701,6 +1702,7 @@ const GrowthTiersPanel: React.FC = () => {
               )}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

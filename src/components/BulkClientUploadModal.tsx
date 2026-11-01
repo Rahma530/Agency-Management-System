@@ -500,8 +500,8 @@ export const BulkClientUploadModal: React.FC<BulkClientUploadModalProps> = ({
                 <span className="text-amber-400 font-bold">{results.filter((r) => r.status === 'skipped').length} skipped</span>
                 <span className="text-red-400 font-bold">{results.filter((r) => r.status === 'failed').length} failed</span>
               </div>
-              <div className="max-h-72 overflow-y-auto rounded-xl border border-amber-900/30 custom-scrollbar">
-                <table className="w-full text-[11px]">
+              <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-xl border border-amber-900/30 custom-scrollbar">
+                <table className="w-full min-w-[480px] text-[11px]">
                   <thead className="sticky top-0 bg-[#1a1428]">
                     <tr className="text-left text-stone-400">
                       <th className="px-3 py-2">Row</th>

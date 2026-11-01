@@ -1454,3 +1454,14 @@ body {
   color: var(--lilac);
   min-height: 100vh;
 }
+
+/* Mobile-responsiveness safety net: clips the page itself at the viewport's width so any one
+   element we missed (a fixed pixel width, an un-wrapped wide table) can't force the whole page
+   to scroll sideways on a phone. Elements that are SUPPOSED to scroll horizontally (the task
+   calendar, data tables) keep working exactly as before — they scroll inside their own
+   overflow-x-auto container, which this doesn't touch. */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}

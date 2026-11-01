@@ -940,7 +940,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
             {reportMode === 'comparison' && <p className="text-[11px] text-stone-400">A (Current)</p>}
             {/* Point 3: dir="ltr" + min-w-[9.5rem] so the date shows its full year (was cropped
                 to e.g. "10/01/202"). */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input type="date" dir="ltr" value={periodStart} onChange={(event) => { setPeriodShortcut('custom'); setPeriodStart(event.target.value); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
               <input type="date" dir="ltr" value={periodEnd} onChange={(event) => { setPeriodShortcut('custom'); setPeriodEnd(event.target.value); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
             </div>
@@ -948,7 +948,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
           {reportMode === 'comparison' && (
             <div className="space-y-1.5">
               <p className="text-[11px] text-stone-400">B (Previous)</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <input type="date" dir="ltr" value={customPreviousRange.start} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, start: event.target.value })); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
                 <input type="date" dir="ltr" value={customPreviousRange.end} onChange={(event) => { setPeriodShortcut('custom'); comparisonPeriodTouched.current = true; setCustomPreviousRange((current) => ({ ...current, end: event.target.value })); }} className="min-w-[9.5rem] px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white" />
               </div>

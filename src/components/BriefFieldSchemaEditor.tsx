@@ -166,7 +166,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
               >
                 {isEditing ? (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <input
                         type="text"
                         dir="auto"
@@ -289,7 +289,7 @@ export const BriefFieldSchemaEditor: React.FC<BriefFieldSchemaEditorProps> = ({
 
         {isAddingNew ? (
           <div className="p-3 rounded-xl border border-dashed border-purple-700/40 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input
                 type="text"
                 dir="auto"

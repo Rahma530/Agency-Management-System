@@ -994,7 +994,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                       </div>
 
                       {/* Capacity Metrics: Used vs Remaining vs Limit */}
-                      <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-stone-900/60 border border-stone-800/80 text-center">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-2.5 rounded-xl bg-stone-900/60 border border-stone-800/80 text-center">
                         <div>
                           <p className="text-[10px] text-stone-400">Used</p>
                           <p className="text-sm font-bold text-white mt-0.5">
@@ -1459,6 +1459,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
             className="rounded-[18px] overflow-hidden border border-stone-800"
             style={{ background: 'var(--gradient-card)' }}
           >
+            <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
               <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
                 <tr>
@@ -1514,6 +1515,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                 )}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
@@ -1560,7 +1562,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-stone-300 block mb-1">
                     Log Date:

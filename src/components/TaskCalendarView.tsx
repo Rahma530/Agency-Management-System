@@ -117,6 +117,12 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({ tasks, clien
         </div>
       </div>
 
+      {/* Weekday header + month grid share one horizontal-scroll wrapper on narrow screens — a
+          7-column grid squeezed into a 360px phone width leaves ~50px cells, too tight for a day
+          number plus task chips to stay legible. min-w-[640px] keeps every cell a readable ~90px
+          and the whole calendar scrolls sideways on phones instead of collapsing illegibly. */}
+      <div className="overflow-x-auto">
+      <div className="min-w-[640px]">
       {/* Weekday header */}
       <div className="grid grid-cols-7 border-b border-stone-800 bg-stone-900/60">
         {WEEKDAY_LABELS.map((label) => (
@@ -184,6 +190,8 @@ export const TaskCalendarView: React.FC<TaskCalendarViewProps> = ({ tasks, clien
             </div>
           );
         })}
+      </div>
+      </div>
       </div>
 
       {/* Day-detail view */}

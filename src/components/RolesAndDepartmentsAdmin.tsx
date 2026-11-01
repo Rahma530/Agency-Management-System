@@ -532,7 +532,7 @@ const RolesTab: React.FC<{
 
       {isAddingNew ? (
         <div className="p-3 rounded-xl border border-dashed border-purple-700/40 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <label className={labelClass}>English Title *</label>
               <input
@@ -594,7 +594,7 @@ const RolesTab: React.FC<{
 
           <div>
             <label className={labelClass}>Allowed Modules</label>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {ALL_MODULE_IDS.map((m) => (
                 <label key={m.id} className="flex items-center gap-1 text-[11px] text-stone-300">
                   <input type="checkbox" checked={allowedModules.includes(m.id)} onChange={() => toggleModule(m.id)} disabled={isSaving} />
