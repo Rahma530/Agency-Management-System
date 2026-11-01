@@ -557,7 +557,7 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
         </div>
       </div>
 
-      <div className="flex gap-1 mb-6 border-b border-stone-800">
+      <div className="flex gap-1 mb-6 border-b border-stone-800 overflow-x-auto">
         <TabButton active={tab === 'overview'} onClick={() => setTab('overview')} label="Overview" />
         <TabButton active={tab === 'log'} onClick={() => setTab('log')} label="Log Monthly Data" />
         {isOversightAdmin && (
@@ -591,12 +591,12 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
           )}
 
           {buyers.length > 0 && (
-            <div className="flex gap-2 mb-4">
+            <div className="flex gap-2 mb-4 overflow-x-auto">
               {buyers.map((b) => (
                 <button
                   key={b.id}
                   onClick={() => setActiveBuyerId(b.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                  className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
                     activeBuyerId === b.id
                       ? 'bg-purple-600/30 text-white border-purple-500/50'
                       : 'bg-stone-900/60 text-stone-300 border-stone-800 hover:text-white'
@@ -629,8 +629,12 @@ export const MentorshipTrackerModule: React.FC<MentorshipTrackerModuleProps> = (
                 />
               </div>
 
+              {/* 19 columns (13 metric columns + one per PLATFORMS entry) is far too much to fit
+                  a 360px phone no matter what — w-full with no floor just crams them down to
+                  unreadable slivers instead of actually scrolling. min-w-[1800px] keeps every
+                  column a legible width and lets the overflow-x-auto wrapper above do its job. */}
               <div className="overflow-x-auto rounded-[20px]" style={cardStyle}>
-                <table className="w-full text-left border-collapse">
+                <table className="w-full min-w-[1800px] text-left border-collapse">
                   <thead>
                     <tr
                       className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider"
@@ -928,7 +932,7 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; label: string 
 }) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+    className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors shrink-0 whitespace-nowrap ${
       active ? 'border-purple-500 text-white' : 'border-transparent text-stone-400 hover:text-stone-200'
     }`}
   >
@@ -1250,7 +1254,7 @@ const LogMonthlyDataForm: React.FC<{
         </div>
 
         {(STORE_PLATFORMS as readonly string[]).filter((p) => selectedPlatforms.has(p)).map((p) => (
-          <div key={p} className="grid grid-cols-[auto_1fr_1fr] items-end gap-3">
+          <div key={p} className="grid grid-cols-1 sm:grid-cols-[auto_1fr_1fr] items-end gap-3">
             <div className="text-xs font-semibold capitalize pb-2.5" style={{ color: 'var(--purple-light)' }}>
               {p}
             </div>
@@ -1411,14 +1415,14 @@ const OversightPanel: React.FC<{ currentUser: UserRecord; allUsers: UserRecord[]
                 key={`${l.overseer_id}-${l.media_buyer_id}`}
                 className="py-2 flex items-center justify-between text-sm text-stone-200"
               >
-                <span>
+                <span className="min-w-0">
                   <strong className="text-white">{nameOf(l.overseer_id)}</strong> tracks{' '}
                   <strong className="text-white">{nameOf(l.media_buyer_id)}</strong>
                 </span>
                 <button
                   onClick={() => remove(l.overseer_id, l.media_buyer_id)}
                   style={{ color: 'var(--roas-bad)' }}
-                  className="hover:opacity-75"
+                  className="hover:opacity-75 shrink-0 ml-2"
                   title="Remove"
                 >
                   <Trash2 className="w-4 h-4" />

@@ -855,7 +855,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         </div>
 
         {/* Employee Selector for Manager or Self */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-3">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-stone-900/80 border border-stone-800 text-xs">
             <User className="w-3.5 h-3.5 text-purple-400" />
             <span className="text-stone-400 text-[11px]">Active Employee:</span>
@@ -1815,10 +1815,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                     key={log.id}
                     className="p-4 rounded-[16px] border border-stone-800 hover:border-purple-500/40 bg-stone-900/60 transition-all space-y-3 shadow-md"
                   >
-                    <div className="flex items-center justify-between pb-2 border-b border-stone-800 text-xs">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center flex-wrap gap-y-1.5 justify-between pb-2 border-b border-stone-800 text-xs">
+                      <div className="flex items-center gap-2 flex-wrap min-w-0">
                         <div
-                          className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px]"
+                          className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0"
                           style={{ background: 'var(--gradient-badge)', color: 'white' }}
                         >
                           {logUser?.name.charAt(0) || 'U'}
@@ -1832,7 +1832,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         )}
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {isFutureLog && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-sky-900/60 text-sky-300 border border-sky-700/50">
                             Future
