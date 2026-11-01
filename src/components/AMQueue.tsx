@@ -680,7 +680,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as ClientStatus | 'all')}
-              className="px-3 py-1.5 rounded-xl text-xs bg-black/30 border border-purple-900/40 text-white outline-none focus:border-purple-400"
+              // Solid dark background (same bg-[#120d1e] the "-- Assign AM --" select below
+              // already uses) instead of bg-black/30 — a translucent background lets the page
+              // behind it show through and reads as near-white in the closed control and the
+              // native options popup, which is what made this filter hard to read.
+              className="px-3 py-1.5 rounded-xl text-xs bg-[#120d1e] border border-purple-900/40 text-white outline-none focus:border-purple-400"
             >
               {STATUS_FILTER_OPTIONS.map((opt) => {
                 const count =
@@ -688,7 +692,10 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                     ? visibleClients.length
                     : visibleClients.filter((c) => c.status === opt.key).length;
                 return (
-                  <option key={opt.key} value={opt.key}>
+                  // Explicit inline colors on <option> too — the options popup is rendered by
+                  // the OS/browser, not this app's CSS, and some browsers ignore a parent
+                  // <select>'s background for that popup unless each <option> also sets one.
+                  <option key={opt.key} value={opt.key} style={{ background: '#120d1e', color: '#ffffff' }}>
                     {opt.label} ({count})
                   </option>
                 );
@@ -736,7 +743,14 @@ export const AMQueue: React.FC<AMQueueProps> = ({
               </thead>
               <tbody className="divide-y divide-purple-900/20 text-xs">
                 {displayedClients.map((client) => {
-                  const assignedAgent = amAgents.find((u) => u.id === client.am_agent_id);
+                  // am_agent_id can point to either a regular AM Agent OR an AM Team Lead — the
+                  // "-- Assign AM --" dropdown below explicitly allows assigning a team lead
+                  // (amTeamLeaders.map(...) alongside amAgents.map(...)). Looking only in
+                  // amAgents here was wrongly showing "Unassigned" for a client assigned to a
+                  // team lead even though it IS assigned — just not to a plain agent.
+                  const assignedAgent =
+                    amAgents.find((u) => u.id === client.am_agent_id) ||
+                    amTeamLeaders.find((u) => u.id === client.am_agent_id);
                   const lifecycle = getClientLifecycleStatus(client);
                   const services = getClientServices(client);
 
