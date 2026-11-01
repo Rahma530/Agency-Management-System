@@ -52,6 +52,29 @@ export const isCurrentlyActiveClient = (client: ClientRecord): boolean =>
 // capacity/workload load, but still counts toward MRR (still a paying, contracted client).
 export const isPausedClient = (client: ClientRecord): boolean => client.status === 'paused';
 
+// Single shared ordering for "clients, sorted by how much attention they need right now" — new
+// onboarding clients first (still being set up), established active/renewal clients next, wound-
+// down ones (paused/closed) last. Used both for the Client Portfolio table (AMQueue.tsx) and for
+// client-picker dropdowns elsewhere (e.g. CrossTeamTaskBoard.tsx's Client filter/select) so a
+// paused or closed client — still perfectly selectable, since existing tasks/history reference it
+// — doesn't clutter the top of a list of clients someone is actively working with.
+const CLIENT_STATUS_SORT_ORDER: Record<ClientStatus, number> = {
+  onboarding: 0,
+  active: 1,
+  renewal: 2,
+  paused: 3,
+  closed: 4,
+};
+
+export const compareByClientStatus = (a: ClientRecord, b: ClientRecord): number =>
+  CLIENT_STATUS_SORT_ORDER[a.status] - CLIENT_STATUS_SORT_ORDER[b.status];
+
+// A paused or closed client is still fully selectable everywhere — never hidden, never actually
+// disabled — just visually de-emphasized (muted text) once sorted to the bottom of a list, via
+// this shared check, so every client picker applies it the same way.
+export const isWoundDownClient = (client: ClientRecord): boolean =>
+  client.status === 'paused' || client.status === 'closed';
+
 type CalendarDate = {
   year: number;
   month: number;
