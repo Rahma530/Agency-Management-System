@@ -1,5 +1,5 @@
 import React from 'react';
-import { useDraggable } from '@dnd-kit/core';
+import { useDraggable, useDroppable } from '@dnd-kit/core';
 import {
   Building2,
   Calendar,
@@ -86,6 +86,9 @@ export interface KanbanTaskCardContentProps {
   isSelected?: boolean;
   anySelected?: boolean;
   onToggleSelection?: (taskId: string) => void;
+  // Manual drag-and-drop reorder within a column (2026-11-02) — see KanbanTaskCard's own comment
+  // below for why only the droppable half of this is gated, not the draggable half.
+  canReorder?: boolean;
 }
 
 // Pure presentational card body — used both for the real (draggable) card
@@ -374,19 +377,40 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
 // PointerSensor (configured where DndContext is set up) is what keeps a
 // plain click still opening Task Details instead of every click being
 // swallowed as a drag start.
+//
+// Also useDroppable (2026-11-02), so a card dragged onto THIS card can be detected as "over"
+// this specific card rather than just the column it sits in — needed for within-column manual
+// reorder (see CrossTeamTaskBoard.tsx's handleDragEnd). Deliberately gated by canReorder alone,
+// not draggable: moving a card between columns (status change) stays unconditional, exactly as
+// it always worked — only the reorder-within-a-column half of this feature is restricted to the
+// unfiltered board (reordering a filtered SUBSET can't unambiguously say where a card lands
+// among tasks of the same status currently hidden by that filter).
 export const KanbanTaskCard: React.FC<KanbanTaskCardContentProps> = (props) => {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({
     id: props.task.id,
     data: { task: props.task },
+  });
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: props.task.id,
+    disabled: !props.canReorder,
   });
 
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     opacity: isDragging ? 0.4 : 1,
+    outline: isOver ? '2px solid var(--purple-light)' : undefined,
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
+    <div
+      ref={(node) => {
+        setDragRef(node);
+        setDropRef(node);
+      }}
+      style={style}
+      {...listeners}
+      {...attributes}
+    >
       <KanbanTaskCardContent {...props} />
     </div>
   );

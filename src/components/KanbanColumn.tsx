@@ -31,6 +31,9 @@ interface KanbanColumnProps {
   selectedTaskIds: Set<string>;
   onToggleTaskSelection: (taskId: string) => void;
   onToggleColumnSelection: (taskIds: string[], select: boolean) => void;
+  // Manual drag-and-drop reorder within this column (2026-11-02) — see KanbanTaskCard.tsx's own
+  // comment for why this is separate from the always-on status-change drag.
+  canReorder?: boolean;
 }
 
 // A useDroppable-backed column. Extracted into its own component (rather
@@ -57,6 +60,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   selectedTaskIds,
   onToggleTaskSelection,
   onToggleColumnSelection,
+  canReorder,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const columnRef = React.useRef<HTMLDivElement | null>(null);
@@ -194,6 +198,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 isSelected={selectedTaskIds.has(task.id)}
                 anySelected={selectedTaskIds.size > 0}
                 onToggleSelection={onToggleTaskSelection}
+                canReorder={canReorder}
               />
             );
           })

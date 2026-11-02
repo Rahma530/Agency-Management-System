@@ -473,6 +473,10 @@ export interface TaskRecord {
   delivered_at?: string | null;
   revision_count?: number;
   revision_started_at?: string | null;
+  // Manual drag-and-drop position within a Kanban column (CrossTeamTaskBoard.tsx, 2026-11-02) —
+  // same idea as ClientRecord.sort_order: null means "never manually reordered within its
+  // current status", in which case the column keeps whatever order `tasks` was already in.
+  sort_order?: number | null;
 }
 
 // 6a. task_assignees — "task assignees" project, PR 1 foundation (database only, not yet read by
