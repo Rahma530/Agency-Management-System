@@ -4724,6 +4724,32 @@ export default function App() {
     showNotification('Task data updated successfully.');
   };
 
+  // Manual drag-and-drop reorder within a Kanban column (CrossTeamTaskBoard.tsx, 2026-11-02) —
+  // same shape as handleReorderClients. Deliberately a direct, minimal write (not routed through
+  // handleUpdateTask) since reordering never touches status/completed_at/started_at/actual_hours
+  // or assignees, and handleUpdateTask's bookkeeping for those would just be dead work here.
+  const handleReorderTasks = async (updates: { id: string; sort_order: number }[]) => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; the task order was not saved.');
+    try {
+      await Promise.all(
+        updates.map(async ({ id, sort_order }) => {
+          const { error } = await supabaseRaw.from('tasks').update({ sort_order }).eq('id', id);
+          if (error) throw error;
+        })
+      );
+      setTasks((prev) =>
+        prev.map((t) => {
+          const match = updates.find((u) => u.id === t.id);
+          return match ? { ...t, sort_order: match.sort_order } : t;
+        })
+      );
+    } catch (err) {
+      console.error('Supabase reorder tasks error:', err);
+      showNotification('Unable to save the new task order.', 'info');
+      throw err;
+    }
+  };
+
   // 6. Create one task copy per selected client. create_task_copy owns assignee notifications and
   // idempotency; the UI must not duplicate either behavior.
   const handleCreateTask = async (taskData: CreateTaskFormInput) => {
@@ -7290,6 +7316,7 @@ export default function App() {
                   currentUser={currentUser}
                   currentUserId={currentUser.id}
                   onUpdateTaskStatus={handleUpdateTaskStatus}
+                  onReorderTasks={handleReorderTasks}
                   onCreateTask={handleCreateTask}
                   onUpdateTask={handleUpdateTask}
                   taskTypes={taskTypes}

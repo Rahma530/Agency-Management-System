@@ -133,6 +133,10 @@ interface CrossTeamTaskBoardProps {
   currentUser?: UserRecord;
   currentUserId?: string;
   onUpdateTaskStatus: (taskId: string, newStatus: TaskStatus) => Promise<void>;
+  // Manual drag-and-drop reorder within a Kanban column (2026-11-02), same shape as AMQueue.tsx's
+  // onReorderClients — only the rows whose sort_order actually changed. Optional: the board still
+  // works exactly as before (status-only drag) if this isn't passed.
+  onReorderTasks?: (updates: { id: string; sort_order: number }[]) => Promise<void>;
   onCreateTask: (taskData: CreateTaskFormInput) => Promise<void>;
   onUpdateTask?: (
     taskId: string,
@@ -213,6 +217,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   currentUser,
   currentUserId = currentUser?.id || users[0]?.id || '',
   onUpdateTaskStatus,
+  onReorderTasks,
   onCreateTask,
   onUpdateTask,
   taskTypes,
@@ -1373,9 +1378,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       const time = value ? new Date(value).getTime() : NaN;
       return Number.isNaN(time) ? 0 : time;
     };
-    return [...filteredTasks].sort((a, b) =>
-      taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b)
-    );
+    // Manual drag-and-drop position (2026-11-02) wins over the newest/oldest toggle whenever
+    // it's set — same precedence rule as AMQueue.tsx's compareClientsForPortfolio: every
+    // manually-positioned task sorts as one contiguous sort_order-ordered block, strictly before
+    // any task never dragged, and those keep falling back to the existing date sort among
+    // themselves. Affects both the Kanban board (reorder happens per-column, see handleDragEnd)
+    // and the Table view, which share this same list.
+    return [...filteredTasks].sort((a, b) => {
+      const aOrder = a.sort_order;
+      const bOrder = b.sort_order;
+      if (aOrder != null && bOrder != null) return aOrder - bOrder;
+      if (aOrder != null) return -1;
+      if (bOrder != null) return 1;
+      return taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b);
+    });
   }, [filteredTasks, taskSortOrder]);
 
   // Handlers
@@ -1752,14 +1768,72 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setDraggingTask(task || null);
   };
 
+  // Manual drag-and-drop reorder within a column (2026-11-02) is only offered on the plain,
+  // unfiltered board — same reasoning as AMQueue.tsx's canReorderClients: reordering a FILTERED
+  // subset can't unambiguously say where a card lands among same-status tasks the filter is
+  // currently hiding. Status-change dragging (moving a card to a different column) is unaffected
+  // by this — it stays available regardless of filters, exactly as it always worked.
+  const canReorderTasks =
+    quickFilter === 'all' &&
+    !dateFilter &&
+    selectedTeam === 'all' &&
+    selectedClient === 'all' &&
+    selectedPriority === 'all' &&
+    selectedStatus === 'all' &&
+    selectedAssigneeId === 'all' &&
+    selectedPlatformIds.length === 0 &&
+    !searchQuery.trim() &&
+    !!onReorderTasks;
+
+  // Shared helper: moves `fromId` to `toId`'s position inside `list` (a single status column's
+  // tasks, in their current display order), reindexes sequentially, and writes only the rows
+  // whose sort_order actually changed. Same shape as AMQueue.tsx's reorderClientList.
+  const reorderTaskList = async (list: TaskRecord[], fromId: string, toId: string) => {
+    if (!onReorderTasks || fromId === toId) return;
+    const fromIndex = list.findIndex((t) => t.id === fromId);
+    const toIndex = list.findIndex((t) => t.id === toId);
+    if (fromIndex === -1 || toIndex === -1) return;
+
+    const reordered = list.slice();
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+
+    const updates = reordered
+      .map((task, index) => ({ id: task.id, sort_order: index }))
+      .filter(({ id, sort_order }) => {
+        const current = reordered.find((t) => t.id === id);
+        return current?.sort_order !== sort_order;
+      });
+    if (updates.length === 0) return;
+    await onReorderTasks(updates);
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setDraggingTask(null);
     if (!over) return;
-    const targetStatus = over.id as TaskStatus;
     const task = tasks.find((t) => t.id === active.id);
-    if (task && task.status !== targetStatus) {
-      handleMoveStatus(task.id, targetStatus);
+    if (!task) return;
+    const overId = String(over.id);
+
+    // over.id is either a column's own id (a TaskStatus — dropped on empty column space) or
+    // another task's id (dropped on a specific card, which only happens when that card's own
+    // useDroppable is enabled, i.e. canReorderTasks).
+    if (columns.some((c) => c.id === overId)) {
+      const targetStatus = overId as TaskStatus;
+      if (task.status !== targetStatus) handleMoveStatus(task.id, targetStatus);
+      return;
+    }
+    const targetTask = tasks.find((t) => t.id === overId);
+    if (!targetTask) return;
+    if (targetTask.status !== task.status) {
+      handleMoveStatus(task.id, targetTask.status);
+    } else {
+      void reorderTaskList(
+        sortedTasks.filter((t) => t.status === task.status),
+        task.id,
+        targetTask.id
+      );
     }
   };
 
@@ -2353,6 +2427,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   canUseBulkActions={canUseBulkActions}
                   selectedTaskIds={selectedTaskIds}
                   onToggleTaskSelection={toggleTaskSelection}
+                  canReorder={canReorderTasks}
                   onToggleColumnSelection={toggleColumnSelection}
                 />
               );
