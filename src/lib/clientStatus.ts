@@ -90,9 +90,34 @@ export const compareClientsForPortfolio = (a: ClientRecord, b: ClientRecord): nu
 // Inhouse module (2026-11-02): Kesraa/Fast Growth are real rows in public.clients, flagged
 // is_inhouse so they can be excluded from every normal Sales/AM client list and picker — they
 // aren't paying clients, and appearing there would be confusing (e.g. a Sales rep being asked to
-// "assign an AM" to the agency's own brand). The Inhouse module (not yet built) is the one place
-// that's meant to show them, as its own "which company" picker.
+// "assign an AM" to the agency's own brand). The Inhouse module is the one place that's meant to
+// show them, as its own "which company" picker — see isInhouseClient below, its exact complement.
 export const isExternalClient = (client: ClientRecord): boolean => !client.is_inhouse;
+
+// The Inhouse module's own client picker uses this instead of `!isExternalClient(...)` inline —
+// same boolean, but named for what the module is selecting FOR rather than what it's excluding,
+// so CrossTeamTaskBoard.tsx's inhouseOnly branches read the same way AMQueue.tsx's normal-client
+// branches do (isExternalClient there) rather than a double negative.
+export const isInhouseClient = (client: ClientRecord): boolean => !!client.is_inhouse;
+
+// The only three teams the Inhouse module deals in (owner's own request: "Creative - Programming
+// Tasks" for Kesraa/Fast Growth) — Video Production and Programming are their own literal
+// task.team values alongside Creative & Design, mirroring OPERATIONAL_TEAMS in
+// departmentStaffing.ts. Kept here (not there) since this is an Inhouse-module-specific subset,
+// not a third copy of the full operational-teams list.
+export const INHOUSE_TEAMS: string[] = ['Creative & Design', 'Video Production', 'Programming'];
+
+// A task belongs to the Inhouse module when its client is one of the is_inhouse companies AND
+// its team is one of the three Inhouse teams above. Both conditions matter: a Kesraa task filed
+// under, say, "Marketing" team is not Inhouse-module work (the owner's own request scoped Inhouse
+// to Creative/Video/Programming specifically), and a non-inhouse client's task is never Inhouse
+// no matter its team. Takes the already-loaded client list rather than a lookup fn so callers
+// that already have `clients` in scope (App.tsx, CrossTeamTaskBoard.tsx) don't need a second one.
+export const isInhouseTask = (task: { client_id: string | null; team: string }, clients: ClientRecord[]): boolean => {
+  if (!task.client_id) return false;
+  const client = clients.find((c) => c.id === task.client_id);
+  return !!client?.is_inhouse && INHOUSE_TEAMS.includes(task.team);
+};
 
 // A paused or closed client is still fully selectable everywhere — never hidden, never actually
 // disabled — just visually de-emphasized (muted text) once sorted to the bottom of a list, via
