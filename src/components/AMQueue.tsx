@@ -74,6 +74,7 @@ import {
 } from '@dnd-kit/core';
 import { GripVertical } from 'lucide-react';
 import { ClientDashboard } from './ClientDashboard';
+import { ClientKanbanColumn } from './ClientKanbanColumn';
 import { MergeClientsModal } from './MergeClientsModal';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
 import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportGenerationResult } from './reporting/ComparisonDisplay';
@@ -463,21 +464,22 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
   const [isReordering, setIsReordering] = useState(false);
+  const [portfolioViewMode, setPortfolioViewMode] = useState<'list' | 'board'>('list');
 
-  const handleClientDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id || !onReorderClients) return;
-    const fromIndex = displayedClients.findIndex((c) => c.id === active.id);
-    const toIndex = displayedClients.findIndex((c) => c.id === over.id);
+  // Shared by the List view's row reorder and the Board view's within-column reorder: moves
+  // `fromId` to `toId`'s position inside `list`, reindexes `list` sequentially, and writes only
+  // the rows whose sort_order actually changed. See compareClientsForPortfolio's comment for why
+  // a full reindex (not just the moved row) keeps future comparisons unambiguous.
+  const reorderClientList = async (list: ClientRecord[], fromId: string, toId: string) => {
+    if (!onReorderClients || fromId === toId) return;
+    const fromIndex = list.findIndex((c) => c.id === fromId);
+    const toIndex = list.findIndex((c) => c.id === toId);
     if (fromIndex === -1 || toIndex === -1) return;
 
-    const reordered = displayedClients.slice();
+    const reordered = list.slice();
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
 
-    // Reindex the WHOLE visible list sequentially (not just the moved row) — see
-    // compareClientsForPortfolio's comment for why this keeps future comparisons unambiguous.
-    // Only send the rows whose sort_order actually changed, to keep the write small.
     const updates = reordered
       .map((client, index) => ({ id: client.id, sort_order: index }))
       .filter(({ id, sort_order }) => {
@@ -491,6 +493,64 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       await onReorderClients(updates);
     } finally {
       setIsReordering(false);
+    }
+  };
+
+  const handleClientDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    await reorderClientList(displayedClients, String(active.id), String(over.id));
+  };
+
+  // Board view (2026-11-02): dragging a card onto another status column's area, or onto a card
+  // that already belongs to a different column, changes status — reusing the exact same
+  // handlers the quick-status dropdown already uses (handleQuickStatusChange/
+  // handleQuickConfirmRenewal), so the set of allowed transitions never drifts out of sync
+  // between the two UIs. Closing (needs a required reason + stop date) and reopening (needs a
+  // reopen date) can't complete from a drag alone — both open the full Client Dashboard instead,
+  // same as the quick-status dropdown's "Close Client…"/"Reopen Client…" items; the card stays
+  // in its current column until that form is actually submitted there.
+  const CLIENT_STATUS_VALUES: ClientStatus[] = ['onboarding', 'active', 'renewal', 'paused', 'closed'];
+
+  const handleClientStatusDrop = (client: ClientRecord, targetStatus: ClientStatus) => {
+    if (client.status === targetStatus || !canManageClientStatus(client)) return;
+    if (targetStatus === 'closed' || client.status === 'closed') {
+      setDashboardClientId(client.id);
+      return;
+    }
+    if (client.status === 'renewal' && targetStatus === 'active') {
+      void handleQuickConfirmRenewal(client.id);
+      return;
+    }
+    const allowed =
+      (client.status === 'onboarding' && targetStatus === 'active') ||
+      (client.status === 'active' && (targetStatus === 'renewal' || targetStatus === 'paused')) ||
+      (client.status === 'paused' && targetStatus === 'active');
+    if (!allowed) return; // Not an offered transition — same set the quick-status menu offers.
+    void handleQuickStatusChange(client.id, targetStatus);
+  };
+
+  const handleBoardDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    const client = displayedClients.find((c) => c.id === active.id);
+    if (!client) return;
+    const overId = String(over.id);
+
+    if ((CLIENT_STATUS_VALUES as string[]).includes(overId)) {
+      handleClientStatusDrop(client, overId as ClientStatus);
+      return;
+    }
+    const targetClient = displayedClients.find((c) => c.id === overId);
+    if (!targetClient) return;
+    if (targetClient.status !== client.status) {
+      handleClientStatusDrop(client, targetClient.status);
+    } else {
+      void reorderClientList(
+        displayedClients.filter((c) => c.status === client.status),
+        client.id,
+        targetClient.id
+      );
     }
   };
 
@@ -866,6 +926,32 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-purple-400" />
             <h3 className="text-sm font-bold" style={{ color: 'var(--ink)' }}>Client Portfolio</h3>
+            {/* List / Board toggle (2026-11-02) — Board groups the same clients into columns by
+                status (like ClickUp), on top of the List view's own drag-and-drop reorder. */}
+            <div className="flex items-center rounded-lg border border-purple-900/40 overflow-hidden text-[11px] font-semibold">
+              <button
+                type="button"
+                onClick={() => setPortfolioViewMode('list')}
+                className="px-2.5 py-1 transition-colors"
+                style={{
+                  background: portfolioViewMode === 'list' ? 'var(--purple-light)' : 'transparent',
+                  color: portfolioViewMode === 'list' ? 'var(--ink-inverse, #fff)' : 'var(--ink-soft)',
+                }}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                onClick={() => setPortfolioViewMode('board')}
+                className="px-2.5 py-1 transition-colors"
+                style={{
+                  background: portfolioViewMode === 'board' ? 'var(--purple-light)' : 'transparent',
+                  color: portfolioViewMode === 'board' ? 'var(--ink-inverse, #fff)' : 'var(--ink-soft)',
+                }}
+              >
+                Board
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {canShowMergeClients && selectedClientIds.size >= 2 && (
@@ -917,7 +1003,33 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           </div>
         </div>
 
-        {displayedClients.length === 0 ? (
+        {portfolioViewMode === 'board' ? (
+          displayedClients.length === 0 ? (
+            <div className="p-8 text-center space-y-2">
+              <p className="text-xs text-stone-400">
+                {searchQuery ? 'No clients match your search.' : 'No clients found in the onboarding queue.'}
+              </p>
+            </div>
+          ) : (
+            <div className="p-4 overflow-x-auto">
+              <DndContext sensors={reorderSensors} onDragEnd={handleBoardDragEnd}>
+                <div className="flex gap-3">
+                  {CLIENT_STATUS_VALUES.map((status) => (
+                    <ClientKanbanColumn
+                      key={status}
+                      status={status}
+                      clients={displayedClients.filter((c) => c.status === status)}
+                      amAgents={amAgents}
+                      amTeamLeaders={amTeamLeaders}
+                      canDrag={canReorderClients}
+                      onOpenDashboard={setDashboardClientId}
+                    />
+                  ))}
+                </div>
+              </DndContext>
+            </div>
+          )
+        ) : displayedClients.length === 0 ? (
           <div className="p-8 text-center space-y-2">
             <p className="text-xs text-stone-400">
               {searchQuery
