@@ -69,6 +69,31 @@ const CLIENT_STATUS_SORT_ORDER: Record<ClientStatus, number> = {
 export const compareByClientStatus = (a: ClientRecord, b: ClientRecord): number =>
   CLIENT_STATUS_SORT_ORDER[a.status] - CLIENT_STATUS_SORT_ORDER[b.status];
 
+// 2026-11-02: the Client Portfolio table (AMQueue.tsx) now supports manual drag-and-drop
+// reordering on top of the automatic status sort above. sort_order is nullable — null means
+// "never manually touched", and such clients keep falling back to compareByClientStatus among
+// themselves. The moment ANY client in the list is dragged, the whole visible list is reindexed
+// (see AMQueue.tsx's handleReorderClients) so every client in it gets a sequential sort_order;
+// in practice a "some manually placed, some not" list only exists transiently, for a brand-new
+// client created after the last reorder. This comparator's job is just to keep that transient
+// case sane: every manually-positioned client (sort_order set) sorts as one contiguous block,
+// in sort_order order, strictly before every not-yet-positioned client, and the not-yet-
+// positioned ones keep the automatic status order among themselves.
+export const compareClientsForPortfolio = (a: ClientRecord, b: ClientRecord): number => {
+  const aOrder = a.sort_order;
+  const bOrder = b.sort_order;
+  if (aOrder != null && bOrder != null) return aOrder - bOrder;
+  if (aOrder == null && bOrder == null) return compareByClientStatus(a, b);
+  return aOrder == null ? 1 : -1;
+};
+
+// Inhouse module (2026-11-02): Kesraa/Fast Growth are real rows in public.clients, flagged
+// is_inhouse so they can be excluded from every normal Sales/AM client list and picker — they
+// aren't paying clients, and appearing there would be confusing (e.g. a Sales rep being asked to
+// "assign an AM" to the agency's own brand). The Inhouse module (not yet built) is the one place
+// that's meant to show them, as its own "which company" picker.
+export const isExternalClient = (client: ClientRecord): boolean => !client.is_inhouse;
+
 // A paused or closed client is still fully selectable everywhere — never hidden, never actually
 // disabled — just visually de-emphasized (muted text) once sorted to the bottom of a list, via
 // this shared check, so every client picker applies it the same way.

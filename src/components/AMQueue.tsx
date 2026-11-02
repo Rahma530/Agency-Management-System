@@ -62,7 +62,17 @@ import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding, canMergeClients } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
-import { CLIENT_STATUS_META, compareByClientStatus } from '../lib/clientStatus';
+import { CLIENT_STATUS_META, compareClientsForPortfolio, isExternalClient } from '../lib/clientStatus';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { GripVertical } from 'lucide-react';
 import { ClientDashboard } from './ClientDashboard';
 import { MergeClientsModal } from './MergeClientsModal';
 import { ComparisonGranularity, DateRange, ReportMode, ReportScope } from '../lib/reportingEngine';
@@ -122,6 +132,10 @@ interface AMQueueProps {
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
   onConfirmClientRenewal?: (clientId: string) => Promise<void>;
+  // Manual drag-and-drop reorder of the Client Portfolio table (2026-11-02). Receives the full
+  // set of {id, sort_order} pairs that actually changed after a drag (not the whole list) — see
+  // handleReorderClients below for why the drag handle only shows with no filter/search active.
+  onReorderClients?: (updates: { id: string; sort_order: number }[]) => Promise<void>;
   onReopenClient?: (clientId: string, reopenDate: string) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onNavigateToModule?: (module: AppModuleId, prefillAssigneeName?: string) => void;
@@ -186,6 +200,57 @@ interface AMQueueProps {
   ) => Promise<{ succeeded: string[]; failed: { id: string; error: string } | null }>;
 }
 
+// Manual drag-and-drop reorder for the Client Portfolio table (2026-11-02). A row is both the
+// drag source AND the drop target — dropping a dragged row onto another row moves it to that
+// row's position (handleClientDragEnd does the actual reindexing). Kept as its own component
+// because a hook like useDraggable/useDroppable can't be called a variable number of times
+// inside a .map() loop in the parent (same reasoning as KanbanColumn.tsx's own comment) — each
+// row needs its own hook call, which means its own component instance. The drag handle is its
+// own leading <td>, rendered only while canReorder is true, so the rest of the row keeps working
+// exactly as before (its own onClick still opens the Client Dashboard) when a filter/search is
+// active and reordering is disabled.
+const SortableClientRow: React.FC<{
+  clientId: string;
+  canReorder: boolean;
+  onRowClick: () => void;
+  className?: string;
+  children: React.ReactNode;
+}> = ({ clientId, canReorder, onRowClick, className, children }) => {
+  const { attributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({
+    id: clientId,
+    disabled: !canReorder,
+  });
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: clientId, disabled: !canReorder });
+
+  return (
+    <tr
+      ref={(node) => {
+        setDragRef(node);
+        setDropRef(node);
+      }}
+      onClick={onRowClick}
+      className={className}
+      style={{
+        transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
+        opacity: isDragging ? 0.4 : 1,
+        background: isOver ? 'rgba(168, 85, 247, 0.12)' : undefined,
+      }}
+    >
+      {canReorder && (
+        <td
+          className="py-3.5 px-2 w-6 text-stone-500 hover:text-stone-300 cursor-grab active:cursor-grabbing"
+          onClick={(e) => e.stopPropagation()}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={14} />
+        </td>
+      )}
+      {children}
+    </tr>
+  );
+};
+
 export const AMQueue: React.FC<AMQueueProps> = ({
   clients,
   clientLifecyclePeriodsByClientId,
@@ -223,6 +288,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   onUpdateTaskStatus,
   onUpdateClientStatus,
   onConfirmClientRenewal,
+  onReorderClients,
   onReopenClient,
   onMarkClientViewed,
   onNavigateToModule,
@@ -283,10 +349,14 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   // - AM Agent: ONLY view clients assigned specifically to that AM Agent.
   // - AM Team Leader: View all clients managed by the AM team (assigned + unassigned), unfiltered by am_team_lead_id.
   const visibleClients = useMemo(() => {
+    // Inhouse module (2026-11-02): Kesraa/Fast Growth are real client rows, flagged is_inhouse,
+    // but aren't paying clients — they don't belong in the Client Portfolio, the stats bar above
+    // it, or the Renewal Queue. They'll have their own picker inside the Inhouse module.
+    const externalClients = clients.filter(isExternalClient);
     if (isAMAgent) {
-      return clients.filter((c) => c.am_agent_id === effectiveUserId);
+      return externalClients.filter((c) => c.am_agent_id === effectiveUserId);
     }
-    return clients;
+    return externalClients;
   }, [clients, isAMAgent, effectiveUserId]);
 
   // Module 12 Phase 8: clients due for renewal, within the same am_team_lead/am_agent scope
@@ -359,10 +429,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         })
         // "Documented Briefs" card filter — clients that have at least one submitted brief.
         .filter((c) => !showDocumentedBriefsOnly || getClientBriefs(c.id).length > 0)
-        // Onboarding clients (need attention now) first, closed ones last — see
-        // compareByClientStatus's own comment (lib/clientStatus.ts) for the full ordering.
+        // Onboarding clients (need attention now) first, closed ones last, unless manually
+        // reordered by drag-and-drop — see compareClientsForPortfolio's own comment
+        // (lib/clientStatus.ts) for the full ordering.
         .slice()
-        .sort(compareByClientStatus),
+        .sort(compareClientsForPortfolio),
     [
       visibleClients,
       searchQuery,
@@ -374,6 +445,54 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       briefs,
     ]
   );
+
+  // Manual drag-and-drop reorder (2026-11-02) is only offered on the plain, unfiltered table —
+  // search/status-filter/stat-card toggles narrow displayedClients to a SUBSET of
+  // visibleClients, and reordering a subset can't unambiguously say where a dragged row should
+  // land among the clients currently hidden by that filter. Simplest honest behavior: show the
+  // drag handle (and accept drags) only when displayedClients === visibleClients in practice.
+  const canReorderClients =
+    !searchQuery &&
+    !showMissingDatesOnly &&
+    statusFilter === 'all' &&
+    !showPendingBriefsOnly &&
+    !showDocumentedBriefsOnly &&
+    !!onReorderClients;
+
+  const reorderSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+  const [isReordering, setIsReordering] = useState(false);
+
+  const handleClientDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !onReorderClients) return;
+    const fromIndex = displayedClients.findIndex((c) => c.id === active.id);
+    const toIndex = displayedClients.findIndex((c) => c.id === over.id);
+    if (fromIndex === -1 || toIndex === -1) return;
+
+    const reordered = displayedClients.slice();
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+
+    // Reindex the WHOLE visible list sequentially (not just the moved row) — see
+    // compareClientsForPortfolio's comment for why this keeps future comparisons unambiguous.
+    // Only send the rows whose sort_order actually changed, to keep the write small.
+    const updates = reordered
+      .map((client, index) => ({ id: client.id, sort_order: index }))
+      .filter(({ id, sort_order }) => {
+        const current = reordered.find((c) => c.id === id);
+        return current?.sort_order !== sort_order;
+      });
+    if (updates.length === 0) return;
+
+    setIsReordering(true);
+    try {
+      await onReorderClients(updates);
+    } finally {
+      setIsReordering(false);
+    }
+  };
 
   const STATUS_FILTER_OPTIONS: { key: ClientStatus | 'all'; label: string }[] = [
     { key: 'all', label: 'All' },
@@ -810,9 +929,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           </div>
         ) : (
           <div className="overflow-x-auto">
+            <DndContext sensors={reorderSensors} onDragEnd={handleClientDragEnd}>
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-purple-900/30 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--ink-soft)', background: 'var(--canvas)' }}>
+                  {canReorderClients && <th className="py-3 px-2 w-6"></th>}
                   {canShowMergeClients && <th className="py-3 px-4 w-8"></th>}
                   <th className="py-3 px-4">Client Name</th>
                   <th className="py-3 px-4">Industry</th>
@@ -836,9 +957,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                   const services = getClientServices(client);
 
                   return (
-                    <tr
+                    <SortableClientRow
                       key={client.id}
-                      onClick={() => setDashboardClientId(client.id)}
+                      clientId={client.id}
+                      canReorder={canReorderClients}
+                      onRowClick={() => setDashboardClientId(client.id)}
                       className="client-portfolio-row hover:bg-purple-950/30 transition-colors cursor-pointer group"
                     >
                       {canShowMergeClients && (
@@ -1103,11 +1226,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                           <span>View Dashboard</span>
                         </button>
                       </td>
-                    </tr>
+                    </SortableClientRow>
                   );
                 })}
               </tbody>
             </table>
+            </DndContext>
           </div>
         )}
       </div>

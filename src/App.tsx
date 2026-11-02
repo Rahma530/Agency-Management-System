@@ -3538,6 +3538,24 @@ export default function App() {
     showNotification(`Client "${client?.name || clientId}" reopened.`);
   };
 
+  // Manual drag-and-drop reorder of the Client Portfolio table (AMQueue.tsx, 2026-11-02).
+  // `updates` is only the rows whose sort_order actually changed after the drag (computed by
+  // AMQueue's handleClientDragEnd), not the whole list — written in parallel since each is an
+  // independent single-row update, same as every other per-client write in this file. Silent on
+  // success (no toast) since a drag-and-drop reorder is its own visual feedback; a failure still
+  // surfaces, same as every other client write here.
+  const handleReorderClients = async (updates: { id: string; sort_order: number }[]) => {
+    try {
+      await Promise.all(
+        updates.map(({ id, sort_order }) => updatePersistedClient(id, { sort_order }))
+      );
+    } catch (err) {
+      console.error('Supabase reorder clients error:', err);
+      showNotification('Unable to save the new client order.', 'info');
+      throw err;
+    }
+  };
+
   // 2a-3. Hard delete a client (point 6/7) — real DELETE, not deactivation, since clients have no
   // login/auth identity concern the way employees do. clients_delete_rls scopes WHO can call this
   // (executive/head_of_technical + all 5 team leads); the actual block-if-any-activity-exists rule
@@ -7146,6 +7164,7 @@ export default function App() {
                     onOpenBulkUploadModal={canRegisterClients ? () => setIsBulkClientUploadOpen(true) : undefined}
                     onUpdateClientStatus={handleUpdateClientStatus}
                     onConfirmClientRenewal={handleConfirmClientRenewal}
+                    onReorderClients={handleReorderClients}
                     onReopenClient={handleReopenClient}
                     onMarkClientViewed={handleMarkClientViewedByAMLead}
                     onNavigateToModule={handleNavigateToModule}
