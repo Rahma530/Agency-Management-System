@@ -230,6 +230,18 @@ export interface ClientRecord {
   // via EditClientModal.tsx (see 20261207000000_update_client_details_add_margin.sql).
   profit_margin_pct?: number | null;
   created_at?: string;
+  // Inhouse module (2026-11-02): marks a client row that represents one of the agency's own
+  // brands (Kesraa, Fast Growth) rather than a paying client — set manually once via SQL on the
+  // two existing rows, never through the registration form. Excluded from every normal Sales/AM
+  // client list (Client Portfolio, lead pipeline, registration pickers); the only place it's
+  // meant to appear is the Inhouse module's "which company" picker. See
+  // 20261226000000_client_inhouse_and_sort_order.sql.
+  is_inhouse?: boolean;
+  // Manual drag-and-drop position for the Client Portfolio board, independent of
+  // compareByClientStatus (lib/clientStatus.ts)'s automatic status-based ordering. Null means
+  // "never manually reordered" — the frontend falls back to the automatic sort for those rows.
+  // Once a client is dragged, it gets an integer and manual order takes over for it from then on.
+  sort_order?: number | null;
 }
 
 // Phase 1 lifecycle history: one row per continuous period during which a client worked with
@@ -278,7 +290,7 @@ export interface ClientAccessFields {
 // built from pieces, it widens to plain `string` and every .select(...) call site below falls back
 // to an untyped `GenericStringError` result instead.
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at' as const;
+  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
