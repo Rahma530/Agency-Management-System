@@ -62,7 +62,7 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
-import { compareByClientStatus, isWoundDownClient } from '../lib/clientStatus';
+import { compareByClientStatus, isExternalClient, isWoundDownClient } from '../lib/clientStatus';
 import {
   computeTaskDeletionPreview,
   fetchTaskEvents,
@@ -253,7 +253,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // create/edit task): onboarding/active/renewal clients first, paused/closed last — never
   // removed or disabled, a paused/closed client still needs to stay pickable since existing
   // tasks/history reference it (see compareByClientStatus's own comment).
-  const sortedClientsForPicker = useMemo(() => [...clients].sort(compareByClientStatus), [clients]);
+  // Inhouse module (2026-11-02): Kesraa/Fast Growth are flagged is_inhouse — excluded from these
+  // plain client pickers (Client filter, bulk-move select, create/edit Task's Client select).
+  // The Inhouse module gets its own "which company" picker that's the one place they DO appear.
+  const sortedClientsForPicker = useMemo(
+    () => clients.filter(isExternalClient).sort(compareByClientStatus),
+    [clients]
+  );
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
