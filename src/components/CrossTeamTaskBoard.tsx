@@ -221,6 +221,60 @@ interface CrossTeamTaskBoardProps {
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
 export type TaskViewMode = 'kanban' | 'table' | 'timeline';
 
+// Table/List view's clickable column headers (2026-11-02) — see columnSort's own comment inside
+// the component for what this does. Status/priority follow their existing FUNNEL/SEVERITY order
+// (the same order the `columns` array and getPriorityBadge's switch already define elsewhere in
+// this file), not alphabetical — alphabetical would put "Blocked" before "Completed", which
+// doesn't read as a meaningful progression the way ClickUp's own status/priority sort doesn't
+// either. Every other field sorts by its own natural value (string localeCompare, numeric, or
+// timestamp as appropriate).
+export type TaskColumnSortField =
+  | 'title'
+  | 'client'
+  | 'assignee'
+  | 'team'
+  | 'priority'
+  | 'status'
+  | 'created'
+  | 'due_date'
+  | 'est_hours'
+  | 'act_hours';
+
+// The direction a freshly-clicked column starts at (first click), before any toggle. Status and
+// priority start at their natural "front of the funnel"/"most urgent first" order (ascending, by
+// TASK_STATUS_ORDER/TASK_PRIORITY_ORDER's own index below); dates start newest-first (matches the
+// existing Newest/Oldest toggle's own default — see taskSortOrder's comment); hours start
+// highest-first (biggest-estimate/most-logged tasks surfaced first, the more useful default for
+// a workload glance); text columns (Task/Client/Assignee/Team) start A→Z.
+const TASK_COLUMN_SORT_DEFAULT_DIRECTION: Record<TaskColumnSortField, 'asc' | 'desc'> = {
+  title: 'asc',
+  client: 'asc',
+  assignee: 'asc',
+  team: 'asc',
+  priority: 'asc',
+  status: 'asc',
+  created: 'desc',
+  due_date: 'desc',
+  est_hours: 'desc',
+  act_hours: 'desc',
+};
+
+const TASK_STATUS_SORT_ORDER: Record<TaskStatus, number> = {
+  todo: 0,
+  in_progress: 1,
+  in_review: 2,
+  completed: 3,
+  closed: 4,
+  blocked: 5,
+};
+
+const TASK_PRIORITY_SORT_ORDER: Record<TaskPriority, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
 // Manual drag-and-drop reorder for the Table/List view (2026-11-02, owner's follow-up — "same as
 // the Clients List"). Same shape as AMQueue.tsx's own SortableClientRow: a combined
 // useDraggable+useDroppable on the same <tr>, via a merged ref callback, so a drop can resolve as
@@ -350,6 +404,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // Defaults to newest-first per the agency owner's request: the previous unsorted order (raw
   // fetch/array order) happened to read oldest-first, which read as "today's new tasks are buried".
   const [taskSortOrder, setTaskSortOrder] = useState<'newest' | 'oldest'>('newest');
+  // ClickUp-style clickable column-header sort for the Table/List view (2026-11-02, owner's
+  // follow-up: "Sort by Status/Priority, exactly like ClickUp"). Distinct from both the manual
+  // drag-and-drop order above AND the Newest/Oldest toggle: clicking a column header sorts the
+  // WHOLE list purely by that column, overriding both of those while active (see sortedTasks'
+  // own comment on the precedence). null means neither is active — the default is this plain
+  // list's own existing manual/date precedence, unaffected. Clicking the SAME column again flips
+  // direction; clicking a DIFFERENT column switches to it at its natural first direction (see
+  // TASK_COLUMN_SORT_DEFAULT_DIRECTION below — e.g. Priority defaults to highest-first, Task
+  // title to A→Z).
+  const [columnSort, setColumnSort] = useState<{ field: TaskColumnSortField; direction: 'asc' | 'desc' } | null>(null);
   // "Date" filter — one free-text calendar-day picker, separate from the Quick Filter pills above.
   // Empty string means no filter. Owner-requested merge of what used to be two separate exclusive
   // fields (Completed On / Due On): "مش عايزة completed on ولا due date... عايزة اكتب التاريخ بس
@@ -1445,10 +1509,64 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     todayStr,
   ]);
 
+  // Resolves a task to the raw value its column sorts by (2026-11-02) — string | number | null,
+  // never pre-formatted display text, so numeric/date columns sort numerically rather than
+  // lexicographically (e.g. "9h" would otherwise sort after "10h"). null always sorts last,
+  // regardless of direction (a task with no due date, no estimate, etc. reads as "unscheduled",
+  // not as "earliest" when flipped to ascending).
+  const getColumnSortValue = (task: TaskRecord, field: TaskColumnSortField): string | number | null => {
+    switch (field) {
+      case 'title':
+        return task.title.toLowerCase();
+      case 'client':
+        return clients.find((c) => c.id === task.client_id)?.name.toLowerCase() || null;
+      case 'assignee': {
+        const firstAssigneeId = (taskAssigneeIdsByTask.get(task.id) || [])[0];
+        if (!firstAssigneeId) return null;
+        return taskDirectoryUsers.find((u) => u.id === firstAssigneeId)?.name.toLowerCase() || null;
+      }
+      case 'team':
+        return task.team ? task.team.toLowerCase() : null;
+      case 'priority':
+        return TASK_PRIORITY_SORT_ORDER[task.priority];
+      case 'status':
+        return TASK_STATUS_SORT_ORDER[task.status];
+      case 'created':
+        return task.created_at ? new Date(task.created_at).getTime() : null;
+      case 'due_date':
+        return task.due_date ? new Date(task.due_date).getTime() : null;
+      case 'est_hours':
+        return task.estimated_hours ?? null;
+      case 'act_hours':
+        return task.actual_hours ?? null;
+      default:
+        return null;
+    }
+  };
+
   // Date-sorted view of filteredTasks — a separate pass so the filter predicate above stays pure
   // "which tasks" logic and this stays pure "what order". [...array] before sort() because Array
   // .sort() mutates in place, and filteredTasks is a useMemo result other code may still read.
   const sortedTasks = useMemo(() => {
+    // ClickUp-style column-header sort (2026-11-02) takes absolute priority the moment it's
+    // active — it overrides BOTH the manual drag order AND the newest/oldest toggle below, same
+    // way clicking a column header in any spreadsheet-like table overrides whatever order was
+    // there before. Switching it off (columnSort back to null, e.g. by reopening Kanban's own
+    // status grouping) returns to that existing precedence untouched.
+    if (columnSort) {
+      const { field, direction } = columnSort;
+      const sign = direction === 'asc' ? 1 : -1;
+      return [...filteredTasks].sort((a, b) => {
+        const aValue = getColumnSortValue(a, field);
+        const bValue = getColumnSortValue(b, field);
+        if (aValue == null && bValue == null) return 0;
+        if (aValue == null) return 1; // null always last, regardless of direction
+        if (bValue == null) return -1;
+        if (typeof aValue === 'number' && typeof bValue === 'number') return (aValue - bValue) * sign;
+        return String(aValue).localeCompare(String(bValue)) * sign;
+      });
+    }
+
     const withDate = (t: TaskRecord) => {
       const value = t.created_at || t.due_date;
       const time = value ? new Date(value).getTime() : NaN;
@@ -1468,7 +1586,43 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       if (bOrder != null) return 1;
       return taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b);
     });
-  }, [filteredTasks, taskSortOrder]);
+  }, [filteredTasks, taskSortOrder, columnSort, clients, taskAssigneeIdsByTask, taskDirectoryUsers]);
+
+  // Column-header click handler (Table view) — same field clicked again flips direction; a
+  // different field switches to it at its own natural default direction (see
+  // TASK_COLUMN_SORT_DEFAULT_DIRECTION). Also disables manual drag reorder while active (see
+  // canReorderTasks below) — dragging a row to reorder wouldn't mean anything while the list is
+  // sorted by Priority/Status/etc. rather than by free manual position.
+  const handleColumnSortClick = (field: TaskColumnSortField) => {
+    setColumnSort((prev) => {
+      if (prev && prev.field === field) {
+        return { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { field, direction: TASK_COLUMN_SORT_DEFAULT_DIRECTION[field] };
+    });
+  };
+
+  // Renders one Table-view <th> as a clickable sort control — label plus a ▲/▼ indicator when
+  // this is the active column, and a faint, always-present ▵ on every other sortable header so
+  // it's discoverable as clickable before it's ever been clicked (same affordance ClickUp itself
+  // uses). `align` controls whether the indicator sits after the label (left-aligned columns,
+  // the default) or the two sit centered together (the existing `text-center` columns).
+  const renderSortableTaskHeader = (field: TaskColumnSortField, label: string, align: 'left' | 'center' = 'left') => {
+    const isActive = columnSort?.field === field;
+    const arrow = isActive ? (columnSort!.direction === 'asc' ? '▲' : '▼') : '▵';
+    return (
+      <th
+        className={`p-3.5 select-none cursor-pointer hover:text-white transition-colors ${align === 'center' ? 'text-center' : ''}`}
+        onClick={() => handleColumnSortClick(field)}
+        title={`Sort by ${label}`}
+      >
+        <span className={`inline-flex items-center gap-1 ${isActive ? 'text-purple-300' : ''}`}>
+          {label}
+          <span className={isActive ? 'opacity-100' : 'opacity-30'}>{arrow}</span>
+        </span>
+      </th>
+    );
+  };
 
   // Handlers
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -1848,7 +2002,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // unfiltered board — same reasoning as AMQueue.tsx's canReorderClients: reordering a FILTERED
   // subset can't unambiguously say where a card lands among same-status tasks the filter is
   // currently hiding. Status-change dragging (moving a card to a different column) is unaffected
-  // by this — it stays available regardless of filters, exactly as it always worked.
+  // by this — it stays available regardless of filters, exactly as it always worked. Also off
+  // while a ClickUp-style column sort (columnSort) is active — see handleColumnSortClick's own
+  // comment: dragging to reorder has no meaning while the list is sorted by Priority/Status/etc.
   const canReorderTasks =
     quickFilter === 'all' &&
     !dateFilter &&
@@ -1859,6 +2015,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     selectedAssigneeId === 'all' &&
     selectedPlatformIds.length === 0 &&
     !searchQuery.trim() &&
+    !columnSort &&
     !!onReorderTasks;
 
   // Shared helper: moves `fromId` to `toId`'s position inside `list` (a single status column's
@@ -2579,18 +2736,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                       />
                     </th>
                   )}
-                  <th className="p-3.5">Task</th>
-                  <th className="p-3.5">Client</th>
-                  <th className="p-3.5">Assignee</th>
-                  <th className="p-3.5">Team</th>
+                  {renderSortableTaskHeader('title', 'Task')}
+                  {renderSortableTaskHeader('client', 'Client')}
+                  {renderSortableTaskHeader('assignee', 'Assignee')}
+                  {renderSortableTaskHeader('team', 'Team')}
                   <th className="p-3.5">Platforms</th>
-                  <th className="p-3.5 text-center">Priority</th>
-                  <th className="p-3.5 text-center">Status</th>
-                  <th className="p-3.5 text-center">Created</th>
-                  <th className="p-3.5 text-center">Due Date</th>
+                  {renderSortableTaskHeader('priority', 'Priority', 'center')}
+                  {renderSortableTaskHeader('status', 'Status', 'center')}
+                  {renderSortableTaskHeader('created', 'Created', 'center')}
+                  {renderSortableTaskHeader('due_date', 'Due Date', 'center')}
                   <th className="p-3.5 text-center">Done Date</th>
-                  <th className="p-3.5 text-center">Est. Hours</th>
-                  <th className="p-3.5 text-center">Act. Hours</th>
+                  {renderSortableTaskHeader('est_hours', 'Est. Hours', 'center')}
+                  {renderSortableTaskHeader('act_hours', 'Act. Hours', 'center')}
                   <th className="p-3.5 text-center">Done Link</th>
                   <th className="p-3.5 text-center">Actions</th>
                 </tr>
