@@ -62,7 +62,7 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
-import { compareByClientStatus, isExternalClient, isWoundDownClient } from '../lib/clientStatus';
+import { compareByClientStatus, isExternalClient, isInhouseClient, isWoundDownClient, INHOUSE_TEAMS } from '../lib/clientStatus';
 import {
   computeTaskDeletionPreview,
   fetchTaskEvents,
@@ -203,6 +203,16 @@ interface CrossTeamTaskBoardProps {
   // above — the bulk toolbar calls this once per selected task via runBulkTaskAction(). Optional
   // for the same reason onHardDeleteTasks is: absent entirely, the Duplicate control doesn't render.
   onDuplicateTask?: (taskId: string, includeSubtasks: boolean) => Promise<void>;
+  // Inhouse module (2026-11-02): a second, independent instance of this same component, rendered
+  // only for executive/head_of_technical/marketing_manager (App.tsx's 'inhouse' tab), scoped to
+  // Kesraa/Fast Growth's own Creative & Design/Video Production/Programming work. `tasks` is
+  // already pre-filtered to just that subset at the App.tsx call site (via isInhouseTask) — this
+  // flag only changes the three UI pickers that would otherwise show the wrong client/team
+  // universe: the client filter+create/edit-task Client select (sortedClientsForPicker normally
+  // EXCLUDES is_inhouse clients; here it must show ONLY them) and the Team filter+taskFormTeams
+  // (normally every operational team +Marketing/Technical; here only the 3 Inhouse teams).
+  // Optional, default false, so the existing main Tasks tab's instance is entirely unaffected.
+  inhouseOnly?: boolean;
 }
 
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
@@ -242,6 +252,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onMarkTaskViewed,
   onHardDeleteTasks,
   onDuplicateTask,
+  inhouseOnly = false,
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
@@ -250,20 +261,24 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const [quickFilter, setQuickFilter] = useState<QuickTaskFilter>('all');
   // marketing_manager lands pre-filtered to "Creative" — the only team value task_visible() ever
   // hands them anyway, so arriving at "All Teams" would show the exact same rows with an extra
-  // click required to get there.
+  // click required to get there. Not on the Inhouse tab (inhouseOnly): 'Creative' isn't one of
+  // its `teams` values (see that memo above) for any of the 3 roles allowed in, marketing_manager
+  // included, so it always starts at 'all' there instead.
   const [selectedTeam, setSelectedTeam] = useState<string>(
-    currentUser?.role === 'marketing_manager' ? 'Creative' : 'all'
+    !inhouseOnly && currentUser?.role === 'marketing_manager' ? 'Creative' : 'all'
   );
   // Shared ordering for every plain client <select> in this component (filter, bulk move,
   // create/edit task): onboarding/active/renewal clients first, paused/closed last — never
   // removed or disabled, a paused/closed client still needs to stay pickable since existing
   // tasks/history reference it (see compareByClientStatus's own comment).
   // Inhouse module (2026-11-02): Kesraa/Fast Growth are flagged is_inhouse — excluded from these
-  // plain client pickers (Client filter, bulk-move select, create/edit Task's Client select).
-  // The Inhouse module gets its own "which company" picker that's the one place they DO appear.
+  // plain client pickers (Client filter, bulk-move select, create/edit Task's Client select) on
+  // the normal Tasks tab. The Inhouse module (this same component, rendered a second time with
+  // inhouseOnly=true) is the one place they DO appear — and the one place every OTHER client is
+  // hidden instead, since a Kesraa/Fast Growth task board has no business offering real clients.
   const sortedClientsForPicker = useMemo(
-    () => clients.filter(isExternalClient).sort(compareByClientStatus),
-    [clients]
+    () => clients.filter(inhouseOnly ? isInhouseClient : isExternalClient).sort(compareByClientStatus),
+    [clients, inhouseOnly]
   );
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
@@ -1055,8 +1070,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // without a catch-all value baked in. Recomputed every render (plain const, not memoized) so it
   // always reflects the cache's current state rather than freezing in whatever was true the first
   // time this component rendered.
-  const teams =
-    currentUser?.role === 'marketing_manager'
+  // inhouseOnly overrides even marketing_manager's own "Creative" special-case above: on the
+  // Inhouse tab there is exactly one universe of teams (the 3 Inhouse ones), for every one of
+  // the 3 roles allowed in, marketing_manager included.
+  const teams = inhouseOnly
+    ? [{ id: 'all', label: 'All Teams' }, ...INHOUSE_TEAMS.map((t) => ({ id: t, label: t }))]
+    : currentUser?.role === 'marketing_manager'
       ? [
           { id: 'all', label: 'All Teams' },
           { id: 'Creative', label: 'Creative' },
@@ -1073,10 +1092,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // does task-based work. Deliberately NOT a useMemo: getOperationalTeams() can change value (once
   // the cache finishes loading) independently of currentUser?.role, and a useMemo keyed only on the
   // latter would freeze a stale list until something else happened to change that one dependency.
-  const taskFormTeams = [
-    ...getOperationalTeams(),
-    ...(currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing']),
-  ];
+  // On the Inhouse tab, the Create/Edit Task Team select is locked to the 3 Inhouse teams only —
+  // no Marketing/Technical, no other department, matching `teams`/sortedClientsForPicker above.
+  const taskFormTeams = inhouseOnly
+    ? [...INHOUSE_TEAMS]
+    : [
+        ...getOperationalTeams(),
+        ...(currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing']),
+      ];
 
   // Employee-name filter options when the Team filter is at "All Teams" (or, for
   // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so

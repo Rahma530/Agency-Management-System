@@ -40,6 +40,7 @@ import {
   fetchAllRows,
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
+import { isInhouseTask } from './lib/clientStatus';
 import { isTeamLeadRole } from './lib/capacity';
 import type { DeliveryEventRow } from './lib/employeeWork';
 import { hasNewVersionDeployed } from './lib/versionCheck';
@@ -811,7 +812,7 @@ export default function App() {
     // itself uses, so a stale/unrecognized module name is simply ignored rather than crashing.
     if (notification.link_url?.startsWith('module:')) {
       const moduleName = notification.link_url.slice('module:'.length) as AppModuleId;
-      const validModules: AppModuleId[] = ['onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'dashboard', 'my_work', 'employees', 'brief_templates'];
+      const validModules: AppModuleId[] = ['onboarding', 'service_briefs', 'capacity', 'tasks', 'inhouse', 'daily_operations', 'campaigns', 'reports', 'dashboard', 'my_work', 'employees', 'brief_templates'];
       if (validModules.includes(moduleName)) {
         handleTabChange(moduleName);
       }
@@ -6161,6 +6162,14 @@ export default function App() {
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 
+  // Inhouse module (2026-11-02): the subset of `tasks` (itself already RLS-scoped to what the
+  // signed-in user may see — task_visible_v2's new inhouse guard, migration 20261228000000, is
+  // what actually keeps a team lead/am_agent from fetching someone else's Inhouse task in the
+  // first place) that belongs to Kesraa/Fast Growth's own Creative & Design/Video Production/
+  // Programming work. Passed as the `tasks` prop to the Inhouse tab's own CrossTeamTaskBoard
+  // instance below instead of the full `tasks` array the main Tasks tab uses.
+  const inhouseTasks = useMemo(() => tasks.filter((t) => isInhouseTask(t, clients)), [tasks, clients]);
+
   // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
   // same "persist, then sync local state" pattern as handleUpdateEmployee/
   // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
@@ -6900,6 +6909,25 @@ export default function App() {
               </button>
             )}
 
+            {/* Inhouse module (2026-11-02) — executive/head_of_technical/marketing_manager only
+                (allowedModules gates the tab; task_visible_v2's inhouse guard, migration
+                20261228000000, gates the underlying data for everyone else regardless of this
+                tab existing). Kesraa/Fast Growth's own Creative & Design/Video Production/
+                Programming work — a second CrossTeamTaskBoard instance, not a new component. */}
+            {userRoleInfo.allowedModules.includes('inhouse') && (
+              <button
+                onClick={() => handleTabChange('inhouse')}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
+                  activeTab === 'inhouse'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
+                }`}
+              >
+                <Building2 className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">Inhouse</span>
+              </button>
+            )}
+
             {/* Tab 4: Daily Operations & Task Execution */}
             {userRoleInfo.allowedModules.includes('daily_operations') && (
               <button
@@ -7328,6 +7356,50 @@ export default function App() {
                   onUpdatePlatform={handleUpdatePlatform}
                   initialAssigneeFilter={taskBoardAssigneePrefill}
                   initialOpenTaskId={taskBoardOpenTaskId}
+                  taskComments={taskComments}
+                  onAddTaskComment={handleAddTaskComment}
+                  onEditTaskComment={handleEditTaskComment}
+                  onDeleteTaskComment={handleDeleteTaskComment}
+                  taskAttachments={taskAttachments}
+                  onUploadTaskAttachment={handleUploadTaskAttachment}
+                  onDeleteTaskAttachment={handleDeleteTaskAttachment}
+                  onGetCapacitySnapshot={getCapacitySnapshot}
+                  onGetUserScheduleLoad={getUserScheduleLoad}
+                  onGetServerToday={getServerToday}
+                  onMarkTaskViewed={handleMarkTaskViewed}
+                  onHardDeleteTasks={handleHardDeleteTasks}
+                  onDuplicateTask={handleDuplicateTask}
+                />
+              </div>
+            )}
+
+            {/* Inhouse module (2026-11-02) — same CrossTeamTaskBoard component as the Tasks tab
+                above, a second instance with inhouseOnly set and `tasks` pre-filtered to
+                Kesraa/Fast Growth's Creative & Design/Video Production/Programming work only.
+                Every other prop is identical — same handlers, same taskTypes/platforms, etc. —
+                since the Inhouse board is otherwise an ordinary task board, just scoped. */}
+            {activeTab === 'inhouse' && (
+              <div className="space-y-6">
+                <CrossTeamTaskBoard
+                  inhouseOnly
+                  tasks={inhouseTasks}
+                  taskAssignees={taskAssignees}
+                  users={users}
+                  taskDirectoryUsers={taskDirectoryUsers}
+                  clients={clients}
+                  currentUser={currentUser}
+                  currentUserId={currentUser.id}
+                  onUpdateTaskStatus={handleUpdateTaskStatus}
+                  onReorderTasks={handleReorderTasks}
+                  onCreateTask={handleCreateTask}
+                  onUpdateTask={handleUpdateTask}
+                  taskTypes={taskTypes}
+                  onCreateTaskType={handleCreateTaskType}
+                  onUpdateTaskType={handleUpdateTaskType}
+                  platforms={platforms}
+                  taskPlatformLinks={taskPlatformLinks}
+                  onCreatePlatform={handleCreatePlatform}
+                  onUpdatePlatform={handleUpdatePlatform}
                   taskComments={taskComments}
                   onAddTaskComment={handleAddTaskComment}
                   onEditTaskComment={handleEditTaskComment}

@@ -1,7 +1,7 @@
 import { BuiltInRole, UserRole } from '../types/database';
 import { getActiveCustomRole, getCustomRoleModules, isCustomRoleCacheLoaded } from './customRoles';
 
-export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship';
+export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship' | 'inhouse';
 
 export interface RoleMetadata {
   role: UserRole;
@@ -32,7 +32,11 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-executive-tint)',
     badgeText: 'var(--role-executive-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
+    // Inhouse module added 2026-11-02 (owner's explicit request): executive/head_of_technical/
+    // marketing_manager are the only three roles that may see the Inhouse (Kesraa/Fast Growth)
+    // task board — see also task_visible_v2's inhouse guard, which is the DB-level half of this
+    // same restriction (allowedModules alone would only hide the nav tab, not the data).
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'inhouse', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -48,7 +52,8 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-head-of-technical-tint)',
     badgeText: 'var(--role-head-of-technical-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
+    // See executive's own comment above — same Inhouse-module exception, same reasoning.
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'inhouse', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -379,7 +384,9 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     // are left as they were (false) — those are narrow, action-level gates (creating a new
     // campaign row, editing someone's capacity, assigning an AM) distinct from module visibility,
     // and weren't part of what was asked to open up; say if those should flip too.
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports'],
+    // See executive's own comment above — same Inhouse-module exception, same reasoning. This is
+    // the third and last of the three roles the Inhouse module is scoped to.
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'inhouse', 'daily_operations', 'campaigns', 'reports'],
     canCreateCampaign: false,
     canManageCapacity: false,
     canAssignAM: false,
