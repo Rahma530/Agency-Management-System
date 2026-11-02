@@ -34,6 +34,7 @@ import {
   Link2,
   Settings,
   Trash2,
+  GripVertical,
 } from 'lucide-react';
 import {
   TaskRecord,
@@ -57,6 +58,8 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDraggable,
+  useDroppable,
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
@@ -217,6 +220,56 @@ interface CrossTeamTaskBoardProps {
 
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
 export type TaskViewMode = 'kanban' | 'table' | 'timeline';
+
+// Manual drag-and-drop reorder for the Table/List view (2026-11-02, owner's follow-up — "same as
+// the Clients List"). Same shape as AMQueue.tsx's own SortableClientRow: a combined
+// useDraggable+useDroppable on the same <tr>, via a merged ref callback, so a drop can resolve as
+// "over" a specific sibling ROW rather than just the table itself (there's no per-status column
+// here to fall back to the way the Kanban board's KanbanColumn does — the Table view is one flat
+// list across every status, so without useDroppable on each row a drop would have nowhere valid
+// to land at all). Reorders the table's one flat `sortedTasks` list directly — unlike the Kanban
+// board, there's no per-column split to reorder within.
+const SortableTaskRow: React.FC<{
+  taskId: string;
+  canReorder: boolean;
+  onRowClick: () => void;
+  className?: string;
+  children: React.ReactNode;
+}> = ({ taskId, canReorder, onRowClick, className, children }) => {
+  const { attributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({
+    id: taskId,
+    disabled: !canReorder,
+  });
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: taskId, disabled: !canReorder });
+
+  return (
+    <tr
+      ref={(node) => {
+        setDragRef(node);
+        setDropRef(node);
+      }}
+      onClick={onRowClick}
+      className={className}
+      style={{
+        transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
+        opacity: isDragging ? 0.4 : 1,
+        background: isOver ? 'rgba(168, 85, 247, 0.12)' : undefined,
+      }}
+    >
+      {canReorder && (
+        <td
+          className="p-3.5 w-6 text-stone-500 hover:text-stone-300 cursor-grab active:cursor-grabbing"
+          onClick={(e) => e.stopPropagation()}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={14} />
+        </td>
+      )}
+      {children}
+    </tr>
+  );
+};
 
 export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   tasks,
@@ -1860,6 +1913,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     }
   };
 
+  // Table/List view's own onDragEnd (2026-11-02, owner's follow-up): unlike the Kanban board,
+  // there's no per-status column to reorder within or drop onto here — the Table view is one flat
+  // list across every status, so the only thing a drop can ever mean is "reorder within
+  // sortedTasks" (status changes stay Kanban/Details-modal/quick-menu only, same as the Clients
+  // List table's own SortableClientRow never changing status either). No status-change branch
+  // needed the way handleDragEnd above has one.
+  const handleTableDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    void reorderTaskList(sortedTasks, String(active.id), String(over.id));
+  };
+
   // Priority helper
   const getPriorityBadge = (priority: TaskPriority) => {
     switch (priority) {
@@ -2497,9 +2562,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
           style={{ background: 'var(--gradient-card)' }}
         >
           <div className="overflow-x-auto">
+            <DndContext sensors={dndSensors} onDragEnd={handleTableDragEnd}>
             <table className="w-full text-left text-xs">
               <thead className="bg-stone-900/90 text-stone-300 border-b border-stone-800">
                 <tr>
+                  {canReorderTasks && <th className="p-3.5 w-6" aria-hidden="true" />}
                   {canUseBulkActions && (
                     <th className="p-3.5 w-8">
                       <input
@@ -2531,7 +2598,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <tbody className="divide-y divide-stone-800/60">
                 {sortedTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={canUseBulkActions ? 14 : 13} className="p-8 text-center text-stone-400">
+                    <td
+                      colSpan={(canUseBulkActions ? 14 : 13) + (canReorderTasks ? 1 : 0)}
+                      className="p-8 text-center text-stone-400"
+                    >
                       No tasks matching current filter criteria.
                     </td>
                   </tr>
@@ -2550,10 +2620,12 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     const overdue = isOverdue(task);
 
                     return (
-                      <tr
+                      <SortableTaskRow
                         key={task.id}
+                        taskId={task.id}
+                        canReorder={canReorderTasks}
+                        onRowClick={() => setSelectedTaskDetails(task)}
                         className="hover:bg-stone-900/40 transition-colors cursor-pointer"
-                        onClick={() => setSelectedTaskDetails(task)}
                       >
                         {canUseBulkActions && (
                           <td className="p-3.5" onClick={(e) => e.stopPropagation()}>
@@ -2740,12 +2812,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                             </button>}
                           </div>
                         </td>
-                      </tr>
+                      </SortableTaskRow>
                     );
                   })
                 )}
               </tbody>
             </table>
+            </DndContext>
           </div>
         </div>
       )}
