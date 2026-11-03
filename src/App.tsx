@@ -2103,6 +2103,43 @@ export default function App() {
     setTaskAttachments((data as TaskAttachmentRecord[]) || []);
   }, []);
 
+  // Targeted Realtime handler for 'task_attachments' (2026-11-03), 5th table in the same rollout
+  // as 'tasks' (#276), 'task_assignees' (#277), 'clients' (#278) and 'task_comments' (#279).
+  // Same simple shape as task_comments: single `id` PK, no derived fields.
+  const applyTaskAttachmentRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+
+      if (payload.eventType === 'DELETE') {
+        setTaskAttachments((prev) => (prev.some((a) => a.id === deletedId) ? prev.filter((a) => a.id !== deletedId) : prev));
+        return;
+      }
+
+      const { data, error } = await supabase.from('task_attachments').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed task attachment; falling back to a full refresh:', error);
+        void refreshTaskAttachments();
+        return;
+      }
+
+      setTaskAttachments((prev) => {
+        const idx = prev.findIndex((a) => a.id === changedId);
+        if (!data) {
+          return idx === -1 ? prev : prev.filter((a) => a.id !== changedId);
+        }
+        const row = data as TaskAttachmentRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshTaskAttachments]
+  );
+
   // Delivered-today events (see taskDeliveryEvents above). Re-read whenever the task list changes,
   // i.e. after this client's own status moves and after realtime/table refreshes of tasks.
   useEffect(() => {
@@ -3151,7 +3188,7 @@ export default function App() {
       { table: 'task_types', refresh: refreshTaskTypes },
       { table: 'platforms', refresh: refreshPlatforms },
       { table: 'task_comments', refresh: refreshTaskComments, onPayload: applyTaskCommentRealtimeChange },
-      { table: 'task_attachments', refresh: refreshTaskAttachments },
+      { table: 'task_attachments', refresh: refreshTaskAttachments, onPayload: applyTaskAttachmentRealtimeChange },
       { table: 'task_assignees', refresh: refreshTaskAssignees, onPayload: applyTaskAssigneeRealtimeChange },
       { table: 'task_platform_links', refresh: refreshTaskPlatformLinks },
       { table: 'social_insights', refresh: refreshSocialInsights },
