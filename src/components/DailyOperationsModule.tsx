@@ -739,7 +739,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     switch (status) {
       case 'todo': return 'To Do';
       case 'in_progress': return 'In Progress';
-      case 'in_review': return 'In Review';
+      case 'in_review': return 'Reviewing';
       case 'completed': return 'Completed';
       case 'blocked': return 'Blocked';
       case 'closed': return 'Closed';
@@ -1417,7 +1417,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <option value="all" className="bg-stone-900 text-white">All Statuses ({sortedEmployeeTasks.length})</option>
                 <option value="todo" className="bg-stone-900 text-white">To Do</option>
                 <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-                <option value="in_review" className="bg-stone-900 text-white">In Review</option>
+                <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
                 <option value="completed" className="bg-stone-900 text-white">Completed</option>
                 <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
               </select>
@@ -1579,7 +1579,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                               >
                                 <option value="todo" className="bg-stone-900 text-white">To Do</option>
                                 <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-                                <option value="in_review" className="bg-stone-900 text-white">In Review</option>
+                                <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
                                 <option value="completed" className="bg-stone-900 text-white">Completed</option>
                                 <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
                               </select>

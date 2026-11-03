@@ -1282,7 +1282,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
     { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'var(--status-todo-tint)' },
     { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'var(--status-progress-tint)' },
-    { id: 'in_review', label: 'In Review', color: 'var(--roas-mid)', badgeBg: 'var(--status-review-tint)' },
+    { id: 'in_review', label: 'Reviewing', color: 'var(--roas-mid)', badgeBg: 'var(--status-review-tint)' },
     { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'var(--status-completed-tint)' },
     { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'var(--status-closed-tint)' },
     { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'var(--status-blocked-tint)' },
@@ -2610,7 +2610,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <option value="all" className="bg-stone-900 text-white">All Statuses</option>
               <option value="todo" className="bg-stone-900 text-white">To Do</option>
               <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-              <option value="in_review" className="bg-stone-900 text-white">In Review</option>
+              <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
               <option value="completed" className="bg-stone-900 text-white">Completed</option>
               <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
             </select>
@@ -4346,7 +4346,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   >
                     <option value="todo" className="bg-stone-900 text-white">To Do</option>
                     <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-                    <option value="in_review" className="bg-stone-900 text-white">In Review</option>
+                    <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
                     <option value="completed" className="bg-stone-900 text-white">Completed</option>
                     <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
                   </select>

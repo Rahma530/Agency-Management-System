@@ -801,7 +801,11 @@ export default function App() {
     if (notification.link_url?.startsWith('task:')) {
       const taskId = notification.link_url.slice('task:'.length);
       if (taskId) {
-        handleTabChange('tasks');
+        // Kesraa/Fast Growth's own Inhouse tasks (2026-11-03) no longer exist on the main Tasks
+        // board at all (externalTasks below excludes them), so a notification pointing at one must
+        // land on the Inhouse tab instead, or the Details modal would simply find nothing to open.
+        const targetTask = tasks.find((t) => t.id === taskId);
+        handleTabChange(targetTask && isInhouseTask(targetTask, clients) ? 'inhouse' : 'tasks');
         setTaskBoardOpenTaskId(taskId);
       }
       return;
@@ -6158,7 +6162,9 @@ export default function App() {
   };
 
   // Stats for badge counters
-  const activeTasksCount = tasks.filter((t) => !isTaskDone(t.status)).length;
+  // Matches the main Tasks tab's own task set below (externalTasks) now that Kesraa/Fast Growth's
+  // Inhouse tasks are excluded from that board entirely — this badge would otherwise overcount.
+  const activeTasksCount = tasks.filter((t) => !isTaskDone(t.status) && !isInhouseTask(t, clients)).length;
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 
@@ -6169,6 +6175,15 @@ export default function App() {
   // Programming work. Passed as the `tasks` prop to the Inhouse tab's own CrossTeamTaskBoard
   // instance below instead of the full `tasks` array the main Tasks tab uses.
   const inhouseTasks = useMemo(() => tasks.filter((t) => isInhouseTask(t, clients)), [tasks, clients]);
+
+  // Owner's explicit request (2026-11-03): Kesraa/Fast Growth's own Inhouse tasks must not show up
+  // on the main, cross-team Tasks board at all — not in the list/Kanban, not in its client filter
+  // (already handled inside CrossTeamTaskBoard.tsx via isExternalClient), and not selectable as the
+  // Client when creating a task there (same isExternalClient filter covers that too, since the
+  // Create Task form's Client select reuses sortedClientsForPicker). The one missing piece was the
+  // `tasks` array itself — the main tab was still receiving every task, inhouse included, so the
+  // exact complement of inhouseTasks above is passed to the main Tasks tab instead of the full list.
+  const externalTasks = useMemo(() => tasks.filter((t) => !isInhouseTask(t, clients)), [tasks, clients]);
 
   // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
   // same "persist, then sync local state" pattern as handleUpdateEmployee/
@@ -7336,7 +7351,7 @@ export default function App() {
             {activeTab === 'tasks' && (
               <div className="space-y-6">
                 <CrossTeamTaskBoard
-                  tasks={tasks}
+                  tasks={externalTasks}
                   taskAssignees={taskAssignees}
                   users={users}
                   taskDirectoryUsers={taskDirectoryUsers}
@@ -7400,6 +7415,7 @@ export default function App() {
                   taskPlatformLinks={taskPlatformLinks}
                   onCreatePlatform={handleCreatePlatform}
                   onUpdatePlatform={handleUpdatePlatform}
+                  initialOpenTaskId={taskBoardOpenTaskId}
                   taskComments={taskComments}
                   onAddTaskComment={handleAddTaskComment}
                   onEditTaskComment={handleEditTaskComment}
