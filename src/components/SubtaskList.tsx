@@ -26,7 +26,7 @@ const statusBadge = (status: TaskStatus) => {
     case 'in_progress':
       return { label: 'In Progress', bg: 'rgba(123, 47, 247, 0.25)', text: 'var(--purple-light)' };
     case 'in_review':
-      return { label: 'In Review', bg: 'rgba(245, 226, 154, 0.2)', text: 'var(--roas-mid)' };
+      return { label: 'Reviewing', bg: 'rgba(245, 226, 154, 0.2)', text: 'var(--roas-mid)' };
     case 'blocked':
       return { label: 'Blocked', bg: 'rgba(245, 163, 163, 0.2)', text: 'var(--roas-bad)' };
     default:

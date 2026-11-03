@@ -260,7 +260,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
                 {Object.entries(tasksByStatus).map(([status, count]) => (
                   <div key={status} className="p-2 rounded-lg bg-stone-900/60 border border-stone-800">
                     <p className="text-sm font-bold text-white">{count}</p>
-                    <p className="text-[9px] text-stone-400 capitalize">{status.replace('_', ' ')}</p>
+                    <p className="text-[9px] text-stone-400 capitalize">{status === 'in_review' ? 'reviewing' : status.replace('_', ' ')}</p>
                   </div>
                 ))}
               </div>
