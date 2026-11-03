@@ -1865,6 +1865,55 @@ export default function App() {
     })));
   }, []);
 
+  // Targeted Realtime handler for 'clients' (2026-11-03), 3rd table in the same rollout as
+  // 'tasks' (PR #276) and 'task_assignees' (PR #277) — clients is read by nearly every module
+  // (AM Queue, Client Dashboard, Campaigns, Service Briefs...) and changes often (status moves,
+  // onboarding fields, the AM-assignment work from earlier this session), so it was paying the
+  // same full-refetch-on-any-change cost. Mirrors applyTaskRealtimeChange's shape exactly — single
+  // `id` primary key, same RLS-correctness reasoning (clients_select_rls decides per row, this
+  // just asks it about one id instead of the whole table) — with one addition: refreshClients
+  // itself derives `services` via getClientServices() after the fetch, so the merged row has to
+  // go through that same derivation, not just the raw columns, to stay consistent with every
+  // other client in state.
+  const applyClientRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+
+      if (payload.eventType === 'DELETE') {
+        setClients((prev) => (prev.some((c) => c.id === deletedId) ? prev.filter((c) => c.id !== deletedId) : prev));
+        return;
+      }
+
+      const { data, error } = await supabaseRaw
+        .from('clients')
+        .select(NON_SENSITIVE_CLIENT_COLUMNS)
+        .eq('id', changedId)
+        .maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed client; falling back to a full refresh:', error);
+        void refreshClients();
+        return;
+      }
+
+      setClients((prev) => {
+        const idx = prev.findIndex((c) => c.id === changedId);
+        if (!data) {
+          return idx === -1 ? prev : prev.filter((c) => c.id !== changedId);
+        }
+        const clientRow = data as ClientRecord;
+        const row: ClientRecord = { ...clientRow, services: getClientServices(clientRow) };
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshClients]
+  );
+
   const refreshBriefs = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -3037,7 +3086,7 @@ export default function App() {
       { table: 'tasks', refresh: refreshTasks, onPayload: applyTaskRealtimeChange },
       // Client Dashboard / AM Queue / Service Briefs Routing / Campaign Management — every screen
       // that reads the `clients` list. 20261217000000_screens_realtime_batch2.sql
-      { table: 'clients', refresh: refreshClients },
+      { table: 'clients', refresh: refreshClients, onPayload: applyClientRealtimeChange },
       // Service Briefs — brief status/content changes as AMs and specialists hand briefs back and
       // forth. 20261217000000_screens_realtime_batch2.sql
       { table: 'briefs', refresh: refreshBriefs },
