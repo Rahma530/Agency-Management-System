@@ -2045,6 +2045,61 @@ export default function App() {
     }
   }, []);
 
+  // Targeted Realtime handler for 'task_assignees' (2026-11-03), same applyTaskRealtimeChange
+  // pattern/reasoning as 'tasks' above, rolled out table-by-table — this is the second table
+  // (task_assignees had already grown past 1000 rows too, see fetchTaskAssignees's own comment),
+  // picked next because assignment changes are as frequent as task changes themselves and were
+  // paying the exact same full-refetch cost on every reassignment, add, or remove.
+  //
+  // One real difference from 'tasks': task_assignees has no single `id` column — its primary key
+  // is the composite (task_id, user_id) — so matching/merging has to compare both fields instead
+  // of one. task_assignees_select_rls itself is a plain `exists (select 1 from tasks ...)` check
+  // (not a SECURITY DEFINER function like task_visible_v2), but that subquery still runs under the
+  // caller's own RLS context, so it still only returns a row when the caller can see the
+  // underlying task via tasks_select_rls — the single-row select() below is just as RLS-correct as
+  // refreshTaskAssignees's full fetch was.
+  const applyTaskAssigneeRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const old = payload.old as { task_id?: string; user_id?: string } | null;
+      const row = payload.new as { task_id?: string; user_id?: string } | null;
+      const taskId = row?.task_id ?? old?.task_id;
+      const userId = row?.user_id ?? old?.user_id;
+      if (!taskId || !userId) return;
+      const matches = (a: TaskAssigneeRecord) => a.task_id === taskId && a.user_id === userId;
+
+      if (payload.eventType === 'DELETE') {
+        setTaskAssignees((prev) => (prev.some(matches) ? prev.filter((a) => !matches(a)) : prev));
+        return;
+      }
+
+      const { data, error } = await supabaseRaw
+        .from('task_assignees')
+        .select('*')
+        .eq('task_id', taskId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed task assignee; falling back to a full refresh:', error);
+        void refreshTaskAssignees();
+        return;
+      }
+
+      setTaskAssignees((prev) => {
+        const idx = prev.findIndex(matches);
+        if (!data) {
+          return idx === -1 ? prev : prev.filter((a) => !matches(a));
+        }
+        const next = prev.slice();
+        const updated = data as TaskAssigneeRecord;
+        if (idx === -1) next.push(updated);
+        else next[idx] = updated;
+        return next;
+      });
+    },
+    [refreshTaskAssignees]
+  );
+
   const refreshTaskPlatformLinks = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -3006,7 +3061,7 @@ export default function App() {
       { table: 'platforms', refresh: refreshPlatforms },
       { table: 'task_comments', refresh: refreshTaskComments },
       { table: 'task_attachments', refresh: refreshTaskAttachments },
-      { table: 'task_assignees', refresh: refreshTaskAssignees },
+      { table: 'task_assignees', refresh: refreshTaskAssignees, onPayload: applyTaskAssigneeRealtimeChange },
       { table: 'task_platform_links', refresh: refreshTaskPlatformLinks },
       { table: 'social_insights', refresh: refreshSocialInsights },
       { table: 'seo_insights', refresh: refreshSeoInsights },
