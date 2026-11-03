@@ -2049,6 +2049,48 @@ export default function App() {
     setTaskComments((data as TaskCommentRecord[]) || []);
   }, []);
 
+  // Targeted Realtime handler for 'task_comments' (2026-11-03), 4th table in the same rollout as
+  // 'tasks' (#276), 'task_assignees' (#277) and 'clients' (#278) — heavily read by the Task
+  // Details modal's comment thread, and every comment posted/edited/deleted by anyone was
+  // refetching every comment on every task company-wide. Simplest case so far: single `id`
+  // primary key, no derived fields to recompute (unlike clients' `services`) — a near-exact copy
+  // of applyTaskRealtimeChange's shape. Uses `supabase` (not supabaseRaw), matching
+  // refreshTaskComments above — task_comments isn't one of the 4 tables
+  // (users/clients/campaigns/tasks) the legacy client-side proxy special-cases, so this is safe.
+  const applyTaskCommentRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+
+      if (payload.eventType === 'DELETE') {
+        setTaskComments((prev) => (prev.some((c) => c.id === deletedId) ? prev.filter((c) => c.id !== deletedId) : prev));
+        return;
+      }
+
+      const { data, error } = await supabase.from('task_comments').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed task comment; falling back to a full refresh:', error);
+        void refreshTaskComments();
+        return;
+      }
+
+      setTaskComments((prev) => {
+        const idx = prev.findIndex((c) => c.id === changedId);
+        if (!data) {
+          return idx === -1 ? prev : prev.filter((c) => c.id !== changedId);
+        }
+        const row = data as TaskCommentRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshTaskComments]
+  );
+
   const refreshTaskAttachments = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -3108,7 +3150,7 @@ export default function App() {
       // sub-records. 20261218000000_screens_realtime_batch3.sql
       { table: 'task_types', refresh: refreshTaskTypes },
       { table: 'platforms', refresh: refreshPlatforms },
-      { table: 'task_comments', refresh: refreshTaskComments },
+      { table: 'task_comments', refresh: refreshTaskComments, onPayload: applyTaskCommentRealtimeChange },
       { table: 'task_attachments', refresh: refreshTaskAttachments },
       { table: 'task_assignees', refresh: refreshTaskAssignees, onPayload: applyTaskAssigneeRealtimeChange },
       { table: 'task_platform_links', refresh: refreshTaskPlatformLinks },
