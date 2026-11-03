@@ -3903,7 +3903,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   </div>
                 ) : (
                   <SearchableMultiSelect
-                    options={clients.map((client) => ({ id: client.id, label: client.name, sublabel: client.industry || 'Client' }))}
+                    options={sortedClientsForPicker.map((client) => ({ id: client.id, label: client.name, sublabel: client.industry || 'Client' }))}
                     selectedIds={newClientIds}
                     onChange={setNewClientIds}
                     disabled={!!activeRecovery}
