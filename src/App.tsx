@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import {
   Database,
   UserCheck,
@@ -314,6 +315,14 @@ function startVisibilityAwarePoll(callback: () => void, intervalMs: number): () 
 interface RealtimeSyncEntry {
   table: string;
   refresh: () => Promise<void>;
+  // Optional fast path (2026-11-03): when the live Realtime channel delivers a change for this
+  // table, apply just the changed row to local state instead of calling `refresh` (which refetches
+  // the ENTIRE table — see refreshTasks's own comment for the full story on why that got
+  // expensive at this app's current scale). `refresh` stays required and is still what the
+  // poll-only fallback below calls for every entry, onPayload included — a poll tick has no
+  // row-level payload to work with, so a full refetch is the only option there; onPayload only
+  // changes what happens on a genuine live postgres_changes event.
+  onPayload?: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void | Promise<void>;
 }
 
 // Single consolidated Realtime channel for every table listed below, replacing two designs that
@@ -376,11 +385,21 @@ function useConsolidatedRealtimeSync(entries: RealtimeSyncEntry[], enabled: bool
     };
 
     let channel: ReturnType<typeof supabaseRaw.channel> = supabaseRaw.channel('app_sync_all');
-    entries.forEach(({ table, refresh }) => {
+    entries.forEach(({ table, refresh, onPayload }) => {
       channel = channel.on(
         'postgres_changes',
         { event: '*', schema: 'public', table },
-        () => invalidate(table, refresh)
+        (payload) => {
+          // Same self-write grace window either way — onPayload's own single-row fetch is cheap,
+          // but the acting client already applied this exact change optimistically via its own
+          // handler, so there's nothing for either path to usefully do with its own echo.
+          if (isRecentSelfWrite(table)) return;
+          if (onPayload) {
+            void onPayload(payload);
+          } else {
+            void runCoalescedRefresh(table, refresh);
+          }
+        }
       );
     });
     channel.subscribe((status, err) => {
@@ -1776,6 +1795,59 @@ export default function App() {
     setTasks(data || []);
   }, []);
 
+  // Targeted Realtime handler for 'tasks' (2026-11-03 — owner's report: at ~1000+ tasks and a
+  // growing headcount, refreshTasks() above re-running for EVERY company-wide task change, on
+  // EVERY other connected session, had become the main cause of the whole app feeling slow for a
+  // simple action like creating one task — a single-row change was refetching the full table
+  // (paginated, 1000+ rows) through task_visible_v2's RLS function for everyone else at once.
+  // This replaces that for the live channel path only (useConsolidatedRealtimeSync's onPayload —
+  // the poll-only fallback still has no choice but to call refreshTasks() in full, since a poll
+  // tick carries no row-level payload).
+  //
+  // Still goes through a real, RLS-scoped select() for the single changed id rather than trusting
+  // payload.new directly — deliberately, not an oversight: the raw Realtime payload carries no
+  // visibility information at all (it bypasses RLS to reach the client), so there's no way to
+  // tell from the payload alone whether the current viewer is actually allowed to see this task.
+  // Letting Postgres answer that for just one row is a tiny fraction of the cost of letting it
+  // answer for all 1000+, which is the entire point of this change.
+  const applyTaskRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+
+      if (payload.eventType === 'DELETE') {
+        setTasks((prev) => (prev.some((t) => t.id === deletedId) ? prev.filter((t) => t.id !== deletedId) : prev));
+        return;
+      }
+
+      // Same proxy caveat as refreshTasks above: must be supabaseRaw, not supabase.
+      const { data, error } = await supabaseRaw.from('tasks').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed task; falling back to a full refresh:', error);
+        void refreshTasks();
+        return;
+      }
+
+      setTasks((prev) => {
+        const idx = prev.findIndex((t) => t.id === changedId);
+        if (!data) {
+          // RLS returned nothing for this id — most often an UPDATE that moved the task outside
+          // this viewer's visibility (e.g. reassigned away from them), since a genuine delete was
+          // already handled above. Either way, it must not linger in local state.
+          return idx === -1 ? prev : prev.filter((t) => t.id !== changedId);
+        }
+        const row = data as TaskRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshTasks]
+  );
+
   // Real-time batch 2 — same invalidate-then-refetch shape as refreshTasks/refreshAssignments
   // above, one per table that loadData() already fetches. See useConsolidatedRealtimeSync for why
   // these re-run the real select() instead of merging the postgres_changes payload directly.
@@ -2907,7 +2979,7 @@ export default function App() {
     [
       // Task Board — most heavily multi-user screen (several people editing/assigning/completing
       // the same board at once). 20261216000000_tasks_realtime.sql
-      { table: 'tasks', refresh: refreshTasks },
+      { table: 'tasks', refresh: refreshTasks, onPayload: applyTaskRealtimeChange },
       // Client Dashboard / AM Queue / Service Briefs Routing / Campaign Management — every screen
       // that reads the `clients` list. 20261217000000_screens_realtime_batch2.sql
       { table: 'clients', refresh: refreshClients },
