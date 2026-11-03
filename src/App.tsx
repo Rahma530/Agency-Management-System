@@ -1926,6 +1926,41 @@ export default function App() {
     setBriefs((data as BriefRecord[]) || []);
   }, []);
 
+  // Targeted Realtime handlers (2026-11-03) — the remaining single-`id`-PK, no-derived-field
+  // tables in this rollout (after tasks/#276, task_assignees/#277, clients/#278,
+  // task_comments/#279, task_attachments/#280). Each one is a near-exact copy of
+  // applyTaskCommentRealtimeChange's shape: fetch the single changed row with the SAME client
+  // (supabase vs supabaseRaw) its own refresh function already uses, merge it into local state by
+  // `id`, remove on DELETE or on a null/RLS-filtered result, fall back to the full refresh on error.
+  const applyBriefRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setBriefs((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('briefs').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed brief; falling back to a full refresh:', error);
+        void refreshBriefs();
+        return;
+      }
+      setBriefs((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as BriefRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshBriefs]
+  );
+
   const refreshCampaigns = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -1937,6 +1972,35 @@ export default function App() {
 
     setCampaigns((data as CampaignRecord[]) || []);
   }, []);
+
+  const applyCampaignRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setCampaigns((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabaseRaw.from('campaigns').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed campaign; falling back to a full refresh:', error);
+        void refreshCampaigns();
+        return;
+      }
+      setCampaigns((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as CampaignRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshCampaigns]
+  );
 
   const refreshCapacityLogs = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -1950,6 +2014,35 @@ export default function App() {
     setCapacityLogs((data as CapacityLogRecord[]) || []);
   }, []);
 
+  const applyCapacityLogRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setCapacityLogs((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('capacity_logs').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed capacity log; falling back to a full refresh:', error);
+        void refreshCapacityLogs();
+        return;
+      }
+      setCapacityLogs((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as CapacityLogRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshCapacityLogs]
+  );
+
   const refreshDailyLogs = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -1961,6 +2054,35 @@ export default function App() {
 
     setDailyLogs((data as DailyLogRecord[]) || []);
   }, []);
+
+  const applyDailyLogRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setDailyLogs((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('daily_logs').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed daily log; falling back to a full refresh:', error);
+        void refreshDailyLogs();
+        return;
+      }
+      setDailyLogs((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as DailyLogRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshDailyLogs]
+  );
 
   const refreshExtraNotes = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -1974,6 +2096,35 @@ export default function App() {
     setExtraNotes((data as ExtraNoteRecord[]) || []);
   }, []);
 
+  const applyExtraNoteRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setExtraNotes((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('extra_notes').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed extra note; falling back to a full refresh:', error);
+        void refreshExtraNotes();
+        return;
+      }
+      setExtraNotes((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as ExtraNoteRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshExtraNotes]
+  );
+
   const refreshReports = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -1985,6 +2136,35 @@ export default function App() {
 
     setReports((data as ReportRecord[]) || []);
   }, []);
+
+  const applyReportRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setReports((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('reports').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed report; falling back to a full refresh:', error);
+        void refreshReports();
+        return;
+      }
+      setReports((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as ReportRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshReports]
+  );
 
   const refreshMeetings = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -1998,6 +2178,35 @@ export default function App() {
     setMeetings((data as MeetingRecord[]) || []);
   }, []);
 
+  const applyMeetingRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setMeetings((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('meetings').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed meeting; falling back to a full refresh:', error);
+        void refreshMeetings();
+        return;
+      }
+      setMeetings((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as MeetingRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshMeetings]
+  );
+
   const refreshClientContracts = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2009,6 +2218,35 @@ export default function App() {
 
     setClientContracts((data as ClientContractRecord[]) || []);
   }, []);
+
+  const applyClientContractRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setClientContracts((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('client_contracts').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed client contract; falling back to a full refresh:', error);
+        void refreshClientContracts();
+        return;
+      }
+      setClientContracts((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as ClientContractRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshClientContracts]
+  );
 
   // Real-time batch 3 — the remaining tables loadData() fetches that batch 2 left out (admin/
   // lookup tables, Reporting Engine's insight feeds, and task sub-records). Same shape as
@@ -2025,6 +2263,35 @@ export default function App() {
     setTaskTypes((data as TaskTypeRecord[]) || []);
   }, []);
 
+  const applyTaskTypeRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setTaskTypes((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('task_types').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed task type; falling back to a full refresh:', error);
+        void refreshTaskTypes();
+        return;
+      }
+      setTaskTypes((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as TaskTypeRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshTaskTypes]
+  );
+
   const refreshPlatforms = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2036,6 +2303,35 @@ export default function App() {
 
     setPlatforms((data as PlatformRecord[]) || []);
   }, []);
+
+  const applyPlatformRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setPlatforms((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabaseRaw.from('platforms').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed platform; falling back to a full refresh:', error);
+        void refreshPlatforms();
+        return;
+      }
+      setPlatforms((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as PlatformRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshPlatforms]
+  );
 
   const refreshTaskComments = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -2238,6 +2534,46 @@ export default function App() {
     }
   }, []);
 
+  // task_platform_links has no `id` column — composite PK (task_id, platform_id), same situation
+  // as task_assignees (#277). supabaseRaw matches fetchTaskPlatformLinks's own client choice.
+  const applyTaskPlatformLinkRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const rowKey = (payload.new ?? payload.old) as { task_id?: string; platform_id?: string } | null;
+      const taskId = rowKey?.task_id;
+      const platformId = rowKey?.platform_id;
+      if (!taskId || !platformId) return;
+      const matches = (r: TaskPlatformLinkRecord) => r.task_id === taskId && r.platform_id === platformId;
+
+      if (payload.eventType === 'DELETE') {
+        setTaskPlatformLinks((prev) => (prev.some(matches) ? prev.filter((r) => !matches(r)) : prev));
+        return;
+      }
+
+      const { data, error } = await supabaseRaw
+        .from('task_platform_links')
+        .select('*')
+        .eq('task_id', taskId)
+        .eq('platform_id', platformId)
+        .maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed task platform link; falling back to a full refresh:', error);
+        void refreshTaskPlatformLinks();
+        return;
+      }
+      setTaskPlatformLinks((prev) => {
+        const idx = prev.findIndex(matches);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => !matches(r));
+        const row = data as TaskPlatformLinkRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshTaskPlatformLinks]
+  );
+
   const refreshSocialInsights = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2249,6 +2585,35 @@ export default function App() {
 
     setSocialInsights((data as SocialInsightRecord[]) || []);
   }, []);
+
+  const applySocialInsightRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setSocialInsights((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('social_insights').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed social insight; falling back to a full refresh:', error);
+        void refreshSocialInsights();
+        return;
+      }
+      setSocialInsights((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as SocialInsightRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshSocialInsights]
+  );
 
   const refreshSeoInsights = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -2262,6 +2627,35 @@ export default function App() {
     setSeoInsights((data as SeoInsightRecord[]) || []);
   }, []);
 
+  const applySeoInsightRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setSeoInsights((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('seo_insights').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed SEO insight; falling back to a full refresh:', error);
+        void refreshSeoInsights();
+        return;
+      }
+      setSeoInsights((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as SeoInsightRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshSeoInsights]
+  );
+
   const refreshClientComparisons = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2273,6 +2667,35 @@ export default function App() {
 
     setClientComparisons((data as ClientComparisonRecord[]) || []);
   }, []);
+
+  const applyClientComparisonRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setClientComparisons((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('client_comparisons').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed client comparison; falling back to a full refresh:', error);
+        void refreshClientComparisons();
+        return;
+      }
+      setClientComparisons((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as ClientComparisonRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshClientComparisons]
+  );
 
   const refreshClientPortalUsers = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -2286,6 +2709,35 @@ export default function App() {
     setClientPortalUsers((data as ClientPortalUserRecord[]) || []);
   }, []);
 
+  const applyClientPortalUserRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setClientPortalUsers((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('client_portal_users').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed client portal user; falling back to a full refresh:', error);
+        void refreshClientPortalUsers();
+        return;
+      }
+      setClientPortalUsers((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as ClientPortalUserRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshClientPortalUsers]
+  );
+
   const refreshBriefRevisions = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2297,6 +2749,35 @@ export default function App() {
 
     setBriefRevisions((data as BriefRevisionRecord[]) || []);
   }, []);
+
+  const applyBriefRevisionRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setBriefRevisions((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('brief_revisions').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed brief revision; falling back to a full refresh:', error);
+        void refreshBriefRevisions();
+        return;
+      }
+      setBriefRevisions((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as BriefRevisionRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshBriefRevisions]
+  );
 
   const refreshBriefFieldSchemas = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -2310,6 +2791,35 @@ export default function App() {
     setBriefFieldSchemaRows((data as BriefFieldSchemaRow[]) || []);
   }, []);
 
+  const applyBriefFieldSchemaRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setBriefFieldSchemaRows((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('brief_field_schemas').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed brief field schema; falling back to a full refresh:', error);
+        void refreshBriefFieldSchemas();
+        return;
+      }
+      setBriefFieldSchemaRows((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as BriefFieldSchemaRow;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshBriefFieldSchemas]
+  );
+
   const refreshBriefAttachments = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2321,6 +2831,35 @@ export default function App() {
 
     setBriefAttachments((data as BriefAttachmentRecord[]) || []);
   }, []);
+
+  const applyBriefAttachmentRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setBriefAttachments((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('brief_attachments').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed brief attachment; falling back to a full refresh:', error);
+        void refreshBriefAttachments();
+        return;
+      }
+      setBriefAttachments((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as BriefAttachmentRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshBriefAttachments]
+  );
 
   const refreshDailyLogAttachments = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -2336,6 +2875,35 @@ export default function App() {
     setDailyLogAttachments(data || []);
   }, []);
 
+  const applyDailyLogAttachmentRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setDailyLogAttachments((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('daily_log_attachments').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed daily log attachment; falling back to a full refresh:', error);
+        void refreshDailyLogAttachments();
+        return;
+      }
+      setDailyLogAttachments((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as DailyLogAttachmentRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshDailyLogAttachments]
+  );
+
   const refreshPlatformConnections = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
@@ -2347,6 +2915,35 @@ export default function App() {
 
     setPlatformConnections((data as PlatformConnectionRecord[]) || []);
   }, []);
+
+  const applyPlatformConnectionRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setPlatformConnections((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabase.from('platform_connections').select('*').eq('id', changedId).maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed platform connection; falling back to a full refresh:', error);
+        void refreshPlatformConnections();
+        return;
+      }
+      setPlatformConnections((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        if (!data) return idx === -1 ? prev : prev.filter((r) => r.id !== changedId);
+        const row = data as PlatformConnectionRecord;
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    },
+    [refreshPlatformConnections]
+  );
 
   const refreshClientLifecyclePeriods = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) {
@@ -2368,6 +2965,44 @@ export default function App() {
 
     setClientLifecyclePeriods((data as ClientLifecyclePeriodRecord[]) || []);
   }, []);
+
+  // client_lifecycle_periods keeps its array sorted by started_on ascending (refreshClientLifecyclePeriods
+  // orders it server-side) — an inserted row is spliced back in at the right position rather than
+  // just appended, so a realtime insert can't silently scramble the display order.
+  const applyClientLifecyclePeriodRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setClientLifecyclePeriods((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabaseRaw
+        .from('client_lifecycle_periods')
+        .select('*')
+        .eq('id', changedId)
+        .maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed client lifecycle period; falling back to a full refresh:', error);
+        void refreshClientLifecyclePeriods();
+        return;
+      }
+      setClientLifecyclePeriods((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        const withoutRow = idx === -1 ? prev : prev.slice(0, idx).concat(prev.slice(idx + 1));
+        if (!data) return withoutRow;
+        const row = data as ClientLifecyclePeriodRecord;
+        const insertAt = withoutRow.findIndex((r) => r.started_on > row.started_on);
+        const next = withoutRow.slice();
+        if (insertAt === -1) next.push(row);
+        else next.splice(insertAt, 0, row);
+        return next;
+      });
+    },
+    [refreshClientLifecyclePeriods]
+  );
 
   // Fetch initial data directly from Supabase (or fallback to initial state)
   //
@@ -3168,39 +3803,39 @@ export default function App() {
       { table: 'clients', refresh: refreshClients, onPayload: applyClientRealtimeChange },
       // Service Briefs — brief status/content changes as AMs and specialists hand briefs back and
       // forth. 20261217000000_screens_realtime_batch2.sql
-      { table: 'briefs', refresh: refreshBriefs },
+      { table: 'briefs', refresh: refreshBriefs, onPayload: applyBriefRealtimeChange },
       // Campaign Management. 20261217000000_screens_realtime_batch2.sql
-      { table: 'campaigns', refresh: refreshCampaigns },
+      { table: 'campaigns', refresh: refreshCampaigns, onPayload: applyCampaignRealtimeChange },
       // Capacity planning view. 20261217000000_screens_realtime_batch2.sql
-      { table: 'capacity_logs', refresh: refreshCapacityLogs },
+      { table: 'capacity_logs', refresh: refreshCapacityLogs, onPayload: applyCapacityLogRealtimeChange },
       // Daily Operations — "Log Today's Activity". 20261217000000_screens_realtime_batch2.sql
-      { table: 'daily_logs', refresh: refreshDailyLogs },
+      { table: 'daily_logs', refresh: refreshDailyLogs, onPayload: applyDailyLogRealtimeChange },
       // My Work Hub — "Log Extra Effort" notes. 20261217000000_screens_realtime_batch2.sql
-      { table: 'extra_notes', refresh: refreshExtraNotes },
+      { table: 'extra_notes', refresh: refreshExtraNotes, onPayload: applyExtraNoteRealtimeChange },
       // Reporting Engine. 20261217000000_screens_realtime_batch2.sql
-      { table: 'reports', refresh: refreshReports },
+      { table: 'reports', refresh: refreshReports, onPayload: applyReportRealtimeChange },
       // AM meeting notes/transcripts. 20261217000000_screens_realtime_batch2.sql
-      { table: 'meetings', refresh: refreshMeetings },
+      { table: 'meetings', refresh: refreshMeetings, onPayload: applyMeetingRealtimeChange },
       // Sales's signed-contract uploads. 20261217000000_screens_realtime_batch2.sql
-      { table: 'client_contracts', refresh: refreshClientContracts },
+      { table: 'client_contracts', refresh: refreshClientContracts, onPayload: applyClientContractRealtimeChange },
       // Batch 3 — remaining lookup/admin tables and the Reporting Engine's insight feeds/task
       // sub-records. 20261218000000_screens_realtime_batch3.sql
-      { table: 'task_types', refresh: refreshTaskTypes },
-      { table: 'platforms', refresh: refreshPlatforms },
+      { table: 'task_types', refresh: refreshTaskTypes, onPayload: applyTaskTypeRealtimeChange },
+      { table: 'platforms', refresh: refreshPlatforms, onPayload: applyPlatformRealtimeChange },
       { table: 'task_comments', refresh: refreshTaskComments, onPayload: applyTaskCommentRealtimeChange },
       { table: 'task_attachments', refresh: refreshTaskAttachments, onPayload: applyTaskAttachmentRealtimeChange },
       { table: 'task_assignees', refresh: refreshTaskAssignees, onPayload: applyTaskAssigneeRealtimeChange },
-      { table: 'task_platform_links', refresh: refreshTaskPlatformLinks },
-      { table: 'social_insights', refresh: refreshSocialInsights },
-      { table: 'seo_insights', refresh: refreshSeoInsights },
-      { table: 'client_comparisons', refresh: refreshClientComparisons },
-      { table: 'client_portal_users', refresh: refreshClientPortalUsers },
-      { table: 'brief_revisions', refresh: refreshBriefRevisions },
-      { table: 'brief_field_schemas', refresh: refreshBriefFieldSchemas },
-      { table: 'brief_attachments', refresh: refreshBriefAttachments },
-      { table: 'daily_log_attachments', refresh: refreshDailyLogAttachments },
-      { table: 'platform_connections', refresh: refreshPlatformConnections },
-      { table: 'client_lifecycle_periods', refresh: refreshClientLifecyclePeriods },
+      { table: 'task_platform_links', refresh: refreshTaskPlatformLinks, onPayload: applyTaskPlatformLinkRealtimeChange },
+      { table: 'social_insights', refresh: refreshSocialInsights, onPayload: applySocialInsightRealtimeChange },
+      { table: 'seo_insights', refresh: refreshSeoInsights, onPayload: applySeoInsightRealtimeChange },
+      { table: 'client_comparisons', refresh: refreshClientComparisons, onPayload: applyClientComparisonRealtimeChange },
+      { table: 'client_portal_users', refresh: refreshClientPortalUsers, onPayload: applyClientPortalUserRealtimeChange },
+      { table: 'brief_revisions', refresh: refreshBriefRevisions, onPayload: applyBriefRevisionRealtimeChange },
+      { table: 'brief_field_schemas', refresh: refreshBriefFieldSchemas, onPayload: applyBriefFieldSchemaRealtimeChange },
+      { table: 'brief_attachments', refresh: refreshBriefAttachments, onPayload: applyBriefAttachmentRealtimeChange },
+      { table: 'daily_log_attachments', refresh: refreshDailyLogAttachments, onPayload: applyDailyLogAttachmentRealtimeChange },
+      { table: 'platform_connections', refresh: refreshPlatformConnections, onPayload: applyPlatformConnectionRealtimeChange },
+      { table: 'client_lifecycle_periods', refresh: refreshClientLifecyclePeriods, onPayload: applyClientLifecyclePeriodRealtimeChange },
       // Custom roles & departments — the five tables feeding registerCustomRoleData()'s in-memory
       // permissions cache. Any change to any of them re-runs the SAME combined fetch
       // loadCustomRolesAndDepartments() already does on login, rather than patching the cache
