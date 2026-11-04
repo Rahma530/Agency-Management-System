@@ -41,7 +41,7 @@ import {
   fetchAllRows,
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
-import { isInhouseTask } from './lib/clientStatus';
+import { isInhouseClient, isInhouseTask } from './lib/clientStatus';
 import { isTeamLeadRole } from './lib/capacity';
 import type { DeliveryEventRow } from './lib/employeeWork';
 import { hasNewVersionDeployed } from './lib/versionCheck';
@@ -177,6 +177,7 @@ import { BulkClientUploadModal } from './components/BulkClientUploadModal';
 import { AMQueue } from './components/AMQueue';
 import { CapacityManagement } from './components/CapacityManagement';
 import { CrossTeamTaskBoard } from './components/CrossTeamTaskBoard';
+import { InhouseClientsPanel } from './components/InhouseClientsPanel';
 import { DailyOperationsModule } from './components/DailyOperationsModule';
 import { ImportDataModal } from './components/ImportDataModal';
 import { CampaignManagementModule } from './components/CampaignManagementModule';
@@ -493,6 +494,9 @@ export default function App() {
 
   // Active module tab
   const [activeTab, setActiveTab] = useState<AppModule>('onboarding');
+  // Inhouse tab's own internal sub-view switch: the Task Board (existing CrossTeamTaskBoard,
+  // inhouseOnly) vs. the Clients panel (services + per-service agent assignment, 2026-11-04).
+  const [inhouseView, setInhouseView] = useState<'tasks' | 'clients'>('tasks');
   const [unauthorizedRoute, setUnauthorizedRoute] = useState<string | null>(null);
   // Off-canvas sidebar drawer, mobile only (md breakpoint and below)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -7075,6 +7079,12 @@ export default function App() {
   // exact complement of inhouseTasks above is passed to the main Tasks tab instead of the full list.
   const externalTasks = useMemo(() => tasks.filter((t) => !isInhouseTask(t, clients)), [tasks, clients]);
 
+  // Inhouse module (2026-11-04): the "treat Kesraa/Fast Growth like a full Client" half of the
+  // owner's request — services + a standing responsible agent per service, same assignments-table
+  // mechanism every normal client already uses. Passed to the Inhouse tab's "Clients" sub-view
+  // (InhouseClientsPanel) below.
+  const inhouseClients = useMemo(() => clients.filter(isInhouseClient), [clients]);
+
   // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
   // same "persist, then sync local state" pattern as handleUpdateEmployee/
   // MiniChat send: insert a real row via supabaseRaw first, only append locally on success —
@@ -8285,41 +8295,78 @@ export default function App() {
                 since the Inhouse board is otherwise an ordinary task board, just scoped. */}
             {activeTab === 'inhouse' && (
               <div className="space-y-6">
-                <CrossTeamTaskBoard
-                  inhouseOnly
-                  tasks={inhouseTasks}
-                  taskAssignees={taskAssignees}
-                  users={users}
-                  taskDirectoryUsers={taskDirectoryUsers}
-                  clients={clients}
-                  currentUser={currentUser}
-                  currentUserId={currentUser.id}
-                  onUpdateTaskStatus={handleUpdateTaskStatus}
-                  onReorderTasks={handleReorderTasks}
-                  onCreateTask={handleCreateTask}
-                  onUpdateTask={handleUpdateTask}
-                  taskTypes={taskTypes}
-                  onCreateTaskType={handleCreateTaskType}
-                  onUpdateTaskType={handleUpdateTaskType}
-                  platforms={platforms}
-                  taskPlatformLinks={taskPlatformLinks}
-                  onCreatePlatform={handleCreatePlatform}
-                  onUpdatePlatform={handleUpdatePlatform}
-                  initialOpenTaskId={taskBoardOpenTaskId}
-                  taskComments={taskComments}
-                  onAddTaskComment={handleAddTaskComment}
-                  onEditTaskComment={handleEditTaskComment}
-                  onDeleteTaskComment={handleDeleteTaskComment}
-                  taskAttachments={taskAttachments}
-                  onUploadTaskAttachment={handleUploadTaskAttachment}
-                  onDeleteTaskAttachment={handleDeleteTaskAttachment}
-                  onGetCapacitySnapshot={getCapacitySnapshot}
-                  onGetUserScheduleLoad={getUserScheduleLoad}
-                  onGetServerToday={getServerToday}
-                  onMarkTaskViewed={handleMarkTaskViewed}
-                  onHardDeleteTasks={handleHardDeleteTasks}
-                  onDuplicateTask={handleDuplicateTask}
-                />
+                {/* Sub-view switch (2026-11-04): Task Board vs. Clients (services + per-service
+                    agent assignment) — the two halves of "treat Kesraa/Fast Growth like a full
+                    Client" the owner asked for. */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setInhouseView('tasks')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      inhouseView === 'tasks'
+                        ? 'bg-purple-600 text-white shadow'
+                        : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                    }`}
+                  >
+                    Tasks
+                  </button>
+                  <button
+                    onClick={() => setInhouseView('clients')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      inhouseView === 'clients'
+                        ? 'bg-purple-600 text-white shadow'
+                        : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                    }`}
+                  >
+                    Clients
+                  </button>
+                </div>
+
+                {inhouseView === 'tasks' ? (
+                  <CrossTeamTaskBoard
+                    inhouseOnly
+                    tasks={inhouseTasks}
+                    taskAssignees={taskAssignees}
+                    users={users}
+                    taskDirectoryUsers={taskDirectoryUsers}
+                    clients={clients}
+                    currentUser={currentUser}
+                    currentUserId={currentUser.id}
+                    onUpdateTaskStatus={handleUpdateTaskStatus}
+                    onReorderTasks={handleReorderTasks}
+                    onCreateTask={handleCreateTask}
+                    onUpdateTask={handleUpdateTask}
+                    taskTypes={taskTypes}
+                    onCreateTaskType={handleCreateTaskType}
+                    onUpdateTaskType={handleUpdateTaskType}
+                    platforms={platforms}
+                    taskPlatformLinks={taskPlatformLinks}
+                    onCreatePlatform={handleCreatePlatform}
+                    onUpdatePlatform={handleUpdatePlatform}
+                    initialOpenTaskId={taskBoardOpenTaskId}
+                    taskComments={taskComments}
+                    onAddTaskComment={handleAddTaskComment}
+                    onEditTaskComment={handleEditTaskComment}
+                    onDeleteTaskComment={handleDeleteTaskComment}
+                    taskAttachments={taskAttachments}
+                    onUploadTaskAttachment={handleUploadTaskAttachment}
+                    onDeleteTaskAttachment={handleDeleteTaskAttachment}
+                    onGetCapacitySnapshot={getCapacitySnapshot}
+                    onGetUserScheduleLoad={getUserScheduleLoad}
+                    onGetServerToday={getServerToday}
+                    onMarkTaskViewed={handleMarkTaskViewed}
+                    onHardDeleteTasks={handleHardDeleteTasks}
+                    onDuplicateTask={handleDuplicateTask}
+                  />
+                ) : (
+                  <InhouseClientsPanel
+                    clients={inhouseClients}
+                    users={users}
+                    assignments={assignments}
+                    currentUser={currentUser}
+                    onAssignServiceAgent={handleAssignServiceAgent}
+                    onUpdateClientDetails={handleUpdateClientDetails}
+                  />
+                )}
               </div>
             )}
 
