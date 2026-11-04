@@ -100,23 +100,17 @@ export const isExternalClient = (client: ClientRecord): boolean => !client.is_in
 // branches do (isExternalClient there) rather than a double negative.
 export const isInhouseClient = (client: ClientRecord): boolean => !!client.is_inhouse;
 
-// The only three teams the Inhouse module deals in (owner's own request: "Creative - Programming
-// Tasks" for Kesraa/Fast Growth) — Video Production and Programming are their own literal
-// task.team values alongside Creative & Design, mirroring OPERATIONAL_TEAMS in
-// departmentStaffing.ts. Kept here (not there) since this is an Inhouse-module-specific subset,
-// not a third copy of the full operational-teams list.
-export const INHOUSE_TEAMS: string[] = ['Creative & Design', 'Video Production', 'Programming'];
-
-// A task belongs to the Inhouse module when its client is one of the is_inhouse companies AND
-// its team is one of the three Inhouse teams above. Both conditions matter: a Kesraa task filed
-// under, say, "Marketing" team is not Inhouse-module work (the owner's own request scoped Inhouse
-// to Creative/Video/Programming specifically), and a non-inhouse client's task is never Inhouse
-// no matter its team. Takes the already-loaded client list rather than a lookup fn so callers
-// that already have `clients` in scope (App.tsx, CrossTeamTaskBoard.tsx) don't need a second one.
+// A task belongs to the Inhouse module purely based on its client — any team/department. Scoping
+// this to a fixed subset of teams (Creative & Design/Video Production/Programming only) was the
+// module's original shape, but the owner explicitly reversed that afterward: in-house clients can
+// get real work from any department now, so a Kesraa/Fast Growth task filed under SEO, Media
+// Buying, Marketing, etc. is still Inhouse-module work, same as one filed under Creative. Takes
+// the already-loaded client list rather than a lookup fn so callers that already have `clients` in
+// scope (App.tsx, CrossTeamTaskBoard.tsx) don't need a second one.
 export const isInhouseTask = (task: { client_id: string | null; team: string }, clients: ClientRecord[]): boolean => {
   if (!task.client_id) return false;
   const client = clients.find((c) => c.id === task.client_id);
-  return !!client?.is_inhouse && INHOUSE_TEAMS.includes(task.team);
+  return !!client?.is_inhouse;
 };
 
 // A paused or closed client is still fully selectable everywhere — never hidden, never actually
