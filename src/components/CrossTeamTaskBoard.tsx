@@ -65,7 +65,7 @@ import {
 } from '@dnd-kit/core';
 import { CAPACITY_UNKNOWN_INDICATOR, resolveCapacityLimit } from '../lib/capacity';
 import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
-import { compareByClientStatus, isExternalClient, isInhouseClient, isWoundDownClient, INHOUSE_TEAMS } from '../lib/clientStatus';
+import { compareByClientStatus, isExternalClient, isInhouseClient, isWoundDownClient } from '../lib/clientStatus';
 import {
   computeTaskDeletionPreview,
   fetchTaskEvents,
@@ -1187,20 +1187,21 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // without a catch-all value baked in. Recomputed every render (plain const, not memoized) so it
   // always reflects the cache's current state rather than freezing in whatever was true the first
   // time this component rendered.
-  // inhouseOnly overrides even marketing_manager's own "Creative" special-case above: on the
-  // Inhouse tab there is exactly one universe of teams (the 3 Inhouse ones), for every one of
-  // the 3 roles allowed in, marketing_manager included.
-  const teams = inhouseOnly
-    ? [{ id: 'all', label: 'All Teams' }, ...INHOUSE_TEAMS.map((t) => ({ id: t, label: t }))]
-    : currentUser?.role === 'marketing_manager'
-      ? [
-          { id: 'all', label: 'All Teams' },
-          { id: 'Creative', label: 'Creative' },
-        ]
-      : [
-          { id: 'all', label: 'All Teams' },
-          ...getOperationalTeams().map((t) => ({ id: t, label: t })),
-        ];
+  // inhouseOnly overrides even marketing_manager's own "Creative" special-case above: the Inhouse
+  // module was originally scoped to 3 fixed teams (Creative & Design/Video Production/
+  // Programming), but the owner explicitly reversed that — in-house clients can now get work from
+  // any department, so every one of the 3 roles allowed into this tab (marketing_manager included)
+  // gets the full operational-teams list here, exactly like the normal Tasks tab's own
+  // non-marketing_manager branch below.
+  const teams = inhouseOnly || currentUser?.role !== 'marketing_manager'
+    ? [
+        { id: 'all', label: 'All Teams' },
+        ...getOperationalTeams().map((t) => ({ id: t, label: t })),
+      ]
+    : [
+        { id: 'all', label: 'All Teams' },
+        { id: 'Creative', label: 'Creative' },
+      ];
 
   // Team options for the Create/Edit Task forms' own Team select — distinct from `teams` above
   // (the board's filter dropdown) and from getOperationalTeams() itself, which EmployeeAdminHub.tsx
@@ -1209,14 +1210,14 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // does task-based work. Deliberately NOT a useMemo: getOperationalTeams() can change value (once
   // the cache finishes loading) independently of currentUser?.role, and a useMemo keyed only on the
   // latter would freeze a stale list until something else happened to change that one dependency.
-  // On the Inhouse tab, the Create/Edit Task Team select is locked to the 3 Inhouse teams only —
-  // no Marketing/Technical, no other department, matching `teams`/sortedClientsForPicker above.
-  const taskFormTeams = inhouseOnly
-    ? [...INHOUSE_TEAMS]
-    : [
-        ...getOperationalTeams(),
-        ...(currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing']),
-      ];
+  // On the Inhouse tab, the Create/Edit Task Team select now offers every department, same as the
+  // normal Tasks tab — the module's original 3-team lock (Creative & Design/Video Production/
+  // Programming only) was an explicit owner request that was later explicitly reversed; in-house
+  // clients can get real work from any team now, Inhouse tab included.
+  const taskFormTeams = [
+    ...getOperationalTeams(),
+    ...(currentUser?.role === 'executive' ? ['Marketing', 'Technical'] : ['Marketing']),
+  ];
 
   // Employee-name filter options when the Team filter is at "All Teams" (or, for
   // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so
