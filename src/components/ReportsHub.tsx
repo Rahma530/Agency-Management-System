@@ -960,7 +960,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
       {/* 2) Sources + Draft + Save/Approve/PDF/Archive + Version history/Source ledger — all
           already one cohesive block inside ReportDraftWorkspace. */}
       <ReportDraftWorkspace
-        currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} reports={reports}
+        currentUser={currentUser} users={users} clients={myClients} employees={selectableAgents} assignments={assignments} reports={reports}
         dailyLogs={dailyLogs} extraNotes={extraNotes} tasks={tasks} taskAssignees={taskAssignees}
         scopeKind={scopeKind} onScopeKindChange={setScopeKind}
         clientId={clientId} onClientIdChange={setClientId}

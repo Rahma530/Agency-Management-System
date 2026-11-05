@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, CheckCircle2, Download, FilePenLine, Save, Sparkles, Trash2, X } from 'lucide-react';
 import {
+  AssignmentRecord,
   ClientRecord,
   DailyLogRecord,
   ExtraNoteRecord,
@@ -24,7 +25,7 @@ import { buildIndividualReportHtml, downloadHtmlReport } from '../../lib/reportH
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
-import { classifyWorkLogService } from '../../lib/workLogServiceClassification';
+import { classifyWorkLogService, classifyWorkLogServiceWithAssignmentFallback } from '../../lib/workLogServiceClassification';
 import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
 import { ReportContentPreview } from './ReportContentPreview';
 
@@ -42,6 +43,12 @@ interface Props {
   users: UserRecord[];
   clients: ClientRecord[];
   employees: UserRecord[];
+  // Used only as a fallback for classifying a CLIENT-scope work-log line into its real service
+  // section (renderWorkLogSection) when the author's formal UserRole has no entry in
+  // classifyWorkLogService's ROLE_TO_SERVICE map — see that fallback's own comment below for why
+  // role alone is no longer a reliable signal (Inhouse clients, PR #283, let ANY department's
+  // employee be the responsible agent for a service).
+  assignments: AssignmentRecord[];
   reports: ReportRecord[];
   dailyLogs: DailyLogRecord[];
   extraNotes: ExtraNoteRecord[];
@@ -170,9 +177,21 @@ function linkedTaskIdsOf(source: Pick<ReportSourceItemRecord, 'snapshot'>): stri
 // meaning for an employee-scope report, which can span several clients at once. usersById is the
 // full roster (not just this manifest's authors) so a lookup never misses an active or deactivated
 // user. See classifyWorkLogService's own comment for the role->service mapping and its limits.
+//
+// assignedServicesByUser (fallback, added 2026-11-05): classifyWorkLogService only ever looks at
+// the author's formal UserRole, which breaks down for an Inhouse client (PR #283) where ANY
+// department's employee can be made the responsible agent for a service — e.g. a marketing_manager
+// personally doing real SEO/Social/Graphic Design work, whose role has no ROLE_TO_SERVICE entry at
+// all, so every one of their lines fell into "Other/More Updates" regardless of what the line
+// actually described. Keyed by user id -> the set of this CLIENT's subscribed services they're the
+// assigned agent/team lead for (from the `assignments` table, the same per-client-per-service
+// "who's responsible" mechanism the Inhouse Clients panel itself uses). renderWorkLogSection only
+// trusts this when it narrows to exactly one service — two or more assigned services for the same
+// author is genuinely ambiguous per line, so it's left in "Other/More Updates" rather than guessed.
 interface WorkLogServiceGrouping {
   client: ClientRecord;
   usersById: Map<string, UserRecord>;
+  assignedServicesByUser: Map<string, Set<ServiceType>>;
 }
 
 // workLogGroups (optional): the result of "Group similar entries" (onGroupWorkItems), keyed by
@@ -322,10 +341,12 @@ function renderWorkLogSection(
   if (!serviceGrouping) return lines.map((entry) => entry.line).join('\n');
 
   type ServiceBucketKey = ServiceType | 'creative' | 'other';
+  const subscribedServices = new Set(getClientServices(serviceGrouping.client));
   const buckets = new Map<ServiceBucketKey, string[]>();
   lines.forEach((entry) => {
     const role = serviceGrouping.usersById.get(entry.userId)?.role;
-    const key: ServiceBucketKey = classifyWorkLogService(role) ?? 'other';
+    const assigned = serviceGrouping.assignedServicesByUser.get(entry.userId);
+    const key: ServiceBucketKey = classifyWorkLogServiceWithAssignmentFallback(role, assigned, subscribedServices) ?? 'other';
     buckets.set(key, [...(buckets.get(key) || []), entry.line]);
   });
   // Fixed section order, not the client's subscription order: the priority services first
@@ -341,7 +362,6 @@ function renderWorkLogSection(
   // placeholder line instead of work-log cards. The Creative pool and "More Updates" are NOT real,
   // client-subscribed services (no client ever "subscribes" to either), so they keep the old
   // only-if-non-empty behavior.
-  const subscribedServices = new Set(getClientServices(serviceGrouping.client));
   const orderedKeys: ServiceBucketKey[] = [
     ...PRIORITY_SERVICE_ORDER.filter((service) => subscribedServices.has(service)),
     ...CLIENT_SERVICES.filter((service) => !PRIORITY_SERVICE_ORDER.includes(service) && subscribedServices.has(service)),
@@ -402,6 +422,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   users,
   clients,
   employees,
+  assignments,
   reports,
   dailyLogs,
   extraNotes,
@@ -516,8 +537,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   const workLogServiceGrouping = useMemo(() => {
     if (effectiveScopeType !== 'client') return undefined;
     const client = clients.find((item) => item.id === clientId);
-    return client ? { client, usersById } : undefined;
-  }, [effectiveScopeType, clientId, clients, usersById]);
+    if (!client) return undefined;
+    const assignedServicesByUser = new Map<string, Set<ServiceType>>();
+    assignments
+      .filter((assignment) => assignment.client_id === client.id)
+      .forEach((assignment) => {
+        [assignment.agent_id, assignment.team_lead_id].forEach((userId) => {
+          if (!userId) return;
+          const set = assignedServicesByUser.get(userId) || new Set<ServiceType>();
+          set.add(assignment.service_type);
+          assignedServicesByUser.set(userId, set);
+        });
+      });
+    return { client, usersById, assignedServicesByUser };
+  }, [effectiveScopeType, clientId, clients, usersById, assignments]);
   // Point 2: "name — من X إلى Y" (not "{period} — {name}") so the Arabic subject name and the
   // period's two dates each keep their own reading order instead of garbling together — see
   // formatPeriodLabel's own comment (ComparisonDisplay.tsx) for why raw "start_end" labels read
