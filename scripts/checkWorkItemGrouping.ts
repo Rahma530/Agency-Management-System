@@ -124,6 +124,32 @@ const input = validateWorkItemGroupPayload({ items });
   if (!groups.some((g) => g.ids.length === 3)) throw new Error('A correctly-phrased group (count before the noun, no banned words) must be accepted.');
 }
 
+// 8) Root-cause regression (2026-11-05): two DIFFERENT real employees who happen to share the
+// exact same display name must never be merged, even though their "employee" strings are
+// identical — the check must key off employeeKey (the real user id) when present, not the name.
+{
+  const collisionItems = [
+    { id: 'f', employee: 'محمد', employeeKey: 'user-social-media-agent', text: 'نشرت ستوري' },
+    { id: 'g', employee: 'محمد', employeeKey: 'user-social-media-agent', text: 'تم نشر story' },
+    { id: 'h', employee: 'محمد', employeeKey: 'user-marketing-manager', text: 'نشرت ستوري' }, // same name, DIFFERENT real person
+  ];
+  const collisionInput = validateWorkItemGroupPayload({ items: collisionItems });
+  const modelOutput = [{ ids: ['f', 'g', 'h'], text: 'نشر 3 ستوريز' }]; // model wrongly thinks all 3 are "محمد"
+  const validation = validateOutput(modelOutput, 'brief', collisionInput);
+  if (!validation.ok) throw new Error('validateOutput must never reject the whole stage.');
+  const groups = (validation.value as { groups: { ids: string[]; text: string }[] }).groups;
+  if (groups.some((g) => g.ids.length > 1)) {
+    throw new Error('Two different employeeKeys sharing the same display name must never be merged — this is the exact bug that sent correctly-written Social Media updates to Other/More Updates.');
+  }
+  // The two genuinely same-person items (same employeeKey) must still merge normally.
+  const retryOutput = [{ ids: ['f', 'g'], text: 'نشر 2 ستوري' }];
+  const retryValidation = validateOutput(retryOutput, 'brief', collisionInput);
+  const retryGroups = (retryValidation.value as { groups: { ids: string[]; text: string }[] }).groups;
+  if (!retryGroups.some((g) => g.ids.length === 2 && g.ids.slice().sort().join(',') === 'f,g')) {
+    throw new Error('Two items with the same real employeeKey must still merge normally.');
+  }
+}
+
 // Payload-level validation: cap, shape, and uniqueness (mirrors CAMPAIGN_SUMMARY's own work_items
 // regressions in checkCampaignSummaryWorkItems.ts).
 {
