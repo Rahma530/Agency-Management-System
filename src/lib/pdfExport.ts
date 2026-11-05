@@ -201,7 +201,11 @@ export const CREATIVE_BUCKET_LABEL = 'Creative';
 // The label for a client-scope report's work-log lines whose author's role has no reliable
 // service mapping at all (classifyWorkLogService, workLogServiceClassification.ts) — AM/sales/
 // executive/head_of_technical/ai_engineer/marketing_manager roles, custom admin-created roles, etc.
-export const OTHER_SERVICE_BUCKET_LABEL = 'Other updates';
+// Renamed from "Other updates" to "More Updates" per the owner's explicit request (2026-11-05):
+// this bucket is specifically for genuine cross-service notes (most commonly the client's own AM
+// writing a general update), not a dumping ground implying something went uncategorized by
+// mistake — "Other" read as a bug/catch-all, "More Updates" reads as its own intentional section.
+export const OTHER_SERVICE_BUCKET_LABEL = 'More Updates';
 
 const KNOWN_TOP_HEADINGS = new Set<string>(Object.values(REPORT_SECTION_HEADINGS));
 const KNOWN_SERVICE_SUBHEADINGS = new Set<string>([

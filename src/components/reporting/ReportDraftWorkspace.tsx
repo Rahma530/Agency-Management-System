@@ -15,7 +15,7 @@ import {
   UserRecord,
 } from '../../types/database';
 import { supabase, supabaseRaw } from '../../lib/supabase';
-import { formatLocalCalendarDate, parseReportPeriodRange, resolveReportPeriod, resolveReportTypeLabel } from '../../lib/reportPeriods';
+import { formatLocalCalendarDate, parseReportPeriodRange, resolveReportPeriod, resolveReportTypeLabel, resolveReportTypeLabelForGranularity, ReportGranularity } from '../../lib/reportPeriods';
 import {
   collectClientReportSources, collectEmployeeReportSources, dedupeIdenticalWorkLogs, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
@@ -74,6 +74,14 @@ interface Props {
   onPeriodStartChange: (value: string) => void;
   periodEnd: string;
   onPeriodEndChange: (value: string) => void;
+  // Owner's explicit request (2026-11-05): the exported report's heading must say exactly which
+  // shortcut button (Weekly/Monthly/Quarterly/Yearly/Custom Range) was selected when generating it,
+  // not a guess from the resulting date range's length — see reportPeriods.ts's
+  // resolveReportTypeLabelForGranularity for why the guess alone isn't enough. ReportsHub.tsx owns
+  // this as its periodShortcut state; optional since not every ReportDraftWorkspace caller has that
+  // selector (none do today besides ReportsHub), in which case exportPdf/exportHtml fall back to
+  // the old date-span guess exactly as before.
+  reportGranularity?: ReportGranularity;
   // AI Summary is the sole AI action inside the draft now (Suggest rewrite's button was removed
   // from this UI — the RPC/edge function it used, create_report_ai_suggestion/ai-router
   // REPORT_REWRITE, and apply_report_ai_suggestion for any already-pending suggestion, are
@@ -317,17 +325,29 @@ function renderWorkLogSection(
   });
   // Fixed section order, not the client's subscription order: the priority services first
   // (Media Buying, Social Media, SEO), then every other real service, then the Creative pool, and
-  // "Other updates" always last. Only sections that actually have entries are emitted.
+  // "More Updates" always last.
+  //
+  // Owner's explicit request (2026-11-05): every service the CLIENT actually subscribes to
+  // (getClientServices) must always get its own section, even when no work-log entry classified
+  // into it this period — a client subscribed to SEO with nothing logged should still show an
+  // (empty) SEO section, not have it silently vanish as if the service didn't exist. This is
+  // genuinely different from before: `subscribedServices` drives which real-service keys appear,
+  // not `buckets.has(service)` — a subscribed service with zero entries still renders, with a
+  // placeholder line instead of work-log cards. The Creative pool and "More Updates" are NOT real,
+  // client-subscribed services (no client ever "subscribes" to either), so they keep the old
+  // only-if-non-empty behavior.
+  const subscribedServices = new Set(getClientServices(serviceGrouping.client));
   const orderedKeys: ServiceBucketKey[] = [
-    ...PRIORITY_SERVICE_ORDER.filter((service) => buckets.has(service)),
-    ...CLIENT_SERVICES.filter((service) => !PRIORITY_SERVICE_ORDER.includes(service) && buckets.has(service)),
+    ...PRIORITY_SERVICE_ORDER.filter((service) => subscribedServices.has(service)),
+    ...CLIENT_SERVICES.filter((service) => !PRIORITY_SERVICE_ORDER.includes(service) && subscribedServices.has(service)),
     ...(buckets.has('creative') ? (['creative'] as ServiceBucketKey[]) : []),
     ...(buckets.has('other') ? (['other'] as ServiceBucketKey[]) : []),
   ];
   return orderedKeys
     .map((key) => {
       const heading = key === 'other' ? OTHER_SERVICE_BUCKET_LABEL : key === 'creative' ? CREATIVE_BUCKET_LABEL : SERVICE_LABELS[key];
-      return `${heading}\n${buckets.get(key)!.join('\n')}`;
+      const body = buckets.get(key)?.join('\n') || 'No updates recorded for this service during this period.';
+      return `${heading}\n${body}`;
     })
     .join('\n\n');
 }
@@ -401,6 +421,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   onPeriodStartChange,
   periodEnd,
   onPeriodEndChange,
+  reportGranularity,
   onRequestAiSummary,
   onGroupWorkItems,
   clearSignal,
@@ -1135,11 +1156,14 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     const periodRange = formatReportPeriodRange(selectedReport.period || '');
     // parseReportContentIntoParagraphs falls back to the literal heading "Final Report" whenever a
     // report's content_text doesn't match the recognized section shape (see its own comment).
-    // Swap that literal for the period-derived Weekly/Monthly/Period label here, right before it's
-    // drawn — same resolveReportTypeLabel() the HTML export uses, kept as a display-only rename so
-    // parseReportContentIntoParagraphs itself (shared with the HTML path) still produces the
-    // original literal string everywhere else that checks for it.
-    const dynamicReportTypeLabel = resolveReportTypeLabel(selectedReport.period || '');
+    // Swap that literal for the real report-type label here, right before it's drawn — kept as a
+    // display-only rename so parseReportContentIntoParagraphs itself (shared with the HTML path)
+    // still produces the original literal string everywhere else that checks for it. Prefers
+    // reportGranularity (exactly which shortcut button was clicked — see this component's own
+    // Props comment) over the date-span guess, same priority the HTML export below uses.
+    const dynamicReportTypeLabel = reportGranularity
+      ? resolveReportTypeLabelForGranularity(reportGranularity)
+      : resolveReportTypeLabel(selectedReport.period || '');
     const paragraphs = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) =>
       p.heading === 'Final Report' ? { ...p, heading: dynamicReportTypeLabel } : p
     );
@@ -1179,6 +1203,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       subtitle: periodRange,
       contentText: currentVersion.content_text,
       period: selectedReport.period || '',
+      reportTypeLabel: reportGranularity ? resolveReportTypeLabelForGranularity(reportGranularity) : undefined,
     });
     downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
   };

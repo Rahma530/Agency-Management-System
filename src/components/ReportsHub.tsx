@@ -970,6 +970,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         clientServiceFilter={serviceFilterForRequests}
         periodStart={periodStart} onPeriodStartChange={setPeriodStart}
         periodEnd={periodEnd} onPeriodEndChange={setPeriodEnd}
+        reportGranularity={periodShortcut}
         openReportId={workspaceReportId} onOpenReportHandled={() => setWorkspaceReportId(null)}
         clearSignal={workspaceClearToken}
         onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
