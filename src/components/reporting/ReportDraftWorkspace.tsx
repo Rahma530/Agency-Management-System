@@ -109,7 +109,12 @@ interface Props {
   // (taskRegistry.ts's WORK_ITEM_GROUP never takes the model's count on its word — see
   // groupSimilarEntries below). Optional for the same reason onRequestAiSummary is.
   onGroupWorkItems?: (
-    items: { id: string; employee?: string; text: string }[]
+    // employeeKey: the author's real, stable user id — used server-side to verify two items
+    // really are the same employee before merging them. employee (the display name) is NOT a
+    // safe substitute: two different employees can share the same name, which used to let the
+    // server wrongly treat them as "the same employee" and merge their lines together (see
+    // taskRegistry.ts's validateWorkItemGroupOutput comment for the full bug this fixes).
+    items: { id: string; employee?: string; employeeKey?: string; text: string }[]
   ) => Promise<WorkItemGroupGenerationResult>;
   // Bumped by ReportsHub whenever the top-bar scope/period changes to a combination with no
   // matching draft — tells this workspace to confirm-discard (if needed) and reset to its empty,
@@ -999,6 +1004,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
         .map((source) => ({
           id: source.source_id,
           employee: names.get(source.user_id) || undefined,
+          employeeKey: source.user_id,
           text: activeTextById.get(source.source_id) ?? String(source.snapshot.summary_text || '').trim(),
         }))
         .filter((item) => item.text);

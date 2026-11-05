@@ -1520,7 +1520,7 @@ export default function App() {
   // server-side (taskRegistry.ts's validateWorkItemGroupOutput) against an independently-counted
   // group size before this ever sees it, so no further grounding check is needed here.
   const handleGroupWorkItems = async (
-    items: { id: string; employee?: string; text: string }[]
+    items: { id: string; employee?: string; employeeKey?: string; text: string }[]
   ): Promise<WorkItemGroupGenerationResult> => {
     try {
       const { data, error } = await withTimeout(

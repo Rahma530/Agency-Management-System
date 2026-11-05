@@ -815,7 +815,24 @@ interface WorkItemGroupInput {
   // Mirrors WorkItemInput's own id contract above — caller-assigned, stable, the only thing used
   // to line a grouped/ungrouped output item back up with its input.
   id: string;
+  // Display name only — shown to the model so it can read "who wrote this" in its own clustering
+  // reasoning. NEVER used for the sameEmployee integrity check below, because two genuinely
+  // different employees can share the exact same display name (common with repeated first names).
+  // Root cause of a real bug: the old code compared THIS field for "same employee," so two
+  // different people named e.g. "محمد" could get merged into one group, and the merged line then
+  // got attributed to whichever one of them happened to be first — silently misclassifying a
+  // Social Media (or any other service's) update under "Other/More Updates" whenever the wrong
+  // one of the two had an unmapped role (marketing_manager, AM, executive, etc.), with no
+  // involvement of custom roles and no single employee reliably at fault — exactly the symptom
+  // reported across multiple clients.
   employee?: string;
+  // The real, stable identity used for the sameEmployee integrity check — the work-log author's
+  // actual user id, never a guessable or collidable display string. Sent alongside `employee` but
+  // never referenced by the model's own output (the model only ever returns `ids` + `text`), so
+  // including it changes nothing about what the model does; it only closes the validation gap
+  // above. Optional only so a payload missing it still degrades to the old (unsafe) name-based
+  // check rather than hard-failing the whole stage.
+  employeeKey?: string;
   text: string;
 }
 
@@ -835,7 +852,7 @@ export function validateWorkItemGroupPayload(rawPayload: unknown): WorkItemGroup
   if (!Array.isArray(p.items) || p.items.length === 0 || p.items.length > MAX_GROUP_ITEMS) {
     throw new Error(`items must be a non-empty array of at most ${MAX_GROUP_ITEMS} entries.`);
   }
-  const allowedItemKeys = new Set(['id', 'employee', 'text']);
+  const allowedItemKeys = new Set(['id', 'employee', 'employeeKey', 'text']);
   const seenIds = new Set<string>();
   const items: WorkItemGroupInput[] = p.items.map((entry, i) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`items[${i}] must be an object.`);
@@ -851,10 +868,14 @@ export function validateWorkItemGroupPayload(rawPayload: unknown): WorkItemGroup
     if (e.employee !== undefined && (typeof e.employee !== 'string' || e.employee.length > MAX_WORK_ITEM_LABEL_CHARS)) {
       throw new Error(`items[${i}].employee must be a string of at most ${MAX_WORK_ITEM_LABEL_CHARS} characters.`);
     }
+    if (e.employeeKey !== undefined && (typeof e.employeeKey !== 'string' || !e.employeeKey.trim() || e.employeeKey.length > MAX_WORK_ITEM_LABEL_CHARS)) {
+      throw new Error(`items[${i}].employeeKey must be a non-empty string of at most ${MAX_WORK_ITEM_LABEL_CHARS} characters.`);
+    }
     return {
       id: e.id,
       text: e.text,
       ...(e.employee !== undefined ? { employee: e.employee as string } : {}),
+      ...(e.employeeKey !== undefined ? { employeeKey: e.employeeKey as string } : {}),
     };
   });
   return { items };
@@ -864,9 +885,12 @@ function buildWorkItemGroupSystemPrompt(language: SupportedLanguage): string {
   const languageName = LANGUAGE_NAMES[language];
   return (
     `You will receive a JSON object with an "items" array: each item has an "id", an optional ` +
-    `"employee", and "text" — one employee's own original work-log line for a reporting period, ` +
-    `in Arabic, English, or a mix of both. The "employee" field is only for deciding which items ` +
-    `belong together; NEVER write a person's name into any output text.\n\n` +
+    `"employee", an optional "employeeKey", and "text" — one employee's own original work-log ` +
+    `line for a reporting period, in Arabic, English, or a mix of both. The "employee" field is ` +
+    `only for deciding which items belong together; NEVER write a person's name into any output ` +
+    `text. Completely ignore "employeeKey" — it is an internal id used only after your response ` +
+    `comes back, has no meaning for your clustering decision, and must never appear in your ` +
+    `output.\n\n` +
     `Your only job is to decide which items, by the SAME employee, clearly describe the exact ` +
     `same recurring practical activity repeated on different days (e.g., several lines that each ` +
     `just mean "posted a story" said by the same person on different days) — including when one ` +
@@ -908,10 +932,25 @@ function buildWorkItemGroupSystemPrompt(language: SupportedLanguage): string {
 // specific check is the whole safety net here. Any id left over after all proposed groups are
 // checked — never proposed, or dropped by a failed check above — becomes its own untouched
 // singleton group carrying its own original text, never the model's wording.
+//
+// Root-cause fix (2026-11-05): the "same employee" check below used to compare `item.employee` —
+// a plain DISPLAY NAME. Two genuinely different employees who happen to share the same name
+// (not rare with common first names) were therefore treated as "the same employee," so a group
+// could legitimately end up mixing lines from two different real people. Downstream, the caller
+// attributes the whole merged line to only ONE of the group's member ids, so whichever of the two
+// employees was NOT picked had their role silently discarded — and if the picked one's role has
+// no service mapping (marketing_manager, AM, executive, a custom admin role, …), the merged line
+// (which may well describe real Social Media/SEO/etc. work) lands in the catch-all "Other/More
+// Updates" bucket instead of its real service section. This matches every symptom reported: no
+// custom role involved, not reproducible with one specific employee, and reproducible across
+// multiple clients (any report where two same-named employees both have logs). Fixed by keying
+// the check on `employeeKey` (the real, stable user id) whenever it's present, falling back to
+// the old name comparison only for a payload that omits it.
 function validateWorkItemGroupOutput(parsed: unknown, _detail: DetailLevel, stageInput?: unknown): StageValidationResult {
   const input = (stageInput as WorkItemGroupPayload | undefined)?.items;
   if (!input || input.length === 0) return { ok: false };
   const byId = new Map(input.map((item) => [item.id, item]));
+  const identityOf = (item: WorkItemGroupInput): string | undefined => item.employeeKey ?? item.employee;
   const used = new Set<string>();
   const groups: { ids: string[]; text: string }[] = [];
   if (Array.isArray(parsed)) {
@@ -920,14 +959,14 @@ function validateWorkItemGroupOutput(parsed: unknown, _detail: DetailLevel, stag
       const g = raw as Record<string, unknown>;
       const idsRaw = Array.isArray(g.ids) ? g.ids : [];
       if (idsRaw.length < 2 || !isNonEmptyString(g.text)) continue;
-      let employee: string | undefined;
+      let identity: string | undefined;
       let sameEmployee = true;
       const validIds: string[] = [];
       for (const id of idsRaw) {
         if (typeof id !== 'string' || used.has(id) || validIds.includes(id) || !byId.has(id)) { sameEmployee = false; break; }
         const item = byId.get(id)!;
-        if (validIds.length === 0) employee = item.employee;
-        else if (employee !== item.employee) { sameEmployee = false; break; }
+        if (validIds.length === 0) identity = identityOf(item);
+        else if (identity !== identityOf(item)) { sameEmployee = false; break; }
         validIds.push(id);
       }
       if (!sameEmployee || validIds.length < 2) continue;
