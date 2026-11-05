@@ -67,3 +67,29 @@ export function classifyWorkLogService(role: UserRole | undefined): ServiceType 
   const departmentId = getCustomRoleDepartmentId(role);
   return (departmentId && DEPARTMENT_ID_TO_BUCKET[departmentId]) || null;
 }
+
+// Fallback for classifyWorkLogService's own null (added 2026-11-05): role alone stopped being a
+// reliable signal once an Inhouse client (PR #283) could have ANY department's employee made the
+// responsible agent for one of its services — e.g. a marketing_manager personally doing real SEO
+// or Social Media work for Kesraa itself. marketing_manager (like am_team_lead/am_agent/sales/
+// executive/head_of_technical/ai_engineer) has no ROLE_TO_SERVICE entry on purpose — it still
+// shouldn't be guessed from role alone — but every one of that employee's lines used to land in
+// "Other/More Updates" regardless of what the line actually described, with no way to recover.
+//
+// This checks a much stronger, per-client signal instead: the `assignments` table (the same
+// per-client-per-service "who's the responsible agent/team lead" mechanism the Inhouse Clients
+// panel itself uses). If this author is the assigned agent/team lead for EXACTLY ONE of the
+// client's subscribed services, that's used; zero or two-or-more assigned services is genuinely
+// ambiguous per individual line (which one is this specific line about?), so it's left
+// unclassified (null) rather than guessed.
+export function classifyWorkLogServiceWithAssignmentFallback(
+  role: UserRole | undefined,
+  assignedServices: Set<ServiceType> | undefined,
+  subscribedServices: Set<ServiceType>
+): ServiceType | 'creative' | null {
+  const byRole = classifyWorkLogService(role);
+  if (byRole) return byRole;
+  if (!assignedServices) return null;
+  const assignedSubscribed = [...assignedServices].filter((service) => subscribedServices.has(service));
+  return assignedSubscribed.length === 1 ? assignedSubscribed[0] : null;
+}
