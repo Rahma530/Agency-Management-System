@@ -127,3 +127,30 @@ export function resolveReportTypeLabel(period: string): string {
     return 'Period Report';
   }
 }
+
+// Owner's explicit request (2026-11-05): the exported report's heading must reflect exactly which
+// shortcut button she clicked when generating it (ReportsHub.tsx's Weekly/Monthly/Quarterly/
+// Yearly/Custom Range row — periodShortcut state), not a guess from the resulting date range's
+// length. resolveReportTypeLabel above over-guesses in two ways this fixes: a 7-day CUSTOM range
+// read as "Weekly" even though no Weekly button was pressed, and a Quarterly/Yearly selection fell
+// through to the generic "Period Report" fallback since only 7-day/28-31-day spans were ever
+// recognized. 'custom' maps to the literal word "Report" per her own wording ("لو اختارت Custom
+// Range يظهر Report بس") — not "Period Report", not a date-derived label. Called with the live
+// granularity whenever the caller has one (ReportDraftWorkspace.tsx, threaded down from
+// ReportsHub.tsx's periodShortcut); resolveReportTypeLabel(period) above remains the fallback for
+// every other entry point that never had a shortcut selector to begin with (e.g. AMQueue's
+// one-off "Generate Monthly Report Draft" action, or a legacy saved report with no live selection
+// to read).
+export type ReportGranularity = 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom';
+
+const GRANULARITY_REPORT_LABELS: Record<ReportGranularity, string> = {
+  weekly: 'Weekly Report',
+  monthly: 'Monthly Report',
+  quarterly: 'Quarterly Report',
+  yearly: 'Yearly Report',
+  custom: 'Report',
+};
+
+export function resolveReportTypeLabelForGranularity(granularity: ReportGranularity): string {
+  return GRANULARITY_REPORT_LABELS[granularity];
+}

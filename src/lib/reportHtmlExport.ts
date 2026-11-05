@@ -341,9 +341,16 @@ export interface IndividualReportHtmlOptions {
   contentText: string;
   // Raw "<fromIso>_<toIso>" period string (ReportDraftWorkspace's selectedReport.period). Optional
   // and additive: when present it drives the bold "From … To …" date line (replacing a plain-text
-  // subtitle) and the dynamic Weekly/Monthly/Period fallback heading below; when absent, behaviour
-  // is unchanged from before this field existed (plain subtitle, literal "Final Report" heading).
+  // subtitle) and, when reportTypeLabel (below) isn't given, the date-span-guessed Weekly/Monthly/
+  // Period fallback heading; when absent, behaviour is unchanged from before this field existed
+  // (plain subtitle, literal "Final Report" heading).
   period?: string;
+  // The exact report-type heading to use for the "Final Report" fallback section, resolved by the
+  // caller from whichever granularity shortcut button was actually selected at generation time
+  // (reportPeriods.ts's resolveReportTypeLabelForGranularity) — takes priority over the date-span
+  // guess below whenever provided. See that function's own comment for why the guess alone isn't
+  // enough (a 7-day Custom Range misread as "Weekly", Quarterly/Yearly never recognized at all).
+  reportTypeLabel?: string;
 }
 
 // Built entirely from the already-APPROVED, saved `content_text` — the exact same parsed
@@ -369,11 +376,13 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
   const workLogSections = sections.filter((s) => !NON_WORKLOG_HEADINGS.has(s.heading));
   const otherSections = sections.filter((s) => NON_WORKLOG_HEADINGS.has(s.heading));
 
-  // Dynamic replacement for the literal "Final Report" fallback heading — "Weekly Report"/"Monthly
-  // Report"/"Period Report" depending on how long options.period actually spans. Resolved once
-  // here (rather than inside the render loop below) since every "Final Report" section in a given
-  // export shares the same period.
-  const dynamicReportTypeLabel = resolveReportTypeLabel(options.period || '');
+  // Dynamic replacement for the literal "Final Report" fallback heading — prefers the caller's own
+  // resolved granularity label (exactly which shortcut button was clicked) over the date-span guess,
+  // falling back to the guess only when the caller has no granularity to give (see
+  // IndividualReportHtmlOptions.reportTypeLabel's own comment). Resolved once here (rather than
+  // inside the render loop below) since every "Final Report" section in a given export shares the
+  // same period.
+  const dynamicReportTypeLabel = options.reportTypeLabel || resolveReportTypeLabel(options.period || '');
 
   // Resolved ONCE across every section's body (not just work-log entries) — otherwise a
   // screenshot link sitting in "Final Report"/"Additional employee context"/"Context and
