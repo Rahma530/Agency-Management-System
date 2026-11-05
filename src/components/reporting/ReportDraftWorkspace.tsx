@@ -1208,7 +1208,10 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     );
     await downloadReportPdf({
       filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
-      title: selectedReport.type === 'client' ? 'Client Report' : 'Employee Report',
+      // Same fix as the HTML export's eyebrow below: this page title must say which report-type
+      // button was clicked (Weekly/Monthly/Quarterly/Yearly), literally "Report" for Custom Range —
+      // never the old hardcoded "Client Report"/"Employee Report" regardless of selection.
+      title: dynamicReportTypeLabel,
       subtitle: `${subjectName} — ${periodRange}`,
       // No "Report Details" block (scope/responsible/evidence count) — the header above already
       // carries everything this PDF is meant to show: client/employee name + period.
@@ -1231,18 +1234,27 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
       : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
     const periodRange = formatReportPeriodRange(selectedReport.period || '');
+    // Owner's explicit request (2026-11-05): this eyebrow line must say exactly which report-type
+    // button was clicked (Weekly/Monthly/Quarterly/Yearly), and literally "Report" for Custom
+    // Range — never the generic "Client Report"/"Employee Report" this used to hardcode regardless
+    // of the selection. Same granularity-over-date-guess priority as dynamicReportTypeLabel
+    // (exportPdf above) and the body's own reportTypeLabel just below, so all three report-type
+    // labels in one export always agree with each other.
+    const eyebrowReportTypeLabel = reportGranularity
+      ? resolveReportTypeLabelForGranularity(reportGranularity)
+      : resolveReportTypeLabel(selectedReport.period || '');
     const html = await buildIndividualReportHtml({
       // Title is the actual client/employee name now, not the literal word "Client"/"Employee" —
       // the eyebrow line just above it already says which kind of report this is.
       title: subjectName,
-      eyebrow: `${selectedReport.type === 'client' ? 'Client Report' : 'Employee Report'} — KESRA Management System`,
+      eyebrow: `${eyebrowReportTypeLabel} — KESRA Management System`,
       // Plain-text fallback only — buildIndividualReportHtml prefers the bold "From … To …" line it
       // derives itself from `period` whenever that parses, and falls back to this string otherwise
       // (e.g. a legacy report whose period field is somehow empty).
       subtitle: periodRange,
       contentText: currentVersion.content_text,
       period: selectedReport.period || '',
-      reportTypeLabel: reportGranularity ? resolveReportTypeLabelForGranularity(reportGranularity) : undefined,
+      reportTypeLabel: eyebrowReportTypeLabel,
     });
     downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
   };
