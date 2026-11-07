@@ -175,47 +175,94 @@ export async function runRegistryTask(
 
   for (const stage of task.stages) {
     const inputText = JSON.stringify(currentInput);
-    const outcome = await runStage(stage, inputText, language, detail, admin, task.name, requestId);
 
-    if (!outcome.ok) {
-      return { ok: false, task: task.name, stage: stage.name, ...outcome };
+    // A provider's API call can succeed while the TEXT it returns still fails to parse as JSON or
+    // fails this stage's own validateOutput (schema shape, or a grounding check like
+    // STRUCTURED_CLIENT_REPORT's "every number in the output must already occur in the input") —
+    // a content-quality miss, not an API failure. Before this fix, that one miss from whichever
+    // provider answered first (almost always the fastest/first-in-order one) failed the ENTIRE
+    // task outright, even though the stage's other configured providers were never even tried —
+    // confirmed as the exact cause of the "AI Summary" button's "STRUCTURE stage produced output
+    // that did not match the expected schema" failure the owner hit (2026-11-07). Retrying with
+    // the next provider, excluding whichever one just produced the bad output, gives every
+    // configured provider in this stage's order a real chance before the stage gives up — bounded
+    // by that provider count so this can never loop more than once per configured provider.
+    let maxAttempts: number;
+    try {
+      maxAttempts = Math.max(stage.providers().length, 1);
+    } catch {
+      maxAttempts = 1; // stage.providers() itself throwing is handled by runStage's own try/catch below.
     }
-    stages.push({ stage: stage.name, provider: outcome.provider, model: outcome.model, usedFallback: outcome.usedFallback });
 
-    if (stage.outputFormat === 'json') {
+    const excludedProviders: AiProvider[] = [];
+    let lastContentFailureMessage: string | null = null;
+    let validatedValue: unknown;
+    let succeeded = false;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const stageForAttempt: TaskStageDefinition = excludedProviders.length
+        ? { ...stage, providers: () => stage.providers().filter((p) => !excludedProviders.includes(p)) }
+        : stage;
+      const outcome = await runStage(stageForAttempt, inputText, language, detail, admin, task.name, requestId);
+
+      if (!outcome.ok) {
+        // A genuine API-level failure (rate limit, network, misconfiguration, or — once
+        // excludedProviders has removed every candidate — none left to try) — not something
+        // excluding a provider and retrying would fix differently, so this ends the stage exactly
+        // as it always has.
+        return { ok: false, task: task.name, stage: stage.name, ...outcome };
+      }
+      stages.push({ stage: stage.name, provider: outcome.provider, model: outcome.model, usedFallback: outcome.usedFallback });
+
+      if (stage.outputFormat !== 'json') {
+        validatedValue = outcome.text;
+        succeeded = true;
+        break;
+      }
+
       let parsed: unknown;
       try {
         parsed = JSON.parse(stripCodeFence(outcome.text));
       } catch {
-        return {
-          ok: false,
-          task: task.name,
-          stage: stage.name,
-          kind: 'error',
-          message: `${stage.name} stage produced invalid JSON.`,
-        };
+        lastContentFailureMessage = `${stage.name} stage produced invalid JSON.`;
+        excludedProviders.push(outcome.provider);
+        continue;
       }
+
       // Applies to whichever provider actually answered — primary or fallback — since a fallback
       // model can just as easily produce syntactically valid but wrongly-shaped JSON. Never passes
       // an unvalidated result on to the next stage or back to the caller.
       if (stage.validateOutput) {
         const validation = stage.validateOutput(parsed, detail, currentInput);
         if (!validation.ok) {
-          return {
-            ok: false,
-            task: task.name,
-            stage: stage.name,
-            kind: 'error',
-            message: `${stage.name} stage produced output that did not match the expected schema.`,
-          };
+          lastContentFailureMessage = `${stage.name} stage produced output that did not match the expected schema.`;
+          excludedProviders.push(outcome.provider);
+          continue;
         }
-        currentInput = validation.value;
+        validatedValue = validation.value;
       } else {
-        currentInput = parsed;
+        validatedValue = parsed;
       }
-    } else {
-      currentInput = outcome.text;
+      succeeded = true;
+      break;
     }
+
+    if (!succeeded) {
+      // Every configured provider for this stage was tried and each one's output either failed to
+      // parse or failed validation — the exact same failure shape as before this fix, just only
+      // returned once nothing was left to try. lastContentFailureMessage is always set by this
+      // point (every `continue` above sets it before looping), the fallback text only guards
+      // against a future edit to this loop leaving it unset.
+      return {
+        ok: false,
+        task: task.name,
+        stage: stage.name,
+        kind: 'error',
+        message: lastContentFailureMessage || `${stage.name} stage produced output that did not match the expected schema.`,
+      };
+    }
+
+    currentInput = validatedValue;
   }
 
   return { ok: true, task: task.name, result: currentInput, stages };
