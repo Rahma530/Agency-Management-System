@@ -1230,11 +1230,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     });
   };
 
-  // Second export format, requested directly: a self-contained HTML page (branded cards, embedded
-  // screenshots) alongside the existing PDF — see reportHtmlExport.ts's own header comment for why
-  // this exists as a separate format rather than replacing the PDF. Same save-before-export gate
-  // as exportPdf (never exports text that hasn't been saved as a version yet), and reads from the
-  // exact same saved `currentVersion.content_text` — no separate live-data path.
+  // HTML export — the primary export format going forward (the owner confirmed on 2026-11-07 that
+  // the plain jsPDF export below is currently unused, hence it being hidden from the UI). Same
+  // save-before-export gate as exportPdf (never exports text that hasn't been saved as a version
+  // yet), and reads from the exact same saved `currentVersion.content_text` — no separate live-data
+  // path.
+  //
+  // When onGenerateStructuredReport is wired (the normal case — see App.tsx's handleGenerateStructuredReport),
+  // this sends the already-parsed sections to the STRUCTURED_CLIENT_REPORT AI task (restructures
+  // into Executive Summary + KPIs, thematic sub-blocks, work-by-date, upcoming work — see
+  // taskRegistry.ts's own header comment for why this exists as its own task rather than a
+  // REPORT_REWRITE variant) and renders its JSON response through buildStructuredClientReportHtml.
+  // Falls back to the older plain-render path (buildIndividualReportHtml, straight off
+  // content_text with no AI restructuring) only if a caller hasn't wired AI generation at all, so
+  // the button still works end-to-end in that case rather than silently doing nothing.
   const exportHtml = async () => {
     if (!selectedReport || !currentVersion?.content_text.trim()) return;
     if (draftText !== currentVersion.content_text) {
@@ -1249,11 +1258,44 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // button was clicked (Weekly/Monthly/Quarterly/Yearly), and literally "Report" for Custom
     // Range — never the generic "Client Report"/"Employee Report" this used to hardcode regardless
     // of the selection. Same granularity-over-date-guess priority as dynamicReportTypeLabel
-    // (exportPdf above) and the body's own reportTypeLabel just below, so all three report-type
-    // labels in one export always agree with each other.
+    // (exportPdf above), so both report-type labels across the two export paths always agree.
     const eyebrowReportTypeLabel = reportGranularity
       ? resolveReportTypeLabelForGranularity(reportGranularity)
       : resolveReportTypeLabel(selectedReport.period || '');
+
+    if (onGenerateStructuredReport) {
+      // Same parsed shape exportPdf derives from the saved content_text — reused here, not
+      // re-parsed differently, so the AI task sees exactly the sections the PDF export shows.
+      const parsed = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) => ({
+        heading: p.heading === 'Final Report' ? eyebrowReportTypeLabel : p.heading,
+        body: p.body,
+      }));
+      setBusy(true);
+      setMessage(null);
+      try {
+        const outcome = await onGenerateStructuredReport({
+          client_name: subjectName,
+          period_label: periodRange,
+          sections: parsed,
+        });
+        if (!outcome.ok) {
+          setMessage(outcome.message);
+          return;
+        }
+        const html = buildStructuredClientReportHtml({
+          title: subjectName,
+          eyebrow: `${eyebrowReportTypeLabel} — KESRA Management System`,
+          subtitle: periodRange,
+          period: selectedReport.period || '',
+          report: outcome.result,
+        });
+        downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const html = await buildIndividualReportHtml({
       // Title is the actual client/employee name now, not the literal word "Client"/"Employee" —
       // the eyebrow line just above it already says which kind of report this is.
@@ -1268,56 +1310,6 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       reportTypeLabel: eyebrowReportTypeLabel,
     });
     downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
-  };
-
-  // Experimental (2026-11-07) — "Generate Structured Report" comparison action. Same save-before-
-  // export gate and saved-content_text source as exportHtml above (never sends unsaved draft text
-  // and never re-derives from live source data), but sends the already-parsed sections to the new
-  // STRUCTURED_CLIENT_REPORT AI task instead of rendering content_text directly, then renders its
-  // JSON response through buildStructuredClientReportHtml for a side-by-side comparison download.
-  const generateStructuredReport = async () => {
-    if (!onGenerateStructuredReport || !selectedReport || !currentVersion?.content_text.trim()) return;
-    if (draftText !== currentVersion.content_text) {
-      setMessage('Save the current text as a version before generating the structured report.');
-      return;
-    }
-    const subjectName = selectedReport.scope_type === 'employee'
-      ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
-      : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
-    const periodRange = formatReportPeriodRange(selectedReport.period || '');
-    const reportTypeLabel = reportGranularity
-      ? resolveReportTypeLabelForGranularity(reportGranularity)
-      : resolveReportTypeLabel(selectedReport.period || '');
-    // Same parsed shape exportPdf/exportHtml already derive from the saved content_text — reused
-    // here, not re-parsed differently, so the AI task sees exactly the sections those exports show.
-    const parsed = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) => ({
-      heading: p.heading === 'Final Report' ? reportTypeLabel : p.heading,
-      body: p.body,
-    }));
-    setBusy(true);
-    setMessage(null);
-    try {
-      const outcome = await onGenerateStructuredReport({
-        client_name: subjectName,
-        period_label: periodRange,
-        sections: parsed,
-      });
-      if (!outcome.ok) {
-        setMessage(outcome.message);
-        return;
-      }
-      const html = buildStructuredClientReportHtml({
-        title: subjectName,
-        eyebrow: `${reportTypeLabel} (Structured, Experimental) — KESRA Management System`,
-        subtitle: periodRange,
-        period: selectedReport.period || '',
-        report: outcome.result,
-      });
-      downloadHtmlReport(html, `report-structured-${selectedReport.period || selectedReport.id}.html`);
-      setMessage('Structured report generated — compare it against the regular HTML/PDF export.');
-    } finally {
-      setBusy(false);
-    }
   };
 
   return (
@@ -1411,16 +1403,12 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
               className="px-3 py-2 rounded-lg text-xs bg-[#100c1c] border border-purple-900/50 text-white placeholder-stone-500 w-64 focus:outline-none focus:border-purple-400"
             />
           )}
-          <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
-          <button onClick={exportHtml} title="Branded HTML report (cards, embedded screenshots) — a second format alongside PDF" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />HTML</button>
-          {onGenerateStructuredReport && (
-            <button
-              disabled={busy}
-              onClick={generateStructuredReport}
-              title="Experimental: restructures this report into Executive Summary + KPIs, thematic sub-blocks, work-by-date, and upcoming work — using the current AI models, for comparison against the regular HTML/PDF export"
-              className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50"
-            ><Sparkles className="w-3.5 h-3.5 inline mr-1" />Structured (Experimental)</button>
-          )}
+          {/* PDF export hidden per the owner's 2026-11-07 request (confirmed currently unused) —
+              exportPdf itself is kept, not deleted, in case this needs to come back. The HTML
+              button below is now the primary export and, when onGenerateStructuredReport is wired,
+              produces the structured (Executive Summary/KPIs/sections/work-by-date/upcoming-work)
+              report directly — see exportHtml's own comment. */}
+          <button disabled={busy} onClick={exportHtml} title="Branded, AI-structured HTML report (Executive Summary, KPIs, sections, work-by-date, upcoming work)" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white disabled:opacity-50"><Download className="w-3.5 h-3.5 inline mr-1" />HTML</button>
           {selectedReport.archived_at
             ? <><button disabled={busy} onClick={restoreSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Restore</button>{['executive', 'head_of_technical'].includes(currentUser.role) && <button disabled={busy} onClick={deleteSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-red-950/50 text-red-200 disabled:opacity-50"><Trash2 className="w-3.5 h-3.5 inline mr-1" />Delete permanently</button>}</>
             : <button disabled={busy} onClick={archiveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-amber-950/50 text-amber-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Archive</button>}
