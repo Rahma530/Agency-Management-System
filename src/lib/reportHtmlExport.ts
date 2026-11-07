@@ -478,6 +478,101 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
   });
 }
 
+// ----------------------------------------------------------------------------
+// Experimental (2026-11-07): renders the STRUCTURED_CLIENT_REPORT AI task's output (see
+// ai-router/taskRegistry.ts's validateStructuredClientReportOutput) into this same visual template,
+// so it can be generated and compared side-by-side against buildIndividualReportHtml's output on
+// the exact same already-approved report — the explicit purpose of this feature (comparing a new
+// prompt's results before deciding whether to also connect a stronger model). Deliberately NOT
+// wired to replace buildIndividualReportHtml above.
+//
+// The input shape below is a deliberate, standalone duplicate of StructuredClientReportResult
+// (src/components/reporting/ComparisonDisplay.tsx) rather than an import of it — ComparisonDisplay
+// already imports buildUnifiedReportHtml/downloadHtmlReport FROM this file, so importing back from
+// it here would create a circular module dependency. Same "duplicate rather than cross-import"
+// reasoning this file already documents above for its own BRAND_PURPLE/BRAND_PURPLE_DEEP copies.
+export interface StructuredReportHtmlInput {
+  subtitle: string;
+  executive_summary: {
+    paragraph: string;
+    kpis: { label: string; value: string; note: string }[];
+    caveat: string;
+  };
+  sections: { heading: string; blocks: { title: string; body: string }[] }[];
+  work_by_date: { date: string; summary: string }[];
+  upcoming_work: { title: string; body: string }[];
+}
+
+export interface StructuredClientReportHtmlOptions {
+  title: string;
+  eyebrow: string;
+  subtitle?: string;
+  period?: string;
+  report: StructuredReportHtmlInput;
+}
+
+export function buildStructuredClientReportHtml(options: StructuredClientReportHtmlOptions): string {
+  const { report } = options;
+  let badgeNumber = 0;
+  const nextBadge = () => String(++badgeNumber).padStart(2, '0');
+
+  const kpisHtml = report.executive_summary.kpis.length
+    ? `<div class="grid g4">${report.executive_summary.kpis
+        .map((kpi) => kpiCard(kpi.label, kpi.value, kpi.note || undefined))
+        .join('')}</div>`
+    : '';
+  const caveatHtml = report.executive_summary.caveat
+    ? `<div class="note" style="margin-top:14px">${escapeHtml(report.executive_summary.caveat)}</div>`
+    : '';
+  const execSectionHtml = `<section class="kesra-section">
+    <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Executive Summary</h2></div>
+    <p>${escapeHtml(report.executive_summary.paragraph)}</p>
+    ${kpisHtml}
+    ${caveatHtml}
+  </section>`;
+
+  const sectionsHtml = report.sections
+    .map((section) => {
+      const blocksHtml = section.blocks
+        .map((block) => `<div class="service-block"><h3>${escapeHtml(block.title)}</h3><p>${escapeHtml(block.body)}</p></div>`)
+        .join('');
+      return `<section class="kesra-section">
+        <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>${escapeHtml(section.heading)}</h2></div>
+        ${blocksHtml}
+      </section>`;
+    })
+    .join('');
+
+  const workByDateHtml = report.work_by_date.length
+    ? `<section class="kesra-section">
+        <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Work by Date</h2></div>
+        <div class="tablewrap"><table><thead><tr><th>Date</th><th>Summary</th></tr></thead><tbody>${report.work_by_date
+          .map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.summary)}</td></tr>`)
+          .join('')}</tbody></table></div>
+      </section>`
+    : '';
+
+  const upcomingWorkHtml = report.upcoming_work.length
+    ? `<section class="kesra-section">
+        <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Upcoming Work</h2></div>
+        <div class="grid g3">${report.upcoming_work
+          .map((item) => `<div class="kesra-card"><h3 style="color:var(--white);margin:0 0 8px">${escapeHtml(item.title)}</h3><p>${escapeHtml(item.body)}</p></div>`)
+          .join('')}</div>
+      </section>`
+    : '';
+
+  const dateRangeHtml = renderDateRangeHtml(options.period || '');
+
+  return pageShell({
+    eyebrow: options.eyebrow,
+    title: options.title,
+    subtitle: dateRangeHtml ? undefined : (options.subtitle || report.subtitle),
+    subtitleHtml: dateRangeHtml || undefined,
+    metaItems: [],
+    bodyHtml: [execSectionHtml, sectionsHtml, workByDateHtml, upcomingWorkHtml].join(''),
+  });
+}
+
 // Client-side-only download, same pattern jsPDF's own `doc.save()` already uses (Blob + object
 // URL + a temporary <a download> click) — no server round trip, matches this app's existing
 // "export happens entirely in the browser" constraint.

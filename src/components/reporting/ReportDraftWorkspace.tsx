@@ -21,12 +21,12 @@ import {
   collectClientReportSources, collectEmployeeReportSources, dedupeIdenticalWorkLogs, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf, CREATIVE_BUCKET_LABEL, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
-import { buildIndividualReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
+import { buildIndividualReportHtml, buildStructuredClientReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
 import { classifyWorkLogService, classifyWorkLogServiceWithAssignmentFallback } from '../../lib/workLogServiceClassification';
-import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
+import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, StructuredClientReportGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
 import { ReportContentPreview } from './ReportContentPreview';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
@@ -123,6 +123,16 @@ interface Props {
     // taskRegistry.ts's validateWorkItemGroupOutput comment for the full bug this fixes).
     items: { id: string; employee?: string; employeeKey?: string; text: string }[]
   ) => Promise<WorkItemGroupGenerationResult>;
+  // Experimental (2026-11-07) — "Generate Structured Report" comparison action (STRUCTURED_CLIENT_
+  // REPORT). Separate from onRequestAiSummary/onGroupWorkItems above: it restructures the already-
+  // approved report into the richer sectioned shape (Executive Summary/KPIs, thematic sub-blocks,
+  // work-by-date, upcoming work) for a direct side-by-side comparison against today's Export HTML,
+  // not a replacement for either existing action. Optional for the same reason those are.
+  onGenerateStructuredReport?: (payload: {
+    client_name: string;
+    period_label: string;
+    sections: { heading: string; body: string }[];
+  }) => Promise<StructuredClientReportGenerationResult>;
   // Bumped by ReportsHub whenever the top-bar scope/period changes to a combination with no
   // matching draft — tells this workspace to confirm-discard (if needed) and reset to its empty,
   // new-draft state. A matching draft instead arrives via openReportId as usual.
@@ -450,6 +460,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   reportGranularity,
   onRequestAiSummary,
   onGroupWorkItems,
+  onGenerateStructuredReport,
   clearSignal,
 }) => {
   // scopeKind 'own' always resolves to the current user's own employee-overall-all-clients work
@@ -1259,6 +1270,56 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
   };
 
+  // Experimental (2026-11-07) — "Generate Structured Report" comparison action. Same save-before-
+  // export gate and saved-content_text source as exportHtml above (never sends unsaved draft text
+  // and never re-derives from live source data), but sends the already-parsed sections to the new
+  // STRUCTURED_CLIENT_REPORT AI task instead of rendering content_text directly, then renders its
+  // JSON response through buildStructuredClientReportHtml for a side-by-side comparison download.
+  const generateStructuredReport = async () => {
+    if (!onGenerateStructuredReport || !selectedReport || !currentVersion?.content_text.trim()) return;
+    if (draftText !== currentVersion.content_text) {
+      setMessage('Save the current text as a version before generating the structured report.');
+      return;
+    }
+    const subjectName = selectedReport.scope_type === 'employee'
+      ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
+      : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
+    const periodRange = formatReportPeriodRange(selectedReport.period || '');
+    const reportTypeLabel = reportGranularity
+      ? resolveReportTypeLabelForGranularity(reportGranularity)
+      : resolveReportTypeLabel(selectedReport.period || '');
+    // Same parsed shape exportPdf/exportHtml already derive from the saved content_text — reused
+    // here, not re-parsed differently, so the AI task sees exactly the sections those exports show.
+    const parsed = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) => ({
+      heading: p.heading === 'Final Report' ? reportTypeLabel : p.heading,
+      body: p.body,
+    }));
+    setBusy(true);
+    setMessage(null);
+    try {
+      const outcome = await onGenerateStructuredReport({
+        client_name: subjectName,
+        period_label: periodRange,
+        sections: parsed,
+      });
+      if (!outcome.ok) {
+        setMessage(outcome.message);
+        return;
+      }
+      const html = buildStructuredClientReportHtml({
+        title: subjectName,
+        eyebrow: `${reportTypeLabel} (Structured, Experimental) — KESRA Management System`,
+        subtitle: periodRange,
+        period: selectedReport.period || '',
+        report: outcome.result,
+      });
+      downloadHtmlReport(html, `report-structured-${selectedReport.period || selectedReport.id}.html`);
+      setMessage('Structured report generated — compare it against the regular HTML/PDF export.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section ref={workspaceRef} className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80 space-y-4 scroll-mt-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1352,6 +1413,14 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           )}
           <button onClick={exportPdf} className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />PDF</button>
           <button onClick={exportHtml} title="Branded HTML report (cards, embedded screenshots) — a second format alongside PDF" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-800 text-white"><Download className="w-3.5 h-3.5 inline mr-1" />HTML</button>
+          {onGenerateStructuredReport && (
+            <button
+              disabled={busy}
+              onClick={generateStructuredReport}
+              title="Experimental: restructures this report into Executive Summary + KPIs, thematic sub-blocks, work-by-date, and upcoming work — using the current AI models, for comparison against the regular HTML/PDF export"
+              className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-950/40 text-indigo-200 border border-indigo-800/40 disabled:opacity-50"
+            ><Sparkles className="w-3.5 h-3.5 inline mr-1" />Structured (Experimental)</button>
+          )}
           {selectedReport.archived_at
             ? <><button disabled={busy} onClick={restoreSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-950/50 text-emerald-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Restore</button>{['executive', 'head_of_technical'].includes(currentUser.role) && <button disabled={busy} onClick={deleteSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-red-950/50 text-red-200 disabled:opacity-50"><Trash2 className="w-3.5 h-3.5 inline mr-1" />Delete permanently</button>}</>
             : <button disabled={busy} onClick={archiveSelected} className="px-3 py-2 rounded-lg text-xs font-bold bg-amber-950/50 text-amber-200 disabled:opacity-50"><Archive className="w-3.5 h-3.5 inline mr-1" />Archive</button>}

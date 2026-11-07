@@ -992,6 +992,210 @@ function validateWorkItemGroupOutput(parsed: unknown, _detail: DetailLevel, stag
 }
 
 // ----------------------------------------------------------------------------
+// STRUCTURED_CLIENT_REPORT — experimental (2026-11-07), added to compare prompt quality BEFORE
+// deciding whether to connect a stronger model (e.g. Claude API) in place of the current free
+// providers. The existing REPORT_REWRITE task only ever polishes wording of the SAME flat text
+// (its own system prompt literally says "Improve clarity and professional tone") and its output
+// schema is a single string — it has no way to produce a restructured, sectioned report even with
+// a much better model behind it, because neither the prompt nor the schema asks for that. This is
+// a genuinely separate task, not a REPORT_REWRITE variant: given the report's own already-parsed,
+// already-service-classified sections (the exact same shape REPORT_SECTION_HEADINGS/
+// parseReportContentIntoParagraphs already produce client-side for the PDF/HTML export paths), it
+// restructures them into an Executive Summary with KPI cards, thematic sub-blocks within each
+// service (grouping lines by what KIND of work they describe, not just by service), a
+// chronological work-by-date rollup, and an upcoming-work outlook — mirroring the richer template
+// sections reportHtmlExport.ts's CSS already supports (kesra-badge/service-block/kpi/status) but
+// that today's flat REPORT_REWRITE/raw-dump export never uses.
+//
+// Deliberately NOT wired to replace the existing "AI Summary"/Export HTML buttons yet — this ships
+// behind its own separate, clearly-labeled "Generate Structured Report (Experimental)" action so
+// the owner can compare its output against today's export on the same report before deciding
+// anything about it, exactly as asked. Still on the same free providers (gemini/groq/openrouter)
+// as every other task — no new provider is added by this change.
+// ----------------------------------------------------------------------------
+const MAX_STRUCTURED_REPORT_SECTIONS = 20;
+const MAX_STRUCTURED_REPORT_SECTION_BODY_CHARS = 6000;
+const MAX_STRUCTURED_REPORT_PAYLOAD_BYTES = 48 * 1024;
+
+interface StructuredClientReportSection {
+  heading: string;
+  body: string;
+}
+
+interface StructuredClientReportPayload {
+  client_name: string;
+  period_label: string;
+  sections: StructuredClientReportSection[];
+}
+
+export function validateStructuredClientReportPayload(raw: unknown): StructuredClientReportPayload {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('STRUCTURED_CLIENT_REPORT payload must be an object.');
+  const byteLength = new TextEncoder().encode(JSON.stringify(raw)).length;
+  if (byteLength > MAX_STRUCTURED_REPORT_PAYLOAD_BYTES) throw new Error('STRUCTURED_CLIENT_REPORT payload is too large.');
+  const value = raw as Record<string, unknown>;
+  const allowedKeys = new Set(['client_name', 'period_label', 'sections']);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) throw new Error('STRUCTURED_CLIENT_REPORT payload contains an unsupported field.');
+  if (!isNonEmptyString(value.client_name) || value.client_name.length > 200) throw new Error('client_name is required and too long.');
+  if (!isNonEmptyString(value.period_label) || value.period_label.length > 100) throw new Error('period_label is required and too long.');
+  if (!Array.isArray(value.sections) || value.sections.length === 0 || value.sections.length > MAX_STRUCTURED_REPORT_SECTIONS) {
+    throw new Error(`sections must be a non-empty array of at most ${MAX_STRUCTURED_REPORT_SECTIONS} items.`);
+  }
+  const sections = value.sections.map((raw, i) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`sections[${i}] must be an object.`);
+    const s = raw as Record<string, unknown>;
+    const allowedSectionKeys = new Set(['heading', 'body']);
+    if (Object.keys(s).some((key) => !allowedSectionKeys.has(key))) throw new Error(`sections[${i}] contains an unsupported field.`);
+    if (!isNonEmptyString(s.heading) || s.heading.length > 200) throw new Error(`sections[${i}].heading is required and too long.`);
+    if (!isNonEmptyString(s.body) || s.body.length > MAX_STRUCTURED_REPORT_SECTION_BODY_CHARS) {
+      throw new Error(`sections[${i}].body is required and too long.`);
+    }
+    return { heading: s.heading, body: s.body };
+  });
+  return { client_name: value.client_name, period_label: value.period_label, sections };
+}
+
+function buildStructuredClientReportSystemPrompt(language: SupportedLanguage): string {
+  const languageName = LANGUAGE_NAMES[language];
+  const arabicRules = buildArabicQualityRules(language);
+  return (
+    `You restructure an agency's already-written client report into a polished, well-organized ` +
+    `client-facing report. You will receive client_name, period_label, and sections — each section ` +
+    `is one service or bucket's own already-correct work-log text (already grouped and fact-checked ` +
+    `by the system; never re-classify a line into a different section than the one it's already in). ` +
+    `Use ONLY the facts, dates, numbers, names, and links already present in the input. Never invent, ` +
+    `estimate, or add any fact, number, date, name, or link that is not already there. Keep every ` +
+    `link exactly as given, attached to the same line it was with in the input.\n\n` +
+    `Write in ${languageName}. Keep English technical terms, platform names, and metric labels ` +
+    `(ROAS, CPM, Instagram Insights, Google Ads, etc.) in English exactly as given.${arabicRules ? `\n\n${arabicRules}` : ''}\n\n` +
+    `Respond with ONLY this JSON object — no markdown code fences, no explanation:\n` +
+    `{\n` +
+    `  "subtitle": string,\n` +
+    `  "executive_summary": {\n` +
+    `    "paragraph": string,\n` +
+    `    "kpis": [{"label": string, "value": string, "note": string}],\n` +
+    `    "caveat": string\n` +
+    `  },\n` +
+    `  "sections": [{"heading": string, "blocks": [{"title": string, "body": string}]}],\n` +
+    `  "work_by_date": [{"date": string, "summary": string}],\n` +
+    `  "upcoming_work": [{"title": string, "body": string}]\n` +
+    `}\n\n` +
+    `Rules:\n` +
+    `- subtitle: one short sentence naming what this report covers (based only on the sections ` +
+    `actually present).\n` +
+    `- executive_summary.paragraph: 2 to 4 sentences synthesizing the period across ALL sections — ` +
+    `never invent a number not already in the input.\n` +
+    `- executive_summary.kpis: at most 4 of the single most important numbers already present in the ` +
+    `input, each with a one-line "note" caption. Return an empty array if the input has no clear ` +
+    `standout numbers to highlight.\n` +
+    `- executive_summary.caveat: ONLY if the input itself reveals a real discrepancy or gap worth ` +
+    `flagging (e.g. a plan mentions more items than were actually logged as done) — otherwise an ` +
+    `empty string. Never invent a caveat.\n` +
+    `- sections: one output section PER INPUT SECTION, in the same order, using the input section's ` +
+    `own heading unchanged. Inside each, group that section's lines into "blocks" by what KIND of ` +
+    `work each line describes (e.g. preparation/review vs. scheduling vs. performance/insights) — ` +
+    `never merge lines from two different input sections together, and never drop a line. A section ` +
+    `with only one natural grouping gets exactly one block.\n` +
+    `- work_by_date: one entry per date that appears anywhere in the input, in chronological order, ` +
+    `summarizing that date's work across all sections in one or two sentences. Never invent a date ` +
+    `that isn't in the input.\n` +
+    `- upcoming_work: at most 3 short, forward-looking entries, each phrased as a natural next step ` +
+    `from what a section's own text already shows in progress — never a generic sentence disconnected ` +
+    `from the input. Return an empty array if nothing in the input suggests a clear next step.\n` +
+    `- Every number you write anywhere in the output must already occur in the input.`
+  );
+}
+
+function isStructuredReportBlockArray(value: unknown): value is { title: string; body: string }[] {
+  return Array.isArray(value) && value.every((b) =>
+    b && typeof b === 'object' && !Array.isArray(b) &&
+    isNonEmptyString((b as Record<string, unknown>).title) && isNonEmptyString((b as Record<string, unknown>).body)
+  );
+}
+
+export function validateStructuredClientReportOutput(parsed: unknown, _detail: DetailLevel, stageInput?: unknown): StageValidationResult {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
+  const p = parsed as Record<string, unknown>;
+  if (!isNonEmptyString(p.subtitle)) return { ok: false };
+  const execRaw = p.executive_summary;
+  if (!execRaw || typeof execRaw !== 'object' || Array.isArray(execRaw)) return { ok: false };
+  const exec = execRaw as Record<string, unknown>;
+  if (!isNonEmptyString(exec.paragraph)) return { ok: false };
+  const kpisRaw = exec.kpis;
+  if (!Array.isArray(kpisRaw) || kpisRaw.length > 4) return { ok: false };
+  const kpis = kpisRaw.map((k) => {
+    if (!k || typeof k !== 'object' || Array.isArray(k)) return null;
+    const kv = k as Record<string, unknown>;
+    if (!isNonEmptyString(kv.label) || !isNonEmptyString(kv.value)) return null;
+    return { label: cleanText(kv.label), value: cleanText(kv.value), note: typeof kv.note === 'string' ? cleanText(kv.note) : '' };
+  });
+  if (kpis.some((k) => k === null)) return { ok: false };
+  const caveat = typeof exec.caveat === 'string' ? cleanText(exec.caveat) : '';
+
+  const sectionsRaw = p.sections;
+  if (!Array.isArray(sectionsRaw) || sectionsRaw.length === 0) return { ok: false };
+  const sections = sectionsRaw.map((s) => {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+    const sv = s as Record<string, unknown>;
+    if (!isNonEmptyString(sv.heading) || !isStructuredReportBlockArray(sv.blocks) || sv.blocks.length === 0) return null;
+    return { heading: cleanText(sv.heading), blocks: sv.blocks.map((b) => ({ title: cleanText(b.title), body: cleanText(b.body) })) };
+  });
+  if (sections.some((s) => s === null)) return { ok: false };
+
+  const workByDateRaw = p.work_by_date;
+  if (!Array.isArray(workByDateRaw)) return { ok: false };
+  const workByDate = workByDateRaw.map((w) => {
+    if (!w || typeof w !== 'object' || Array.isArray(w)) return null;
+    const wv = w as Record<string, unknown>;
+    if (!isNonEmptyString(wv.date) || !isNonEmptyString(wv.summary)) return null;
+    return { date: cleanText(wv.date), summary: cleanText(wv.summary) };
+  });
+  if (workByDate.some((w) => w === null)) return { ok: false };
+
+  const upcomingRaw = p.upcoming_work;
+  if (!Array.isArray(upcomingRaw) || upcomingRaw.length > 3) return { ok: false };
+  const upcoming = upcomingRaw.map((u) => {
+    if (!u || typeof u !== 'object' || Array.isArray(u)) return null;
+    const uv = u as Record<string, unknown>;
+    if (!isNonEmptyString(uv.title) || !isNonEmptyString(uv.body)) return null;
+    return { title: cleanText(uv.title), body: cleanText(uv.body) };
+  });
+  if (upcoming.some((u) => u === null)) return { ok: false };
+
+  // Grounding: every number anywhere in the output must already occur somewhere in the input's
+  // sections — the same numericTokens mechanism REPORT_REWRITE already uses, applied to the whole
+  // flattened output at once rather than field-by-field (this task restructures across many small
+  // fields, so a single combined check is both simpler and no less strict).
+  const input = stageInput as StructuredClientReportPayload | undefined;
+  if (!input) return { ok: false };
+  const allowedNumbers = numericTokens(
+    [input.client_name, input.period_label, ...input.sections.map((s) => `${s.heading}\n${s.body}`)].join('\n')
+  );
+  const outputText = [
+    p.subtitle,
+    exec.paragraph,
+    caveat,
+    ...kpis.flatMap((k) => [k!.label, k!.value, k!.note]),
+    ...sections.flatMap((s) => [s!.heading, ...s!.blocks.flatMap((b) => [b.title, b.body])]),
+    ...workByDate.flatMap((w) => [w!.date, w!.summary]),
+    ...upcoming.flatMap((u) => [u!.title, u!.body]),
+  ].join('\n');
+  for (const token of numericTokens(outputText)) {
+    if (!allowedNumbers.has(token)) return { ok: false };
+  }
+
+  return {
+    ok: true,
+    value: {
+      subtitle: cleanText(p.subtitle),
+      executive_summary: { paragraph: cleanText(exec.paragraph), kpis, caveat },
+      sections,
+      work_by_date: workByDate,
+      upcoming_work: upcoming,
+    },
+  };
+}
+
+// ----------------------------------------------------------------------------
 // The registry itself
 // ----------------------------------------------------------------------------
 export const TASK_REGISTRY: Record<string, TaskDefinition> = {
@@ -1074,6 +1278,27 @@ export const TASK_REGISTRY: Record<string, TaskDefinition> = {
         maxOutputTokens: () => 2000,
         outputFormat: 'json',
         validateOutput: validateWorkItemGroupOutput,
+      },
+    ],
+  },
+  // Experimental (2026-11-07) — see the large comment above validateStructuredClientReportPayload
+  // for why this is a separate task rather than a REPORT_REWRITE change. Same free providers as
+  // every other task; ships behind its own UI action for side-by-side comparison, not wired to
+  // replace anything yet.
+  STRUCTURED_CLIENT_REPORT: {
+    name: 'STRUCTURED_CLIENT_REPORT',
+    buildInitialInput: (rawPayload) => validateStructuredClientReportPayload(rawPayload),
+    stages: [
+      {
+        name: 'STRUCTURE',
+        providers: () => ['groq', 'gemini', 'openrouter'],
+        systemPrompt: (language) => buildStructuredClientReportSystemPrompt(language),
+        // Much larger than REPORT_REWRITE's 4000 (flat single string) since this restructures up to
+        // MAX_STRUCTURED_REPORT_SECTIONS (20) sections of up to MAX_STRUCTURED_REPORT_SECTION_BODY_CHARS
+        // (6000) chars each into a multi-field JSON shape with per-line blocks preserved.
+        maxOutputTokens: () => 8000,
+        outputFormat: 'json',
+        validateOutput: validateStructuredClientReportOutput,
       },
     ],
   },
