@@ -4,6 +4,7 @@ import { ClientComparisonRecord, ClientRecord, ReportRecord, ServiceType, UserRe
 import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEngine';
 import { downloadReportPdf, buildUnifiedReportMetricsTable, PdfParagraph, PdfBulletList } from '../../lib/pdfExport';
 import { buildUnifiedReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
+import { resolveReportBrand } from '../../lib/reportBranding';
 import { reattachLinks } from '../../lib/textLinks';
 import { StructuredReportTextShape } from '../../lib/structuredReportText';
 
@@ -706,7 +707,13 @@ export const UnifiedReportPanel: React.FC<{
   // onGenerateUnifiedReport below. Omitted entirely means "this viewer can't generate at all,"
   // same convention as every other optional handler prop in this file.
   onEnsureComparison?: () => Promise<ClientComparisonRecord | null>;
-}> = ({ latestComparison, onGenerateUnifiedReport, onEnsureComparison }) => {
+  // Which of the agency's sibling companies the HTML export's colors/name should carry (owner's
+  // direct request, 2026-11-07) — this panel is always tied to exactly one client (ClientDashboard.tsx
+  // passes its own client.company), so there's always a single company to resolve, unlike an
+  // employee-scope report. Optional/omitted means the fixed Kesra identity, same as before this
+  // existed — see reportBranding.ts's resolveReportBrand.
+  clientCompany?: string | null;
+}> = ({ latestComparison, onGenerateUnifiedReport, onEnsureComparison, clientCompany }) => {
   const [stage, setStage] = useState<'idle' | 'computing' | 'generating'>('idle');
   const [result, setResult] = useState<UnifiedClientReportResult | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -797,6 +804,7 @@ export const UnifiedReportPanel: React.FC<{
         narrative: result.narrative,
         recommendations: result.recommendations,
         comparison: pdfSourceComparison,
+        brand: resolveReportBrand(clientCompany),
       });
       downloadHtmlReport(html, `unified-client-report-${pdfSourceComparison.period_current}.html`);
     } catch (err) {

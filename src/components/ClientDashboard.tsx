@@ -3654,6 +3654,7 @@ const ReportsAndComparisonsTab: React.FC<ReportsAndComparisonsTabProps> = ({
           latestComparison={latestFullComparison}
           onGenerateUnifiedReport={onGenerateUnifiedReport}
           onEnsureComparison={() => onEnsureComparisonForSummary('comparison')}
+          clientCompany={client.company}
         />
       )}
 
