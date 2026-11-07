@@ -28,16 +28,21 @@ if (helperStart < 0 || helperEnd < 0
   throw new Error('workItemsFromOriginalSources no longer groups by the active WorkItemGroup[] before building AI Summary work items.');
 }
 
-// requestAiSummary must pass the currently active grouping into workItemsFromOriginalSources, and
-// must carry the AI's rephrased wording back onto that SAME grouping (not drop it) afterward.
+// requestAiSummary was redesigned 2026-11-07 (STRUCTURED_CLIENT_REPORT restructuring instead of a
+// CAMPAIGN_SUMMARY per-line rephrase — see its own comment in ReportDraftWorkspace.tsx): it still
+// reads the currently active grouping as an INPUT to composeManifestContent (so a prior "Group
+// similar entries" merge is preserved in what the AI sees), but — since its output is now fully
+// AI-synthesized prose, not a 1:1 rephrase of each original line — it no longer has a well-defined
+// "same grouping, new wording" to carry forward, so it deliberately resets activeWorkLogGroups to
+// undefined afterward instead of fabricating a stale mapping.
 const aiStart = workspace.indexOf('const requestAiSummary = async () =>');
 const aiEnd = workspace.indexOf('\n  // "Group similar entries"', aiStart);
 const aiBody = workspace.slice(aiStart, aiEnd);
 if (aiStart < 0 || aiEnd < 0
-  || !aiBody.includes('workItemsFromOriginalSources(manifest.sources, activeWorkLogGroups)')
-  || !aiBody.includes('const nextGroups = effectiveGroups.map((group) => ({ ids: group.ids, text: rephrasedById.get(group.ids[0]) ?? group.text }));')
-  || !aiBody.includes('setDraftTextWithUndo(result.text, nextGroups);')) {
-  throw new Error('AI Summary no longer preserves the active grouping (or its own rephrase) across the request.');
+  || !aiBody.includes('activeWorkLogGroups,')
+  || !aiBody.includes('composeManifestContent(')
+  || !aiBody.includes('setDraftTextWithUndo(serializeStructuredReportText(outcome.result), undefined);')) {
+  throw new Error('AI Summary no longer composes from the active grouping, or no longer resets it afterward as designed.');
 }
 
 // groupSimilarEntries must read each log's CURRENTLY active text (an AI Summary's rephrase, if one
@@ -62,4 +67,4 @@ if (!workspace.includes('const [undoSnapshot, setUndoSnapshot] = useState<{ text
   throw new Error('Undo no longer restores the active grouping/rephrase state alongside the draft text.');
 }
 
-console.log('OK: AI Summary and Group similar entries now carry each other\'s result forward (merge survives a rephrase, rephrase survives a later merge) instead of silently undoing one another, and Undo restores both together.');
+console.log('OK: AI Summary composes from (and then deliberately resets) the active grouping, Group similar entries groups from whatever text is currently active, and Undo restores both text and grouping together.');

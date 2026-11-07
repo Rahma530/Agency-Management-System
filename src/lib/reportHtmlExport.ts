@@ -479,36 +479,27 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
 }
 
 // ----------------------------------------------------------------------------
-// Experimental (2026-11-07): renders the STRUCTURED_CLIENT_REPORT AI task's output (see
-// ai-router/taskRegistry.ts's validateStructuredClientReportOutput) into this same visual template,
-// so it can be generated and compared side-by-side against buildIndividualReportHtml's output on
-// the exact same already-approved report — the explicit purpose of this feature (comparing a new
-// prompt's results before deciding whether to also connect a stronger model). Deliberately NOT
-// wired to replace buildIndividualReportHtml above.
+// Redesigned 2026-11-07 per the owner's direct feedback: the structured (Executive Summary/KPIs/
+// sections/work-by-date/upcoming-work) shape is now generated ONCE, at drafting time ("AI
+// Summary" — see ReportDraftWorkspace.tsx's requestAiSummary), and saved as ordinary report
+// content_text (via structuredReportText.ts's serializeStructuredReportText). Export stays "dumb":
+// buildReportHtmlAuto below (the only entry point ReportDraftWorkspace.tsx's "HTML" button calls)
+// just detects, from content_text alone, which of the two shapes a given saved report is in, and
+// renders accordingly — no AI call at export time, ever.
 //
-// The input shape below is a deliberate, standalone duplicate of StructuredClientReportResult
-// (src/components/reporting/ComparisonDisplay.tsx) rather than an import of it — ComparisonDisplay
-// already imports buildUnifiedReportHtml/downloadHtmlReport FROM this file, so importing back from
-// it here would create a circular module dependency. Same "duplicate rather than cross-import"
-// reasoning this file already documents above for its own BRAND_PURPLE/BRAND_PURPLE_DEEP copies.
-export interface StructuredReportHtmlInput {
-  subtitle: string;
-  executive_summary: {
-    paragraph: string;
-    kpis: { label: string; value: string; note: string }[];
-    caveat: string;
-  };
-  sections: { heading: string; blocks: { title: string; body: string }[] }[];
-  work_by_date: { date: string; summary: string }[];
-  upcoming_work: { title: string; body: string }[];
-}
+// report (the parsed structured shape) comes from structuredReportText.ts's
+// parseStructuredReportText, not a duplicated local interface — that file sits below both this one
+// and ComparisonDisplay.tsx in the import graph (ComparisonDisplay already imports FROM this file),
+// so importing its type here carries no circularity risk, unlike importing ComparisonDisplay's own
+// StructuredClientReportResult would.
+import { StructuredReportTextShape, parseStructuredReportText } from './structuredReportText';
 
 export interface StructuredClientReportHtmlOptions {
   title: string;
   eyebrow: string;
   subtitle?: string;
   period?: string;
-  report: StructuredReportHtmlInput;
+  report: StructuredReportTextShape;
 }
 
 export function buildStructuredClientReportHtml(options: StructuredClientReportHtmlOptions): string {
@@ -566,11 +557,31 @@ export function buildStructuredClientReportHtml(options: StructuredClientReportH
   return pageShell({
     eyebrow: options.eyebrow,
     title: options.title,
-    subtitle: dateRangeHtml ? undefined : (options.subtitle || report.subtitle),
+    subtitle: dateRangeHtml ? undefined : options.subtitle,
     subtitleHtml: dateRangeHtml || undefined,
     metaItems: [],
     bodyHtml: [execSectionHtml, sectionsHtml, workByDateHtml, upcomingWorkHtml].join(''),
   });
+}
+
+// The single entry point ReportDraftWorkspace.tsx's "HTML" export button calls. Pure rendering,
+// no AI call: parseStructuredReportText detects, from content_text alone, whether this particular
+// saved report is in the new AI-Summary-produced structured shape (renders with
+// buildStructuredClientReportHtml, the rich branded template) or the older one (every report saved
+// before this feature existed, or one whose author never ran the new AI Summary on it — renders
+// with buildIndividualReportHtml exactly as before, completely unaffected by this feature).
+export async function buildReportHtmlAuto(options: IndividualReportHtmlOptions): Promise<string> {
+  const structured = parseStructuredReportText(options.contentText);
+  if (structured) {
+    return buildStructuredClientReportHtml({
+      title: options.title,
+      eyebrow: options.eyebrow || 'Employee Report — KESRA Management System',
+      subtitle: options.subtitle,
+      period: options.period,
+      report: structured,
+    });
+  }
+  return buildIndividualReportHtml(options);
 }
 
 // Client-side-only download, same pattern jsPDF's own `doc.save()` already uses (Blob + object
