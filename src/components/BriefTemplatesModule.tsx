@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ClipboardList, Globe, Target, Share2, Layout, PenTool, Palette } from 'lucide-react';
+import { ClipboardList, Globe, Target, Share2, Layout, PenTool, Palette, Image } from 'lucide-react';
 import { BriefFieldSchemaRow, ServiceType, UserRecord } from '../types/database';
 import { canEditBriefFieldSchema } from '../lib/permissions';
 import { BriefFieldSchemaEditor, SERVICE_LABELS } from './BriefFieldSchemaEditor';
@@ -11,6 +11,10 @@ const SERVICE_ICONS: Record<ServiceType, React.ReactNode> = {
   interface: <Layout className="w-4 h-4" />,
   creation: <PenTool className="w-4 h-4" />,
   branding: <Palette className="w-4 h-4" />,
+  // Unused: graphic_design is deliberately absent from SERVICE_ORDER below (2026-11-07 owner
+  // decision — it has no brief template of its own to edit; see SERVICE_LABELS' own comment in
+  // BriefFieldSchemaEditor.tsx). Present only to satisfy Record<ServiceType, React.ReactNode>.
+  graphic_design: <Image className="w-4 h-4" />,
 };
 
 const SERVICE_ORDER: ServiceType[] = ['seo', 'media_buying', 'social_media', 'interface', 'creation', 'branding'];

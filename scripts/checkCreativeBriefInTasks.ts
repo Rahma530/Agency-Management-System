@@ -1,32 +1,33 @@
 // Static source-text checks (same style as checkReportCoreServicesScope.ts) for the "Creative
 // Brief auto-display in Tasks" feature requested 2026-11-07: "ال BRIEF الخاص بال UI و ال CREATIVE
 // عموما أيا كان ال Client لازم يظهر في كل Task هيترفع ليهم" — whenever a creative assignee is
-// selected (New/Edit Task) or already assigned (Task Details), that client's brief for the
-// assignee's own specialty must show, read-only. The owner's confirmed design: resolve the ONE
-// brief to show from the assignee's ROLE ("هنحدد من role الموظف لو graphic يظهر ليه الخاص بيه لو
-// UI يظهر الخاص بيه و هكذا"), shown in BOTH the create/edit modal and the Task Details view
-// ("في الاتنين (موصى بيه)"). None of this is exported as a hook-testable unit, so this checks the
-// actual component source for the specific patterns the feature depends on.
+// selected (New/Edit Task) or already assigned (Task Details), that client's relevant brief(s)
+// must show, read-only. The owner's confirmed design (revised 2026-11-07): UI roles see just the
+// Interface brief; graphic_designer sees the COMBINATION of the client's Social Media + Branding
+// briefs instead of a dedicated "Graphic Design brief" — Graphic Design is now a baseline service
+// every client has, with no brief template of its own at all. None of this is exported as a
+// hook-testable unit, so this checks the actual component source for the specific patterns the
+// feature depends on.
 import fs from 'node:fs';
 
 const board = fs.readFileSync('src/components/CrossTeamTaskBoard.tsx', 'utf8').replace(/\r\n/g, '\n');
 
-// 1) The role -> brief service_type map exists and covers exactly the roles the owner named
+// 1) The role -> brief service_type(s) map exists and covers exactly the roles the owner named
 // (graphic, UI) under both of this codebase's real UI-designer role spellings (ui_ux_designer is
 // the UserRole union member; ui_designer is the real, live production value per capacity.ts's own
 // comment on DAILY_WORK_CREATIVE_ROLES) — and deliberately does NOT map video_editor, since no
 // ServiceType exists for video work.
-const mapStart = board.indexOf('const CREATIVE_ROLE_TO_BRIEF_SERVICE: Record<string, ServiceType> = {');
+const mapStart = board.indexOf('const CREATIVE_ROLE_TO_BRIEF_SERVICES: Record<string, ServiceType[]> = {');
 if (mapStart < 0) {
-  throw new Error('CREATIVE_ROLE_TO_BRIEF_SERVICE map is missing — the brief-display feature needs its own role -> service_type map, separate from workLogServiceClassification.ts\'s ROLE_TO_SERVICE (which deliberately pools graphic_designer/video_editor into a shared bucket for a different purpose).');
+  throw new Error('CREATIVE_ROLE_TO_BRIEF_SERVICES map is missing — the brief-display feature needs its own role -> service_type[] map, separate from workLogServiceClassification.ts\'s ROLE_TO_SERVICE (which deliberately pools graphic_designer/video_editor into a shared bucket for a different purpose).');
 }
 const mapEnd = board.indexOf('};', mapStart);
 const mapBody = board.slice(mapStart, mapEnd);
-if (!mapBody.includes("graphic_designer: 'graphic_design'")) {
-  throw new Error("CREATIVE_ROLE_TO_BRIEF_SERVICE must map graphic_designer -> 'graphic_design'.");
+if (!mapBody.includes("graphic_designer: ['social_media', 'branding']")) {
+  throw new Error("CREATIVE_ROLE_TO_BRIEF_SERVICES must map graphic_designer -> ['social_media', 'branding'] (a combined brief, since Graphic Design has no brief template of its own).");
 }
-if (!mapBody.includes("ui_ux_designer: 'interface'") || !mapBody.includes("ui_designer: 'interface'")) {
-  throw new Error("CREATIVE_ROLE_TO_BRIEF_SERVICE must map both ui_ux_designer and ui_designer -> 'interface'.");
+if (!mapBody.includes("ui_ux_designer: ['interface']") || !mapBody.includes("ui_designer: ['interface']")) {
+  throw new Error("CREATIVE_ROLE_TO_BRIEF_SERVICES must map both ui_ux_designer and ui_designer -> ['interface'].");
 }
 if (mapBody.includes('video_editor:')) {
   throw new Error('video_editor must NOT be mapped to a ServiceType — no brief category exists for video work; this was a deliberate owner-facing gap, not an oversight.');

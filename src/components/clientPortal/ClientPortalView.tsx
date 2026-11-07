@@ -27,6 +27,7 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   interface: 'واجهة',
   creation: 'Creation',
   branding: 'Branding',
+  graphic_design: 'Graphic Design',
 };
 
 // Purely read-only: reuses ComparisonCard/FiledReportsList from reporting/ComparisonDisplay.tsx
@@ -77,10 +78,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
   // Module 13 Phase 5: services now lives directly on the client row the portal fetch already
   // returned — no more package lookup needed.
   const services = useMemo(() => getClientServices(client), [client]);
+  // Graphic Design is baseline for every client (2026-11-07 owner decision) but has no brief of
+  // its own to show here — design work is covered by the client's Social Media + Branding briefs
+  // combined (shown to the assigned designer in Tasks instead). Excluded here so this tab list
+  // never shows an always-empty "Graphic Design" tab. The plan-summary line above still lists it
+  // via the unfiltered `services`, since it IS part of what the client is getting.
+  const briefServices = useMemo(() => services.filter((s) => s !== 'graphic_design'), [services]);
 
   useEffect(() => {
-    if (services.length > 0 && !activeBriefService) setActiveBriefService(services[0]);
-  }, [services, activeBriefService]);
+    if (briefServices.length > 0 && !activeBriefService) setActiveBriefService(briefServices[0]);
+  }, [briefServices, activeBriefService]);
 
   const activeBrief = briefs.find((b) => b.service_type === activeBriefService);
 
@@ -146,14 +153,14 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
             </div>
 
             {/* Briefs */}
-            {services.length > 0 && (
+            {briefServices.length > 0 && (
               <div className="space-y-3">
                 <h2 className="text-sm font-bold text-white flex items-center gap-2">
                   <ClipboardList className="w-4 h-4 text-purple-400" />
                   What We Documented About Your Needs
                 </h2>
                 <div className="flex items-center gap-2 flex-wrap">
-                  {services.map((s) => (
+                  {briefServices.map((s) => (
                     <button
                       key={s}
                       onClick={() => setActiveBriefService(s)}

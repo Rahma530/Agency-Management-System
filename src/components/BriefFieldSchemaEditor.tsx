@@ -26,6 +26,11 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
   interface: 'واجهة',
   creation: 'Creation',
   branding: 'Branding',
+  // Unused: Graphic Design has no brief template of its own to edit here (2026-11-07 owner
+  // decision) — graphic designers see a combined Social Media + Branding brief in Tasks instead
+  // (CrossTeamTaskBoard.tsx). Present only to satisfy Record<ServiceType, string>; BriefTemplatesModule's
+  // SERVICE_ORDER deliberately never offers it as an editable service.
+  graphic_design: 'Graphic Design',
 };
 
 // A label with zero [a-z0-9] characters after lowercasing (an Arabic-only question, another

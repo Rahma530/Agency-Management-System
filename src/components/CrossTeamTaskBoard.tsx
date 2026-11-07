@@ -230,28 +230,32 @@ interface CrossTeamTaskBoardProps {
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
 }
 
-// Which ONE brief an assignee's role points to, per the owner's explicit decision: "هنحدد من role
-// الموظف لو graphic يظهر ليه الخاص بيه لو UI يظهر الخاص بيه و هكذا" (determine it from the
-// employee's role — graphic shows their own, UI shows their own, and so on). Deliberately separate
-// from workLogServiceClassification.ts's ROLE_TO_SERVICE: that mapping intentionally pools
-// graphic_designer/video_editor into a shared 'creative' work-log bucket with no single
-// ServiceType, which is right for logging work but wrong here — a Brief is filed under one real
-// service_type, so this feature needs its own 1:1 map. 'ui_designer' (not just 'ui_ux_designer')
-// is included for the same reason capacity.ts's DAILY_WORK_CREATIVE_ROLES does: it's the real,
-// live role value in production for this app's UI/UX designers even though it isn't a UserRole
-// union member. video_editor has no entry on purpose — no ServiceType exists for video work, so no
-// brief can be resolved for that role; a video editor simply sees no brief card.
-const CREATIVE_ROLE_TO_BRIEF_SERVICE: Record<string, ServiceType> = {
-  graphic_designer: 'graphic_design',
-  ui_ux_designer: 'interface',
-  ui_designer: 'interface',
+// Which brief(s) an assignee's role points to, per the owner's explicit decision (2026-11-07,
+// revised): "هنحدد من role الموظف ... أما ال UI هيظهر ليه brief الواجهة بس" (determine it from
+// the employee's role — UI sees just the Interface brief). graphic_designer is a special case:
+// Graphic Design is now a baseline service every client has (see getClientServices() in
+// clientServices.ts), not a separately-briefed one — it has no brief template of its own at all
+// (BriefTemplatesModule never offers it as editable). Per the owner's decision, a graphic designer
+// instead sees the COMBINATION of the client's Social Media brief + Branding brief: "ال brief اللي
+// هيظهر لل designers يكون combination بين ال social media brief + branding brief". Deliberately
+// separate from workLogServiceClassification.ts's ROLE_TO_SERVICE (a different concern — work-log
+// bucketing, not briefs). 'ui_designer' (not just 'ui_ux_designer') is included for the same
+// reason capacity.ts's DAILY_WORK_CREATIVE_ROLES does: it's the real, live role value in
+// production for this app's UI/UX designers even though it isn't a UserRole union member.
+// video_editor has no entry on purpose — no ServiceType/brief concept exists for video work, so a
+// video editor simply sees no brief card.
+const CREATIVE_ROLE_TO_BRIEF_SERVICES: Record<string, ServiceType[]> = {
+  graphic_designer: ['social_media', 'branding'],
+  ui_ux_designer: ['interface'],
+  ui_designer: ['interface'],
 };
 
 // One entry per DISTINCT service_type among the given assignees' roles (never one per assignee —
-// two graphic designers on the same task share one Graphic Design brief, not two identical cards).
-// brief is null when the role resolves to a real service_type but the client simply has no brief
-// filed under it yet — shown as an explicit "not submitted" card rather than silently hidden, so
-// the gap itself is visible to whoever is filling in the task.
+// two graphic designers on the same task share the same two brief cards, not four identical ones;
+// a graphic designer AND a UI designer together get 3 distinct cards: Social Media, Branding,
+// Interface). brief is null when the role resolves to a real service_type but the client simply
+// has no brief filed under it yet — shown as an explicit "not submitted" card rather than
+// silently hidden, so the gap itself is visible to whoever is filling in the task.
 function resolveCreativeBriefsForAssignees(
   clientId: string | null | undefined,
   assigneeRoles: (string | undefined)[],
@@ -261,11 +265,14 @@ function resolveCreativeBriefsForAssignees(
   const seen = new Set<ServiceType>();
   const results: { serviceType: ServiceType; brief: BriefRecord | null }[] = [];
   assigneeRoles.forEach((role) => {
-    const serviceType = role ? CREATIVE_ROLE_TO_BRIEF_SERVICE[role] : undefined;
-    if (!serviceType || seen.has(serviceType)) return;
-    seen.add(serviceType);
-    const brief = briefs.find((b) => b.client_id === clientId && b.service_type === serviceType) || null;
-    results.push({ serviceType, brief });
+    const serviceTypes = role ? CREATIVE_ROLE_TO_BRIEF_SERVICES[role] : undefined;
+    if (!serviceTypes) return;
+    serviceTypes.forEach((serviceType) => {
+      if (seen.has(serviceType)) return;
+      seen.add(serviceType);
+      const brief = briefs.find((b) => b.client_id === clientId && b.service_type === serviceType) || null;
+      results.push({ serviceType, brief });
+    });
   });
   return results;
 }

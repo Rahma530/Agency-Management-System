@@ -25,16 +25,19 @@ export const CLIENT_SERVICE_OPTIONS: { value: ClientServiceOption; label: string
   { value: 'interface', label: 'واجهة', group: 'other' },
   { value: 'creation', label: 'Creation (Store/Website Setup) — إنشاء', group: 'other' },
   { value: 'branding', label: 'Branding — الهوية البصرية', group: 'other' },
-  // Standalone subscribable service (per explicit product decision, superseding the earlier
-  // design that rode a graphic_designer assignment on social_media): a client can need design
-  // work without being subscribed to Social Media at all. Unlike seo/social_media/media_buying,
-  // this is NOT a "core" service — it lives in other_services, same mechanism as interface/
-  // creation/branding, so no clients_services_check change was needed to add it (see
-  // client_has_service(), which already matches services OR other_services).
-  { value: 'graphic_design', label: 'Graphic Design — تصميم جرافيك', group: 'other' },
+  // Graphic Design intentionally has NO entry here (2026-11-07 owner decision, superseding the
+  // earlier "standalone subscribable service" design this comment used to describe): it's now a
+  // baseline service every client has, not a toggle anyone picks. See normalizeClientServices()
+  // and splitClientServices() above — both already treat every client as having it unconditionally.
 ];
 
 /** Expand the bundle and map historical Creative subscriptions to Social Media. */
+// Pure alias/value classifier — "does this raw string(s) resolve to a real ServiceType, and
+// which one(s)". Used both for a client's full list (via getClientServices below, which is where
+// the Graphic Design baseline is injected — NOT here) and to classify a single raw value (e.g.
+// getClientCustomServices' "is this recognized, or genuinely custom text" check). Must never
+// inject a value that wasn't actually present/implied in `values`, or every single-value
+// classification call site silently breaks.
 export function normalizeClientServices(values: readonly string[] | null | undefined): ServiceType[] {
   const selected = new Set<ServiceType>();
   for (const value of values || []) {
@@ -78,7 +81,13 @@ export function splitClientServices(values: readonly string[] | null | undefined
   other_services: string[];
 } {
   const core = new Set<ServiceType>();
-  const otherCanonical = new Set<ServiceType>();
+  // Graphic Design is baseline for every client (owner decision, 2026-11-07) — always written
+  // out to other_services on every save, never conditional on a toggle. normalizeClientServices()
+  // above already treats every client as having it on the READ side regardless of stored data (so
+  // this never needs a backfill migration for existing clients), but writing it out explicitly
+  // here too keeps new/edited clients' stored other_services honest and consistent for any future
+  // code that reads the raw column directly.
+  const otherCanonical = new Set<ServiceType>(['graphic_design']);
   const customSeen = new Set<string>();
   const custom: string[] = [];
 
@@ -126,7 +135,17 @@ export function getClientServices(client: {
   services?: string[] | null;
   other_services?: string[] | null;
 }): ServiceType[] {
-  return normalizeClientServices([...(client.services || []), ...(client.other_services || [])]);
+  const resolved = normalizeClientServices([...(client.services || []), ...(client.other_services || [])]);
+  // Graphic Design is baseline for every client (owner decision, 2026-11-07) — no longer an
+  // opt-in toggle, always treated as present regardless of what's actually stored in this
+  // client's columns. This covers every client immediately, including ones saved before this
+  // change, with no data migration needed: this is the ONE function "what services does this
+  // client have" should go through (per the convention above), so injecting it here (never in
+  // normalizeClientServices itself, which also classifies single raw values where this
+  // unconditional injection would be wrong) reaches every consumer at once. splitClientServices()
+  // separately writes it out explicitly on every save, so newly saved/edited clients also have it
+  // in their actual stored other_services going forward.
+  return resolved.includes('graphic_design') ? resolved : [...resolved, 'graphic_design'];
 }
 
 // `other_services` entries that are NOT a recognized ServiceType value or alias — i.e. genuine
