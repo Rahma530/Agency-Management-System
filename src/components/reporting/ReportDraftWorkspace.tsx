@@ -1247,8 +1247,13 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     const paragraphs = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) =>
       p.heading === 'Final Report' ? { ...p, heading: dynamicReportTypeLabel } : p
     );
+    // Same filename fix as exportHtml below (2026-11-07): lead with the subject name so two
+    // different clients/employees' reports for the same period don't collide under the exact same
+    // filename. This button is currently hidden from the UI, but kept consistent in case it's shown
+    // again.
+    const safeFilenamePart = (value: string) => value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'report';
     await downloadReportPdf({
-      filename: `report-${selectedReport.period || selectedReport.id}.pdf`,
+      filename: `${safeFilenamePart(subjectName)}-${selectedReport.period || selectedReport.id}.pdf`,
       // Same fix as the HTML export's eyebrow below: this page title must say which report-type
       // button was clicked (Weekly/Monthly/Quarterly/Yearly), literally "Report" for Custom Range —
       // never the old hardcoded "Client Report"/"Employee Report" regardless of selection.
@@ -1300,7 +1305,15 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       period: selectedReport.period || '',
       reportTypeLabel: eyebrowReportTypeLabel,
     });
-    downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
+    // Owner's explicit request (2026-11-07): the downloaded filename used to be literally
+    // "report-<period>.html" for EVERY report — every client's weekly report for the same date
+    // range collided on the exact same filename, piling up as confusing "(1)", "(2)", "(3)" copies
+    // in the downloads folder with no way to tell them apart. Leads with the actual subject name
+    // (sanitized to safe filename characters) so every download is distinguishable at a glance;
+    // the period stays appended so the same client's reports across different weeks don't collide
+    // with each other either.
+    const safeFilenamePart = (value: string) => value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'report';
+    downloadHtmlReport(html, `${safeFilenamePart(subjectName)}-${selectedReport.period || selectedReport.id}.html`);
   };
 
   return (
