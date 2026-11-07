@@ -64,6 +64,7 @@ import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding, canMe
 import { matchesClientQuery } from '../lib/clientSearch';
 import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { CLIENT_STATUS_META, compareClientsForPortfolio, isExternalClient } from '../lib/clientStatus';
+import { ClientCompanyId, CLIENT_COMPANY_OPTIONS, getClientCompanyLabel } from '../lib/clientCompany';
 import {
   DndContext,
   PointerSensor,
@@ -588,6 +589,13 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   // The "Total In Onboarding" stats card reuses this same state (set to 'onboarding') rather than
   // its own boolean, since it's just another status filter.
   const [statusFilter, setStatusFilter] = useState<ClientStatus | 'all'>('all');
+  // Company filter (2026-11-07, owner request): which sibling company (Kesra/Fast Growth/Top
+  // Rate — src/lib/clientCompany.ts) a client belongs to, display/organization only, same
+  // click-to-narrow convention as statusFilter above. 'all' shows every client regardless of
+  // company (including ones never tagged); 'unassigned' isolates clients with no company set yet,
+  // so tagging the existing portfolio (no automatic backfill — see the migration's own note on
+  // why) is actually trackable to completion instead of an untracked one-off chore.
+  const [companyFilter, setCompanyFilter] = useState<ClientCompanyId | 'all' | 'unassigned'>('all');
   // Inline quick-status dropdown (Client Portfolio table, Status column) — ClientStatusQuickMenu
   // above owns its own open/closed state per row now (2026-11-03, portal fix); this just tracks
   // which row currently has a status-change request in flight. Same permission rule as
@@ -610,6 +618,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         .filter((c) => matchesClientQuery(c, searchQuery))
         .filter((c) => !showMissingDatesOnly || !c.start_date || !c.renewal_date)
         .filter((c) => statusFilter === 'all' || c.status === statusFilter)
+        .filter((c) => {
+          if (companyFilter === 'all') return true;
+          if (companyFilter === 'unassigned') return !c.company;
+          return c.company === companyFilter;
+        })
         // "Pending Briefs" / "Awaiting Assignment" card filter — same underlying condition as that
         // card's own count, just applied as a filter instead of only displayed as a number.
         .filter((c) => {
@@ -630,6 +643,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       searchQuery,
       showMissingDatesOnly,
       statusFilter,
+      companyFilter,
       showPendingBriefsOnly,
       showDocumentedBriefsOnly,
       isAMTeamLead,
@@ -646,6 +660,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     !searchQuery &&
     !showMissingDatesOnly &&
     statusFilter === 'all' &&
+    companyFilter === 'all' &&
     !showPendingBriefsOnly &&
     !showDocumentedBriefsOnly &&
     !!onReorderClients;
@@ -751,6 +766,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     { key: 'paused', label: 'Paused' },
     { key: 'renewal', label: 'Renewal' },
     { key: 'closed', label: 'Closed' },
+  ];
+
+  const COMPANY_FILTER_OPTIONS: { key: ClientCompanyId | 'all' | 'unassigned'; label: string }[] = [
+    { key: 'all', label: 'All Companies' },
+    ...CLIENT_COMPANY_OPTIONS.map((opt) => ({ key: opt.value as ClientCompanyId | 'all' | 'unassigned', label: opt.label })),
+    { key: 'unassigned', label: 'Unassigned' },
   ];
 
   const amAgents = users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u));
@@ -1175,6 +1196,25 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                 );
               })}
             </select>
+            <select
+              value={companyFilter}
+              onChange={(e) => setCompanyFilter(e.target.value as ClientCompanyId | 'all' | 'unassigned')}
+              className="px-3 py-1.5 rounded-xl text-xs bg-[#120d1e] border border-purple-900/40 text-white outline-none focus:border-purple-400"
+            >
+              {COMPANY_FILTER_OPTIONS.map((opt) => {
+                const count =
+                  opt.key === 'all'
+                    ? visibleClients.length
+                    : opt.key === 'unassigned'
+                      ? visibleClients.filter((c) => !c.company).length
+                      : visibleClients.filter((c) => c.company === opt.key).length;
+                return (
+                  <option key={opt.key} value={opt.key} style={{ background: '#120d1e', color: '#ffffff' }}>
+                    {opt.label} ({count})
+                  </option>
+                );
+              })}
+            </select>
             <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -1300,6 +1340,15 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                             <span className="text-[10px] text-stone-400 block font-mono">
                               {client.id}
                             </span>
+                            {/* Company (2026-11-07, owner request): display/organization grouping
+                                only — Kesra/Fast Growth/Top Rate, see lib/clientCompany.ts. Shown
+                                only when set; an unassigned client is found via the Company filter
+                                dropdown above, not by scanning the table for a blank badge. */}
+                            {client.company && (
+                              <span className="text-[9px] text-purple-300/80 font-semibold block">
+                                {getClientCompanyLabel(client.company)}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </td>

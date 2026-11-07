@@ -42,6 +42,7 @@ import {
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isInhouseClient, isInhouseTask } from './lib/clientStatus';
+import { ClientCompanyId, CLIENT_COMPANY_OPTIONS, getClientCompanyLabel } from './lib/clientCompany';
 import { isTeamLeadRole } from './lib/capacity';
 import type { DeliveryEventRow } from './lib/employeeWork';
 import { hasNewVersionDeployed } from './lib/versionCheck';
@@ -4094,6 +4095,7 @@ export default function App() {
     name: string;
     client_contact_name?: string;
     sector: ClientSector;
+    company: ClientCompanyId;
     industry: string;
     services: ServiceType[];
     other_services: string[];
@@ -4125,6 +4127,7 @@ export default function App() {
       name: clientData.name,
       client_contact_name: clientData.client_contact_name || null,
       sector: clientData.sector,
+      company: clientData.company,
       industry: clientData.industry,
       services: normalizeClientServices(clientData.services),
       other_services: clientData.other_services || [],

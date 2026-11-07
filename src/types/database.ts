@@ -159,6 +159,13 @@ export interface ClientRecord {
   // created before the dedicated sector column was introduced.
   sector?: ClientSector | null;
   industry?: string | null;
+  // Which of the agency's own sibling companies (Kesra, Fast Growth, Top Rate — see
+  // src/lib/clientCompany.ts's ClientCompanyId/CLIENT_COMPANY_OPTIONS) this client belongs to.
+  // Display/organization only, never an access boundary (owner decision, 2026-11-07) — not the
+  // same concept as is_inhouse below, see clientCompany.ts's own note on that. Nullable with no
+  // backfill: every client registered before this field existed stays unset until tagged by hand
+  // via EditClientModal.tsx.
+  company?: string | null;
   // The individual point of contact at the client's company — distinct from `name` (the
   // company/business name itself), which may differ (e.g. name: "Apex Global Trading",
   // client_contact_name: "Khaled"). Optional, searchable alongside name/phone_number via
@@ -290,7 +297,7 @@ export interface ClientAccessFields {
 // built from pieces, it widens to plain `string` and every .select(...) call site below falls back
 // to an untyped `GenericStringError` result instead.
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order' as const;
+  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
