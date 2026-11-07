@@ -502,10 +502,55 @@ export interface StructuredClientReportHtmlOptions {
   report: StructuredReportTextShape;
 }
 
-export function buildStructuredClientReportHtml(options: StructuredClientReportHtmlOptions): string {
+// A block/upcoming-work-item body point can itself carry one or more raw attachment links (a
+// work-log line listing several product-page/post URLs together, say — exactly the shape the
+// owner's live test surfaced: links rendered as unbroken, unclickable escaped text with no
+// embedded image at all, since this function never used to call extractLinks/resolveEmbeddableImages
+// the way buildIndividualReportHtml already does for the older template). Mirrors the PDF export's
+// own drawLinkLines (pdfExport.ts) convention: every link gets its own line with a short, fixed
+// clickable label ("View image"/"View attachment") instead of the raw (often 150+ char, signed)
+// URL, and a link that resolves to an embeddable image also shows the actual picture above its
+// link line (with lightbox support — pageShell's LIGHTBOX_SCRIPT already targets any ".shots img").
+function renderBodyItemHtml(item: string, imageAssets: Map<string, EmbeddedImageAsset>): string {
+  const { cleanText, links } = extractLinks(item);
+  const textHtml = cleanText ? `<p>${escapeHtml(cleanText)}</p>` : '';
+  const linkLines = links
+    .map((url) => {
+      const asset = imageAssets.get(url);
+      const label = asset ? 'View image' : 'View attachment';
+      const imgHtml = asset ? `<div class="shots"><figure><img src="${asset.dataUrl}" alt=""></figure></div>` : '';
+      return `${imgHtml}<p><a href="${escapeHtml(url)}" target="_blank" rel="noopener">${label}</a></p>`;
+    })
+    .join('');
+  return `${textHtml}${linkLines}`;
+}
+
+// A body with 2+ points renders as a real <ul> of stacked bullets (one per line, per the owner's
+// direct request); a single point stays unbulleted. Either way each point goes through
+// renderBodyItemHtml above so its own links/images are handled the same way.
+function renderBodyHtml(body: string[], imageAssets: Map<string, EmbeddedImageAsset>): string {
+  return body.length > 1
+    ? `<ul>${body.map((item) => `<li>${renderBodyItemHtml(item, imageAssets)}</li>`).join('')}</ul>`
+    : renderBodyItemHtml(body[0] || '', imageAssets);
+}
+
+export async function buildStructuredClientReportHtml(options: StructuredClientReportHtmlOptions): Promise<string> {
   const { report } = options;
   let badgeNumber = 0;
   const nextBadge = () => String(++badgeNumber).padStart(2, '0');
+
+  // Resolved ONCE across every body point in the report (sections' blocks + upcoming_work — the
+  // only two places a raw attachment link can appear in this shape; executive_summary/work_by_date
+  // are short AI-synthesized fields that in practice never carry one, but scanning them too is
+  // harmless and cheap, same reasoning buildIndividualReportHtml's own allUrls collection uses).
+  const allUrls = new Set<string>();
+  report.sections.forEach((section) =>
+    section.blocks.forEach((block) => block.body.forEach((item) => extractLinks(item).links.forEach((url) => allUrls.add(url))))
+  );
+  report.upcoming_work.forEach((item) => item.body.forEach((line) => extractLinks(line).links.forEach((url) => allUrls.add(url))));
+  extractLinks(report.executive_summary.paragraph).links.forEach((url) => allUrls.add(url));
+  report.work_by_date.forEach((row) => extractLinks(row.summary).links.forEach((url) => allUrls.add(url)));
+  const imageAssets = await resolveEmbeddableImages(allUrls);
 
   const kpisHtml = report.executive_summary.kpis.length
     ? `<div class="grid g4">${report.executive_summary.kpis
@@ -522,18 +567,10 @@ export function buildStructuredClientReportHtml(options: StructuredClientReportH
     ${caveatHtml}
   </section>`;
 
-  // A block's body is an array of separate points — 2+ items render as a real <ul> of bullets
-  // (stacked, one per line, per the owner's direct request), a single item stays a plain <p> so a
-  // one-sentence block doesn't show a lone, pointless bullet.
-  const bodyHtml = (body: string[]): string =>
-    body.length > 1
-      ? `<ul>${body.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-      : `<p>${escapeHtml(body[0] || '')}</p>`;
-
   const sectionsHtml = report.sections
     .map((section) => {
       const blocksHtml = section.blocks
-        .map((block) => `<div class="service-block"><h3>${escapeHtml(block.title)}</h3>${bodyHtml(block.body)}</div>`)
+        .map((block) => `<div class="service-block"><h3>${escapeHtml(block.title)}</h3>${renderBodyHtml(block.body, imageAssets)}</div>`)
         .join('');
       return `<section class="kesra-section">
         <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>${escapeHtml(section.heading)}</h2></div>
@@ -555,7 +592,7 @@ export function buildStructuredClientReportHtml(options: StructuredClientReportH
     ? `<section class="kesra-section">
         <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Upcoming Work</h2></div>
         <div class="grid g3">${report.upcoming_work
-          .map((item) => `<div class="kesra-card"><h3 style="color:var(--white);margin:0 0 8px">${escapeHtml(item.title)}</h3>${bodyHtml(item.body)}</div>`)
+          .map((item) => `<div class="kesra-card"><h3 style="color:var(--white);margin:0 0 8px">${escapeHtml(item.title)}</h3>${renderBodyHtml(item.body, imageAssets)}</div>`)
           .join('')}</div>
       </section>`
     : '';

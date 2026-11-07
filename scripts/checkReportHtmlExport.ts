@@ -126,8 +126,9 @@ async function checkStructuredReportRoundTripAndAutoDetect() {
   if (!autoStructuredHtml.includes('Posted 12 stories.') || !autoStructuredHtml.includes('Next campaign')) {
     throw new Error('buildReportHtmlAuto did not render the structured shape via the rich template.');
   }
-  // A 2+ item body renders as a real <ul> of stacked bullets, not one run-on paragraph.
-  if (!autoStructuredHtml.includes('<ul><li>Posted 12 stories.</li><li>Scheduled 3 posts for next week.</li></ul>')) {
+  // A 2+ item body renders as a real <ul> of stacked bullets, not one run-on paragraph (each item
+  // goes through renderBodyItemHtml, which wraps its plain text in its own <p>).
+  if (!autoStructuredHtml.includes('<ul><li><p>Posted 12 stories.</p></li><li><p>Scheduled 3 posts for next week.</p></li></ul>')) {
     throw new Error('buildReportHtmlAuto did not render a multi-item block body as a <ul> bullet list.');
   }
 
@@ -140,10 +141,55 @@ async function checkStructuredReportRoundTripAndAutoDetect() {
   console.log('OK (3/3): the structured-report text format round-trips through serialize/parse, and buildReportHtmlAuto detects and renders each shape correctly with no AI call.');
 }
 
+// A live test surfaced a real gap: a structured-report body point carrying raw attachment links
+// (a work-log line listing several product-page URLs together, say) used to render as unbroken,
+// unclickable escaped text — this function never called extractLinks/resolveEmbeddableImages the
+// way buildIndividualReportHtml already does. Each link must now get its own clickable line
+// (resolveEmbeddableImages' own fetch() points at an unreachable test host on purpose — it fails
+// and falls back to a plain "View attachment" link, exactly like checkIndividualReport above).
+async function checkStructuredReportLinksRenderClickable() {
+  const structured = {
+    executive_summary: { paragraph: 'Content work continued this period.', kpis: [], caveat: '' },
+    sections: [
+      {
+        heading: 'SEO',
+        blocks: [
+          {
+            title: 'Content',
+            body: ['كتابة محتوى جديد لـ 4 منتجات مع الروابط https://wajaha4perfumes.test/a https://wajaha4perfumes.test/b'],
+          },
+        ],
+      },
+    ],
+    work_by_date: [],
+    upcoming_work: [],
+  };
+  const text = serializeStructuredReportText(structured);
+  const html = await buildReportHtmlAuto({ title: 'Wajaha', eyebrow: 'Weekly Report', contentText: text });
+
+  if (!html.includes('كتابة محتوى جديد لـ 4 منتجات مع الروابط')) {
+    throw new Error('The body point\'s own text did not survive once its links were pulled out of it.');
+  }
+  // Two raw URLs must become two separate clickable lines, never left as unbroken inline text.
+  const viewAttachmentCount = (html.match(/View attachment<\/a>/g) || []).length;
+  if (viewAttachmentCount !== 2) {
+    throw new Error(`Expected each of the 2 links to render as its own clickable "View attachment" line, got ${viewAttachmentCount}.`);
+  }
+  if (!html.includes('href="https://wajaha4perfumes.test/a"') || !html.includes('href="https://wajaha4perfumes.test/b"')) {
+    throw new Error('A link in a structured-report body point was not rendered as a real clickable <a href>.');
+  }
+  if (html.includes('https://wajaha4perfumes.test/a https://wajaha4perfumes.test/b')) {
+    throw new Error('Links were left crammed together as raw unbroken text instead of being pulled into their own lines.');
+  }
+
+  console.log('OK (4/4): a structured-report body point\'s attachment links render as separate, real clickable lines (and would embed as pictures for a reachable image URL), never as unbroken raw text.');
+}
+
 (async () => {
   await checkIndividualReport();
   await checkUnifiedReport();
   await checkStructuredReportRoundTripAndAutoDetect();
+  await checkStructuredReportLinksRenderClickable();
 })().catch((err) => {
   console.error(err);
   process.exit(1);
