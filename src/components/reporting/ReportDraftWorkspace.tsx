@@ -25,10 +25,10 @@ import { buildReportHtmlAuto, downloadHtmlReport } from '../../lib/reportHtmlExp
 import { resolveReportBrand } from '../../lib/reportBranding';
 import { serializeStructuredReportText } from '../../lib/structuredReportText';
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
-import { extractLinks } from '../../lib/textLinks';
+import { extractLinks, URL_RE } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
 import { classifyWorkLogService, classifyWorkLogServiceWithAssignmentFallback } from '../../lib/workLogServiceClassification';
-import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, StructuredClientReportGenerationResult, formatPeriodLabel } from './ComparisonDisplay';
+import { CampaignSummaryWorkItem, WorkItemGroup, WorkItemGroupGenerationResult, StructuredClientReportGenerationResult, StructuredClientReportResult, formatPeriodLabel } from './ComparisonDisplay';
 import { ReportContentPreview } from './ReportContentPreview';
 
 // scope/period/creatorNote are CONTROLLED (owned by ReportsHub, the unified single-page parent)
@@ -987,6 +987,61 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   // string like any other draft, just with new section headings (Executive Summary/Work by
   // Date/Upcoming Work, plus the original per-service headings) instead of the old ones. See that
   // file's header comment for how export later detects and renders this shape.
+  //
+  // Added 2026-11-07, after a production report with a task-attachment screenshot consistently
+  // timed out even after STRUCTURED_REPORT_TIMEOUT_MS (App.tsx) was raised to 60s, while reports
+  // with no attachments succeeded in a few seconds. Root cause: composeManifestContent embeds the
+  // attachment's full signed URL (a 300+ character opaque JWT-bearing string) directly as a line
+  // of section body text, and buildStructuredClientReportSystemPrompt (taskRegistry.ts) explicitly
+  // tells the model to "keep every link exactly as given" — so the model has to reproduce that
+  // huge opaque token byte-for-byte, sometimes more than once, and across up to three provider
+  // attempts when one output fails validation (PR #303). That's slow on its own, and a single
+  // wrong character anywhere in the reproduced token is a mismatched number under
+  // validateStructuredClientReportOutput's grounding check, forcing yet another attempt. Swapping
+  // each link for a short, trivial-to-copy placeholder before the call — then restoring the real
+  // URL afterward, wherever the model placed the placeholder — removes both problems: the model
+  // never has to copy anything long or opaque, and reportHtmlExport.ts's buildStructuredClientReportHtml
+  // (which scans the AI's own output text for embedded links to render screenshots) still finds a
+  // real URL in the final, restored result.
+  function replaceLinksWithPlaceholders(
+    sections: { heading: string; body: string }[]
+  ): { sections: { heading: string; body: string }[]; placeholders: Map<string, string> } {
+    const placeholders = new Map<string, string>();
+    let counter = 0;
+    const rewritten = sections.map((section) => ({
+      heading: section.heading,
+      body: section.body.replace(URL_RE, (url) => {
+        counter += 1;
+        const placeholder = `[[LINK${counter}]]`;
+        placeholders.set(placeholder, url);
+        return placeholder;
+      }),
+    }));
+    return { sections: rewritten, placeholders };
+  }
+
+  function restoreLinkPlaceholders<T>(value: T, placeholders: Map<string, string>): T {
+    if (placeholders.size === 0) return value;
+    if (typeof value === 'string') {
+      let restored: string = value;
+      placeholders.forEach((url, placeholder) => {
+        restored = restored.split(placeholder).join(url);
+      });
+      return restored as unknown as T;
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => restoreLinkPlaceholders(item, placeholders)) as unknown as T;
+    }
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      Object.entries(value as Record<string, unknown>).forEach(([key, v]) => {
+        out[key] = restoreLinkPlaceholders(v, placeholders);
+      });
+      return out as T;
+    }
+    return value;
+  }
+
   const requestAiSummary = async () => {
     if (!onGenerateStructuredReport || !selectedReport || busy) return;
     if (hasUnsavedChanges && !window.confirm('Replace the current draft text with the AI Summary? Your unsaved manual edits will be lost.')) return;
@@ -1016,20 +1071,22 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       const reportTypeLabel = reportGranularity
         ? resolveReportTypeLabelForGranularity(reportGranularity)
         : resolveReportTypeLabel(selectedReport.period || '');
-      const sections = parseReportContentIntoParagraphs(composed).map((p) => ({
+      const rawSections = parseReportContentIntoParagraphs(composed).map((p) => ({
         heading: p.heading === 'Final Report' ? reportTypeLabel : p.heading,
         body: p.body,
       }));
+      const { sections, placeholders } = replaceLinksWithPlaceholders(rawSections);
       const outcome = await onGenerateStructuredReport({ client_name: subjectName, period_label: periodRange, sections });
       if (!outcome.ok) {
         setMessage(outcome.message);
         return;
       }
+      const restoredResult: StructuredClientReportResult = restoreLinkPlaceholders(outcome.result, placeholders);
       // "Group similar entries" groups raw work-log lines by id, which the new AI-synthesized
       // blocks no longer map onto 1:1 — reset to undefined (same meaning as "no grouping/rephrase
       // history yet" this state already documents) so a later Group click starts clean from
       // whatever fresh sources it pulls, rather than silently reusing a now-stale grouping.
-      setDraftTextWithUndo(serializeStructuredReportText(outcome.result), undefined);
+      setDraftTextWithUndo(serializeStructuredReportText(restoredResult), undefined);
       setPreviewManifest(null);
       setMessage('AI Summary inserted into the draft, restructured into sections. Save a version to keep it.');
     } finally {
