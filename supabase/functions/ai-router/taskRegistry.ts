@@ -768,6 +768,52 @@ function numericTokens(value: string): Set<string> {
   return new Set((normalizeDigits(value).match(/\d+(?:[.,]\d+)?/g) || []).map((token) => token.replace(',', '.')));
 }
 
+// Added 2026-11-07 per direct owner decision: the plain numericTokens() grounding check above
+// rejects a WHOLE output the moment it contains any number not written verbatim in the input —
+// but STRUCTURED_CLIENT_REPORT's own prompt explicitly asks the model to synthesize an executive
+// summary across sections, and a legitimate synthesis routinely produces a genuinely-derived
+// number that was never itself typed anywhere (e.g. CPA = spend / clicks, CTR = clicks /
+// impressions * 100, ROAS = revenue / spend, a period-over-period delta = current - previous, or
+// a simple total = a + b). Rejecting those as "invented" was a false positive — the model wasn't
+// fabricating a fact, it was doing arithmetic the owner wants it to do. This expands the allowed
+// set with every pairwise sum/difference/product/ratio/percentage-ratio of the input's OWN
+// numbers (rounded to 0/1/2 decimals, covering the common ways such a result gets written) so a
+// genuinely-derived figure passes, while a number with no such relationship to anything in the
+// input still fails exactly as before. Guarded by MAX_DERIVED_NUMBERS_INPUT_COUNT so a huge report
+// can't blow this up combinatorially.
+const MAX_DERIVED_NUMBERS_INPUT_COUNT = 40;
+
+function expandWithDerivedNumbers(baseNumbers: Set<string>): Set<string> {
+  const expanded = new Set(baseNumbers);
+  const numbers = Array.from(baseNumbers)
+    .map((token) => Number.parseFloat(token))
+    .filter((n) => Number.isFinite(n));
+  if (numbers.length === 0 || numbers.length > MAX_DERIVED_NUMBERS_INPUT_COUNT) return expanded;
+
+  const addFormatted = (n: number) => {
+    if (!Number.isFinite(n)) return;
+    expanded.add(n.toFixed(0));
+    expanded.add(n.toFixed(1));
+    expanded.add(n.toFixed(2));
+  };
+
+  for (let i = 0; i < numbers.length; i++) {
+    for (let j = 0; j < numbers.length; j++) {
+      if (i === j) continue;
+      const a = numbers[i];
+      const b = numbers[j];
+      addFormatted(a + b);
+      addFormatted(a - b);
+      addFormatted(a * b);
+      if (b !== 0) {
+        addFormatted(a / b);
+        addFormatted((a / b) * 100); // e.g. CTR, completion rate, % of plan
+      }
+    }
+  }
+  return expanded;
+}
+
 export function validateReportRewriteOutput(parsed: unknown, _detail: DetailLevel, stageInput?: unknown): StageValidationResult {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
   const suggestedText = (parsed as Record<string, unknown>).suggested_text;
@@ -1108,13 +1154,18 @@ function buildStructuredClientReportSystemPrompt(language: SupportedLanguage): s
     `exactly one item (never an empty array).\n` +
     `- work_by_date: one entry per date that appears anywhere in the input, in chronological order, ` +
     `summarizing that date's work across all sections in one or two sentences. Never invent a date ` +
-    `that isn't in the input.\n` +
+    `that isn't in the input. When writing any date, copy its exact digits and format from the ` +
+    `input — never reorder it, reformat it, or add a part (such as a year) that was not already ` +
+    `written there.\n` +
     `- upcoming_work: at most 3 short, forward-looking entries, each with a "body" array following the ` +
     `exact same one-point-per-item rule as a section block's body above, phrased as a natural next ` +
     `step from what a section's own text already shows in progress — never a generic sentence ` +
     `disconnected from the input. Return an empty array if nothing in the input suggests a clear ` +
     `next step.\n` +
-    `- Every number you write anywhere in the output must already occur in the input.`
+    `- Every number you write anywhere in the output must either already occur in the input, or be ` +
+    `a direct arithmetic result of numbers that occur in the input (e.g. a total, a difference, or ` +
+    `a rate/percentage like CPA or CTR computed from two input numbers) — never a number pulled ` +
+    `from outside knowledge or guessed.`
   );
 }
 
@@ -1229,13 +1280,14 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
   if (upcoming.some((u) => u === null)) return { ok: false };
 
   // Grounding: every number anywhere in the output must already occur somewhere in the input's
-  // sections — the same numericTokens mechanism REPORT_REWRITE already uses, applied to the whole
+  // sections, OR be a direct arithmetic result of input numbers (expandWithDerivedNumbers, above)
+  // — the same numericTokens mechanism REPORT_REWRITE already uses, applied to the whole
   // flattened output at once rather than field-by-field (this task restructures across many small
   // fields, so a single combined check is both simpler and no less strict).
   const input = stageInput as StructuredClientReportPayload | undefined;
   if (!input) return { ok: false };
-  const allowedNumbers = numericTokens(
-    [input.client_name, input.period_label, ...input.sections.map((s) => `${s.heading}\n${s.body}`)].join('\n')
+  const allowedNumbers = expandWithDerivedNumbers(
+    numericTokens([input.client_name, input.period_label, ...input.sections.map((s) => `${s.heading}\n${s.body}`)].join('\n'))
   );
   const outputText = [
     p.subtitle,
