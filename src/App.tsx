@@ -1558,11 +1558,12 @@ export default function App() {
     }
   };
 
-  // Experimental (2026-11-07) — Report Workspace's "Generate Structured Report (Experimental)"
-  // action, built for a deliberate side-by-side comparison against today's Export HTML/PDF on the
-  // same already-approved report, before deciding whether to also connect a stronger model. Same
-  // never-throws/timeout/sanitized-error convention as handleGroupWorkItems above; the only
-  // difference is the task name and the response shape it validates.
+  // Backs Report Workspace's "AI Summary" button (STRUCTURED_CLIENT_REPORT) as of 2026-11-07 —
+  // both improves wording and restructures the report (Executive Summary/KPIs, thematic
+  // sub-blocks, work-by-date, upcoming work) in one pass; its result is serialized to plain draft
+  // text and set as the new draft (ReportDraftWorkspace.tsx's requestAiSummary), never called at
+  // export time. Same never-throws/timeout/sanitized-error convention as handleGroupWorkItems
+  // above; the only difference is the task name and the response shape it validates.
   const handleGenerateStructuredReport = async (payload: {
     client_name: string;
     period_label: string;

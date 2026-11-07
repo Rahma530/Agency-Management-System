@@ -7,7 +7,8 @@
 // deterministic and offline-safe.
 import { ClientComparisonRecord } from '../src/types/database';
 import { REPORT_SECTION_HEADINGS } from '../src/lib/pdfExport';
-import { buildIndividualReportHtml, buildUnifiedReportHtml } from '../src/lib/reportHtmlExport';
+import { buildIndividualReportHtml, buildUnifiedReportHtml, buildReportHtmlAuto } from '../src/lib/reportHtmlExport';
+import { serializeStructuredReportText, parseStructuredReportText, STRUCTURED_REPORT_HEADINGS } from '../src/lib/structuredReportText';
 
 const BRAND_PURPLE_HEX = '#7b2ff7';
 
@@ -68,9 +69,71 @@ async function checkUnifiedReport() {
   console.log('OK (2/2): buildUnifiedReportHtml renders metrics cards and narrative/recommendations from a ClientComparisonRecord.');
 }
 
+// serializeStructuredReportText/parseStructuredReportText (structuredReportText.ts) must round-trip
+// the AI task's JSON shape through the plain report-text format used to save it as a draft — and
+// buildReportHtmlAuto (ReportDraftWorkspace.tsx's only HTML export entry point) must correctly
+// detect, from content_text alone, which of the two shapes a saved report is in, with no AI call.
+async function checkStructuredReportRoundTripAndAutoDetect() {
+  const structured = {
+    executive_summary: {
+      paragraph: 'Social media activity grew this period.',
+      kpis: [{ label: 'Stories posted', value: '12', note: 'Reached 4500 accounts' }],
+      caveat: '',
+    },
+    sections: [
+      { heading: 'Social Media', blocks: [{ title: 'Stories', body: 'Posted 12 stories.' }] },
+    ],
+    work_by_date: [{ date: '2026-10-10', summary: 'Posted stories and scheduled content.' }],
+    upcoming_work: [{ title: 'Next campaign', body: 'Prepare assets for the November push.' }],
+  };
+
+  const text = serializeStructuredReportText(structured);
+  if (!text.startsWith(STRUCTURED_REPORT_HEADINGS.executiveSummary)) {
+    throw new Error('Serialized structured report text must start with the Executive Summary heading.');
+  }
+  if (!text.includes('KPI: Stories posted — 12 (Reached 4500 accounts)')) {
+    throw new Error('Serialized structured report text is missing its KPI line in the expected format.');
+  }
+
+  const parsedBack = parseStructuredReportText(text);
+  if (!parsedBack) throw new Error('parseStructuredReportText failed to detect its own serialized output as the structured shape.');
+  if (parsedBack.executive_summary.kpis.length !== 1 || parsedBack.executive_summary.kpis[0].value !== '12') {
+    throw new Error('Structured report round-trip lost or corrupted a KPI.');
+  }
+  if (parsedBack.sections.length !== 1 || parsedBack.sections[0].heading !== 'Social Media') {
+    throw new Error('Structured report round-trip lost or corrupted a section.');
+  }
+  if (parsedBack.work_by_date.length !== 1 || parsedBack.work_by_date[0].date !== '2026-10-10') {
+    throw new Error('Structured report round-trip lost or corrupted a work-by-date row.');
+  }
+  if (parsedBack.upcoming_work.length !== 1 || parsedBack.upcoming_work[0].title !== 'Next campaign') {
+    throw new Error('Structured report round-trip lost or corrupted an upcoming-work item.');
+  }
+
+  // An OLD-shape report (this test's own fixture from checkIndividualReport) must never be
+  // misdetected as the new structured shape.
+  if (parseStructuredReportText(`${REPORT_SECTION_HEADINGS.workLogs}\nSara: did some work.`) !== null) {
+    throw new Error('An old-shape report content_text was wrongly detected as the new structured shape.');
+  }
+
+  const autoStructuredHtml = await buildReportHtmlAuto({ title: 'Natural Glow', eyebrow: 'Weekly Report', contentText: text });
+  if (!autoStructuredHtml.includes('Posted 12 stories.') || !autoStructuredHtml.includes('Next campaign')) {
+    throw new Error('buildReportHtmlAuto did not render the structured shape via the rich template.');
+  }
+
+  const oldShapeText = `${REPORT_SECTION_HEADINGS.workLogs}\nSara: did some work.`;
+  const autoOldHtml = await buildReportHtmlAuto({ title: 'Sara', eyebrow: 'Weekly Report', contentText: oldShapeText });
+  if (!autoOldHtml.includes('did some work.')) {
+    throw new Error('buildReportHtmlAuto did not fall back to the original template for an old-shape report.');
+  }
+
+  console.log('OK (3/3): the structured-report text format round-trips through serialize/parse, and buildReportHtmlAuto detects and renders each shape correctly with no AI call.');
+}
+
 (async () => {
   await checkIndividualReport();
   await checkUnifiedReport();
+  await checkStructuredReportRoundTripAndAutoDetect();
 })().catch((err) => {
   console.error(err);
   process.exit(1);

@@ -30,24 +30,25 @@ if (engine.includes('export async function ensureComparisonForSummary')) {
   throw new Error('reportingEngine.ts still exports the shared ensureComparisonForSummary reuse-shortcut.');
 }
 
-// AI Summary must fetch the server-authorized original manifest on every click and build work
-// items solely from that result (plus, now, whatever grouping/rephrase state this same session
-// already produced from an earlier fresh fetch — activeWorkLogGroups is never fed from draft
-// text, a saved source ledger, or an old preview; see workItemsFromOriginalSources/
-// requestAiSummary's own comments), never directly from draft text, a saved source ledger, or an
-// old preview.
+// AI Summary (redesigned 2026-11-07 — now the STRUCTURED_CLIENT_REPORT restructuring action, not
+// the old CAMPAIGN_SUMMARY per-line rephrase) must fetch the server-authorized original manifest
+// on every click and compose its sections solely from that fresh result (plus whatever
+// grouping/rephrase state this same session already produced from an earlier fresh fetch —
+// activeWorkLogGroups), never directly from draft text, a saved source ledger, or an old preview.
 const requestStart = workspace.indexOf('const requestAiSummary = async () =>');
 const requestEnd = workspace.indexOf('\n  const applySuggestion', requestStart);
 const requestBody = workspace.slice(requestStart, requestEnd);
 if (requestStart < 0 || requestEnd < 0
   || !requestBody.includes('const manifest = await fetchSourceManifest();')
-  || !requestBody.includes('workItemsFromOriginalSources(manifest.sources, activeWorkLogGroups)')
-  || requestBody.indexOf('fetchSourceManifest()') > requestBody.indexOf('onRequestAiSummary(')
+  || !requestBody.includes('composeManifestContent(')
+  || !requestBody.includes('activeWorkLogGroups,')
+  || requestBody.indexOf('fetchSourceManifest()') > requestBody.indexOf('onGenerateStructuredReport(')
   || workspace.includes('const workItemsForAiSummary')
   || workspace.includes('previewManifest ? previewManifest.sources : sources')) {
   throw new Error('AI Summary does not start each request from a newly fetched original source manifest.');
 }
-if (!workspace.includes('never\n  // reads draftText, report_content_versions, or a prior summary.')) {
+if (!workspace.includes('Every click starts from the live original source records under fetchSourceManifest')
+  || !workspace.includes('never reads draftText, report_content_versions, or a prior summary')) {
   throw new Error('AI source boundary between originals, report text, and prior summaries is undocumented.');
 }
 

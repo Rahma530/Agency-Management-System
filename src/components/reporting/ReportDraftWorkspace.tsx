@@ -21,7 +21,8 @@ import {
   collectClientReportSources, collectEmployeeReportSources, dedupeIdenticalWorkLogs, EmployeeClientScopeMode,
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf, CREATIVE_BUCKET_LABEL, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
-import { buildIndividualReportHtml, buildStructuredClientReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
+import { buildReportHtmlAuto, downloadHtmlReport } from '../../lib/reportHtmlExport';
+import { serializeStructuredReportText } from '../../lib/structuredReportText';
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
 import { CLIENT_SERVICES, getClientServices, SERVICE_LABELS } from '../../lib/clientServices';
@@ -89,14 +90,13 @@ interface Props {
   // selector (none do today besides ReportsHub), in which case exportPdf/exportHtml fall back to
   // the old date-span guess exactly as before.
   reportGranularity?: ReportGranularity;
-  // AI Summary is the sole AI action inside the draft now (Suggest rewrite's button was removed
-  // from this UI — the RPC/edge function it used, create_report_ai_suggestion/ai-router
-  // REPORT_REWRITE, and apply_report_ai_suggestion for any already-pending suggestion, are
-  // untouched). Resolves to replacement draft text, or a safe message on failure — ReportsHub
-  // owns ensuring/generating the underlying comparison and calling onGenerateAiSummary itself,
-  // so this component stays decoupled from CampaignSummaryPayload's shape. The current
-  // creatorNote text is passed as an argument (not lifted to ReportsHub as its own controlled
-  // prop) since this component is the only owner of that textarea's live value.
+  // UNUSED as of 2026-11-07 — "AI Summary" (requestAiSummary below) was redesigned to call
+  // onGenerateStructuredReport instead (restructuring, not a per-line CAMPAIGN_SUMMARY rephrase).
+  // Left wired here and in ReportsHub.tsx (requestDraftAiSummary/generateComparisonForSummary),
+  // not deleted, in case this needs to come back — same "hidden, not deleted" posture as exportPdf
+  // below. (Suggest rewrite's own button was removed even earlier — the RPC/edge function it used,
+  // create_report_ai_suggestion/ai-router REPORT_REWRITE, and apply_report_ai_suggestion for any
+  // already-pending suggestion, are untouched too.)
   onRequestAiSummary?: (
     creatorNote?: string,
     workItems?: CampaignSummaryWorkItem[]
@@ -123,11 +123,13 @@ interface Props {
     // taskRegistry.ts's validateWorkItemGroupOutput comment for the full bug this fixes).
     items: { id: string; employee?: string; employeeKey?: string; text: string }[]
   ) => Promise<WorkItemGroupGenerationResult>;
-  // Experimental (2026-11-07) — "Generate Structured Report" comparison action (STRUCTURED_CLIENT_
-  // REPORT). Separate from onRequestAiSummary/onGroupWorkItems above: it restructures the already-
-  // approved report into the richer sectioned shape (Executive Summary/KPIs, thematic sub-blocks,
-  // work-by-date, upcoming work) for a direct side-by-side comparison against today's Export HTML,
-  // not a replacement for either existing action. Optional for the same reason those are.
+  // Backs the "AI Summary" button (requestAiSummary below) as of 2026-11-07 — calls the
+  // STRUCTURED_CLIENT_REPORT ai-router task, which both improves this report's wording and
+  // restructures it (Executive Summary/KPIs, thematic sub-blocks per section, work-by-date,
+  // upcoming work) in one pass. Its JSON result is serialized to plain draft text
+  // (structuredReportText.ts) and set as the new draft, same as any other AI Summary result —
+  // export itself (exportPdf/exportHtml) never calls this; see their own comments. Optional for
+  // the same reason onGroupWorkItems is (a caller that hasn't wired AI yet still renders).
   onGenerateStructuredReport?: (payload: {
     client_name: string;
     period_label: string;
@@ -938,69 +940,68 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearSignal]);
 
+  // Redesigned 2026-11-07 per the owner's direct feedback: AI Summary is now the ONE place
+  // wording improvement and structuring both happen — replacing the old CAMPAIGN_SUMMARY-based
+  // per-line rephrase entirely — and export (exportPdf/exportHtml above) stays a pure, no-AI
+  // render of whatever this saves. onRequestAiSummary/onGroupWorkItems's underlying CAMPAIGN_SUMMARY
+  // wiring (ReportsHub.tsx's requestDraftAiSummary/generateComparisonForSummary) is intentionally
+  // left in place but no longer called from here — same "hidden, not deleted" posture as exportPdf
+  // below, in case this needs to be revisited.
+  //
+  // Every click starts from the live original source records under fetchSourceManifest's own RLS
+  // checks — never reads draftText, report_content_versions, or a prior summary — then composes
+  // the exact same raw, un-rephrased sections composeManifestContent/buildPreview already produce
+  // (preserving whatever "Group similar entries" grouping is currently active), and sends THOSE to
+  // the STRUCTURED_CLIENT_REPORT AI task. Its JSON response is serialized straight into the new
+  // draft text (structuredReportText.ts's serializeStructuredReportText) — a normal, hand-editable
+  // string like any other draft, just with new section headings (Executive Summary/Work by
+  // Date/Upcoming Work, plus the original per-service headings) instead of the old ones. See that
+  // file's header comment for how export later detects and renders this shape.
   const requestAiSummary = async () => {
-    if (!onRequestAiSummary || busy) return;
+    if (!onGenerateStructuredReport || !selectedReport || busy) return;
     if (hasUnsavedChanges && !window.confirm('Replace the current draft text with the AI Summary? Your unsaved manual edits will be lost.')) return;
     setBusy(true);
     setMessage(null);
     try {
-      // Every click starts from the live original source records under the RPC's existing RLS
-      // checks. Do not reuse previewManifest/sources here: those are useful display and saved
-      // evidence snapshots, but are not a cache for a new AI request.
       const manifest = await fetchSourceManifest();
       if (!manifest) return;
-      // Build work items from whatever grouping is currently active (undefined the first time —
-      // one item per raw log row, same as before this existed) so an earlier "Group similar
-      // entries" merge is rephrased as ONE item, not exploded back into its original individual
-      // lines.
-      const { items: workItems, groups: effectiveGroups } = await workItemsFromOriginalSources(manifest.sources, activeWorkLogGroups);
-      const result = await onRequestAiSummary(creatorNote, workItems);
-      if (!result.ok) {
-        setMessage(result.message);
+      const attachmentLinksByTask = await fetchTaskAttachmentLinks(
+        manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
+      );
+      const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
+      const composed = composeManifestContent(
+        manifest,
+        creatorNote,
+        names,
+        creativeSubject,
+        attachmentLinksByTask,
+        activeWorkLogGroups,
+        workLogServiceGrouping,
+        effectiveScopeType === 'employee'
+      );
+      const subjectName = selectedReport.scope_type === 'employee'
+        ? (names.get(selectedReport.subject_user_id || '') || 'Employee')
+        : (clientDisplayNameOverride.trim() || clients.find((client) => client.id === selectedReport.client_id)?.name || 'Client');
+      const periodRange = formatReportPeriodRange(selectedReport.period || '');
+      const reportTypeLabel = reportGranularity
+        ? resolveReportTypeLabelForGranularity(reportGranularity)
+        : resolveReportTypeLabel(selectedReport.period || '');
+      const sections = parseReportContentIntoParagraphs(composed).map((p) => ({
+        heading: p.heading === 'Final Report' ? reportTypeLabel : p.heading,
+        body: p.body,
+      }));
+      const outcome = await onGenerateStructuredReport({ client_name: subjectName, period_label: periodRange, sections });
+      if (!outcome.ok) {
+        setMessage(outcome.message);
         return;
       }
-      // Carry the rephrase forward onto the SAME groups (same ids/merges), just with each group's
-      // text updated to its freshly rephrased wording — so a later "Group similar entries" groups
-      // from this rephrased wording instead of reverting to the raw original log text, and a later
-      // AI Summary click still sees (and keeps) this same merge.
-      const rephrasedById = new Map<string, string>((result.items || []).map((item) => [item.id, item.text]));
-      const nextGroups = effectiveGroups.map((group) => ({ ids: group.ids, text: rephrasedById.get(group.ids[0]) ?? group.text }));
-      // result.text is the AI's own flat `summaryOverview + rephrased lines, all joined by blank
-      // lines` string — it has no section headings ("Social Media"/"Media Buying"/...), no
-      // per-service grouping, and no trailing "بتاريخ D/M" clause on any line (workItemsFromOriginalSources
-      // never sends the date to the AI in the first place — composeManifestContent only adds it at
-      // render time). Using it directly as the new draft silently dropped every heading and date.
-      // Whenever work items were actually involved, re-render the SAME structured shape "Group
-      // similar entries" already uses (composeManifestContent/renderWorkLogSection, keyed off
-      // nextGroups) with the freshly rephrased wording substituted in, and only prepend the AI's
-      // own metrics-overview prose (summaryOverview) above it. Fall back to result.text verbatim
-      // only for the no-work-items (pure campaign-metrics) case, where there's no work-logs
-      // structure to regenerate at all.
-      let finalText = result.text;
-      if (workItems.length) {
-        const attachmentLinksByTask = await fetchTaskAttachmentLinks(
-          manifest.sources.filter((source) => source.source_kind === 'daily_log').flatMap(linkedTaskIdsOf)
-        );
-        const creativeSubject = !!selectedSubject && isCreativeReportSubject(selectedSubject);
-        const regenerated = composeManifestContent(
-          manifest,
-          creatorNote,
-          names,
-          creativeSubject,
-          attachmentLinksByTask,
-          nextGroups,
-          workLogServiceGrouping,
-          effectiveScopeType === 'employee'
-        );
-        finalText = result.summaryOverview ? `${result.summaryOverview}\n\n${regenerated}` : regenerated;
-      }
-      setDraftTextWithUndo(finalText, nextGroups);
+      // "Group similar entries" groups raw work-log lines by id, which the new AI-synthesized
+      // blocks no longer map onto 1:1 — reset to undefined (same meaning as "no grouping/rephrase
+      // history yet" this state already documents) so a later Group click starts clean from
+      // whatever fresh sources it pulls, rather than silently reusing a now-stale grouping.
+      setDraftTextWithUndo(serializeStructuredReportText(outcome.result), undefined);
       setPreviewManifest(null);
-      setMessage(
-        result.partial
-          ? 'AI Summary inserted into the draft, but some work-log batches could not be rephrased and were kept in their original wording. Save a version to keep it.'
-          : 'AI Summary inserted into the draft. Save a version to keep it.'
-      );
+      setMessage('AI Summary inserted into the draft, restructured into sections. Save a version to keep it.');
     } finally {
       setBusy(false);
     }
@@ -1231,19 +1232,14 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
   };
 
   // HTML export — the primary export format going forward (the owner confirmed on 2026-11-07 that
-  // the plain jsPDF export below is currently unused, hence it being hidden from the UI). Same
-  // save-before-export gate as exportPdf (never exports text that hasn't been saved as a version
-  // yet), and reads from the exact same saved `currentVersion.content_text` — no separate live-data
-  // path.
-  //
-  // When onGenerateStructuredReport is wired (the normal case — see App.tsx's handleGenerateStructuredReport),
-  // this sends the already-parsed sections to the STRUCTURED_CLIENT_REPORT AI task (restructures
-  // into Executive Summary + KPIs, thematic sub-blocks, work-by-date, upcoming work — see
-  // taskRegistry.ts's own header comment for why this exists as its own task rather than a
-  // REPORT_REWRITE variant) and renders its JSON response through buildStructuredClientReportHtml.
-  // Falls back to the older plain-render path (buildIndividualReportHtml, straight off
-  // content_text with no AI restructuring) only if a caller hasn't wired AI generation at all, so
-  // the button still works end-to-end in that case rather than silently doing nothing.
+  // the plain jsPDF export below is currently unused, hence it being hidden from the UI). Pure
+  // rendering, no AI call of any kind — per the owner's explicit 2026-11-07 direction, export must
+  // stay "dumb" and just render whatever's already saved; the structuring now happens once, at
+  // drafting time, in requestAiSummary below. Same save-before-export gate as exportPdf (never
+  // exports text that hasn't been saved as a version yet), and reads from the exact same saved
+  // `currentVersion.content_text` — no separate live-data path. buildReportHtmlAuto itself detects
+  // whether this saved report is in the new AI-Summary-produced structured shape or the older one
+  // and renders accordingly — see reportHtmlExport.ts's own comment.
   const exportHtml = async () => {
     if (!selectedReport || !currentVersion?.content_text.trim()) return;
     if (draftText !== currentVersion.content_text) {
@@ -1262,41 +1258,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     const eyebrowReportTypeLabel = reportGranularity
       ? resolveReportTypeLabelForGranularity(reportGranularity)
       : resolveReportTypeLabel(selectedReport.period || '');
-
-    if (onGenerateStructuredReport) {
-      // Same parsed shape exportPdf derives from the saved content_text — reused here, not
-      // re-parsed differently, so the AI task sees exactly the sections the PDF export shows.
-      const parsed = parseReportContentIntoParagraphs(currentVersion.content_text).map((p) => ({
-        heading: p.heading === 'Final Report' ? eyebrowReportTypeLabel : p.heading,
-        body: p.body,
-      }));
-      setBusy(true);
-      setMessage(null);
-      try {
-        const outcome = await onGenerateStructuredReport({
-          client_name: subjectName,
-          period_label: periodRange,
-          sections: parsed,
-        });
-        if (!outcome.ok) {
-          setMessage(outcome.message);
-          return;
-        }
-        const html = buildStructuredClientReportHtml({
-          title: subjectName,
-          eyebrow: `${eyebrowReportTypeLabel} — KESRA Management System`,
-          subtitle: periodRange,
-          period: selectedReport.period || '',
-          report: outcome.result,
-        });
-        downloadHtmlReport(html, `report-${selectedReport.period || selectedReport.id}.html`);
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-
-    const html = await buildIndividualReportHtml({
+    const html = await buildReportHtmlAuto({
       // Title is the actual client/employee name now, not the literal word "Client"/"Employee" —
       // the eyebrow line just above it already says which kind of report this is.
       title: subjectName,
@@ -1383,8 +1345,8 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       <div className="flex flex-wrap gap-2">
         {!selectedReport ? <button disabled={busy || !draftText.trim() || !previewManifest} onClick={createDraft} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save draft</button> : <>
           <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={saveVersion} className="filled-purple-action px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50"><Save className="w-3.5 h-3.5 inline mr-1" />Save version</button>
-          {onRequestAiSummary && (
-            <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={requestAiSummary} className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Sparkles className="w-3.5 h-3.5 inline mr-1" />AI Summary</button>
+          {onGenerateStructuredReport && (
+            <button disabled={busy || !!selectedReport.archived_at || selectedReport.status === 'final'} onClick={requestAiSummary} title="Improves this report's wording and restructures it into Executive Summary + KPIs, sections, work-by-date, and upcoming work" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-900/50 text-indigo-200 disabled:opacity-50"><Sparkles className="w-3.5 h-3.5 inline mr-1" />AI Summary</button>
           )}
           {hasUnsavedChanges && !selectedReport.archived_at && selectedReport.status !== 'final' && (
             <button disabled={busy} onClick={clearAiText} title="Discard the current draft text and revert to the last saved version" className="px-3 py-2 rounded-lg text-xs font-bold bg-stone-900 text-stone-300 border border-stone-700 disabled:opacity-50">✕ Clear AI text</button>

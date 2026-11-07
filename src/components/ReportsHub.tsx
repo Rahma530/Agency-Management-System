@@ -99,10 +99,9 @@ interface ReportsHubProps {
   onGroupWorkItems?: (
     items: { id: string; employee?: string; text: string }[]
   ) => Promise<WorkItemGroupGenerationResult>;
-  // Experimental (2026-11-07) — Report Workspace's "Structured (Experimental)" comparison action
-  // (STRUCTURED_CLIENT_REPORT). See ReportDraftWorkspace.tsx's own prop comment for what this does
-  // and why it's separate from onGenerateAiSummary/onGroupWorkItems above. Optional for the same
-  // reason those are.
+  // Backs Report Workspace's "AI Summary" button (STRUCTURED_CLIENT_REPORT) as of 2026-11-07 — see
+  // ReportDraftWorkspace.tsx's own prop comment. Optional for the same reason onGenerateAiSummary/
+  // onGroupWorkItems above are (a caller that hasn't wired AI yet still renders).
   onGenerateStructuredReport?: (payload: {
     client_name: string;
     period_label: string;

@@ -5,6 +5,7 @@ import { generateComparisonNarrative, AnomalyFlag } from '../../lib/reportingEng
 import { downloadReportPdf, buildUnifiedReportMetricsTable, PdfParagraph, PdfBulletList } from '../../lib/pdfExport';
 import { buildUnifiedReportHtml, downloadHtmlReport } from '../../lib/reportHtmlExport';
 import { reattachLinks } from '../../lib/textLinks';
+import { StructuredReportTextShape } from '../../lib/structuredReportText';
 
 // ----------------------------------------------------------------------------
 // Shared presentation pieces for a generated ClientComparisonRecord and the ReportRecords filed
@@ -216,41 +217,15 @@ export interface WorkItemGroupResult {
 }
 export type WorkItemGroupGenerationResult = AiGenerationResult<WorkItemGroupResult>;
 
-// Experimental (2026-11-07) — matches ai-router's STRUCTURED_CLIENT_REPORT task output shape
-// (taskRegistry.ts's validateStructuredClientReportOutput). Kept entirely separate from
-// WorkItemGroupResult/UnifiedClientReportResult above: this is a side-by-side comparison feature,
-// not a replacement for the existing AI Summary / Export HTML flows yet.
-export interface StructuredReportKpi {
-  label: string;
-  value: string;
-  note: string;
-}
-export interface StructuredReportBlock {
-  title: string;
-  body: string;
-}
-export interface StructuredReportSection {
-  heading: string;
-  blocks: StructuredReportBlock[];
-}
-export interface StructuredReportWorkByDate {
-  date: string;
-  summary: string;
-}
-export interface StructuredReportUpcomingWork {
-  title: string;
-  body: string;
-}
-export interface StructuredClientReportResult {
+// Matches ai-router's STRUCTURED_CLIENT_REPORT task output shape (taskRegistry.ts's
+// validateStructuredClientReportOutput). Generated once, at drafting time ("AI Summary" — see
+// ReportDraftWorkspace.tsx's requestAiSummary), then immediately serialized to plain report text
+// via structuredReportText.ts's serializeStructuredReportText and saved like any other draft — see
+// that file's header comment for the full round-trip design. The result's core fields
+// (executive_summary/sections/work_by_date/upcoming_work) reuse StructuredReportTextShape rather
+// than duplicating it a third time; `subtitle` is extra, present only in the AI's raw response.
+export interface StructuredClientReportResult extends StructuredReportTextShape {
   subtitle: string;
-  executive_summary: {
-    paragraph: string;
-    kpis: StructuredReportKpi[];
-    caveat: string;
-  };
-  sections: StructuredReportSection[];
-  work_by_date: StructuredReportWorkByDate[];
-  upcoming_work: StructuredReportUpcomingWork[];
 }
 export type StructuredClientReportGenerationResult = AiGenerationResult<StructuredClientReportResult>;
 
