@@ -522,10 +522,18 @@ export function buildStructuredClientReportHtml(options: StructuredClientReportH
     ${caveatHtml}
   </section>`;
 
+  // A block's body is an array of separate points — 2+ items render as a real <ul> of bullets
+  // (stacked, one per line, per the owner's direct request), a single item stays a plain <p> so a
+  // one-sentence block doesn't show a lone, pointless bullet.
+  const bodyHtml = (body: string[]): string =>
+    body.length > 1
+      ? `<ul>${body.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      : `<p>${escapeHtml(body[0] || '')}</p>`;
+
   const sectionsHtml = report.sections
     .map((section) => {
       const blocksHtml = section.blocks
-        .map((block) => `<div class="service-block"><h3>${escapeHtml(block.title)}</h3><p>${escapeHtml(block.body)}</p></div>`)
+        .map((block) => `<div class="service-block"><h3>${escapeHtml(block.title)}</h3>${bodyHtml(block.body)}</div>`)
         .join('');
       return `<section class="kesra-section">
         <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>${escapeHtml(section.heading)}</h2></div>
@@ -547,7 +555,7 @@ export function buildStructuredClientReportHtml(options: StructuredClientReportH
     ? `<section class="kesra-section">
         <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Upcoming Work</h2></div>
         <div class="grid g3">${report.upcoming_work
-          .map((item) => `<div class="kesra-card"><h3 style="color:var(--white);margin:0 0 8px">${escapeHtml(item.title)}</h3><p>${escapeHtml(item.body)}</p></div>`)
+          .map((item) => `<div class="kesra-card"><h3 style="color:var(--white);margin:0 0 8px">${escapeHtml(item.title)}</h3>${bodyHtml(item.body)}</div>`)
           .join('')}</div>
       </section>`
     : '';

@@ -26,14 +26,54 @@ const input = validateStructuredClientReportPayload({
       caveat: '',
     },
     sections: [
-      { heading: 'Social Media', blocks: [{ title: 'Stories', body: 'Posted 12 stories reaching 4500 accounts.' }, { title: 'Scheduling', body: 'Scheduled 3 posts for next week.' }] },
-      { heading: 'SEO', blocks: [{ title: 'Audits', body: 'Completed 5 on-page audits, with 2 tasks still pending review.' }] },
+      { heading: 'Social Media', blocks: [{ title: 'Stories', body: ['Posted 12 stories reaching 4500 accounts.'] }, { title: 'Scheduling', body: ['Scheduled 3 posts for next week.'] }] },
+      { heading: 'SEO', blocks: [{ title: 'Audits', body: ['Completed 5 on-page audits.', '2 tasks still pending review.'] }] },
     ],
     work_by_date: [],
-    upcoming_work: [{ title: 'Scheduled posts', body: '3 posts are scheduled for next week.' }],
+    upcoming_work: [{ title: 'Scheduled posts', body: ['3 posts are scheduled for next week.'] }],
   };
   const validation = validateOutput(modelOutput, 'brief', input);
   if (!validation.ok) throw new Error('A valid, fully-grounded structured report was rejected.');
+  // body is an ARRAY of separate points (changed 2026-11-07 so each renders as its own line/bullet
+  // instead of a joined run-on string) — confirm the multi-item block round-trips as two items.
+  const seoBlock = (validation.value as any).sections[1].blocks[0];
+  if (seoBlock.body.length !== 2 || seoBlock.body[0] !== 'Completed 5 on-page audits.' || seoBlock.body[1] !== '2 tasks still pending review.') {
+    throw new Error(`A multi-item block body did not round-trip as a separate-item array, got ${JSON.stringify(seoBlock.body)}`);
+  }
+}
+
+// 1b) Markdown syntax and emoji anywhere in the output are stripped, never shown to the client
+// verbatim — a live test surfaced a markdown table's "|---|---|" separator row and inline "**bold**"
+// rendering as literal garbled characters, since the app's renderer never interprets markdown.
+{
+  const modelOutput = {
+    subtitle: 'Social Media and SEO activity for October 🚀',
+    executive_summary: {
+      paragraph: 'The team posted **12 stories** reaching 4500 accounts.',
+      kpis: [{ label: 'Stories posted ✅', value: '12', note: 'Reached 4500 accounts' }],
+      caveat: '',
+    },
+    sections: [
+      {
+        heading: 'Social Media',
+        blocks: [{ title: '### Stories', body: ['Posted 12 stories.', '| --- | --- |', '- Scheduled 3 posts for next week.'] }],
+      },
+      { heading: 'SEO', blocks: [{ title: 'Audits', body: ['Completed 5 on-page audits.'] }] },
+    ],
+    work_by_date: [],
+    upcoming_work: [],
+  };
+  const validation = validateOutput(modelOutput, 'brief', input);
+  if (!validation.ok) throw new Error('A markdown/emoji-laden but otherwise valid output was rejected outright.');
+  const value = validation.value as any;
+  if (value.subtitle.includes('🚀')) throw new Error('Emoji was not stripped from subtitle.');
+  if (value.executive_summary.paragraph.includes('**')) throw new Error('Markdown bold markers were not stripped from the paragraph.');
+  if (value.executive_summary.kpis[0].label.includes('✅')) throw new Error('Emoji was not stripped from a KPI label.');
+  const storiesBlock = value.sections[0].blocks[0];
+  if (storiesBlock.title.startsWith('#')) throw new Error('A markdown heading marker was not stripped from a block title.');
+  if (storiesBlock.body.some((item: string) => item.includes('|') || item.startsWith('-'))) {
+    throw new Error(`A markdown table separator / leading bullet dash was not stripped from a body item, got ${JSON.stringify(storiesBlock.body)}`);
+  }
 }
 
 // 2) A fabricated number not present anywhere in the input (reach figure invented) is rejected —
@@ -47,8 +87,8 @@ const input = validateStructuredClientReportPayload({
       caveat: '',
     },
     sections: [
-      { heading: 'Social Media', blocks: [{ title: 'Stories', body: 'Posted 12 stories.' }] },
-      { heading: 'SEO', blocks: [{ title: 'Audits', body: 'Completed 5 on-page audits.' }] },
+      { heading: 'Social Media', blocks: [{ title: 'Stories', body: ['Posted 12 stories.'] }] },
+      { heading: 'SEO', blocks: [{ title: 'Audits', body: ['Completed 5 on-page audits.'] }] },
     ],
     work_by_date: [],
     upcoming_work: [],
@@ -64,7 +104,7 @@ const input = validateStructuredClientReportPayload({
     subtitle: 'Social Media activity for October',
     executive_summary: { paragraph: 'The team posted 12 stories.', kpis: [], caveat: '' },
     sections: [
-      { heading: 'Social Media', blocks: [{ title: 'Stories', body: 'Posted 12 stories reaching 4500 accounts.' }] },
+      { heading: 'Social Media', blocks: [{ title: 'Stories', body: ['Posted 12 stories reaching 4500 accounts.'] }] },
     ],
     work_by_date: [],
     upcoming_work: [],

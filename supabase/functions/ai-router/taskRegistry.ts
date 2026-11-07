@@ -1075,10 +1075,16 @@ function buildStructuredClientReportSystemPrompt(language: SupportedLanguage): s
     `    "kpis": [{"label": string, "value": string, "note": string}],\n` +
     `    "caveat": string\n` +
     `  },\n` +
-    `  "sections": [{"heading": string, "blocks": [{"title": string, "body": string}]}],\n` +
+    `  "sections": [{"heading": string, "blocks": [{"title": string, "body": string[]}]}],\n` +
     `  "work_by_date": [{"date": string, "summary": string}],\n` +
-    `  "upcoming_work": [{"title": string, "body": string}]\n` +
+    `  "upcoming_work": [{"title": string, "body": string[]}]\n` +
     `}\n\n` +
+    `Formatting rules that apply to EVERY string field above, no exceptions:\n` +
+    `- Plain text only. Never use markdown syntax anywhere — no tables, no "|" pipe characters, no ` +
+    `"---" separator rows, no "**bold**" or "__bold__", no "#" headings, no leading "-", "*", or "•" ` +
+    `bullet characters inside a string (the app itself renders bullets — you only provide the text).\n` +
+    `- Never use emoji, icons, or any decorative symbol anywhere in the output. Plain professional ` +
+    `wording only.\n\n` +
     `Rules:\n` +
     `- subtitle: one short sentence naming what this report covers (based only on the sections ` +
     `actually present).\n` +
@@ -1095,20 +1101,71 @@ function buildStructuredClientReportSystemPrompt(language: SupportedLanguage): s
     `work each line describes (e.g. preparation/review vs. scheduling vs. performance/insights) — ` +
     `never merge lines from two different input sections together, and never drop a line. A section ` +
     `with only one natural grouping gets exactly one block.\n` +
+    `- A block's "body" is an ARRAY of short, separate plain-text items — ONE distinct activity or ` +
+    `point per array item. NEVER combine two or more distinct points into a single string by joining ` +
+    `them with "-", "|", ",", "،", or any other separator — each point is its own array element, so ` +
+    `it renders as its own line. A block describing only one activity still gets an array with ` +
+    `exactly one item (never an empty array).\n` +
     `- work_by_date: one entry per date that appears anywhere in the input, in chronological order, ` +
     `summarizing that date's work across all sections in one or two sentences. Never invent a date ` +
     `that isn't in the input.\n` +
-    `- upcoming_work: at most 3 short, forward-looking entries, each phrased as a natural next step ` +
-    `from what a section's own text already shows in progress — never a generic sentence disconnected ` +
-    `from the input. Return an empty array if nothing in the input suggests a clear next step.\n` +
+    `- upcoming_work: at most 3 short, forward-looking entries, each with a "body" array following the ` +
+    `exact same one-point-per-item rule as a section block's body above, phrased as a natural next ` +
+    `step from what a section's own text already shows in progress — never a generic sentence ` +
+    `disconnected from the input. Return an empty array if nothing in the input suggests a clear ` +
+    `next step.\n` +
     `- Every number you write anywhere in the output must already occur in the input.`
   );
 }
 
-function isStructuredReportBlockArray(value: unknown): value is { title: string; body: string }[] {
+// Belt-and-suspenders on top of the prompt's own "plain text only, no markdown, no emoji"
+// instruction (above): the app's renderer treats every one of this task's string fields as plain
+// text (reportHtmlExport.ts's escapeHtml, no markdown interpretation at all), so any markdown
+// syntax or decorative symbol the model writes anyway shows up as literal garbled characters — a
+// live test surfaced exactly this, a markdown table's "|---|---|" header-separator row rendering
+// as raw pipes and dashes in a block that was supposed to be a plain paragraph. Applied to every
+// STRUCTURED_CLIENT_REPORT output string below before cleanText.
+const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}️]/gu;
+function stripDecorativeMarkup(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !/^[\s|:-]+$/.test(line)) // a markdown table separator/divider row on its own
+    .join('\n')
+    .replace(EMOJI_RE, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^[-*•]\s+/gm, '')
+    .replace(/\|/g, ', ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+// A block/upcoming-work-item "body" is now an array of short, separate plain-text items — one
+// distinct point per array item (changed 2026-11-07 per direct owner feedback: several points
+// joined inline into one string, e.g. with "-"/"|" separators, read as an unreadable run-on line
+// instead of stacked, scannable points). Capped at 8 items per body, 400 chars per item — generous
+// for a restructured work-log point but still a hard ceiling against a runaway response.
+const MAX_STRUCTURED_REPORT_BODY_ITEMS = 8;
+const MAX_STRUCTURED_REPORT_BODY_ITEM_CHARS = 400;
+
+function isStructuredReportBodyArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_STRUCTURED_REPORT_BODY_ITEMS &&
+    value.every((v) => isNonEmptyString(v) && v.length <= MAX_STRUCTURED_REPORT_BODY_ITEM_CHARS)
+  );
+}
+
+function cleanBodyItems(items: string[]): string[] {
+  return items.map((item) => cleanText(stripDecorativeMarkup(item))).filter(Boolean);
+}
+
+function isStructuredReportBlockArray(value: unknown): value is { title: string; body: string[] }[] {
   return Array.isArray(value) && value.every((b) =>
     b && typeof b === 'object' && !Array.isArray(b) &&
-    isNonEmptyString((b as Record<string, unknown>).title) && isNonEmptyString((b as Record<string, unknown>).body)
+    isNonEmptyString((b as Record<string, unknown>).title) && isStructuredReportBodyArray((b as Record<string, unknown>).body)
   );
 }
 
@@ -1126,10 +1183,14 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
     if (!k || typeof k !== 'object' || Array.isArray(k)) return null;
     const kv = k as Record<string, unknown>;
     if (!isNonEmptyString(kv.label) || !isNonEmptyString(kv.value)) return null;
-    return { label: cleanText(kv.label), value: cleanText(kv.value), note: typeof kv.note === 'string' ? cleanText(kv.note) : '' };
+    return {
+      label: cleanText(stripDecorativeMarkup(kv.label)),
+      value: cleanText(stripDecorativeMarkup(kv.value)),
+      note: typeof kv.note === 'string' ? cleanText(stripDecorativeMarkup(kv.note)) : '',
+    };
   });
   if (kpis.some((k) => k === null)) return { ok: false };
-  const caveat = typeof exec.caveat === 'string' ? cleanText(exec.caveat) : '';
+  const caveat = typeof exec.caveat === 'string' ? cleanText(stripDecorativeMarkup(exec.caveat)) : '';
 
   const sectionsRaw = p.sections;
   if (!Array.isArray(sectionsRaw) || sectionsRaw.length === 0) return { ok: false };
@@ -1137,7 +1198,11 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
     if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
     const sv = s as Record<string, unknown>;
     if (!isNonEmptyString(sv.heading) || !isStructuredReportBlockArray(sv.blocks) || sv.blocks.length === 0) return null;
-    return { heading: cleanText(sv.heading), blocks: sv.blocks.map((b) => ({ title: cleanText(b.title), body: cleanText(b.body) })) };
+    const blocks = sv.blocks
+      .map((b) => ({ title: cleanText(stripDecorativeMarkup(b.title)), body: cleanBodyItems(b.body) }))
+      .filter((b) => b.body.length > 0);
+    if (blocks.length === 0) return null;
+    return { heading: cleanText(stripDecorativeMarkup(sv.heading)), blocks };
   });
   if (sections.some((s) => s === null)) return { ok: false };
 
@@ -1147,7 +1212,7 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
     if (!w || typeof w !== 'object' || Array.isArray(w)) return null;
     const wv = w as Record<string, unknown>;
     if (!isNonEmptyString(wv.date) || !isNonEmptyString(wv.summary)) return null;
-    return { date: cleanText(wv.date), summary: cleanText(wv.summary) };
+    return { date: cleanText(stripDecorativeMarkup(wv.date)), summary: cleanText(stripDecorativeMarkup(wv.summary)) };
   });
   if (workByDate.some((w) => w === null)) return { ok: false };
 
@@ -1156,8 +1221,10 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
   const upcoming = upcomingRaw.map((u) => {
     if (!u || typeof u !== 'object' || Array.isArray(u)) return null;
     const uv = u as Record<string, unknown>;
-    if (!isNonEmptyString(uv.title) || !isNonEmptyString(uv.body)) return null;
-    return { title: cleanText(uv.title), body: cleanText(uv.body) };
+    if (!isNonEmptyString(uv.title) || !isStructuredReportBodyArray(uv.body)) return null;
+    const body = cleanBodyItems(uv.body);
+    if (body.length === 0) return null;
+    return { title: cleanText(stripDecorativeMarkup(uv.title)), body };
   });
   if (upcoming.some((u) => u === null)) return { ok: false };
 
@@ -1175,9 +1242,9 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
     exec.paragraph,
     caveat,
     ...kpis.flatMap((k) => [k!.label, k!.value, k!.note]),
-    ...sections.flatMap((s) => [s!.heading, ...s!.blocks.flatMap((b) => [b.title, b.body])]),
+    ...sections.flatMap((s) => [s!.heading, ...s!.blocks.flatMap((b) => [b.title, ...b.body])]),
     ...workByDate.flatMap((w) => [w!.date, w!.summary]),
-    ...upcoming.flatMap((u) => [u!.title, u!.body]),
+    ...upcoming.flatMap((u) => [u!.title, ...u!.body]),
   ].join('\n');
   for (const token of numericTokens(outputText)) {
     if (!allowedNumbers.has(token)) return { ok: false };
@@ -1186,8 +1253,8 @@ export function validateStructuredClientReportOutput(parsed: unknown, _detail: D
   return {
     ok: true,
     value: {
-      subtitle: cleanText(p.subtitle),
-      executive_summary: { paragraph: cleanText(exec.paragraph), kpis, caveat },
+      subtitle: cleanText(stripDecorativeMarkup(p.subtitle)),
+      executive_summary: { paragraph: cleanText(stripDecorativeMarkup(exec.paragraph)), kpis, caveat },
       sections,
       work_by_date: workByDate,
       upcoming_work: upcoming,
