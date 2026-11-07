@@ -51,6 +51,9 @@ import {
   TaskEventRecord,
   ActivityRecord,
   TaskAssigneeLogRecord,
+  BriefRecord,
+  BriefFieldDef,
+  ServiceType,
 } from '../types/database';
 import {
   DndContext,
@@ -107,6 +110,8 @@ import { TaskAttachmentList } from './TaskAttachmentList';
 import { TaskHistoryTab } from './TaskHistoryTab';
 import { TaskAttachmentPicker } from './TaskAttachmentPicker';
 import { SearchableMultiSelect } from './SearchableMultiSelect';
+import { BriefFieldsReadOnly } from './BriefFieldsReadOnly';
+import { SERVICE_LABELS } from '../lib/clientServices';
 import type { CreateTaskFormInput, StagedTaskAttachment, UserScheduleLoad } from '../lib/taskOperations';
 import {
   TaskCreateRecoveryRecord,
@@ -216,7 +221,95 @@ interface CrossTeamTaskBoardProps {
   // (normally every operational team +Marketing/Technical; here only the 3 Inhouse teams).
   // Optional, default false, so the existing main Tasks tab's instance is entirely unaffected.
   inhouseOnly?: boolean;
+  // Creative Brief auto-display (2026-11-07, owner request): "البرีف الخاص بال UI و ال Creative
+  // لازم يظهر في كل Task هيترفع ليهم" — whenever a creative-team agent is selected as an
+  // assignee (New/Edit Task forms) or already assigned (Task Details), that client's brief for
+  // the assignee's own specialty shows alongside the task, read-only. Both already loaded once
+  // in App.tsx for the Brief Repository — passed through here unchanged, not re-fetched.
+  briefs: BriefRecord[];
+  briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
 }
+
+// Which brief(s) an assignee's role points to, per the owner's explicit decision (2026-11-07,
+// revised): "هنحدد من role الموظف ... أما ال UI هيظهر ليه brief الواجهة بس" (determine it from
+// the employee's role — UI sees just the Interface brief). graphic_designer is a special case:
+// Graphic Design is now a baseline service every client has (see getClientServices() in
+// clientServices.ts), not a separately-briefed one — it has no brief template of its own at all
+// (BriefTemplatesModule never offers it as editable). Per the owner's decision, a graphic designer
+// instead sees the COMBINATION of the client's Social Media brief + Branding brief: "ال brief اللي
+// هيظهر لل designers يكون combination بين ال social media brief + branding brief". Deliberately
+// separate from workLogServiceClassification.ts's ROLE_TO_SERVICE (a different concern — work-log
+// bucketing, not briefs). 'ui_designer' (not just 'ui_ux_designer') is included for the same
+// reason capacity.ts's DAILY_WORK_CREATIVE_ROLES does: it's the real, live role value in
+// production for this app's UI/UX designers even though it isn't a UserRole union member.
+// video_editor has no entry on purpose — no ServiceType/brief concept exists for video work, so a
+// video editor simply sees no brief card.
+const CREATIVE_ROLE_TO_BRIEF_SERVICES: Record<string, ServiceType[]> = {
+  graphic_designer: ['social_media', 'branding'],
+  ui_ux_designer: ['interface'],
+  ui_designer: ['interface'],
+};
+
+// One entry per DISTINCT service_type among the given assignees' roles (never one per assignee —
+// two graphic designers on the same task share the same two brief cards, not four identical ones;
+// a graphic designer AND a UI designer together get 3 distinct cards: Social Media, Branding,
+// Interface). brief is null when the role resolves to a real service_type but the client simply
+// has no brief filed under it yet — shown as an explicit "not submitted" card rather than
+// silently hidden, so the gap itself is visible to whoever is filling in the task.
+function resolveCreativeBriefsForAssignees(
+  clientId: string | null | undefined,
+  assigneeRoles: (string | undefined)[],
+  briefs: BriefRecord[]
+): { serviceType: ServiceType; brief: BriefRecord | null }[] {
+  if (!clientId) return [];
+  const seen = new Set<ServiceType>();
+  const results: { serviceType: ServiceType; brief: BriefRecord | null }[] = [];
+  assigneeRoles.forEach((role) => {
+    const serviceTypes = role ? CREATIVE_ROLE_TO_BRIEF_SERVICES[role] : undefined;
+    if (!serviceTypes) return;
+    serviceTypes.forEach((serviceType) => {
+      if (seen.has(serviceType)) return;
+      seen.add(serviceType);
+      const brief = briefs.find((b) => b.client_id === clientId && b.service_type === serviceType) || null;
+      results.push({ serviceType, brief });
+    });
+  });
+  return results;
+}
+
+// Read-only card(s) showing the resolved Creative brief(s) for the current client + selected
+// creative assignees — rendered in the New/Edit Task forms (while picking client+assignee) and in
+// Task Details (for an already-saved task). Renders nothing when there's no creative assignee with
+// a resolvable service_type, so it never crowds a non-creative task.
+const TaskCreativeBriefPreview: React.FC<{
+  clientId: string | null | undefined;
+  assigneeRoles: (string | undefined)[];
+  briefs: BriefRecord[];
+  briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas }) => {
+  const entries = resolveCreativeBriefsForAssignees(clientId, assigneeRoles, briefs);
+  if (entries.length === 0) return null;
+  return (
+    <>
+      {entries.map(({ serviceType, brief }) => (
+        <div key={serviceType} className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
+          <label className="text-[10px] text-stone-400 block mb-2">
+            {SERVICE_LABELS[serviceType]} Brief:
+          </label>
+          {brief ? (
+            <BriefFieldsReadOnly
+              fields={brief.fields}
+              fieldDefs={briefFieldSchemas[serviceType] || []}
+              customFieldDefs={brief.custom_field_defs}
+            />
+          ) : (
+            <p className="text-xs text-stone-500">No {SERVICE_LABELS[serviceType]} brief has been submitted for this client yet.</p>
+          )}
+        </div>
+      ))}
+    </>
+  );
+};
 
 export type QuickTaskFilter = 'all' | 'overdue' | 'due_soon' | 'unassigned' | 'my_tasks';
 export type TaskViewMode = 'kanban' | 'table' | 'timeline';
@@ -360,6 +453,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onHardDeleteTasks,
   onDuplicateTask,
   inhouseOnly = false,
+  briefs,
+  briefFieldSchemas,
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
@@ -3566,6 +3661,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 })()}
               </div>
 
+              {/* Creative Brief auto-display (owner request, 2026-11-07) — same card as the
+                  New/Edit Task forms, resolved from this saved task's own client + assignees. */}
+              <TaskCreativeBriefPreview
+                clientId={selectedTaskDetails.client_id}
+                assigneeRoles={resolveTaskAssigneeIds(
+                  selectedTaskDetails.id,
+                  taskAssignees,
+                  selectedTaskDetails.assigned_to
+                ).map((id) => taskDirectoryUsers.find((user) => user.id === id)?.role)}
+                briefs={briefs}
+                briefFieldSchemas={briefFieldSchemas}
+              />
+
               {/* Platforms — read-only display; edited only via the Edit Task form. */}
               {(() => {
                 const platformNames = (taskPlatformIdsByTask.get(selectedTaskDetails.id) || [])
@@ -4079,6 +4187,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 </div>
               )}
 
+              {/* Creative Brief auto-display (owner request, 2026-11-07): the selected client's
+                  brief for each selected creative assignee's own specialty, read-only. Shows
+                  nothing if no creative assignee is selected yet. */}
+              <TaskCreativeBriefPreview
+                clientId={addSubtaskParent ? addSubtaskParent.client_id : newClientIds.length === 1 ? newClientIds[0] : null}
+                assigneeRoles={newAssigneeOptions.filter((u) => newAssigneeIds.includes(u.id)).map((u) => u.role)}
+                briefs={briefs}
+                briefFieldSchemas={briefFieldSchemas}
+              />
+
               {/* Priority & Due Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -4457,6 +4575,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   )}
                 </div>
               )}
+
+              {/* Creative Brief auto-display (owner request, 2026-11-07) — same card as the New
+                  Task form, re-resolved against this task's current client + selected assignees. */}
+              <TaskCreativeBriefPreview
+                clientId={editClientId || null}
+                assigneeRoles={editAssigneeOptions.filter((u) => editAssigneeIds.includes(u.id)).map((u) => u.role)}
+                briefs={briefs}
+                briefFieldSchemas={briefFieldSchemas}
+              />
 
               {/* Priority & Due Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

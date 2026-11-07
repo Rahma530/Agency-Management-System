@@ -14,7 +14,10 @@ import { parseWorkLogEntries } from '../../lib/reportHtmlExport';
 // src>. Whether a given URL is actually an image is decided by whether the <img> succeeds to load
 // (onError), never guessed from the URL's path/extension — a signed Storage URL's path is not a
 // reliable content-type signal (same reasoning embeddableImages.ts documents for its own sniff).
-function AttachmentPreview({ url }: { url: string }): React.ReactElement {
+// Typed as React.FC (not a plain function returning React.ReactElement) so JSX's implicit `key`
+// prop is accepted at every call site — same convention as ComparisonCard and other list-rendered
+// components in this codebase; a plain `function X(props: {...})` signature doesn't get that.
+const AttachmentPreview: React.FC<{ url: string }> = ({ url }) => {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
@@ -40,7 +43,7 @@ function AttachmentPreview({ url }: { url: string }): React.ReactElement {
       />
     </a>
   );
-}
+};
 
 export interface ReportContentPreviewProps {
   contentText: string;

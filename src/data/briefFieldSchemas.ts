@@ -63,6 +63,10 @@ export function groupBriefFieldSchemas(rows: BriefFieldSchemaRow[]): Record<Serv
     interface: [],
     creation: [],
     branding: [],
+    // Always empty: graphic_design has no brief template of its own (2026-11-07 owner decision —
+    // see BriefFieldSchemaEditor.tsx's SERVICE_LABELS comment). No brief_field_schemas row is ever
+    // created with this service_type since BriefTemplatesModule never offers it as editable.
+    graphic_design: [],
   };
   const sorted = [...rows].sort((a, b) => a.sort_order - b.sort_order);
   for (const row of sorted) {

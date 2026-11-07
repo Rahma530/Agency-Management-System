@@ -21,6 +21,9 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
   interface: 'واجهة',
   creation: 'Creation',
   branding: 'Branding',
+  // Unused: graphic_design is filtered out of `services` above before this is ever indexed with
+  // it. Present only to satisfy Record<ServiceType, string>.
+  graphic_design: 'Graphic Design',
 };
 
 const timeAgo = (iso: string): string => {
@@ -73,7 +76,12 @@ export const BriefRepositoryView: React.FC<BriefRepositoryViewProps> = ({
           (c.industry || '').toLowerCase().includes(searchQuery.toLowerCase())
       )
       .map((client) => {
-        const services = getClientServices(client);
+        // graphic_design is excluded here on purpose: it's a baseline service every client now
+        // has (2026-11-07 owner decision), but it has no brief template of its own to submit —
+        // graphic designers see a combined Social Media + Branding brief in Tasks instead
+        // (CrossTeamTaskBoard.tsx). Listing it here would show a permanent, un-actionable
+        // "Pending submission" row for every single client.
+        const services = getClientServices(client).filter((s) => s !== 'graphic_design');
         const serviceRows = services
           .filter((s) => serviceFilter === 'all' || s === serviceFilter)
           .map((s) => {
