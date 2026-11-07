@@ -7126,6 +7126,21 @@ export default function App() {
   // instance below instead of the full `tasks` array the main Tasks tab uses.
   const inhouseTasks = useMemo(() => tasks.filter((t) => isInhouseTask(t, clients)), [tasks, clients]);
 
+  // Fixed 2026-11-07 (owner report: Hasnaa, a Social Media Agent, created an Inhouse task and
+  // assigned it to May, a Graphic Designer — neither role has the Inhouse tab per
+  // allowedModules, so the task was invisible to both of them). Owner's correction: don't leak the
+  // task into the main Tasks tab — instead open the Inhouse tab itself for anyone who is the
+  // creator or an assignee of at least one Inhouse task, same as inhouseTasks above, so they see it
+  // where it belongs. This is dynamic (data-driven), not a role/team check, since the motivating
+  // case (a Social Media Agent) isn't on any Creative/Video/Programming team.
+  const hasOwnInhouseWork = useMemo(
+    () =>
+      inhouseTasks.some(
+        (t) => t.created_by === currentUser.id || resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id)
+      ),
+    [inhouseTasks, taskAssignees, currentUser.id]
+  );
+
   // Owner's explicit request (2026-11-03): Kesraa/Fast Growth's own Inhouse tasks must not show up
   // on the main, cross-team Tasks board at all — not in the list/Kanban, not in its client filter
   // (already handled inside CrossTeamTaskBoard.tsx via isExternalClient), and not selectable as the
@@ -7133,6 +7148,8 @@ export default function App() {
   // Create Task form's Client select reuses sortedClientsForPicker). The one missing piece was the
   // `tasks` array itself — the main tab was still receiving every task, inhouse included, so the
   // exact complement of inhouseTasks above is passed to the main Tasks tab instead of the full list.
+  // (The Inhouse-task-invisibility bug above is fixed via hasOwnInhouseWork opening the Inhouse tab
+  // itself, not by changing this filter — an Inhouse task still never belongs on this board.)
   const externalTasks = useMemo(() => tasks.filter((t) => !isInhouseTask(t, clients)), [tasks, clients]);
 
   // Inhouse module (2026-11-04): the "treat Kesraa/Fast Growth like a full Client" half of the
@@ -7880,12 +7897,14 @@ export default function App() {
               </button>
             )}
 
-            {/* Inhouse module (2026-11-02) — executive/head_of_technical/marketing_manager only
+            {/* Inhouse module (2026-11-02) — executive/head_of_technical/marketing_manager always
                 (allowedModules gates the tab; task_visible_v2's inhouse guard, migration
                 20261228000000, gates the underlying data for everyone else regardless of this
                 tab existing). Kesraa/Fast Growth's own Creative & Design/Video Production/
-                Programming work — a second CrossTeamTaskBoard instance, not a new component. */}
-            {userRoleInfo.allowedModules.includes('inhouse') && (
+                Programming work — a second CrossTeamTaskBoard instance, not a new component.
+                Also shown (2026-11-07) to any other agent who is the creator or an assignee of at
+                least one Inhouse task (hasOwnInhouseWork) — see its definition above for why. */}
+            {(userRoleInfo.allowedModules.includes('inhouse') || hasOwnInhouseWork) && (
               <button
                 onClick={() => handleTabChange('inhouse')}
                 className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
@@ -8355,31 +8374,36 @@ export default function App() {
               <div className="space-y-6">
                 {/* Sub-view switch (2026-11-04): Task Board vs. Clients (services + per-service
                     agent assignment) — the two halves of "treat Kesraa/Fast Growth like a full
-                    Client" the owner asked for. */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setInhouseView('tasks')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      inhouseView === 'tasks'
-                        ? 'bg-purple-600 text-white shadow'
-                        : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
-                    }`}
-                  >
-                    Tasks
-                  </button>
-                  <button
-                    onClick={() => setInhouseView('clients')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      inhouseView === 'clients'
-                        ? 'bg-purple-600 text-white shadow'
-                        : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
-                    }`}
-                  >
-                    Clients
-                  </button>
-                </div>
+                    Client" the owner asked for. Admin-only (2026-11-07): an agent who only has this
+                    tab via hasOwnInhouseWork asked only to see "their own tasks" — the Clients
+                    sub-view is an admin-level service/agent-assignment panel, out of scope for them,
+                    so they go straight to the Task Board with no switch to show. */}
+                {userRoleInfo.allowedModules.includes('inhouse') && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setInhouseView('tasks')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        inhouseView === 'tasks'
+                          ? 'bg-purple-600 text-white shadow'
+                          : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                      }`}
+                    >
+                      Tasks
+                    </button>
+                    <button
+                      onClick={() => setInhouseView('clients')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        inhouseView === 'clients'
+                          ? 'bg-purple-600 text-white shadow'
+                          : 'bg-stone-900/60 text-stone-400 hover:text-white border border-stone-800'
+                      }`}
+                    >
+                      Clients
+                    </button>
+                  </div>
+                )}
 
-                {inhouseView === 'tasks' ? (
+                {!userRoleInfo.allowedModules.includes('inhouse') || inhouseView === 'tasks' ? (
                   <CrossTeamTaskBoard
                     inhouseOnly
                     tasks={inhouseTasks}
