@@ -96,18 +96,17 @@ function yearPeriod(year: number): ComparisonPeriod {
   return { label: `${year}`, range: { start: `${year}-01-01`, end: `${year}-12-31` } };
 }
 
-// Saturday-to-Friday work week (Africa/Cairo) — same calendar convention as reportPeriods.ts's
-// resolveReportWorkWeek(), kept as its own constant here (rather than importing that function)
-// since this one needs an inclusive 7-day ComparisonPeriod/label like monthPeriod/quarterPeriod/
-// yearPeriod above, not reportPeriods.ts's half-open {startInclusive, endExclusive} shape. Change
-// this single constant (6 = Saturday, per Date.getDay()'s 0=Sunday) if the agency's week start
-// ever moves.
-const WEEK_START_DAY = 6;
-
+// A rolling, backward-looking 7-day window that always ENDS on the reference date (today, by
+// default) — never a fixed Saturday-to-Friday calendar week. Changed 2026-11-07 per the owner's
+// direct feedback: the previous fixed-week-start version anchored to the calendar week containing
+// the reference date, which on any day that happened to BE the week's start (e.g. a Saturday)
+// produced a range running from today to 6 days in the future — the opposite of what a "Weekly"
+// default should show when opened mid-week-in-progress. A rolling window has no such edge case:
+// whatever today is, the range is always (today - 6) to today, i.e. genuinely backward-looking —
+// e.g. referenceDate = Nov 7 -> Nov 1..Nov 7, referenceDate = Nov 3 -> Oct 28..Nov 3.
 function weekPeriod(referenceDate: Date): ComparisonPeriod {
-  const daysSinceStart = (referenceDate.getDay() - WEEK_START_DAY + 7) % 7;
-  const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - daysSinceStart);
-  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+  const end = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
   return { label: `${iso(start)}_${iso(end)}`, range: { start: iso(start), end: iso(end) } };
 }
 
