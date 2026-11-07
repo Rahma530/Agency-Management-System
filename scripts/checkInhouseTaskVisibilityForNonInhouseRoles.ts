@@ -49,6 +49,16 @@ if (!hasOwnInhouseWorkBody.includes('inhouseTasks.some(')) {
 if (!hasOwnInhouseWorkBody.includes('t.created_by === currentUser.id') || !hasOwnInhouseWorkBody.includes('resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id)')) {
   throw new Error('hasOwnInhouseWork must check both creator (created_by) and assignee (resolveTaskAssigneeIds) — the owner’s own example (Hasnaa created, May assigned) needs both sides covered.');
 }
+// Broadened 2026-11-07 (owner report: the tab vanished for Hasnaa/May/Fatima once their one
+// qualifying task was no longer current, even though she'd also assigned all three to Kesraa/Fast
+// Growth via InhouseClientsPanel's own per-service agent assignment) — a standing public.assignments
+// row for an is_inhouse client must grant access on its own, independent of any task's current state.
+if (!hasOwnInhouseWorkBody.includes('assignments.some(')) {
+  throw new Error('hasOwnInhouseWork must also check public.assignments for a standing agent assignment to an is_inhouse client — a task creator/assignee check alone misses an agent the owner assigned via InhouseClientsPanel but who has no current qualifying task.');
+}
+if (!hasOwnInhouseWorkBody.includes('a.agent_id === currentUser.id') || !hasOwnInhouseWorkBody.includes('isInhouseClient(c)')) {
+  throw new Error('hasOwnInhouseWork’s assignments check must match the signed-in user as agent_id, scoped to a client flagged is_inhouse (isInhouseClient) — not any assignment on any client.');
+}
 
 // 3. The nav tab link must open for hasOwnInhouseWork in addition to the 3 admin roles.
 const navGateStart = appSrc.indexOf("{(userRoleInfo.allowedModules.includes('inhouse') || hasOwnInhouseWork) && (");

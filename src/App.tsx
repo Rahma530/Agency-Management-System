@@ -771,12 +771,25 @@ export default function App() {
   // creator or an assignee of at least one Inhouse task, same as inhouseTasks above, so they see it
   // where it belongs. This is dynamic (data-driven), not a role/team check, since the motivating
   // case (a Social Media Agent) isn't on any Creative/Video/Programming team.
+  //
+  // Broadened same day (owner report: she assigned Hasnaa/May/Fatima to Kesraa/Fast Growth via the
+  // Inhouse tab's own "Clients" sub-view — InhouseClientsPanel's per-service agent assignment,
+  // public.assignments — and the tab disappeared for all three once their one qualifying task was
+  // no longer current). A standing assignments row for an is_inhouse client is just as much
+  // "associated with Kesraa/Fast" as being a task's creator/assignee — this is the admin's own,
+  // deliberate way of marking that association, and must grant the same tab access on its own,
+  // independent of whether any task happens to exist right now. assignments is already scoped by
+  // assignments_select_rls to each agent's own rows (20261231000000), so no new data access opens
+  // up here.
   const hasOwnInhouseWork = useMemo(
     () =>
       inhouseTasks.some(
         (t) => t.created_by === currentUser.id || resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id)
+      ) ||
+      assignments.some(
+        (a) => a.agent_id === currentUser.id && clients.some((c) => c.id === a.client_id && isInhouseClient(c))
       ),
-    [inhouseTasks, taskAssignees, currentUser.id]
+    [inhouseTasks, taskAssignees, currentUser.id, assignments, clients]
   );
 
   // isModuleAllowed() (data/roles.ts) is a pure role-table lookup — it knows nothing about
