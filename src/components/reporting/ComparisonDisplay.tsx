@@ -216,6 +216,44 @@ export interface WorkItemGroupResult {
 }
 export type WorkItemGroupGenerationResult = AiGenerationResult<WorkItemGroupResult>;
 
+// Experimental (2026-11-07) — matches ai-router's STRUCTURED_CLIENT_REPORT task output shape
+// (taskRegistry.ts's validateStructuredClientReportOutput). Kept entirely separate from
+// WorkItemGroupResult/UnifiedClientReportResult above: this is a side-by-side comparison feature,
+// not a replacement for the existing AI Summary / Export HTML flows yet.
+export interface StructuredReportKpi {
+  label: string;
+  value: string;
+  note: string;
+}
+export interface StructuredReportBlock {
+  title: string;
+  body: string;
+}
+export interface StructuredReportSection {
+  heading: string;
+  blocks: StructuredReportBlock[];
+}
+export interface StructuredReportWorkByDate {
+  date: string;
+  summary: string;
+}
+export interface StructuredReportUpcomingWork {
+  title: string;
+  body: string;
+}
+export interface StructuredClientReportResult {
+  subtitle: string;
+  executive_summary: {
+    paragraph: string;
+    kpis: StructuredReportKpi[];
+    caveat: string;
+  };
+  sections: StructuredReportSection[];
+  work_by_date: StructuredReportWorkByDate[];
+  upcoming_work: StructuredReportUpcomingWork[];
+}
+export type StructuredClientReportGenerationResult = AiGenerationResult<StructuredClientReportResult>;
+
 // Matches ai-router's own widened PERIOD_LABEL_RE (taskRegistry.ts) — monthly ("2026-03"),
 // quarterly ("2026-Q1"), yearly ("2026"), and custom range ("2026-01-01_2026-03-31"). Kept as its
 // own client-side copy (not imported — taskRegistry.ts is Deno Edge Function code) so the button

@@ -49,6 +49,7 @@ import {
   CampaignSummaryGenerationResult,
   CampaignSummaryWorkItem,
   WorkItemGroupGenerationResult,
+  StructuredClientReportGenerationResult,
 } from './reporting/ComparisonDisplay';
 import { DailyLogEditModal } from './DailyLogEditModal';
 import { ReportDraftWorkspace, ReportScopeKind } from './reporting/ReportDraftWorkspace';
@@ -98,6 +99,15 @@ interface ReportsHubProps {
   onGroupWorkItems?: (
     items: { id: string; employee?: string; text: string }[]
   ) => Promise<WorkItemGroupGenerationResult>;
+  // Experimental (2026-11-07) — Report Workspace's "Structured (Experimental)" comparison action
+  // (STRUCTURED_CLIENT_REPORT). See ReportDraftWorkspace.tsx's own prop comment for what this does
+  // and why it's separate from onGenerateAiSummary/onGroupWorkItems above. Optional for the same
+  // reason those are.
+  onGenerateStructuredReport?: (payload: {
+    client_name: string;
+    period_label: string;
+    sections: { heading: string; body: string }[];
+  }) => Promise<StructuredClientReportGenerationResult>;
   onUpdateDailyLog: (
     logId: string,
     updates: { date: string; summary_text: string; linked_task_ids: string[]; client_id: string | null }
@@ -135,6 +145,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   onGenerateReport,
   onGenerateAiSummary,
   onGroupWorkItems,
+  onGenerateStructuredReport,
   onUpdateDailyLog,
   onDeleteDailyLog,
   onReportChanged,
@@ -976,6 +987,7 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
         onReportChanged={handleWorkspaceReportChanged} onReportDeleted={handleWorkspaceReportDeleted}
         onRequestAiSummary={onGenerateAiSummary ? requestDraftAiSummary : undefined}
         onGroupWorkItems={onGroupWorkItems}
+        onGenerateStructuredReport={onGenerateStructuredReport}
       />
 
       {/* Point 1: "نتائج المقارنة" — Calculate/Save-as-report/the saved-comparisons list, moved

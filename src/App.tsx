@@ -70,6 +70,7 @@ import {
   CampaignSummaryGenerationResult,
   UnifiedReportGenerationResult,
   WorkItemGroupGenerationResult,
+  StructuredClientReportGenerationResult,
 } from './components/reporting/ComparisonDisplay';
 import { ReportsHub } from './components/ReportsHub';
 import { EmployeeAdminHub, NewEmployeeInput, SendInvitationResult } from './components/EmployeeAdminHub';
@@ -1551,6 +1552,60 @@ export default function App() {
       const message = safeAiErrorMessage(
         err instanceof Error ? err.message : undefined,
         'Grouping unavailable — try again later.'
+      );
+      showNotification(message, 'info');
+      return { ok: false, message };
+    }
+  };
+
+  // Experimental (2026-11-07) — Report Workspace's "Generate Structured Report (Experimental)"
+  // action, built for a deliberate side-by-side comparison against today's Export HTML/PDF on the
+  // same already-approved report, before deciding whether to also connect a stronger model. Same
+  // never-throws/timeout/sanitized-error convention as handleGroupWorkItems above; the only
+  // difference is the task name and the response shape it validates.
+  const handleGenerateStructuredReport = async (payload: {
+    client_name: string;
+    period_label: string;
+    sections: { heading: string; body: string }[];
+  }): Promise<StructuredClientReportGenerationResult> => {
+    try {
+      const { data, error } = await withTimeout(
+        supabaseRaw.functions.invoke('ai-router', {
+          body: { task: 'STRUCTURED_CLIENT_REPORT', language: 'ar', payload },
+        }),
+        AI_SUMMARY_TIMEOUT_MS,
+        `Structured report timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+      );
+      if (error) {
+        const context = error.context;
+        const status = context instanceof Response ? context.status : undefined;
+        console.error('STRUCTURED_CLIENT_REPORT request failed:', { status, errorName: error.name, errorMessage: error.message });
+        throw new Error(status
+          ? `Structured report request failed (HTTP ${status}). Please try again.`
+          : 'Could not reach the structured report service. Please try again.');
+      }
+      if (!data?.ok) {
+        throw new Error(safeAiErrorMessage(data?.message, 'Structured report is currently unavailable.'));
+      }
+      const result = data.result;
+      if (
+        !result || typeof result !== 'object'
+        || typeof result.subtitle !== 'string'
+        || !result.executive_summary || typeof result.executive_summary !== 'object'
+        || typeof result.executive_summary.paragraph !== 'string'
+        || !Array.isArray(result.executive_summary.kpis)
+        || !Array.isArray(result.sections)
+        || !Array.isArray(result.work_by_date)
+        || !Array.isArray(result.upcoming_work)
+      ) {
+        throw new Error('Unexpected structured report response.');
+      }
+      return { ok: true, result } as StructuredClientReportGenerationResult;
+    } catch (err: unknown) {
+      console.error('STRUCTURED_CLIENT_REPORT request failed:', err);
+      const message = safeAiErrorMessage(
+        err instanceof Error ? err.message : undefined,
+        'Structured report unavailable — try again later.'
       );
       showNotification(message, 'info');
       return { ok: false, message };
@@ -8478,6 +8533,7 @@ export default function App() {
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
                   onGroupWorkItems={handleGroupWorkItems}
+                  onGenerateStructuredReport={handleGenerateStructuredReport}
                   onUpdateDailyLog={handleUpdateDailyLog}
                   onDeleteDailyLog={handleDeleteDailyLog}
                   onReportChanged={(report) =>
