@@ -37,9 +37,15 @@ export interface StructuredReportTextShape {
     kpis: { label: string; value: string; note: string }[];
     caveat: string;
   };
-  sections: { heading: string; blocks: { title: string; body: string }[] }[];
+  // A block/upcoming-work-item's body is an ARRAY of separate points (changed 2026-11-07 per
+  // direct owner feedback: several distinct points joined into one string read as an unreadable
+  // run-on line instead of stacked, scannable bullets) — see this file's serializeBlock/
+  // parseTitleBodyBlocks below for how each array item becomes its own "- " line in the saved
+  // text, and reportHtmlExport.ts's buildStructuredClientReportHtml for how it renders (a <ul> of
+  // bullets for 2+ items, a plain paragraph for exactly 1).
+  sections: { heading: string; blocks: { title: string; body: string[] }[] }[];
   work_by_date: { date: string; summary: string }[];
-  upcoming_work: { title: string; body: string }[];
+  upcoming_work: { title: string; body: string[] }[];
 }
 
 // Every free-text field below can, in principle, come back from the AI with an embedded newline
@@ -63,6 +69,20 @@ function parseKpiLine(line: string): { label: string; value: string; note: strin
   return { label: match[1].trim(), value: match[2].trim(), note: (match[3] || '').trim() };
 }
 
+// One block/upcoming-work-item becomes a title line ending in ":" followed by one "- " line per
+// body item — e.g.:
+//   Stories:
+//   - Posted 12 stories reaching 4500 accounts.
+//   - Scheduled 3 posts for next week.
+// Always this two-or-more-line shape, even for a single body item, so parseTitleBodyBlocks below
+// has exactly one parsing rule to apply (a line is either a new block's title or a "- " item of
+// the current one) rather than having to also recognize an old single-line "Title: body" form.
+function serializeBlock(block: { title: string; body: string[] }): string {
+  const titleLine = `${flatten(block.title)}:`;
+  const bodyLines = block.body.map((item) => `- ${flatten(item)}`);
+  return [titleLine, ...bodyLines].join('\n');
+}
+
 export function serializeStructuredReportText(report: StructuredReportTextShape): string {
   const sections: string[] = [];
 
@@ -72,7 +92,10 @@ export function serializeStructuredReportText(report: StructuredReportTextShape)
   sections.push(`${STRUCTURED_REPORT_HEADINGS.executiveSummary}\n${execLines.filter(Boolean).join('\n')}`);
 
   report.sections.forEach((section) => {
-    const body = section.blocks.map((block) => `${flatten(block.title)}: ${flatten(block.body)}`).join('\n');
+    const body = section.blocks
+      .filter((block) => block.body.length > 0)
+      .map(serializeBlock)
+      .join('\n');
     if (body) sections.push(`${section.heading}\n${body}`);
   });
 
@@ -84,7 +107,8 @@ export function serializeStructuredReportText(report: StructuredReportTextShape)
 
   if (report.upcoming_work.length) {
     sections.push(`${STRUCTURED_REPORT_HEADINGS.upcomingWork}\n${report.upcoming_work
-      .map((item) => `${flatten(item.title)}: ${flatten(item.body)}`)
+      .filter((item) => item.body.length > 0)
+      .map(serializeBlock)
       .join('\n')}`);
   }
 
@@ -104,17 +128,28 @@ function splitIntoSections(text: string): { heading: string; body: string }[] {
     });
 }
 
-function parseTitleBodyLines(body: string): { title: string; body: string }[] {
-  return body
+// Reverses serializeBlock above: a line starting with "- " is a body item of the block currently
+// being built; any other non-empty line starts a new block (its trailing ":", if present, is
+// dropped — serializeBlock always writes one, but this stays tolerant of a hand-edited draft that
+// doesn't). A "- " line encountered before any title line is a parsing artifact with nothing to
+// attach to and is dropped; a block that ends up with zero body items (also only possible from a
+// hand-edited draft) is dropped too, same as the AI-output validator never emits an empty block.
+function parseTitleBodyBlocks(body: string): { title: string; body: string[] }[] {
+  const blocks: { title: string; body: string[] }[] = [];
+  body
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const colonIndex = line.indexOf(':');
-      return colonIndex === -1
-        ? { title: line, body: '' }
-        : { title: line.slice(0, colonIndex).trim(), body: line.slice(colonIndex + 1).trim() };
+    .forEach((line) => {
+      if (line.startsWith('- ')) {
+        const item = line.slice(2).trim();
+        if (item && blocks.length) blocks[blocks.length - 1].body.push(item);
+        return;
+      }
+      const title = line.endsWith(':') ? line.slice(0, -1).trim() : line;
+      blocks.push({ title, body: [] });
     });
+  return blocks.filter((block) => block.body.length > 0);
 }
 
 // Returns null for any report NOT in this shape (every report saved before this feature existed,
@@ -152,8 +187,8 @@ export function parseStructuredReportText(contentText: string): StructuredReport
 
   return {
     executive_summary: { paragraph: paragraphLines.join(' ').trim(), kpis, caveat },
-    sections: topicSections.map((s) => ({ heading: s.heading, blocks: parseTitleBodyLines(s.body) })),
+    sections: topicSections.map((s) => ({ heading: s.heading, blocks: parseTitleBodyBlocks(s.body) })),
     work_by_date: workByDate,
-    upcoming_work: upcomingWorkSection ? parseTitleBodyLines(upcomingWorkSection.body) : [],
+    upcoming_work: upcomingWorkSection ? parseTitleBodyBlocks(upcomingWorkSection.body) : [],
   };
 }

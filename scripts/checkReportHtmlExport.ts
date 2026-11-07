@@ -81,10 +81,10 @@ async function checkStructuredReportRoundTripAndAutoDetect() {
       caveat: '',
     },
     sections: [
-      { heading: 'Social Media', blocks: [{ title: 'Stories', body: 'Posted 12 stories.' }] },
+      { heading: 'Social Media', blocks: [{ title: 'Stories', body: ['Posted 12 stories.', 'Scheduled 3 posts for next week.'] }] },
     ],
     work_by_date: [{ date: '2026-10-10', summary: 'Posted stories and scheduled content.' }],
-    upcoming_work: [{ title: 'Next campaign', body: 'Prepare assets for the November push.' }],
+    upcoming_work: [{ title: 'Next campaign', body: ['Prepare assets for the November push.'] }],
   };
 
   const text = serializeStructuredReportText(structured);
@@ -103,6 +103,12 @@ async function checkStructuredReportRoundTripAndAutoDetect() {
   if (parsedBack.sections.length !== 1 || parsedBack.sections[0].heading !== 'Social Media') {
     throw new Error('Structured report round-trip lost or corrupted a section.');
   }
+  // A block's body is an array of separate points (each its own "- " line in the saved text) — the
+  // two-item fixture above must round-trip as two distinct items, not get merged back into one.
+  const roundTrippedBody = parsedBack.sections[0].blocks[0]?.body;
+  if (!roundTrippedBody || roundTrippedBody.length !== 2 || roundTrippedBody[1] !== 'Scheduled 3 posts for next week.') {
+    throw new Error(`Structured report round-trip lost or merged a multi-item block body, got ${JSON.stringify(roundTrippedBody)}`);
+  }
   if (parsedBack.work_by_date.length !== 1 || parsedBack.work_by_date[0].date !== '2026-10-10') {
     throw new Error('Structured report round-trip lost or corrupted a work-by-date row.');
   }
@@ -119,6 +125,10 @@ async function checkStructuredReportRoundTripAndAutoDetect() {
   const autoStructuredHtml = await buildReportHtmlAuto({ title: 'Natural Glow', eyebrow: 'Weekly Report', contentText: text });
   if (!autoStructuredHtml.includes('Posted 12 stories.') || !autoStructuredHtml.includes('Next campaign')) {
     throw new Error('buildReportHtmlAuto did not render the structured shape via the rich template.');
+  }
+  // A 2+ item body renders as a real <ul> of stacked bullets, not one run-on paragraph.
+  if (!autoStructuredHtml.includes('<ul><li>Posted 12 stories.</li><li>Scheduled 3 posts for next week.</li></ul>')) {
+    throw new Error('buildReportHtmlAuto did not render a multi-item block body as a <ul> bullet list.');
   }
 
   const oldShapeText = `${REPORT_SECTION_HEADINGS.workLogs}\nSara: did some work.`;
