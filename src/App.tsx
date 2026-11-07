@@ -751,6 +751,44 @@ export default function App() {
   const canRegisterClients = canRegisterClient(currentUser.role);
   const userRoleInfo = getRoleInfo(currentUser?.role || 'sales');
 
+  // Inhouse module (2026-11-02): the subset of `tasks` (itself already RLS-scoped to what the
+  // signed-in user may see — task_visible_v2's new inhouse guard, migration 20261228000000, is
+  // what actually keeps a team lead/am_agent from fetching someone else's Inhouse task in the
+  // first place) that belongs to Kesraa/Fast Growth's own Creative & Design/Video Production/
+  // Programming work. Passed as the `tasks` prop to the Inhouse tab's own CrossTeamTaskBoard
+  // instance below instead of the full `tasks` array the main Tasks tab uses.
+  //
+  // Declared up here (not lower, by the Inhouse tab's other memos) specifically so
+  // hasOwnInhouseWork below is available to the route/nav guards further down this same function
+  // (the hashchange effect, handleTabChange, and the top-level isModuleAllowed render-gate) —
+  // all of which are defined lexically before where this used to live.
+  const inhouseTasks = useMemo(() => tasks.filter((t) => isInhouseTask(t, clients)), [tasks, clients]);
+
+  // Fixed 2026-11-07 (owner report: Hasnaa, a Social Media Agent, created an Inhouse task and
+  // assigned it to May, a Graphic Designer — neither role has the Inhouse tab per
+  // allowedModules, so the task was invisible to both of them). Owner's correction: don't leak the
+  // task into the main Tasks tab — instead open the Inhouse tab itself for anyone who is the
+  // creator or an assignee of at least one Inhouse task, same as inhouseTasks above, so they see it
+  // where it belongs. This is dynamic (data-driven), not a role/team check, since the motivating
+  // case (a Social Media Agent) isn't on any Creative/Video/Programming team.
+  const hasOwnInhouseWork = useMemo(
+    () =>
+      inhouseTasks.some(
+        (t) => t.created_by === currentUser.id || resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id)
+      ),
+    [inhouseTasks, taskAssignees, currentUser.id]
+  );
+
+  // isModuleAllowed() (data/roles.ts) is a pure role-table lookup — it knows nothing about
+  // hasOwnInhouseWork, and must stay that way (it's also used for checking OTHER employees'
+  // access, e.g. reportAgentEligibility.ts, where this per-viewer override would be wrong). Every
+  // guard below that decides whether the SIGNED-IN user may actually open a module (the hashchange
+  // route effect, handleTabChange, and the top-level render-gate) needs the 'inhouse' exception
+  // ORed in alongside it, so they all go through this wrapper instead of calling isModuleAllowed
+  // directly.
+  const canAccessModule = (role: UserRole, moduleId: AppModuleId): boolean =>
+    isModuleAllowed(role, moduleId) || (moduleId === 'inhouse' && hasOwnInhouseWork);
+
   const showNotification = (text: string, type: 'success' | 'info' = 'success') => {
     setNotification({ text, type });
     setTimeout(() => setNotification(null), 4500);
@@ -1169,7 +1207,7 @@ export default function App() {
         }
 
         if (requestedModule) {
-          if (!isModuleAllowed(authenticatedUser.role, requestedModule)) {
+          if (!canAccessModule(authenticatedUser.role, requestedModule)) {
             setUnauthorizedRoute(`#/portal/${requestedSlug}/${requestedModule}`);
             return;
           }
@@ -1205,13 +1243,18 @@ export default function App() {
     // producing a same-value setActiveTab no-op. Re-subscribing on an actual login/logout/
     // user-switch is enough; a role change for an already-logged-in user is picked up the next
     // time they navigate to a new hash anyway.
+    // hasOwnInhouseWork IS included (2026-11-07): unlike a role change, this can legitimately flip
+    // from false to true shortly after mount (tasks/taskAssignees load asynchronously), and the
+    // 'hashchange' listener this effect attaches would otherwise keep using the closure captured
+    // at mount — stale-false — for a direct #/portal/:slug/inhouse link until the next real
+    // hashchange event. Re-subscribing when it changes is cheap and keeps that window closed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticatedUser?.id]);
+  }, [authenticatedUser?.id, hasOwnInhouseWork]);
 
   // Switch tab and keep URL hash synchronized
   const handleTabChange = (newTab: AppModule, prefillAssigneeName?: string) => {
     if (!authenticatedUser) return;
-    if (!isModuleAllowed(authenticatedUser.role, newTab)) {
+    if (!canAccessModule(authenticatedUser.role, newTab)) {
       setUnauthorizedRoute(`#/${newTab}`);
       return;
     }
@@ -7118,28 +7161,8 @@ export default function App() {
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 
-  // Inhouse module (2026-11-02): the subset of `tasks` (itself already RLS-scoped to what the
-  // signed-in user may see — task_visible_v2's new inhouse guard, migration 20261228000000, is
-  // what actually keeps a team lead/am_agent from fetching someone else's Inhouse task in the
-  // first place) that belongs to Kesraa/Fast Growth's own Creative & Design/Video Production/
-  // Programming work. Passed as the `tasks` prop to the Inhouse tab's own CrossTeamTaskBoard
-  // instance below instead of the full `tasks` array the main Tasks tab uses.
-  const inhouseTasks = useMemo(() => tasks.filter((t) => isInhouseTask(t, clients)), [tasks, clients]);
-
-  // Fixed 2026-11-07 (owner report: Hasnaa, a Social Media Agent, created an Inhouse task and
-  // assigned it to May, a Graphic Designer — neither role has the Inhouse tab per
-  // allowedModules, so the task was invisible to both of them). Owner's correction: don't leak the
-  // task into the main Tasks tab — instead open the Inhouse tab itself for anyone who is the
-  // creator or an assignee of at least one Inhouse task, same as inhouseTasks above, so they see it
-  // where it belongs. This is dynamic (data-driven), not a role/team check, since the motivating
-  // case (a Social Media Agent) isn't on any Creative/Video/Programming team.
-  const hasOwnInhouseWork = useMemo(
-    () =>
-      inhouseTasks.some(
-        (t) => t.created_by === currentUser.id || resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(currentUser.id)
-      ),
-    [inhouseTasks, taskAssignees, currentUser.id]
-  );
+  // inhouseTasks/hasOwnInhouseWork now declared near the top of this component (right after
+  // userRoleInfo) — the route/nav guards further up need them too. See their definitions there.
 
   // Owner's explicit request (2026-11-03): Kesraa/Fast Growth's own Inhouse tasks must not show up
   // on the main, cross-team Tasks board at all — not in the list/Kanban, not in its client filter
@@ -8082,7 +8105,7 @@ export default function App() {
             attemptedModuleOrPortal={unauthorizedRoute}
             onNavigateToHomePortal={handleNavigateToHomePortal}
           />
-        ) : !isModuleAllowed(currentUser.role, activeTab) ? (
+        ) : !canAccessModule(currentUser.role, activeTab) ? (
           <AccessDenied
             currentUser={currentUser}
             attemptedModuleOrPortal={activeTab}

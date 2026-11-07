@@ -68,4 +68,33 @@ if (!inhouseTabBody.includes("!userRoleInfo.allowedModules.includes('inhouse') |
   throw new Error('A non-admin hasOwnInhouseWork viewer must render the Task Board directly (inhouseView defaults to \'tasks\' and they never see a switch to leave it), not the admin-only Clients sub-view.');
 }
 
-console.log('OK: an Inhouse task’s own creator/assignee now gets the Inhouse tab itself (scoped to their own tasks, Task Board only, no admin Clients sub-view) instead of the task leaking into the main Tasks tab; the main Tasks tab keeps excluding every Inhouse task unconditionally for everyone.');
+// 5. 2026-11-07 follow-up bug (owner report, screenshot): the nav link opened for Hasnaa, but
+//    clicking it still hit the AccessDenied screen — isModuleAllowed() (data/roles.ts) is a pure
+//    role-table lookup with no idea hasOwnInhouseWork exists, and 3 separate route/nav guards in
+//    this file called it directly, independently of the sidebar link's own (already-fixed) gate:
+//    the #/portal/:slug/:module hashchange handler, handleTabChange, and the top-level render-gate
+//    that actually swaps in <AccessDenied>. All three must go through the canAccessModule wrapper
+//    instead, or a user can see the tab and still be blocked from opening it.
+if (!appSrc.includes("const canAccessModule = (role: UserRole, moduleId: AppModuleId): boolean =>\n    isModuleAllowed(role, moduleId) || (moduleId === 'inhouse' && hasOwnInhouseWork);")) {
+  throw new Error('canAccessModule must exist as a thin wrapper that ORs hasOwnInhouseWork into isModuleAllowed() for the \'inhouse\' module only — isModuleAllowed() itself must stay a pure role lookup (it\'s reused for other employees\' eligibility elsewhere, e.g. reportAgentEligibility.ts).');
+}
+if (!appSrc.includes('if (!canAccessModule(authenticatedUser.role, requestedModule)) {')) {
+  throw new Error('The #/portal/:slug/:module hashchange route guard must call canAccessModule, not isModuleAllowed directly — this is the exact path a direct Inhouse link/refresh goes through.');
+}
+if (!appSrc.includes('if (!canAccessModule(authenticatedUser.role, newTab)) {')) {
+  throw new Error('handleTabChange (the sidebar click handler) must call canAccessModule, not isModuleAllowed directly.');
+}
+if (!appSrc.includes(') : !canAccessModule(currentUser.role, activeTab) ? (')) {
+  throw new Error('The top-level render-gate that actually decides whether <AccessDenied> replaces the tab content must call canAccessModule, not isModuleAllowed directly — this was the exact screen in the owner’s bug report.');
+}
+// hasOwnInhouseWork must be declared before every one of these guards (not just before the nav
+// link far below) — the hashchange effect's closure is only re-created when its dependency array
+// changes, so hasOwnInhouseWork must also be a dependency or a just-loaded user stays blocked.
+if (appSrc.indexOf('const hasOwnInhouseWork = useMemo(') > appSrc.indexOf('if (!canAccessModule(authenticatedUser.role, requestedModule)) {')) {
+  throw new Error('hasOwnInhouseWork must be declared before the hashchange route guard that uses it (moved near userRoleInfo, not left by the Inhouse tab’s other memos further down).');
+}
+if (!appSrc.includes('}, [authenticatedUser?.id, hasOwnInhouseWork]);')) {
+  throw new Error('The hashchange effect must list hasOwnInhouseWork in its dependency array — it can flip from false to true shortly after mount once tasks/taskAssignees load, and the \'hashchange\' listener would otherwise keep using a stale-false closure for a direct Inhouse link.');
+}
+
+console.log('OK: an Inhouse task’s own creator/assignee now gets the Inhouse tab itself (scoped to their own tasks, Task Board only, no admin Clients sub-view) instead of the task leaking into the main Tasks tab; the main Tasks tab keeps excluding every Inhouse task unconditionally for everyone; and every route/nav guard (hashchange, handleTabChange, the render-gate) agrees with the sidebar link, not just the link itself.');
