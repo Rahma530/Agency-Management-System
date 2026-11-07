@@ -22,6 +22,7 @@ import {
 } from '../../lib/reportDraftSources';
 import { downloadReportPdf, CREATIVE_BUCKET_LABEL, OTHER_SERVICE_BUCKET_LABEL, parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS } from '../../lib/pdfExport';
 import { buildReportHtmlAuto, downloadHtmlReport } from '../../lib/reportHtmlExport';
+import { resolveReportBrand } from '../../lib/reportBranding';
 import { serializeStructuredReportText } from '../../lib/structuredReportText';
 import { getReportClientServiceLock, isCreativeReportSubject } from '../../lib/reportAgentEligibility';
 import { extractLinks } from '../../lib/textLinks';
@@ -1292,11 +1293,20 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
     const eyebrowReportTypeLabel = reportGranularity
       ? resolveReportTypeLabelForGranularity(reportGranularity)
       : resolveReportTypeLabel(selectedReport.period || '');
+    // Owner's direct request (2026-11-07): a client-scope report about a client that belongs to
+    // one of the agency's sibling companies (clients.company) must carry THAT company's own
+    // colors/name instead of Kesra's. An employee-scope report can span several clients — possibly
+    // several companies — at once, so it's never resolved to anything but the fixed Kesra identity
+    // (resolveReportBrand(undefined) below, same as passing no company at all).
+    const reportCompany = selectedReport.scope_type === 'client'
+      ? clients.find((client) => client.id === selectedReport.client_id)?.company
+      : undefined;
+    const brand = resolveReportBrand(reportCompany);
     const html = await buildReportHtmlAuto({
       // Title is the actual client/employee name now, not the literal word "Client"/"Employee" —
       // the eyebrow line just above it already says which kind of report this is.
       title: subjectName,
-      eyebrow: `${eyebrowReportTypeLabel} — KESRA Management System`,
+      eyebrow: `${eyebrowReportTypeLabel} — ${brand.footerText}`,
       // Plain-text fallback only — buildIndividualReportHtml prefers the bold "From … To …" line it
       // derives itself from `period` whenever that parses, and falls back to this string otherwise
       // (e.g. a legacy report whose period field is somehow empty).
@@ -1304,6 +1314,7 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
       contentText: currentVersion.content_text,
       period: selectedReport.period || '',
       reportTypeLabel: eyebrowReportTypeLabel,
+      brand,
     });
     // Owner's explicit request (2026-11-07): the downloaded filename used to be literally
     // "report-<period>.html" for EVERY report — every client's weekly report for the same date

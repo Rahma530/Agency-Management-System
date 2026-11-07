@@ -9,6 +9,7 @@ import { ClientComparisonRecord } from '../src/types/database';
 import { REPORT_SECTION_HEADINGS } from '../src/lib/pdfExport';
 import { buildIndividualReportHtml, buildUnifiedReportHtml, buildReportHtmlAuto } from '../src/lib/reportHtmlExport';
 import { serializeStructuredReportText, parseStructuredReportText, STRUCTURED_REPORT_HEADINGS } from '../src/lib/structuredReportText';
+import { TOP_RATE_BRAND, FAST_GROWTH_BRAND, resolveReportBrand } from '../src/lib/reportBranding';
 
 const BRAND_PURPLE_HEX = '#7b2ff7';
 
@@ -185,11 +186,73 @@ async function checkStructuredReportLinksRenderClickable() {
   console.log('OK (4/4): a structured-report body point\'s attachment links render as separate, real clickable lines (and would embed as pictures for a reachable image URL), never as unbroken raw text.');
 }
 
+// Owner's direct request, 2026-11-07: a report about a client belonging to one of the agency's
+// sibling companies must carry THAT company's own colors and name, never Kesra's — resolveReportBrand
+// (reportBranding.ts) is how every HTML export call site gets there. Checks every report shape this
+// file builds (plain individual, structured individual, unified) picks up the resolved brand's own
+// palette hex and footer/eyebrow text, and never leaks the Kesra identity (purple hex, "KESRA
+// Management System") when a non-Kesra brand was explicitly requested — and that omitting `brand`
+// entirely (resolveReportBrand(undefined), the employee-scope-report case) still falls back to the
+// exact original Kesra identity, unchanged.
+async function checkCompanyBranding() {
+  const contentText = `${REPORT_SECTION_HEADINGS.workLogs}\nAhmed: Launched a new product page.`;
+
+  const defaultHtml = await buildIndividualReportHtml({ title: 'Some Client', contentText });
+  if (!defaultHtml.includes(BRAND_PURPLE_HEX)) throw new Error('Omitting `brand` must still render the default Kesra purple palette.');
+  if (!defaultHtml.includes('KESRA Management System')) throw new Error('Omitting `brand` must still show the Kesra footer/eyebrow text.');
+
+  const topRateBrand = resolveReportBrand('top_rate');
+  if (topRateBrand !== TOP_RATE_BRAND) throw new Error("resolveReportBrand('top_rate') did not resolve to TOP_RATE_BRAND.");
+  const topRateHtml = await buildIndividualReportHtml({ title: 'Some Client', contentText, brand: topRateBrand });
+  if (!topRateHtml.includes(TOP_RATE_BRAND.palette.accentDeep)) throw new Error('Top Rate report is missing its own navy accent color.');
+  if (!topRateHtml.includes('Top Rate Marketing Agency')) throw new Error('Top Rate report is missing its own footer/eyebrow name.');
+  if (topRateHtml.includes(BRAND_PURPLE_HEX)) throw new Error('Top Rate report must never leak the Kesra purple palette.');
+  if (topRateHtml.includes('KESRA Management System')) throw new Error('Top Rate report must never leak the Kesra name.');
+
+  const fastGrowthBrand = resolveReportBrand('fast_growth');
+  if (fastGrowthBrand !== FAST_GROWTH_BRAND) throw new Error("resolveReportBrand('fast_growth') did not resolve to FAST_GROWTH_BRAND.");
+  const comparison: ClientComparisonRecord = {
+    id: 'cmp-brand-test',
+    client_id: 'client-brand-test',
+    agent_id: null,
+    row_kind: 'comparison',
+    period_current: '2026-10',
+    period_previous: '2026-09',
+    metrics_current: { media_buying: { spend: 5000, roas: 3.5, conversions: 120, cpa: 41.6 } },
+    metrics_previous: { media_buying: { spend: 4000, roas: 3.1, conversions: 100, cpa: 40 } },
+    delta: { media_buying: { spend: 25, roas: 12.9, conversions: 20, cpa: 4 } },
+    ai_recommendations_text: null,
+  };
+  const fastGrowthHtml = await buildUnifiedReportHtml({
+    title: 'Unified Client Report',
+    subtitle: '2026-10',
+    narrative: 'Spend grew this period.',
+    recommendations: [],
+    comparison,
+    brand: fastGrowthBrand,
+  });
+  if (!fastGrowthHtml.includes(FAST_GROWTH_BRAND.palette.accent) || !fastGrowthHtml.includes(FAST_GROWTH_BRAND.palette.accentLight)) {
+    throw new Error('Fast Growth unified report is missing its own orange/yellow accent colors.');
+  }
+  if (!fastGrowthHtml.includes('Fast Growth')) throw new Error('Fast Growth unified report is missing its own footer/eyebrow name.');
+  if (fastGrowthHtml.includes(BRAND_PURPLE_HEX)) throw new Error('Fast Growth report must never leak the Kesra purple palette.');
+  if (fastGrowthHtml.includes('KESRA Management System')) throw new Error('Fast Growth report must never leak the Kesra name.');
+
+  // resolveReportBrand(undefined/null/an unrecognized string) — the employee-scope-report case —
+  // must always fall back to the exact fixed Kesra identity, never guess a company.
+  if (resolveReportBrand(undefined).id !== 'kesra') throw new Error('resolveReportBrand(undefined) must resolve to the Kesra identity.');
+  if (resolveReportBrand(null).id !== 'kesra') throw new Error('resolveReportBrand(null) must resolve to the Kesra identity.');
+  if (resolveReportBrand('not-a-real-company').id !== 'kesra') throw new Error('resolveReportBrand of an unknown value must fall back to Kesra, not throw or guess.');
+
+  console.log('OK (5/5): a non-Kesra brand carries its own colors and name with no Kesra leakage, and omitting `brand` keeps the original Kesra identity unchanged.');
+}
+
 (async () => {
   await checkIndividualReport();
   await checkUnifiedReport();
   await checkStructuredReportRoundTripAndAutoDetect();
   await checkStructuredReportLinksRenderClickable();
+  await checkCompanyBranding();
 })().catch((err) => {
   console.error(err);
   process.exit(1);

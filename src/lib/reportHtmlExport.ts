@@ -27,29 +27,36 @@ import { extractLinks } from './textLinks';
 import { resolveEmbeddableImages, EmbeddedImageAsset } from './embeddableImages';
 import { parseReportContentIntoParagraphs, REPORT_SECTION_HEADINGS, buildUnifiedReportMetricsTable, PdfParagraph } from './pdfExport';
 import { parseReportPeriodRange, resolveReportTypeLabel } from './reportPeriods';
+import { ReportBrand, KESRA_BRAND } from './reportBranding';
 
-// Mirrors pdfExport.ts's BRAND_PURPLE/BRAND_PURPLE_DEEP/BRAND_WHITE (src/index.css's "Kesra Brand
-// Tokens") — duplicated as plain hex literals here rather than imported, same reasoning pdfExport.ts
-// itself documents for its own copies: a template string has no access to computed CSS either way,
-// so there is nothing to gain from a cross-file import of three constants. The extra dark-theme
-// tokens below (black/lilac/grey/roas-*) come directly from the product owner's own example report,
-// which already uses this exact purple palette.
-const TOKENS = `
-  --black:#0a0a0d;--black-2:#151318;--purple-deep:#3b1560;--purple:#7b2ff7;--purple-light:#b98cf0;
-  --lilac:#e9d9fb;--white:#ffffff;--grey:#a89bb8;
-  --roas-good:#a9f5c1;--roas-mid:#f5e29a;--roas-bad:#f5a3a3;
-  --gradient-page:linear-gradient(180deg,var(--black) 0%,#150f1f 40%,var(--black) 100%);
-  --gradient-hero:radial-gradient(circle at 50% -10%,rgba(123,47,247,0.45),transparent 60%),linear-gradient(135deg,var(--black) 0%,var(--purple-deep) 100%);
-  --gradient-title-text:linear-gradient(90deg,var(--white),var(--purple-light));
-  --gradient-card:linear-gradient(160deg,var(--black-2),#1c1224);
-  --gradient-badge:linear-gradient(135deg,var(--purple),var(--purple-deep));
-  --gradient-section:linear-gradient(160deg,rgba(21,19,24,0.9),rgba(59,21,96,0.25));
-  --border-soft:rgba(123,47,247,0.25);--border-medium:rgba(123,47,247,0.35);--border-strong:rgba(123,47,247,0.4);--border-lilac:rgba(185,140,240,0.2);
+// Per-brand CSS custom properties (reportBranding.ts) — the SAME variable names as the report's
+// original, only-ever Kesra theme, just resolved from whichever ReportBrand the caller passes
+// (defaulting to KESRA_BRAND, so every call site that hasn't been updated for company branding yet
+// renders pixel-identical to before). BASE_STYLE itself never branches per brand — every selector
+// below reads through these roles via var(--xxx), so a brand is free to redefine what "page
+// background" or "heading text" means (see reportBranding.ts's own ReportBrandPalette comment).
+function buildTokens(brand: ReportBrand): string {
+  const p = brand.palette;
+  return `
+  --black:${p.pageBg};--black-2:${p.cardBg};--purple-deep:${p.accentDeep};--purple:${p.accent};--purple-light:${p.accentLight};
+  --lilac:${p.bodyText};--heading:${p.headingText};--on-accent:${p.onAccentText};--grey:${p.mutedText};
+  --roas-good:${p.roasGood};--roas-mid:${p.roasMid};--roas-bad:${p.roasBad};
+  --gradient-page:${p.gradientPage};
+  --gradient-hero:${p.gradientHero};
+  --gradient-title-text:${p.gradientTitleText};
+  --gradient-card:${p.gradientCard};
+  --gradient-badge:${p.gradientBadge};
+  --gradient-section:${p.gradientSection};
+  --border-soft:${p.borderSoft};--border-medium:${p.borderMedium};--border-strong:${p.borderStrong};--border-lilac:${p.borderLilac};
+  --meta-bg:${p.metaBg};--note-bg:${p.noteBg};--service-bg:${p.serviceBg};--row-stripe:${p.rowStripe};--img-shadow:${p.imgShadow};
+  --img-fallback-bg:${p.imgFallbackBg};
   --radius-lg:20px;--radius-md:16px;--radius-sm:12px;--radius-pill:30px;
 `;
+}
 
-const BASE_STYLE = `
-:root{${TOKENS}--font-main:'Segoe UI',Tahoma,Arial,sans-serif;}
+function buildBaseStyle(brand: ReportBrand): string {
+  return `
+:root{${buildTokens(brand)}--font-main:'Segoe UI',Tahoma,Arial,sans-serif;}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;font-family:var(--font-main);background:var(--gradient-page);color:var(--lilac);line-height:1.7}
@@ -59,44 +66,45 @@ body{margin:0;font-family:var(--font-main);background:var(--gradient-page);color
 .hero h1{font-size:38px;margin:0 0 8px;font-weight:800;background:var(--gradient-title-text);-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1.3}
 .hero p{max-width:720px;margin:10px auto 0;color:var(--grey)}
 .meta{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;max-width:900px;margin:30px auto 0}
-.meta div{border:1px solid var(--border-medium);background:rgba(255,255,255,.04);border-radius:var(--radius-sm);padding:12px 18px;min-width:160px}
+.meta div{border:1px solid var(--border-medium);background:var(--meta-bg);border-radius:var(--radius-sm);padding:12px 18px;min-width:160px}
 .meta span{display:block;color:var(--grey);font-size:12px}
-.meta strong{display:block;color:var(--white);font-size:14px}
+.meta strong{display:block;color:var(--heading);font-size:14px}
 main{padding:36px 0 20px}
 .kesra-section{border-radius:var(--radius-lg);background:var(--gradient-section);border:1px solid var(--border-soft);padding:32px 30px;margin-bottom:28px}
 .sec-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
-.kesra-badge{flex:none;width:44px;height:44px;border-radius:50%;background:var(--gradient-badge);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:var(--white)}
-h2{margin:0;color:var(--white);font-size:22px;line-height:1.3}
+.kesra-badge{flex:none;width:44px;height:44px;border-radius:50%;background:var(--gradient-badge);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:var(--on-accent)}
+h2{margin:0;color:var(--heading);font-size:22px;line-height:1.3}
 p{margin:0 0 12px}
 .grid{display:grid;gap:14px}
 .g4{grid-template-columns:repeat(4,1fr)}
 .g3{grid-template-columns:repeat(3,1fr)}
 .kesra-card{background:var(--gradient-card);border:1px solid var(--border-medium);border-radius:var(--radius-md);padding:18px}
 .kpi span{display:block;color:var(--grey);font-size:13px;margin-bottom:8px}
-.kpi strong{display:block;font-size:24px;color:var(--white);line-height:1.2;direction:ltr;text-align:right}
+.kpi strong{display:block;font-size:24px;color:var(--heading);line-height:1.2;direction:ltr;text-align:right}
 .kpi small{display:block;margin-top:8px;color:var(--grey);font-size:12px}
-.note{border-right:4px solid var(--purple);background:rgba(123,47,247,.1);border-radius:var(--radius-sm);padding:14px 18px;font-size:14px;margin-bottom:12px}
-.service-block{border:1px solid var(--border-medium);background:rgba(123,47,247,.06);border-radius:var(--radius-md);padding:18px 20px;margin-bottom:16px}
-.service-block h3{color:var(--white);font-weight:800;font-size:16px;margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid var(--border-soft)}
+.note{border-right:4px solid var(--purple);background:var(--note-bg);border-radius:var(--radius-sm);padding:14px 18px;font-size:14px;margin-bottom:12px}
+.service-block{border:1px solid var(--border-medium);background:var(--service-bg);border-radius:var(--radius-md);padding:18px 20px;margin-bottom:16px}
+.service-block h3{color:var(--heading);font-weight:800;font-size:16px;margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid var(--border-soft)}
 table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;border-radius:var(--radius-sm);overflow:hidden}
-th{background:var(--purple-deep);color:var(--white);text-align:right;padding:10px 12px;font-weight:700}
+th{background:var(--purple-deep);color:var(--on-accent);text-align:right;padding:10px 12px;font-weight:700}
 td{padding:10px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top}
-tbody tr:nth-child(even) td{background:rgba(123,47,247,.06)}
+tbody tr:nth-child(even) td{background:var(--row-stripe)}
 .tablewrap{overflow-x:auto}
 ul{margin:0;padding:0 20px 0 0}
 li{margin-bottom:7px}
 a{color:var(--purple-light)}
 .shots{display:grid;gap:18px;margin-top:14px;justify-items:center;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
 figure{margin:0;text-align:center}
-figure img{width:100%;max-width:280px;height:auto;border-radius:var(--radius-md);border:1px solid var(--border-strong);cursor:zoom-in;background:#000;box-shadow:0 12px 32px rgba(123,47,247,.18)}
+figure img{width:100%;max-width:280px;height:auto;border-radius:var(--radius-md);border:1px solid var(--border-strong);cursor:zoom-in;background:var(--img-fallback-bg);box-shadow:var(--img-shadow)}
 .lb{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out;padding:16px}
 .lb.on{display:flex}
 .lb img{max-height:96vh;max-width:96vw;border-radius:12px}
 footer{border-top:1px solid var(--border-lilac);padding:22px 0 40px;color:var(--grey);font-size:13px;text-align:center}
-@media print{body{background:#0a0a0d;-webkit-print-color-adjust:exact;print-color-adjust:exact}.kesra-section{break-inside:avoid}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.kesra-section{break-inside:avoid}}
 @media(max-width:860px){.hero h1{font-size:28px}.g4,.g3{grid-template-columns:1fr 1fr}.kesra-section{padding:22px 16px}}
 @media(max-width:560px){.g4,.g3{grid-template-columns:1fr}}
 `;
+}
 
 const LIGHTBOX_SCRIPT = `
 document.querySelectorAll('.shots img').forEach(function (img) {
@@ -194,6 +202,7 @@ function pageShell(opts: {
   subtitleHtml?: string;
   metaItems: { label: string; value: string }[];
   bodyHtml: string;
+  brand: ReportBrand;
 }): string {
   const metaHtml = opts.metaItems
     .map((item) => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`)
@@ -204,7 +213,7 @@ function pageShell(opts: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(opts.title)}</title>
-<style>${BASE_STYLE}</style>
+<style>${buildBaseStyle(opts.brand)}</style>
 </head>
 <body class="kesra-report">
 <header class="hero">
@@ -216,7 +225,7 @@ function pageShell(opts: {
 <main class="wrap">
 ${opts.bodyHtml}
 </main>
-<footer><div class="wrap">KESRA Management System</div></footer>
+<footer><div class="wrap">${escapeHtml(opts.brand.footerText)}</div></footer>
 <div class="lb" id="lb"><img id="lbimg" alt=""></div>
 <script>${LIGHTBOX_SCRIPT}</script>
 </body>
@@ -351,6 +360,12 @@ export interface IndividualReportHtmlOptions {
   // guess below whenever provided. See that function's own comment for why the guess alone isn't
   // enough (a 7-day Custom Range misread as "Weekly", Quarterly/Yearly never recognized at all).
   reportTypeLabel?: string;
+  // Which of the agency's sibling companies this report's colors/footer should carry — resolved by
+  // the caller (ReportDraftWorkspace.tsx's exportHtml, via reportBranding.ts's resolveReportBrand)
+  // from the report's OWN client, only for a client-scope report; an employee-scope report never
+  // sets this (see reportBranding.ts's own header comment). Defaults to KESRA_BRAND — every call
+  // site that hasn't been updated for company branding yet renders exactly as before.
+  brand?: ReportBrand;
 }
 
 // Built entirely from the already-APPROVED, saved `content_text` — the exact same parsed
@@ -414,13 +429,14 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
   // period; falls back to the old plain subtitle (or nothing) otherwise so a call site that hasn't
   // been updated to pass `period` yet keeps working exactly as before.
   const dateRangeHtml = renderDateRangeHtml(options.period || '');
+  const brand = options.brand || KESRA_BRAND;
 
   return pageShell({
     // options.eyebrow was added to the interface but never actually read here — every export
     // rendered "Employee Report" in the small top label even for a client report. Now honors
     // whatever the caller passes, falling back to the old literal only if a call site is ever
     // added that doesn't set it.
-    eyebrow: options.eyebrow || 'Employee Report — KESRA Management System',
+    eyebrow: options.eyebrow || `Employee Report — ${brand.footerText}`,
     title: options.title,
     subtitle: dateRangeHtml ? undefined : options.subtitle,
     subtitleHtml: dateRangeHtml || undefined,
@@ -429,6 +445,7 @@ export async function buildIndividualReportHtml(options: IndividualReportHtmlOpt
     // repeating it here as a meta item duplicated it on the page for no reason.
     metaItems: [],
     bodyHtml: parts.join(''),
+    brand,
   });
 }
 
@@ -438,6 +455,10 @@ export interface UnifiedReportHtmlOptions {
   narrative: string;
   recommendations: string[];
   comparison: ClientComparisonRecord;
+  // Same company-brand resolution as IndividualReportHtmlOptions.brand — the Unified Client Report
+  // is always tied to exactly one client, so its caller (UnifiedReportPanel in ComparisonDisplay.tsx)
+  // always has a company to resolve this from. Defaults to KESRA_BRAND.
+  brand?: ReportBrand;
 }
 
 // Partial by design (see this file's header comment): no per-campaign breakdown, no screenshots —
@@ -466,8 +487,10 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
     </section>
   `;
 
+  const brand = options.brand || KESRA_BRAND;
+
   return pageShell({
-    eyebrow: 'Unified Client Report — KESRA Management System',
+    eyebrow: `Unified Client Report — ${brand.footerText}`,
     title: options.title,
     subtitle: options.subtitle,
     // No separate "Period" meta box — options.subtitle already renders once, directly under the
@@ -475,6 +498,7 @@ export async function buildUnifiedReportHtml(options: UnifiedReportHtmlOptions):
     // buildIndividualReportHtml above).
     metaItems: [],
     bodyHtml,
+    brand,
   });
 }
 
@@ -500,6 +524,10 @@ export interface StructuredClientReportHtmlOptions {
   subtitle?: string;
   period?: string;
   report: StructuredReportTextShape;
+  // Same company-brand resolution as IndividualReportHtmlOptions.brand — this shape is just the
+  // other rendering path buildReportHtmlAuto picks for the same client-scope report, so it needs
+  // the exact same brand. Defaults to KESRA_BRAND.
+  brand?: ReportBrand;
 }
 
 // A block/upcoming-work-item body point can itself carry one or more raw attachment links (a
@@ -592,7 +620,7 @@ export async function buildStructuredClientReportHtml(options: StructuredClientR
     ? `<section class="kesra-section">
         <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Upcoming Work</h2></div>
         <div class="grid g3">${report.upcoming_work
-          .map((item) => `<div class="kesra-card"><h3 style="color:var(--white);margin:0 0 8px">${escapeHtml(item.title)}</h3>${renderBodyHtml(item.body, imageAssets)}</div>`)
+          .map((item) => `<div class="kesra-card"><h3 style="color:var(--heading);margin:0 0 8px">${escapeHtml(item.title)}</h3>${renderBodyHtml(item.body, imageAssets)}</div>`)
           .join('')}</div>
       </section>`
     : '';
@@ -606,6 +634,7 @@ export async function buildStructuredClientReportHtml(options: StructuredClientR
     subtitleHtml: dateRangeHtml || undefined,
     metaItems: [],
     bodyHtml: [execSectionHtml, sectionsHtml, workByDateHtml, upcomingWorkHtml].join(''),
+    brand: options.brand || KESRA_BRAND,
   });
 }
 
@@ -618,12 +647,14 @@ export async function buildStructuredClientReportHtml(options: StructuredClientR
 export async function buildReportHtmlAuto(options: IndividualReportHtmlOptions): Promise<string> {
   const structured = parseStructuredReportText(options.contentText);
   if (structured) {
+    const brand = options.brand || KESRA_BRAND;
     return buildStructuredClientReportHtml({
       title: options.title,
-      eyebrow: options.eyebrow || 'Employee Report — KESRA Management System',
+      eyebrow: options.eyebrow || `Employee Report — ${brand.footerText}`,
       subtitle: options.subtitle,
       period: options.period,
       report: structured,
+      brand,
     });
   }
   return buildIndividualReportHtml(options);
