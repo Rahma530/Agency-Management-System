@@ -8340,6 +8340,8 @@ export default function App() {
                   onMarkTaskViewed={handleMarkTaskViewed}
                   onHardDeleteTasks={handleHardDeleteTasks}
                   onDuplicateTask={handleDuplicateTask}
+                  briefs={briefs}
+                  briefFieldSchemas={briefFieldSchemas}
                 />
               </div>
             )}
@@ -8412,6 +8414,8 @@ export default function App() {
                     onMarkTaskViewed={handleMarkTaskViewed}
                     onHardDeleteTasks={handleHardDeleteTasks}
                     onDuplicateTask={handleDuplicateTask}
+                    briefs={briefs}
+                    briefFieldSchemas={briefFieldSchemas}
                   />
                 ) : (
                   <InhouseClientsPanel

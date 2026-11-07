@@ -35,6 +35,10 @@ const CHECKS: { tag: string; requiredProps: string[] }[] = [
     requiredProps: [
       'taskTypes', 'onCreateTaskType', 'onUpdateTaskType', 'taskDirectoryUsers', 'taskAssignees',
       'platforms', 'taskPlatformLinks', 'onCreatePlatform', 'onUpdatePlatform',
+      // Creative Brief auto-display (2026-11-07) — required for the same reason as the rest of
+      // this list: a render site missing either prop would type-check fine (no @types/react here)
+      // and only fail at runtime when a creative assignee is picked.
+      'briefs', 'briefFieldSchemas',
     ],
   },
   {
