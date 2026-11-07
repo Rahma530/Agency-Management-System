@@ -1439,6 +1439,13 @@ export default function App() {
   // CAMPAIGN_SUMMARY's ANALYZE stage can chain up to three provider attempts on fallback, each its
   // own network round trip, before the Edge Function itself gives up.
   const AI_SUMMARY_TIMEOUT_MS = 25000;
+  // STRUCTURED_CLIENT_REPORT gets its own, longer budget: since taskRunner.ts's runRegistryTask
+  // started retrying the STRUCTURE stage with the next provider on a content-validation failure
+  // (not just a provider error) on top of maxOutputTokens: 8000 for that stage (vs. 1500-4000 for
+  // every other AI task here) — a worst case of three full provider attempts, each generating up
+  // to 8000 tokens of JSON, routinely exceeded the shared 25s budget and surfaced as a timeout
+  // instead of a real result. Observed in production after that change shipped.
+  const STRUCTURED_REPORT_TIMEOUT_MS = 60000;
   function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(message)), ms);
@@ -1631,8 +1638,8 @@ export default function App() {
         supabaseRaw.functions.invoke('ai-router', {
           body: { task: 'STRUCTURED_CLIENT_REPORT', language: 'ar', payload },
         }),
-        AI_SUMMARY_TIMEOUT_MS,
-        `Structured report timed out after ${AI_SUMMARY_TIMEOUT_MS / 1000}s.`
+        STRUCTURED_REPORT_TIMEOUT_MS,
+        `Structured report timed out after ${STRUCTURED_REPORT_TIMEOUT_MS / 1000}s.`
       );
       if (error) {
         const context = error.context;
