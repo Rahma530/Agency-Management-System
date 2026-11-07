@@ -10,6 +10,7 @@ import {
   getClientServices,
   splitClientServices,
 } from '../lib/clientServices';
+import { ClientCompanyId, CLIENT_COMPANY_OPTIONS } from '../lib/clientCompany';
 
 interface EditClientModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
   const [phoneNumber, setPhoneNumber] = useState(client.phone_number || '');
   const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState(client.website_or_social_link || '');
   const [sector, setSector] = useState<ClientSector | ''>(client.sector || '');
+  const [company, setCompany] = useState<ClientCompanyId | ''>((client.company as ClientCompanyId | null) || '');
   const [industry, setIndustry] = useState(client.industry || '');
   const [isIndustryOpen, setIsIndustryOpen] = useState(false);
   const [activeIndustryIndex, setActiveIndustryIndex] = useState(-1);
@@ -132,6 +134,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
       patch.website_or_social_link = websiteOrSocialLink.trim() || null;
     }
     if ((sector || null) !== (client.sector || null)) patch.sector = sector || null;
+    if ((company || null) !== (client.company || null)) patch.company = company || null;
     if ((industry.trim() || null) !== (client.industry || null)) patch.industry = industry.trim() || null;
     const { servicesChanged, otherServicesChanged } = clientServicesChanged(client, { services, other_services });
     if (servicesChanged) patch.services = services;
@@ -282,6 +285,24 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
                 >
                   <option value="">Not set</option>
                   {SECTOR_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>Company</label>
+              <div className="relative">
+                <Building2 className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <select
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value as ClientCompanyId | '')}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                >
+                  <option value="">Not set / Unassigned</option>
+                  {CLIENT_COMPANY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
             </div>

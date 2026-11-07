@@ -3,6 +3,7 @@ import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Pho
 import { ClientSector, ServiceType, UserRecord } from '../types/database';
 import { COMPREHENSIVE_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption, splitClientServices } from '../lib/clientServices';
 import { CONTRACT_ALLOWED_MIME_TYPES, CONTRACT_MAX_FILE_SIZE_BYTES, formatContractFileSize } from '../lib/clientContracts';
+import { ClientCompanyId, CLIENT_COMPANY_OPTIONS } from '../lib/clientCompany';
 
 interface ClientRegistrationModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ interface ClientRegistrationModalProps {
       client_contact_name?: string;
       sector: ClientSector;
       industry: string;
+      company: ClientCompanyId;
       services: ServiceType[];
       other_services: string[];
       phone_number?: string;
@@ -67,6 +69,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [name, setName] = useState('');
   const [contactName, setContactName] = useState('');
   const [sector, setSector] = useState<ClientSector | ''>('');
+  const [company, setCompany] = useState<ClientCompanyId | ''>('');
   const [industry, setIndustry] = useState('');
   const [isIndustryOpen, setIsIndustryOpen] = useState(false);
   const [activeIndustryIndex, setActiveIndustryIndex] = useState(-1);
@@ -114,6 +117,10 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setErrorMsg('Please select a sector.');
       return;
     }
+    if (!company) {
+      setErrorMsg('Please select which company this client belongs to.');
+      return;
+    }
     if (!industry.trim()) {
       setErrorMsg('Please select or enter an industry.');
       return;
@@ -140,6 +147,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           name: name.trim(),
           client_contact_name: contactName.trim() || undefined,
           sector,
+          company,
           industry: industry.trim(),
           services,
           other_services,
@@ -473,6 +481,31 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+              Company <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <Building2 className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+              <select
+                required
+                value={company}
+                onChange={(e) => setCompany(e.target.value as ClientCompanyId | '')}
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
+                style={{
+                  background: 'rgba(10, 10, 13, 0.8)',
+                  border: '1px solid var(--border-soft)',
+                  color: 'var(--white)',
+                }}
+              >
+                <option value="">Select company</option>
+                {CLIENT_COMPANY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </div>
           </div>
 
