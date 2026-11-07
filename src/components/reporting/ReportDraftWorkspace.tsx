@@ -200,10 +200,16 @@ function linkedTaskIdsOf(source: Pick<ReportSourceItemRecord, 'snapshot'>): stri
 // "who's responsible" mechanism the Inhouse Clients panel itself uses). renderWorkLogSection only
 // trusts this when it narrows to exactly one service — two or more assigned services for the same
 // author is genuinely ambiguous per line, so it's left in "Other/More Updates" rather than guessed.
+// activeServiceFilter (added 2026-11-07): this report request's own single-service scope — null
+// for "All Services". Lets renderWorkLogSection distinguish "a core service with nothing logged"
+// (still mandatory, see that function's own ordered-keys comment) from "a one-off service like
+// واجهة/إنشاء that happens to have logged entries but this report was never scoped to it" (must
+// stay hidden under "All Services", only shown when the report is scoped to exactly that service).
 interface WorkLogServiceGrouping {
   client: ClientRecord;
   usersById: Map<string, UserRecord>;
   assignedServicesByUser: Map<string, Set<ServiceType>>;
+  activeServiceFilter: ServiceType | null;
 }
 
 // workLogGroups (optional): the result of "Group similar entries" (onGroupWorkItems), keyed by
@@ -215,10 +221,10 @@ interface WorkLogServiceGrouping {
 //
 // serviceGrouping (optional): when present, the rendered lines are additionally bucketed by the
 // author's classified service (classifyWorkLogService) and emitted as one sub-section per service
-// — heading line, then its lines, blank line, next service — ordered by the client's own
-// subscribed-services order (CLIENT_SERVICES), with any classified service the client isn't
-// actually subscribed to still shown (never dropped) right after, and an "Other updates" bucket
-// for anything that couldn't be confidently classified always last. pdfExport.ts's
+// — heading line, then its lines, blank line, next service. Section order and which sections can
+// ever appear are governed by renderWorkLogSection's own ordered-keys logic below (core services
+// always, a one-off service only when this report is scoped to exactly it, Creative/"Other
+// updates" only when non-empty) — see that comment for the full, current rule. pdfExport.ts's
 // parseReportContentIntoParagraphs recovers this exact same structure back out of the saved
 // content_text at PDF-export time to give each service its own heading and a decorative divider —
 // see that function's own comment for the heading strings this must stay in sync with.
@@ -361,22 +367,39 @@ function renderWorkLogSection(
     const key: ServiceBucketKey = classifyWorkLogServiceWithAssignmentFallback(role, assigned, subscribedServices) ?? 'other';
     buckets.set(key, [...(buckets.get(key) || []), entry.line]);
   });
-  // Fixed section order, not the client's subscription order: the priority services first
-  // (Media Buying, Social Media, SEO), then every other real service, then the Creative pool, and
-  // "More Updates" always last.
+  // Fixed section order: the three CORE recurring services first (Media Buying, Social Media,
+  // SEO — PRIORITY_SERVICE_ORDER), then the Creative pool, then "More Updates" always last.
   //
-  // Owner's explicit request (2026-11-05): every service the CLIENT actually subscribes to
-  // (getClientServices) must always get its own section, even when no work-log entry classified
-  // into it this period — a client subscribed to SEO with nothing logged should still show an
-  // (empty) SEO section, not have it silently vanish as if the service didn't exist. This is
-  // genuinely different from before: `subscribedServices` drives which real-service keys appear,
-  // not `buckets.has(service)` — a subscribed service with zero entries still renders, with a
-  // placeholder line instead of work-log cards. The Creative pool and "More Updates" are NOT real,
-  // client-subscribed services (no client ever "subscribes" to either), so they keep the old
-  // only-if-non-empty behavior.
+  // Owner's explicit request (2026-11-05, narrowed 2026-11-07 — see below): every service the
+  // CLIENT actually subscribes to must always get its own section, even when no work-log entry
+  // classified into it this period — a client subscribed to SEO with nothing logged should still
+  // show an (empty) SEO section, not have it silently vanish as if the service didn't exist. This
+  // is genuinely different from before: `subscribedServices` drives which real-service keys
+  // appear, not `buckets.has(service)` — a subscribed service with zero entries still renders,
+  // with a placeholder line instead of work-log cards.
+  //
+  // Narrowed 2026-11-07 per direct owner feedback: that "always mandatory, even empty" treatment
+  // is ONLY for the three core, genuinely-recurring services above — "All Services" must mean SEO
+  // + Social Media + Media Buying, nothing else. interface/creation/branding (واجهة، إنشاء متجر،
+  // identity work) are one-off services done once, not weekly, so they must never force an empty
+  // section onto a report that didn't ask for them — they only appear when this specific report
+  // was scoped to exactly that one service (activeServiceFilter) AND it actually has logged
+  // content (buckets.has), same old only-if-non-empty behavior the Creative pool/"More Updates"
+  // already had. graphic_design never gets its own section at all — no role maps a work-log entry
+  // to it (classifyWorkLogService routes graphic_designer/video_editor into the shared 'creative'
+  // bucket instead, see that file's own comment), so it folds into Creative automatically.
+  const coreSubscribedServices = PRIORITY_SERVICE_ORDER.filter((service) => subscribedServices.has(service));
+  const filteredService = serviceGrouping.activeServiceFilter;
+  const selectedNonCoreService =
+    filteredService &&
+    !PRIORITY_SERVICE_ORDER.includes(filteredService) &&
+    subscribedServices.has(filteredService) &&
+    buckets.has(filteredService)
+      ? filteredService
+      : null;
   const orderedKeys: ServiceBucketKey[] = [
-    ...PRIORITY_SERVICE_ORDER.filter((service) => subscribedServices.has(service)),
-    ...CLIENT_SERVICES.filter((service) => !PRIORITY_SERVICE_ORDER.includes(service) && subscribedServices.has(service)),
+    ...coreSubscribedServices,
+    ...(selectedNonCoreService ? [selectedNonCoreService] : []),
     ...(buckets.has('creative') ? (['creative'] as ServiceBucketKey[]) : []),
     ...(buckets.has('other') ? (['other'] as ServiceBucketKey[]) : []),
   ];
@@ -562,8 +585,14 @@ export const ReportDraftWorkspace: React.FC<Props> = ({
           assignedServicesByUser.set(userId, set);
         });
       });
-    return { client, usersById, assignedServicesByUser };
-  }, [effectiveScopeType, clientId, clients, usersById, assignments]);
+    // effectiveClientServiceFilter also covers the synthetic 'own_entries' value (ReportsHub.tsx's
+    // "Only what I logged myself" scope) which is never a real ServiceType — narrowed to null here
+    // so renderWorkLogSection's ordered-keys logic only ever sees a genuine service or "none".
+    const activeServiceFilter = CLIENT_SERVICES.includes(effectiveClientServiceFilter as ServiceType)
+      ? (effectiveClientServiceFilter as ServiceType)
+      : null;
+    return { client, usersById, assignedServicesByUser, activeServiceFilter };
+  }, [effectiveScopeType, clientId, clients, usersById, assignments, effectiveClientServiceFilter]);
   // Point 2: "name — من X إلى Y" (not "{period} — {name}") so the Arabic subject name and the
   // period's two dates each keep their own reading order instead of garbling together — see
   // formatPeriodLabel's own comment (ComparisonDisplay.tsx) for why raw "start_end" labels read
