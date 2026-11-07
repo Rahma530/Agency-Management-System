@@ -7112,9 +7112,17 @@ export default function App() {
   };
 
   // Stats for badge counters
+  // Whether the signed-in user even HAS the Inhouse tab at all (executive/head_of_technical/
+  // marketing_manager only — see data/roles.ts's allowedModules). Needed below: hiding an Inhouse
+  // task from the main Tasks tab is only safe for someone who can actually go see it on the
+  // dedicated Inhouse tab instead — otherwise it just vanishes from the app entirely for them.
+  const currentUserHasInhouseAccess = userRoleInfo.allowedModules.includes('inhouse');
+
   // Matches the main Tasks tab's own task set below (externalTasks) now that Kesraa/Fast Growth's
-  // Inhouse tasks are excluded from that board entirely — this badge would otherwise overcount.
-  const activeTasksCount = tasks.filter((t) => !isTaskDone(t.status) && !isInhouseTask(t, clients)).length;
+  // Inhouse tasks are excluded from that board — this badge would otherwise overcount.
+  const activeTasksCount = tasks.filter(
+    (t) => !isTaskDone(t.status) && (!isInhouseTask(t, clients) || !currentUserHasInhouseAccess)
+  ).length;
   const onboardingClientsCount = clients.filter((c) => c.status === 'onboarding').length;
   const blockedTasksCount = tasks.filter((t) => t.status === 'blocked').length;
 
@@ -7127,13 +7135,22 @@ export default function App() {
   const inhouseTasks = useMemo(() => tasks.filter((t) => isInhouseTask(t, clients)), [tasks, clients]);
 
   // Owner's explicit request (2026-11-03): Kesraa/Fast Growth's own Inhouse tasks must not show up
-  // on the main, cross-team Tasks board at all — not in the list/Kanban, not in its client filter
-  // (already handled inside CrossTeamTaskBoard.tsx via isExternalClient), and not selectable as the
-  // Client when creating a task there (same isExternalClient filter covers that too, since the
-  // Create Task form's Client select reuses sortedClientsForPicker). The one missing piece was the
-  // `tasks` array itself — the main tab was still receiving every task, inhouse included, so the
-  // exact complement of inhouseTasks above is passed to the main Tasks tab instead of the full list.
-  const externalTasks = useMemo(() => tasks.filter((t) => !isInhouseTask(t, clients)), [tasks, clients]);
+  // on the main, cross-team Tasks board — not in the list/Kanban, not in its client filter (already
+  // handled inside CrossTeamTaskBoard.tsx via isExternalClient), and not selectable as the Client
+  // when creating a task there (same isExternalClient filter covers that too, since the Create Task
+  // form's Client select reuses sortedClientsForPicker).
+  //
+  // Fixed 2026-11-07 (owner report: Hasnaa, a Social Media Agent, created an Inhouse task and
+  // assigned it to May, a Graphic Designer — neither role has the Inhouse tab at all per
+  // allowedModules above, so the task became invisible to both of them everywhere: excluded from
+  // their only Tasks tab by this exact filter, and unreachable via the Inhouse tab they can't open).
+  // An Inhouse task is now only excluded here for a viewer who actually HAS the Inhouse tab to see
+  // it on instead (executive/head_of_technical/marketing_manager — currentUserHasInhouseAccess
+  // above) — never for someone with no other place to find their own task.
+  const externalTasks = useMemo(
+    () => tasks.filter((t) => !isInhouseTask(t, clients) || !currentUserHasInhouseAccess),
+    [tasks, clients, currentUserHasInhouseAccess]
+  );
 
   // Inhouse module (2026-11-04): the "treat Kesraa/Fast Growth like a full Client" half of the
   // owner's request — services + a standing responsible agent per service, same assignments-table
