@@ -186,6 +186,7 @@ import { CampaignManagementModule } from './components/CampaignManagementModule'
 import { MentorshipTrackerModule } from './components/MentorshipTrackerModule';
 import { ServiceBriefsRoutingView } from './components/ServiceBriefsRoutingView';
 import { MyWorkHub } from './components/MyWorkHub';
+import { ClientDashboard } from './components/ClientDashboard';
 import { SalesPortalView } from './components/SalesPortalView';
 import { AccessDenied } from './components/AccessDenied';
 import { RolePortalHeader } from './components/RolePortalHeader';
@@ -596,6 +597,14 @@ export default function App() {
   // initialOpenTaskId prop/effect). Reset to null on every ordinary tab change the same way
   // taskBoardAssigneePrefill is, so a later visit to Tasks never reopens a stale notification's task.
   const [taskBoardOpenTaskId, setTaskBoardOpenTaskId] = useState<string | null>(null);
+  // Which client's full ClientDashboard to show as a modal when opened from MyWorkHub's My
+  // Clients cards — independent of AMQueue's own dashboardClientId (its own local state), since
+  // My Work Hub has no client-queue table of its own to host that state in.
+  const [myWorkHubDashboardClientId, setMyWorkHubDashboardClientId] = useState<string | null>(null);
+  const myWorkHubDashboardClient = useMemo(
+    () => (myWorkHubDashboardClientId ? clients.find((c) => c.id === myWorkHubDashboardClientId) || null : null),
+    [myWorkHubDashboardClientId, clients]
+  );
   const [notifications, setNotifications] = useState<NotificationRecord[]>([
     {
       id: 'notif-1',
@@ -8201,7 +8210,76 @@ export default function App() {
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
                   onHardDeleteTasks={handleHardDeleteTasks}
+                  onOpenClientDashboard={setMyWorkHubDashboardClientId}
                 />
+                {myWorkHubDashboardClient && (
+                  <ClientDashboard
+                    client={myWorkHubDashboardClient}
+                    lifecyclePeriods={clientLifecyclePeriodsByClientId[myWorkHubDashboardClient.id] || []}
+                    users={users}
+                    currentUser={currentUser}
+                    briefs={briefs}
+                    briefRevisions={briefRevisions}
+                    campaigns={campaigns}
+                    tasks={tasks}
+                    dailyLogs={dailyLogs}
+                    extraNotes={extraNotes}
+                    assignments={assignments}
+                    onRefreshAssignments={refreshAssignments}
+                    reports={reports}
+                    clientComparisons={clientComparisons}
+                    socialInsights={socialInsights}
+                    seoInsights={seoInsights}
+                    clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === myWorkHubDashboardClient.id) || null}
+                    onClose={() => setMyWorkHubDashboardClientId(null)}
+                    onSaveBrief={handleSaveBrief}
+                    onSubmitBrief={handleSubmitBrief}
+                    briefFieldSchemas={briefFieldSchemas}
+                    briefFieldSchemaRows={briefFieldSchemaRows}
+                    onCreateBriefFieldSchema={handleCreateBriefFieldSchema}
+                    onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
+                    onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
+                    onDeleteClient={handleDeleteClient}
+                    onForceDeleteClient={handleHardDeleteClient}
+                    onAssignAMAgent={handleAssignAMAgent}
+                    onAssignAMTeamLead={handleAssignAMTeamLead}
+                    onAssignServiceAgent={handleAssignServiceAgent}
+                    onUpdateTaskStatus={handleUpdateTaskStatus}
+                    onUpdateClientStatus={handleUpdateClientStatus}
+                    onConfirmClientRenewal={handleConfirmClientRenewal}
+                    onReopenClient={handleReopenClient}
+                    onMarkClientViewed={handleMarkClientViewedByAMLead}
+                    onGenerateComparison={handleGenerateComparison}
+                    onGenerateReport={handleGenerateReport}
+                    onGenerateAiSummary={handleGenerateCampaignSummary}
+                    onGenerateUnifiedReport={handleGenerateUnifiedReport}
+                    onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
+                    onApproveReport={handleApproveReport}
+                    meetings={meetings}
+                    onUploadMeetingRecording={handleUploadMeetingRecording}
+                    onSaveMeetingNotes={handleSaveMeetingNotes}
+                    platformConnections={platformConnections}
+                    onSetPlatformConnectionStatus={handleSetPlatformConnectionStatus}
+                    onCreatePortalLogin={handleCreatePortalLogin}
+                    clientContracts={clientContracts}
+                    onUploadClientContract={handleUploadClientContract}
+                    onDeleteClientContract={handleDeleteClientContract}
+                    onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                    onUpdateClientDates={handleUpdateClientDates}
+                    onUpdateClientDetails={handleUpdateClientDetails}
+                    onUpdateClientAccess={handleUpdateClientAccess}
+                    onFetchClientAccess={handleFetchClientAccess}
+                    briefAttachments={briefAttachments}
+                    onUploadBriefAttachment={handleUploadBriefAttachment}
+                    onDeleteBriefAttachment={handleDeleteBriefAttachment}
+                    onFetchClientAccessAttachments={handleFetchClientAccessAttachments}
+                    onUploadClientAccessAttachment={handleUploadClientAccessAttachment}
+                    onDeleteClientAccessAttachment={handleDeleteClientAccessAttachment}
+                    allClients={clients}
+                    onPreviewMergeClients={handlePreviewMergeClients}
+                    onMergeClients={handleMergeClients}
+                  />
+                )}
               </div>
             )}
 

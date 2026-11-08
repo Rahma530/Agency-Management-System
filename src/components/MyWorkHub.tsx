@@ -107,6 +107,11 @@ interface MyWorkHubProps {
   // without leaving this screen. Optional and role-re-checked below via canHardDeleteTasks: absent
   // or wrong role, the delete affordance simply never renders — never a silent no-op button.
   onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
+  // Opens the full ClientDashboard (same one AMQueue/CampaignManagementModule already use) for a
+  // specific client, from a My Clients card — App.tsx owns the actual modal/state, this is just
+  // the trigger. Optional and re-checked at the render site below: absent, a My Clients card is
+  // plain, non-clickable info, same as before this feature existed.
+  onOpenClientDashboard?: (clientId: string) => void;
 }
 
 // Ordering only, not section presence: am_agent/am_team_lead/sales lead with
@@ -186,6 +191,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   onNavigateToModule,
   onMarkTaskViewed,
   onHardDeleteTasks,
+  onOpenClientDashboard,
 }) => {
   const roleInfo = getRoleInfo(currentUser.role);
   const layout: 'client-first' | 'task-first' = CLIENT_FIRST_LAYOUT_ROLES.includes(currentUser.role)
@@ -681,10 +687,15 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
           {displayedMyClients.map((client) => {
             const showValue = canSeeContractValue(currentUser.role, client.sales_owner_id === currentUser.id);
             const isNewAssignment = newClientTaskIds.has(client.id);
+            const openable = !!onOpenClientDashboard;
             return (
               <div
                 key={client.id}
-                className="p-3 rounded-xl border border-stone-800 bg-stone-900/60 flex items-center justify-between gap-2"
+                onClick={openable ? () => onOpenClientDashboard!(client.id) : undefined}
+                title={openable ? 'Open client dashboard' : undefined}
+                className={`p-3 rounded-xl border border-stone-800 bg-stone-900/60 flex items-center justify-between gap-2 ${
+                  openable ? 'cursor-pointer hover:border-purple-500/40 hover:bg-stone-900 transition-all' : ''
+                }`}
               >
                 <div>
                   <p className="text-xs font-bold text-white inline-flex items-center gap-1.5">
@@ -706,15 +717,18 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                     {CLIENT_STATUS_META[client.status].label}
                   </span>
                 </div>
-                <div className="text-right">
-                  {showValue && client.contract_value ? (
-                    <span className="text-[10px] font-mono text-emerald-400 block">
-                      {client.contract_value.toLocaleString()} SAR
-                    </span>
-                  ) : null}
-                  {client.renewal_date && (
-                    <span className="text-[10px] font-mono text-stone-500">Renews {client.renewal_date}</span>
-                  )}
+                <div className="text-right flex items-center gap-2">
+                  <div>
+                    {showValue && client.contract_value ? (
+                      <span className="text-[10px] font-mono text-emerald-400 block">
+                        {client.contract_value.toLocaleString()} SAR
+                      </span>
+                    ) : null}
+                    {client.renewal_date && (
+                      <span className="text-[10px] font-mono text-stone-500">Renews {client.renewal_date}</span>
+                    )}
+                  </div>
+                  {openable && <ArrowUpRight className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
                 </div>
               </div>
             );
