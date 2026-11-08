@@ -41,7 +41,7 @@ const aiBody = workspace.slice(aiStart, aiEnd);
 if (aiStart < 0 || aiEnd < 0
   || !aiBody.includes('activeWorkLogGroups,')
   || !aiBody.includes('composeManifestContent(')
-  || !aiBody.includes('setDraftTextWithUndo(serializeStructuredReportText(outcome.result), undefined);')) {
+  || !aiBody.includes('setDraftTextWithUndo(serializeStructuredReportText(restoredResult), undefined);')) {
   throw new Error('AI Summary no longer composes from the active grouping, or no longer resets it afterward as designed.');
 }
 
