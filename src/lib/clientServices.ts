@@ -148,6 +148,25 @@ export function getClientServices(client: {
   return resolved.includes('graphic_design') ? resolved : [...resolved, 'graphic_design'];
 }
 
+// Added 2026-11-08 (owner decision): getClientServices() above is correct for every FUNCTIONAL use
+// — brief routing/eligibility, lifecycle/"all briefs submitted" status, Inhouse specialist
+// assignment, report section inclusion — Graphic Design genuinely is one of those services for
+// every client and must keep acting like it everywhere real work gets routed or gated. But showing
+// a "Graphic Design" badge on every single client's service-pill list, in an admin-facing table or
+// card, says nothing (it's true of every row, so it carries no information) and was asked to be
+// dropped from those PURELY DECORATIVE badge/pill lists specifically. Use this helper — never
+// getClientServices() directly — only at a call site that renders a client's services as a
+// read-only list/badge row with no other behavior hanging off it (no tabs, no counts, no
+// assignment, no routing). This mirrors the filter BriefRepositoryView.tsx and
+// clientPortal/ClientPortalView.tsx's own briefServices already applied independently, for the
+// same reason, before this helper existed.
+export function getDisplayableClientServices(client: {
+  services?: string[] | null;
+  other_services?: string[] | null;
+}): ServiceType[] {
+  return getClientServices(client).filter((s) => s !== 'graphic_design');
+}
+
 // `other_services` entries that are NOT a recognized ServiceType value or alias — i.e. genuine
 // free text (a service this app has no dedicated handling for at all). Trimmed, deduped
 // case-insensitively, blanks dropped, original casing of the first occurrence preserved.
