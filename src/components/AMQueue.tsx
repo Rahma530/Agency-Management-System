@@ -25,6 +25,7 @@ import {
   UploadCloud,
   PlusCircle,
   Merge,
+  CalendarClock,
 } from 'lucide-react';
 import {
   ClientRecord,
@@ -566,6 +567,29 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     [visibleClients]
   );
 
+  // Added 2026-11-08: a persistent stats-bar card mirroring the automated renewal-alert
+  // notification's own window (App.tsx's checkRenewalAlerts effect — renewal_date within the next
+  // 7 days, any non-closed status) — requested because that notification disappears once clicked,
+  // leaving no durable way to see "how many renewals are coming up" at a glance. Deliberately NOT
+  // the same 30-day window TeamLeadDashboard.tsx's own isRenewalApproaching uses (that one also
+  // requires status === 'active' and serves a different "needs attention" list) — this one matches
+  // the actual renewal alert she's asking to replace, not a different definition.
+  const renewalSoonClients = useMemo(() => {
+    const now = new Date();
+    const in7Days = new Date(now);
+    in7Days.setDate(in7Days.getDate() + 7);
+    return visibleClients.filter((c) => {
+      if (!c.renewal_date || c.status === 'closed') return false;
+      const renewal = new Date(c.renewal_date);
+      return !Number.isNaN(renewal.getTime()) && renewal >= now && renewal <= in7Days;
+    });
+  }, [visibleClients]);
+  const renewalSoonClientIds = useMemo(
+    () => new Set(renewalSoonClients.map((c) => c.id)),
+    [renewalSoonClients]
+  );
+  const [showRenewalSoonOnly, setShowRenewalSoonOnly] = useState(false);
+
   const [dashboardClientId, setDashboardClientId] = useState<string | null>(null);
   const [assigningAgentId, setAssigningAgentId] = useState<Record<string, string>>({});
   const [isAssigning, setIsAssigning] = useState<string | null>(null);
@@ -633,6 +657,9 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         })
         // "Documented Briefs" card filter — clients that have at least one submitted brief.
         .filter((c) => !showDocumentedBriefsOnly || getClientBriefs(c.id).length > 0)
+        // "Renewals Due Soon" card filter — same renewal_date-within-7-days set as that card's
+        // own count.
+        .filter((c) => !showRenewalSoonOnly || renewalSoonClientIds.has(c.id))
         // Onboarding clients (need attention now) first, closed ones last, unless manually
         // reordered by drag-and-drop — see compareClientsForPortfolio's own comment
         // (lib/clientStatus.ts) for the full ordering.
@@ -646,6 +673,8 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       companyFilter,
       showPendingBriefsOnly,
       showDocumentedBriefsOnly,
+      showRenewalSoonOnly,
+      renewalSoonClientIds,
       isAMTeamLead,
       briefs,
     ]
@@ -663,6 +692,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     companyFilter === 'all' &&
     !showPendingBriefsOnly &&
     !showDocumentedBriefsOnly &&
+    !showRenewalSoonOnly &&
     !!onReorderClients;
 
   const reorderSensors = useSensors(
@@ -960,7 +990,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           number. "Total In Onboarding" reuses the statusFilter dropdown's own state; the other
           two new toggles follow the same click-to-filter pattern "Clients with Missing Dates"
           already used before this change. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <button
           type="button"
           onClick={() => {
@@ -1076,6 +1106,33 @@ export const AMQueue: React.FC<AMQueueProps> = ({
           </div>
           <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-950/30 text-amber-300 border border-amber-800/30">
             <Calendar className="w-4 h-4" />
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setShowRenewalSoonOnly((prev) => !prev);
+            scrollToClientPortfolio();
+          }}
+          className="p-4 rounded-xl flex items-center justify-between text-left transition-all"
+          data-accent="warning"
+          style={{
+            background: 'var(--gradient-card)',
+            border: showRenewalSoonOnly ? '1px solid var(--stat-warning-alt)' : '1px solid var(--border-soft)',
+          }}
+        >
+          <div>
+            <p className="text-xs font-semibold" style={{ color: 'var(--ink-soft)' }}>Renewals Due Soon</p>
+            <p className="text-2xl font-bold mt-1 stat-number" style={{ color: 'var(--stat-warning-alt)' }}>
+              {renewalSoonClients.length}
+            </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
+              {showRenewalSoonOnly ? 'Showing only these — click to clear' : 'Click to filter the list below'}
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-950/30 text-amber-300 border border-amber-800/30">
+            <CalendarClock className="w-4 h-4" />
           </div>
         </button>
       </div>
