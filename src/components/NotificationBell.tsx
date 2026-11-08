@@ -26,6 +26,45 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const prevUnreadCount = useRef(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // Added 2026-11-08: a notification arriving while this browser tab is open but NOT the active/
+  // focused tab was silent, even though everything else about the notification (badge count, bell
+  // animation) worked fine. Root cause: the old code created a brand-new AudioContext on every
+  // single notification. Browsers' autoplay policy only lets an AudioContext start producing sound
+  // without an explicit, recent user gesture in the ACTIVE tab — a freshly-created context in a
+  // background tab is typically created already 'suspended' and stays silent. An AudioContext that
+  // is already 'running', though, keeps producing sound even after its tab loses focus — so the fix
+  // is to create ONE context lazily, unlock/resume it the first time the user interacts with the
+  // page at all (while the tab is necessarily focused, since that's how a click/keydown reaches it)
+  // and reuse that same running context for every later notification, including ones that arrive
+  // while a different tab is focused.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const getAudioContext = (): AudioContext | null => {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioCtx();
+    }
+    return audioCtxRef.current;
+  };
+
+  useEffect(() => {
+    // Any real interaction with the page — necessarily happening while this tab is focused —
+    // creates/unlocks the shared AudioContext once, so it's already 'running' by the time a later
+    // notification needs to play a sound from a background tab.
+    const unlockAudio = () => {
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
+    window.addEventListener('keydown', unlockAudio, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
+
   const unreadCount = notifications.filter((n) => !n.is_read).length;
   const visibleNotifications = notifications.filter((n) => !n.is_read);
 
@@ -38,24 +77,34 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
 
       // Play Sound (Synthetic Pop/Tick)
       try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          const ctx = new AudioCtx();
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(800, ctx.currentTime); 
-          osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
-          
-          gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-          
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          
-          osc.start();
-          osc.stop(ctx.currentTime + 0.1);
+        const ctx = getAudioContext();
+        if (ctx) {
+          const playTone = () => {
+            const osc = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
+
+            gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+
+            osc.connect(gainNode);
+            gainNode.connect(ctx.destination);
+
+            osc.start();
+            osc.stop(ctx.currentTime + 0.1);
+          };
+          if (ctx.state === 'suspended') {
+            // Background-tab notification arriving before any interaction ever unlocked the
+            // context (e.g. the very first notification of the session) — still attempt resume();
+            // browsers that allow it will play the tone, the rest silently stay suspended same as
+            // today, which is a no-worse-than-before fallback, not a regression.
+            ctx.resume().then(playTone).catch(() => {});
+          } else {
+            playTone();
+          }
         }
       } catch (e) {
         console.log("Audio playback prevented or unsupported");
