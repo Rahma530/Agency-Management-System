@@ -1,10 +1,12 @@
 // Regression check for getUserCapacityData() (src/lib/capacity.ts) — the client-side mirror of
 // get_capacity_snapshot v2 (supabase/migrations/20261119000000_capacity_snapshot_v2.sql). Covers
 // the five things most likely to silently drift between the two: the creative roles' own
-// delivered-today measure (never 'over_capacity', 'target_reached' instead), in_review not
-// counting as workload, a client reachable via two different sources still counting once, a
-// team-lead role with capacity_limit = 0 (or any other value — ignored either way) always being
-// informational only, and the non-creative/non-TL default limit being 12, not 8.
+// delivered-today measure (never 'over_capacity', 'target_reached' instead), completed/closed not
+// counting as workload while 'edit' does (retired 'in_review' used to be the non-workload example
+// here — see 20270103000000_retire_in_review_add_edit_status.sql), a client reachable via two
+// different sources still counting once, a team-lead role with capacity_limit = 0 (or any other
+// value — ignored either way) always being informational only, and the non-creative/non-TL
+// default limit being 12, not 8.
 //
 // Run via `npm run lint` (chained after tsc --noEmit) or directly:
 // `npx tsx scripts/checkCapacityModel.ts`.
@@ -67,7 +69,7 @@ function main(): void {
   {
     const designer = makeUser({ id: 'designer', role: 'graphic_designer', team: 'Creative & Design', capacity_limit: null });
     const todayIso = new Date().toISOString();
-    const tasks = [task('t1', 'c1', 'in_review', 'designer', todayIso)] as TaskRecord[];
+    const tasks = [task('t1', 'c1', 'completed', 'designer', todayIso)] as TaskRecord[];
     const taskAssignees = [assignee('t1', 'designer')] as TaskAssigneeRecord[];
     const data = getUserCapacityData(designer, [] as ClientRecord[], tasks, taskAssignees, [] as AssignmentRecord[]);
     assertEqual(data.usedCapacity, 1, 'creative: a task delivered today counts');
@@ -76,7 +78,7 @@ function main(): void {
 
     // 6 deliveries today against the MAX_TASKS_PER_DAY (6) default target — must read
     // 'target_reached', never 'over_capacity', even though used === limit.
-    const busyTasks = Array.from({ length: 6 }, (_, i) => task(`bt${i}`, 'c1', 'in_review', 'designer', todayIso)) as TaskRecord[];
+    const busyTasks = Array.from({ length: 6 }, (_, i) => task(`bt${i}`, 'c1', 'completed', 'designer', todayIso)) as TaskRecord[];
     const busyAssignees = busyTasks.map((t) => assignee(t.id, 'designer')) as TaskAssigneeRecord[];
     const busyData = getUserCapacityData(designer, [] as ClientRecord[], busyTasks, busyAssignees, [] as AssignmentRecord[]);
     assertEqual(busyData.usedCapacity, 6, 'creative: 6 deliveries today all count');
@@ -84,20 +86,24 @@ function main(): void {
   }
 
   // ------------------------------------------------------------------
-  // Scenario 2: in_review is not workload. A non-creative, non-TL role's own client, reachable
-  // ONLY via a task, must not count while that task is in_review — only once it reaches a
-  // workload-open status (todo/in_progress/blocked).
+  // Scenario 2: completed/closed are not workload; todo/in_progress/blocked/edit are. A
+  // non-creative, non-TL role's own client, reachable ONLY via a task, must not count while that
+  // task is completed — only once it reaches a workload-open status, 'edit' included (a
+  // duplicated task counts as new, open work — owner decision, 2026-11-08).
   // ------------------------------------------------------------------
   {
     const agent = makeUser({ id: 'agent', role: 'am_agent', capacity_limit: 5 });
     const clients = [client('c2', 'active')] as ClientRecord[];
     const taskAssignees = [assignee('t2', 'agent')] as TaskAssigneeRecord[];
 
-    const inReview = getUserCapacityData(agent, clients, [task('t2', 'c2', 'in_review', 'agent')] as TaskRecord[], taskAssignees, [] as AssignmentRecord[]);
-    assertEqual(inReview.usedCapacity, 0, 'in_review: the only task being in_review must not count the client');
+    const completed = getUserCapacityData(agent, clients, [task('t2', 'c2', 'completed', 'agent')] as TaskRecord[], taskAssignees, [] as AssignmentRecord[]);
+    assertEqual(completed.usedCapacity, 0, 'completed: the only task being completed must not count the client');
 
     const inProgress = getUserCapacityData(agent, clients, [task('t2', 'c2', 'in_progress', 'agent')] as TaskRecord[], taskAssignees, [] as AssignmentRecord[]);
     assertEqual(inProgress.usedCapacity, 1, 'in_progress (workload-open): the same client now counts');
+
+    const editing = getUserCapacityData(agent, clients, [task('t2', 'c2', 'edit', 'agent')] as TaskRecord[], taskAssignees, [] as AssignmentRecord[]);
+    assertEqual(editing.usedCapacity, 1, 'edit (workload-open): a duplicated task counts the client too');
   }
 
   // ------------------------------------------------------------------
@@ -171,7 +177,7 @@ function main(): void {
     failures.forEach((failure) => console.error(`  ${failure}`));
     process.exit(1);
   }
-  console.log('OK: capacity model mirrors get_capacity_snapshot v2 — creative delivered-today, in_review excluded, cross-source dedupe, team-lead informational-only, and the 12 default.');
+  console.log('OK: capacity model mirrors get_capacity_snapshot v2 — creative delivered-today, completed excluded while edit counts, cross-source dedupe, team-lead informational-only, and the 12 default.');
 }
 
 main();

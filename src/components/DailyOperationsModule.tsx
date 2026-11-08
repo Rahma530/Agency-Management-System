@@ -69,7 +69,7 @@ interface DailyOperationsModuleProps {
   // employee's" filter below must go through it, never tasks.assigned_to alone (visibility
   // audit finding: a co-assignee added after the first was invisible to every filter here).
   taskAssignees?: TaskAssigneeRecord[];
-  // Recent in_review/completed transitions (see App.tsx's taskDeliveryEvents). Drives the
+  // Recent completed transitions (see App.tsx's taskDeliveryEvents). Drives the
   // Delivered-today count by actor, so a re-delivery on a later day still counts that day.
   taskDeliveryEvents?: DeliveryEventRow[];
   // Already RLS-scoped (App.tsx's global state, loaded once via loadData()) — handed straight to
@@ -290,9 +290,9 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const dailyTaskTarget = useMemo(() => resolveDailyTaskTarget(effectiveEmployee), [effectiveEmployee]);
 
   // Helper date functions — shared with MyWorkHub.tsx via lib/employeeWork.ts. isOverdue uses
-  // isTaskOverdueForAssignee (not the plain isTaskOverdue): in_review is never Overdue, and
-  // neither is a revision (revision_count > 0) even past its unmoved due_date — see that
-  // function's own comment.
+  // isTaskOverdueForAssignee (not the plain isTaskOverdue): only Workload-open statuses can ever
+  // be Overdue, and neither can a revision (revision_count > 0) even past its unmoved due_date —
+  // see that function's own comment.
   const isOverdue = (task: TaskRecord) => isTaskOverdueForAssignee(task, todayStr);
   const isDueToday = (task: TaskRecord) => isTaskDueToday(task, todayStr);
 
@@ -383,13 +383,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return sortedEmployeeTasks.filter((t) => t.status === 'blocked');
   }, [sortedEmployeeTasks]);
 
-  // Waiting for review: delivered, sitting with the client — NOT workload (owner decision), so
-  // never folded into any hours total or the Overdue card, but still worth its own section so the
-  // assignee can see what they're waiting on.
-  const waitingForReviewTasks = useMemo(() => {
-    return sortedEmployeeTasks.filter((t) => t.status === 'in_review');
-  }, [sortedEmployeeTasks]);
-
   // Revisions: workload-open AND previously delivered at least once (revision_count > 0) — real
   // work the client sent back, shown separately from "What to do today" so it's clear which
   // tasks are a second (or third...) pass rather than first-time work.
@@ -460,14 +453,14 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const teamWorkloadSummary = useMemo(() => {
     return teamMembers.map((member) => {
       const memberTasks = tasks.filter((t) => resolveTaskAssigneeIds(t.id, taskAssignees, t.assigned_to).includes(member.id));
-      // Workload-open, not merely "not done" — in_review is delivered, not active workload
-      // (owner decision), so it's excluded from the active count below. It gets its own
-      // waitingForReview count instead.
+      // Workload-open (todo/in_progress/blocked/edit) feeds the active count and the capacity
+      // rate below — a duplicated Edit-column task counts as active workload, same as any other
+      // open task (owner decision, 2026-11-08).
       const active = memberTasks.filter((t) => isTaskWorkloadOpen(t.status));
       const completed = memberTasks.filter((t) => isTaskDone(t.status));
       const overdue = memberTasks.filter(isOverdue);
       const blocked = memberTasks.filter((t) => t.status === 'blocked');
-      const waitingForReview = memberTasks.filter((t) => t.status === 'in_review');
+      const editing = memberTasks.filter((t) => t.status === 'edit');
       const limit = resolveDailyWorkCapacityLimit(member);
       // Team leads may genuinely have a limit of 0 (no tracked buffer) — not
       // an error, just nothing to compute a rate against.
@@ -483,7 +476,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         completedCount: completed.length,
         overdueCount: overdue.length,
         blockedCount: blocked.length,
-        waitingForReviewCount: waitingForReview.length,
+        editingCount: editing.length,
         deliveredToday,
         dailyTarget,
         limit,
@@ -511,8 +504,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const handleAdvanceStatus = async (taskId: string, currentStatus: TaskStatus) => {
     // Never advances into 'closed' — isTaskDone(currentStatus) already excludes 'completed' from
     // ever reaching this point via the render-side guards below, so this only ever walks
-    // todo -> in_progress -> in_review -> completed. Closing is a separate, gated action (see
-    // handleCloseTask below), not something this generic advance button can reach.
+    // todo -> in_progress -> completed. Closing is a separate, gated action (see handleCloseTask
+    // below), not something this generic advance button can reach. 'edit' is never a step this
+    // button walks through either (TASK_STATUS_ORDER excludes it) — a task in the Edit column
+    // simply has no Advance Status control shown for it (see the render-side guard).
     const currentIndex = TASK_STATUS_ORDER.indexOf(currentStatus);
     if (currentIndex >= 0 && currentIndex < TASK_STATUS_ORDER.length - 1) {
       const nextStatus = TASK_STATUS_ORDER[currentIndex + 1];
@@ -739,10 +734,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     switch (status) {
       case 'todo': return 'To Do';
       case 'in_progress': return 'In Progress';
-      case 'in_review': return 'Reviewing';
       case 'completed': return 'Completed';
       case 'blocked': return 'Blocked';
       case 'closed': return 'Closed';
+      case 'edit': return 'Edit';
       default: return status;
     }
   };
@@ -754,10 +749,10 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
         return { bg: 'rgba(169, 245, 193, 0.15)', text: 'var(--roas-good)', border: 'rgba(169, 245, 193, 0.3)' };
       case 'in_progress':
         return { bg: 'rgba(123, 47, 247, 0.25)', text: 'var(--purple-light)', border: 'rgba(123, 47, 247, 0.4)' };
-      case 'in_review':
-        return { bg: 'rgba(245, 226, 154, 0.2)', text: 'var(--roas-mid)', border: 'rgba(245, 226, 154, 0.35)' };
       case 'blocked':
         return { bg: 'rgba(245, 163, 163, 0.25)', text: 'var(--roas-bad)', border: 'rgba(245, 163, 163, 0.4)' };
+      case 'edit':
+        return { bg: 'var(--indigo-tint)', text: 'var(--indigo-ink)', border: 'var(--border-indigo)' };
       case 'todo':
       default:
         return { bg: 'rgba(168, 155, 184, 0.15)', text: 'var(--grey)', border: 'rgba(168, 155, 184, 0.3)' };
@@ -999,7 +994,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
           {/* Daily Workload KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
             {/* Delivered Today — replaces the old hours-based "Total Hours Today" card (owner
-                decision: in_review/delivered_at-based, no estimated/actual hours anywhere in
+                decision: completed/delivered_at-based, no estimated/actual hours anywhere in
                 this view). No cap: if delivered exceeds the target, shown as "+k" over it. */}
             <div
               className="p-3.5 rounded-[16px] flex flex-col justify-between"
@@ -1139,7 +1134,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
 
                       <div className="flex items-center justify-end pt-2 border-t border-stone-800 text-[11px]">
                         <div className="flex items-center gap-1.5">
-                          {!isTaskDone(task.status) && (
+                          {!isTaskDone(task.status) && task.status !== 'edit' && (
                             <button
                               onClick={() => handleAdvanceStatus(task.id, task.status)}
                               className="px-2.5 py-1 rounded bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 font-semibold text-[11px] transition-colors"
@@ -1257,7 +1252,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                           {/* Quick Workflow Action Buttons */}
                           <div className="flex items-center gap-1.5 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-stone-800">
                             {/* Status Advancement Button */}
-                            {!isTaskDone(task.status) && task.status !== 'blocked' && (
+                            {!isTaskDone(task.status) && task.status !== 'blocked' && task.status !== 'edit' && (
                               <button
                                 onClick={() => handleAdvanceStatus(task.id, task.status)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600/30 text-purple-200 hover:bg-purple-600/50 transition-colors flex items-center gap-1"
@@ -1298,43 +1293,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Waiting for review — delivered, sitting with the client. NOT workload (owner
-                decision): never in the hours totals above, never Overdue, shown purely so the
-                assignee can see what they're waiting on. */}
-            {waitingForReviewTasks.length > 0 && (
-              <div
-                className="rounded-[18px] p-4 space-y-3"
-                style={{ background: 'var(--gradient-card)', border: '1px solid var(--border-medium)' }}
-              >
-                <div className="flex items-center justify-between pb-2 border-b border-stone-800">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-amber-400" />
-                    <h3 className="text-xs font-bold text-white">Waiting for review</h3>
-                  </div>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400">
-                    {waitingForReviewTasks.length}
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {waitingForReviewTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      onClick={() => setSelectedTaskDetails(task)}
-                      className="p-2.5 rounded-xl border border-stone-800 hover:border-purple-500/40 bg-stone-900/60 transition-all cursor-pointer flex items-center justify-between gap-2"
-                    >
-                      <span className="text-xs font-semibold text-white truncate">
-                        {task.task_number != null && (
-                          <span className="text-stone-500 font-mono">#{task.task_number} </span>
-                        )}
-                        {task.title}
-                      </span>
-                      <span className="text-[10px] text-stone-400 font-mono shrink-0">Due: {task.due_date || 'Not set'}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Revisions — workload-open AND previously delivered at least once. Real work, never
                 Overdue (owner decision: the client's review cycle isn't the assignee being late). */}
@@ -1417,9 +1375,12 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                 <option value="all" className="bg-stone-900 text-white">All Statuses ({sortedEmployeeTasks.length})</option>
                 <option value="todo" className="bg-stone-900 text-white">To Do</option>
                 <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-                <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
                 <option value="completed" className="bg-stone-900 text-white">Completed</option>
                 <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
+                {/* View-only filter — 'edit' is never a pick in the status-change dropdowns below
+                    (reaching Edit always means a fresh duplicate, never relabeling this row), but
+                    this one just filters the list, so it's safe and useful to include. */}
+                <option value="edit" className="bg-stone-900 text-white">Edit</option>
               </select>
             </div>
 
@@ -1579,7 +1540,6 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                               >
                                 <option value="todo" className="bg-stone-900 text-white">To Do</option>
                                 <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-                                <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
                                 <option value="completed" className="bg-stone-900 text-white">Completed</option>
                                 <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
                               </select>
@@ -2016,12 +1976,19 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
                         </p>
                       </div>
 
-                      {/* in_review is delivered, waiting on the client — never Overdue (owner
-                          decision); this is the one place a management board shows that state. */}
-                      <div className={`p-2 rounded-xl border ${item.waitingForReviewCount > 0 ? 'bg-amber-950/40 border-amber-500/40' : 'bg-stone-900 border-stone-800'}`}>
-                        <p className="text-[10px] text-stone-400">Waiting for review</p>
-                        <p className={`text-sm font-bold mt-0.5 ${item.waitingForReviewCount > 0 ? 'text-amber-400' : 'text-stone-300'}`}>
-                          {item.waitingForReviewCount}
+                      {/* Edit-column duplicates for this member — counted as active workload
+                          (isTaskWorkloadOpen includes 'edit'), surfaced here so a manager can see
+                          how much of someone's load is revision/edit work versus first-time work. */}
+                      <div
+                        className="p-2 rounded-xl border bg-stone-900 border-stone-800"
+                        style={item.editingCount > 0 ? { background: 'var(--indigo-tint)', borderColor: 'var(--border-indigo)' } : undefined}
+                      >
+                        <p className="text-[10px] text-stone-400">Edit</p>
+                        <p
+                          className="text-sm font-bold mt-0.5 text-stone-300"
+                          style={item.editingCount > 0 ? { color: 'var(--indigo-ink)' } : undefined}
+                        >
+                          {item.editingCount}
                         </p>
                       </div>
                     </div>
@@ -2282,7 +2249,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800 space-y-2">
                 <span className="text-xs font-bold text-white block">Update task stage:</span>
                 <div className="flex flex-wrap gap-2">
-                  {(['todo', 'in_progress', 'in_review', 'completed'] as TaskStatus[]).map((st) => (
+                  {(['todo', 'in_progress', 'completed'] as TaskStatus[]).map((st) => (
                     <button
                       key={st}
                       onClick={async () => {

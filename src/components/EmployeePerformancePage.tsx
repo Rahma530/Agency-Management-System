@@ -158,7 +158,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
 
   const employeeTasks = useMemo(() => tasks.filter((t) => t.assigned_to === employee.id), [tasks, employee.id]);
   const tasksByStatus = useMemo(() => {
-    const counts: Record<string, number> = { todo: 0, in_progress: 0, in_review: 0, completed: 0, blocked: 0 };
+    const counts: Record<string, number> = { todo: 0, in_progress: 0, completed: 0, blocked: 0, edit: 0 };
     employeeTasks.forEach((t) => {
       counts[t.status] = (counts[t.status] || 0) + 1;
     });
@@ -260,7 +260,7 @@ export const EmployeePerformancePage: React.FC<EmployeePerformancePageProps> = (
                 {Object.entries(tasksByStatus).map(([status, count]) => (
                   <div key={status} className="p-2 rounded-lg bg-stone-900/60 border border-stone-800">
                     <p className="text-sm font-bold text-white">{count}</p>
-                    <p className="text-[9px] text-stone-400 capitalize">{status === 'in_review' ? 'reviewing' : status.replace('_', ' ')}</p>
+                    <p className="text-[9px] text-stone-400 capitalize">{status.replace('_', ' ')}</p>
                   </div>
                 ))}
               </div>

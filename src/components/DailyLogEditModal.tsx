@@ -20,10 +20,10 @@ interface DailyLogEditModalProps {
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: 'To Do',
   in_progress: 'In Progress',
-  in_review: 'Reviewing',
   completed: 'Completed',
   blocked: 'Blocked',
   closed: 'Closed',
+  edit: 'Edit',
 };
 
 // Single-row edit form for an existing daily_logs entry, shared by DailyOperationsModule.tsx,

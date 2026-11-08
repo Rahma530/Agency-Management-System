@@ -226,17 +226,17 @@ function main(): void {
     assertEqual(counts['2026-10-20'], 1, 'future day counts only the open task');
   }
 
-  // Future day excludes in_review too — delivered, not workload (owner decision), same as
-  // completed/closed; only the open (revision) task counts.
+  // Future day's open set also includes 'edit' — a task duplicated into the Edit column counts
+  // as new, open workload, same as a revision sent back to todo/in_progress.
   {
     const counts = buildScheduleLoadByDate(
       [
-        { due_date: '2026-10-20', status: 'in_review' },
-        { due_date: '2026-10-20', status: 'todo' },
+        { due_date: '2026-10-20', status: 'edit' },
+        { due_date: '2026-10-20', status: 'completed' },
       ],
       '2026-10-15'
     );
-    assertEqual(counts['2026-10-20'], 1, 'future day excludes in_review, counts only the open (revision) task');
+    assertEqual(counts['2026-10-20'], 1, 'future day counts the edit-column task, excludes the completed one');
   }
 
   // Future day's open set also includes 'blocked' — Workload-open per the owner's own

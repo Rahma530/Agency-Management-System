@@ -207,10 +207,13 @@ interface CrossTeamTaskBoardProps {
   // canManageTaskTypes/canManagePlatforms above. Optional: absent entirely (e.g. no currentUser),
   // the delete controls simply never render.
   onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
-  // Duplicate (bulk-action toolbar, Table view). Single-task shaped, same as onUpdateTaskStatus
-  // above — the bulk toolbar calls this once per selected task via runBulkTaskAction(). Optional
-  // for the same reason onHardDeleteTasks is: absent entirely, the Duplicate control doesn't render.
-  onDuplicateTask?: (taskId: string, includeSubtasks: boolean) => Promise<void>;
+  // Duplicate (bulk-action toolbar, Table view, AND dragging an existing Kanban card onto the
+  // Edit column — see handleDragEnd below). Single-task shaped, same as onUpdateTaskStatus above
+  // — the bulk toolbar calls this once per selected task via runBulkTaskAction(). targetStatus
+  // defaults to 'todo' server-side when omitted; handleDragEnd passes 'edit' explicitly. Optional
+  // for the same reason onHardDeleteTasks is: absent entirely, the Duplicate control (and the
+  // drag-into-Edit behavior) don't render/activate.
+  onDuplicateTask?: (taskId: string, includeSubtasks: boolean, targetStatus?: TaskStatus) => Promise<void>;
   // Inhouse module (2026-11-02): a second, independent instance of this same component, rendered
   // only for executive/head_of_technical/marketing_manager (App.tsx's 'inhouse' tab), scoped to
   // Kesraa/Fast Growth's own Creative & Design/Video Production/Programming work. `tasks` is
@@ -355,10 +358,10 @@ const TASK_COLUMN_SORT_DEFAULT_DIRECTION: Record<TaskColumnSortField, 'asc' | 'd
 const TASK_STATUS_SORT_ORDER: Record<TaskStatus, number> = {
   todo: 0,
   in_progress: 1,
-  in_review: 2,
-  completed: 3,
-  closed: 4,
-  blocked: 5,
+  completed: 2,
+  closed: 3,
+  blocked: 4,
+  edit: 5,
 };
 
 const TASK_PRIORITY_SORT_ORDER: Record<TaskPriority, number> = {
@@ -886,6 +889,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // newTaskTypeOther only applies when the selected row's is_other flag is set.
   const [newTaskType, setNewTaskType] = useState<string>('');
   const [newTaskTypeOther, setNewTaskTypeOther] = useState('');
+  // "Create directly in Edit" — the second of the two owner-requested ways to get a task into the
+  // Edit column (the other is dragging an EXISTING task onto it, see handleDragEnd/
+  // duplicateIntoEditColumn above). This path needs no duplication machinery at all: the task
+  // simply starts life with status 'edit' instead of the usual 'todo'.
+  const [newCreateAsEdit, setNewCreateAsEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   // Create-modal failure banner — rendered inline at the top of the modal itself, since the
@@ -1373,25 +1381,31 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [employeeFilterDisabled, employeeFilterOptions]);
 
   // Kanban Columns configuration. color already referenced a theme-aware token per status
-  // (--grey/--purple-light/--roas-mid/--roas-good/--lilac/--roas-bad all have light-mode
-  // overrides) — only badgeBg was a raw dark-mode-only rgba with no light counterpart.
+  // (--grey/--purple-light/--roas-good/--lilac/--roas-bad all have light-mode overrides) — only
+  // badgeBg was a raw dark-mode-only rgba with no light counterpart.
+  //
+  // 'in_review' ("Reviewing") retired 2026-11-08 — In Progress now advances straight to Completed.
+  // 'edit' is new: a deliberately distinct indigo (not reused from any other status, so it never
+  // blends with the amber "Revision #N" badge or any other column) — see handleDragEnd below for
+  // the duplicate-on-drop behavior and KanbanTaskCard.tsx/the inline card renderer for the extra
+  // visual treatment Edit-column cards get beyond just this column header color.
   const columns: { id: TaskStatus; label: string; color: string; badgeBg: string }[] = [
     { id: 'todo', label: 'To Do', color: 'var(--grey)', badgeBg: 'var(--status-todo-tint)' },
     { id: 'in_progress', label: 'In Progress', color: 'var(--purple-light)', badgeBg: 'var(--status-progress-tint)' },
-    { id: 'in_review', label: 'Reviewing', color: 'var(--roas-mid)', badgeBg: 'var(--status-review-tint)' },
     { id: 'completed', label: 'Completed', color: 'var(--roas-good)', badgeBg: 'var(--status-completed-tint)' },
     { id: 'closed', label: 'Closed', color: 'var(--lilac)', badgeBg: 'var(--status-closed-tint)' },
     { id: 'blocked', label: 'Blocked', color: 'var(--roas-bad)', badgeBg: 'var(--status-blocked-tint)' },
+    { id: 'edit', label: 'Edit', color: 'var(--indigo-ink)', badgeBg: 'var(--indigo-tint)' },
   ];
 
   // Helper date functions
   const todayStr = useMemo(() => getTodayStr(), []);
   
-  // in_review is delivered, waiting on the client — never Overdue; neither is a revision
-  // (revision_count > 0) even past its unmoved due_date (owner decision — see
-  // isTaskOverdueForAssignee's own comment in lib/employeeWork.ts). Was a local reimplementation
-  // of the same today/past-due check employeeWork.ts's own isTaskOverdue already did — now
-  // delegates there instead of carrying a second copy of the rule.
+  // Only Workload-open statuses can ever be Overdue; neither can a revision (revision_count > 0)
+  // even past its unmoved due_date (owner decision — see isTaskOverdueForAssignee's own comment
+  // in lib/employeeWork.ts). Was a local reimplementation of the same today/past-due check
+  // employeeWork.ts's own isTaskOverdue already did — now delegates there instead of carrying a
+  // second copy of the rule.
   const isOverdue = (task: TaskRecord) => isTaskOverdueForAssignee(task, todayStr);
 
   // Browser-local calendar day of a timestamptz value, same formula as getTodayStr() — used to
@@ -1746,6 +1760,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
         taskTypeOther: newSelectedTaskType?.is_other ? newTaskTypeOther.trim() || null : null,
         attachments: newAttachments,
         platformIds: newPlatformIds,
+        status: newCreateAsEdit ? 'edit' : undefined,
       };
 
       let submission = currentInput;
@@ -1799,6 +1814,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       setNewBatchId(crypto.randomUUID());
       setNewTaskType('');
       setNewTaskTypeOther('');
+      setNewCreateAsEdit(false);
       setNotification({
         text: addSubtaskParent
           ? 'Subtask created successfully.'
@@ -1832,6 +1848,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     setNewEstimatedHours(recovery.input.estimatedHours ?? 0);
     setNewTaskType(recovery.input.taskType || '');
     setNewTaskTypeOther(recovery.input.taskTypeOther || '');
+    setNewCreateAsEdit(recovery.input.status === 'edit');
     setAddSubtaskParent(recovery.input.parentTaskId
       ? tasks.find((task) => task.id === recovery.input.parentTaskId) || null
       : null);
@@ -2034,6 +2051,16 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   };
 
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
+    // 'edit' is never a plain status change, from ANY caller of handleMoveStatus (the Kanban
+    // drag handlers below, the Task Details "Update Status" quick-pick grid, the Stage arrow
+    // buttons) — reaching it always means duplicating this task into a new, separate row instead
+    // (the owner's explicit decision), handled centrally here so every caller gets the same
+    // behavior without having to special-case it individually. See duplicateIntoEditColumn below.
+    if (targetStatus === 'edit') {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) duplicateIntoEditColumn(task);
+      return;
+    }
     // 'closed' is the one transition every other status change here is deliberately NOT gated
     // for: the task must have reached 'completed' first, and the mover must be the task's
     // creator, any current assignee, or an admin role (canCloseTask/canSubmitTaskForClosing in
@@ -2137,6 +2164,29 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     await onReorderTasks(updates);
   };
 
+  // Dropping a card onto the Edit column is NOT a status change of the dragged card — the
+  // owner's explicit decision is that it must create a genuinely separate, new task row (status
+  // 'edit'), leaving the original card exactly where it was. handleMoveStatus above redirects
+  // here centrally for every caller, so handleDragEnd below needs no special-casing of its own —
+  // it just calls handleMoveStatus the same way it always did.
+  const duplicateIntoEditColumn = (task: TaskRecord) => {
+    if (!onDuplicateTask) {
+      setNotification({ text: 'Duplicating into Edit is not available right now.', type: 'error' });
+      setTimeout(() => setNotification(null), 3500);
+      return;
+    }
+    onDuplicateTask(task.id, false, 'edit')
+      .then(() => {
+        setNotification({ text: `"${task.title}" was copied into Edit as a new task.`, type: 'success' });
+        setTimeout(() => setNotification(null), 3500);
+      })
+      .catch((err) => {
+        console.error(err);
+        setNotification({ text: 'Unable to copy the task into Edit. Please try again.', type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+      });
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setDraggingTask(null);
@@ -2150,7 +2200,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     // useDroppable is enabled, i.e. canReorderTasks).
     if (columns.some((c) => c.id === overId)) {
       const targetStatus = overId as TaskStatus;
-      if (task.status !== targetStatus) handleMoveStatus(task.id, targetStatus);
+      if (task.status === targetStatus) return;
+      handleMoveStatus(task.id, targetStatus);
       return;
     }
     const targetTask = tasks.find((t) => t.id === overId);
@@ -2706,9 +2757,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               <option value="all" className="bg-stone-900 text-white">All Statuses</option>
               <option value="todo" className="bg-stone-900 text-white">To Do</option>
               <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-              <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
               <option value="completed" className="bg-stone-900 text-white">Completed</option>
               <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
+              <option value="edit" className="bg-stone-900 text-white">Edit</option>
             </select>
           </div>
 
@@ -3159,7 +3210,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   onChange={(e) => setBulkStatusDraft(e.target.value as TaskStatus)}
                   className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
                 >
-                  {columns.map((col) => (
+                  {/* 'edit' excluded — this bulk action is a plain status write
+                      (onUpdateTaskStatus) with no duplication semantics, and reaching 'edit' is
+                      only ever supposed to happen by duplicating a task (see handleMoveStatus's
+                      own redirect for the single-task paths), never a bulk relabel. */}
+                  {columns.filter((col) => col.id !== 'edit').map((col) => (
                     <option key={col.id} value={col.id}>{col.label}</option>
                   ))}
                 </select>
@@ -4245,6 +4300,22 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               </div>
 
               <div>
+                <label className="flex items-center gap-2 text-xs font-semibold text-stone-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    disabled={!!activeRecovery}
+                    checked={newCreateAsEdit}
+                    onChange={(e) => setNewCreateAsEdit(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-[var(--indigo-ink)]"
+                  />
+                  <span>Create directly in Edit</span>
+                </label>
+                <p className="text-[10px] text-stone-500 mt-1">
+                  Starts this task in the Edit column instead of To Do — it counts as new work right away, same as duplicating an existing task into Edit.
+                </p>
+              </div>
+
+              <div>
                 <label className="mb-1 block text-xs font-semibold text-stone-300">Attachments:</label>
                 {activeRecovery?.attachments.some((attachment) => attachment.status !== 'confirmed') && (
                   <div className="mb-2 space-y-1 rounded-lg border border-amber-700/40 bg-amber-950/20 p-2">
@@ -4465,9 +4536,18 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   >
                     <option value="todo" className="bg-stone-900 text-white">To Do</option>
                     <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
-                    <option value="in_review" className="bg-stone-900 text-white">Reviewing</option>
                     <option value="completed" className="bg-stone-900 text-white">Completed</option>
                     <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
+                    {/* 'edit' is disabled here on purpose — reaching it is only ever supposed to
+                        happen by duplicating a task into the Edit column, never by relabeling an
+                        existing row through this dropdown. Still rendered (not omitted) so a task
+                        that's already 'edit' (a duplicate someone is now editing through this same
+                        modal) displays correctly instead of silently mismatching the controlled
+                        value; a disabled option can be the pre-set selected one without being
+                        user-selectable, so this can't be used to turn ANOTHER task into 'edit'. */}
+                    {editStatus === 'edit' && (
+                      <option value="edit" disabled className="bg-stone-900 text-white">Edit</option>
+                    )}
                   </select>
                 </div>
               </div>

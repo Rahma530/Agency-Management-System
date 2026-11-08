@@ -559,7 +559,7 @@ export default function App() {
   const [platforms, setPlatforms] = useState<PlatformRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [taskAssignees, setTaskAssignees] = useState<TaskAssigneeRecord[]>([]);
-  // Recent transitions into in_review/completed, for the Delivered-today card (see
+  // Recent transitions into completed, for the Delivered-today card (see
   // countDeliveredTodayByActor). A 36-hour window always covers the current Cairo day; the module
   // does the exact Cairo-day filter itself.
   const [taskDeliveryEvents, setTaskDeliveryEvents] = useState<DeliveryEventRow[]>([]);
@@ -2571,7 +2571,7 @@ export default function App() {
         .from('task_events')
         .select('task_id, actor_id, old_value, new_value, created_at')
         .eq('event_type', 'status_changed')
-        .in('new_value', ['in_review', 'completed'])
+        .eq('new_value', 'completed')
         .gte('created_at', since);
       if (cancelled) return;
       if (error) {
@@ -6074,7 +6074,12 @@ export default function App() {
   // computeTaskDeletionPreview() already use), each duplicated subtask's parent_task_id repointed
   // at its OWN duplicated parent (idMap), processed in collectDescendantTaskIds()'s own walk
   // order (parent before its children) so that mapping is always already known.
-  const handleDuplicateTask = async (taskId: string, includeSubtasks: boolean): Promise<void> => {
+  // targetStatus defaults to 'todo' (the ordinary Duplicate action, Table view bulk toolbar).
+  // CrossTeamTaskBoard.tsx's handleDragEnd passes 'edit' when an existing task is dragged onto
+  // the Edit column — per the owner's explicit decision, that must create a genuinely separate
+  // new row (not just relabel the dragged task), which is exactly what this function already
+  // does; only the new copy's starting status changes.
+  const handleDuplicateTask = async (taskId: string, includeSubtasks: boolean, targetStatus: TaskStatus = 'todo'): Promise<void> => {
     if (!supabaseActive) throw new Error('Supabase is not configured; the task was not duplicated.');
     const sourceTask = tasks.find((t) => t.id === taskId);
     if (!sourceTask) throw new Error('Task not found.');
@@ -6103,6 +6108,10 @@ export default function App() {
         taskTypeOther: source.task_type_other ?? undefined,
         parentTaskId: newParentId,
         platformIds,
+        // Only the duplicated task itself starts in the target status — a duplicated SUBTASK
+        // (includeSubtasks) always starts 'todo' like any other fresh subtask, since dragging a
+        // parent into Edit doesn't mean every descendant is also "ready for editing."
+        status: sourceId === taskId ? targetStatus : 'todo',
       });
 
       if (result.tasks.length === 0) {

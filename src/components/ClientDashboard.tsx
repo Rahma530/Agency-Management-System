@@ -3179,7 +3179,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         >
                           <option value="todo">To Do</option>
                           <option value="in_progress">In Progress</option>
-                          <option value="in_review">Reviewing</option>
                           <option value="completed">Completed</option>
                           <option value="blocked">Blocked</option>
                         </select>
@@ -3261,16 +3260,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                                   ? 'rgba(169, 245, 193, 0.15)'
                                   : t.status === 'blocked'
                                   ? 'rgba(245, 163, 163, 0.15)'
-                                  : t.status === 'in_review'
-                                  ? 'rgba(245, 226, 154, 0.15)'
+                                  : t.status === 'edit'
+                                  ? 'var(--indigo-tint)'
                                   : 'rgba(168, 155, 184, 0.15)',
                               color:
                                 isTaskDone(t.status)
                                   ? 'var(--roas-good)'
                                   : t.status === 'blocked'
                                   ? 'var(--roas-bad)'
-                                  : t.status === 'in_review'
-                                  ? 'var(--roas-mid)'
+                                  : t.status === 'edit'
+                                  ? 'var(--indigo-ink)'
                                   : 'var(--lilac)',
                             }}
                           >

@@ -76,9 +76,9 @@ export function isWorkingDay(dateStr: string): boolean {
 // 20261112000000_in_review_not_workload.sql's comment): today AND every past day count ALL
 // tasks due that day, whatever their status (never defaulting a 7th task into a day a 6th
 // already quietly completed on); every future day counts only Workload-open tasks
-// (isTaskWorkloadOpen: todo/in_progress/blocked) — in_review is delivered, not workload, so a
-// future-dated in_review task never counts, while a revision (todo/in_progress after being
-// delivered) still does, same as any other open task. archived_at is supported defensively even
+// (isTaskWorkloadOpen: todo/in_progress/blocked/edit) — a future-dated completed/closed task
+// never counts, while a revision (todo/in_progress after being delivered) or an Edit-column
+// duplicate still does, same as any other open task. archived_at is supported defensively even
 // though public.tasks has no such column today (confirmed via the Step 1 audit) — see the
 // migration's own matching comment for why this mirrors it rather than assuming the column will
 // never exist.

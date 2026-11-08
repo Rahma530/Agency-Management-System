@@ -117,7 +117,20 @@ export type ClientStatus = 'onboarding' | 'active' | 'paused' | 'renewal' | 'clo
 // identical to 'completed' for every downstream calculation (capacity, overdue, completion
 // metrics) — see isTaskDone() in lib/taskLifecycle.ts, the single source of truth for that
 // equivalence instead of checking either value inline.
-export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'completed' | 'blocked' | 'closed';
+//
+// 'in_review' ("Reviewing") was retired (owner decision, 2026-11-08): In Progress now advances
+// straight to Completed, with no in-between review step. See
+// supabase/migrations/20270103000000_retire_in_review_add_edit_status.sql for the data migration
+// (every existing in_review row becomes completed) and the tasks_status_check update — apply
+// that migration BEFORE this code reaches production, or the DB will still reject 'edit' and
+// still allow a client to write 'in_review'.
+//
+// 'edit' is new: a task lands here only as a fresh, separate row created by duplicating an
+// existing task (or by being created directly with Edit as its starting status) — never by an
+// ordinary status transition of the SAME row. It's deliberately left out of TASK_STATUS_ORDER
+// (lib/taskLifecycle.ts) — same treatment as 'blocked' — since it's a side lane, not a step in
+// the normal forward progression.
+export type TaskStatus = 'todo' | 'in_progress' | 'edit' | 'completed' | 'blocked' | 'closed';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 // 1. users
@@ -468,15 +481,17 @@ export interface TaskRecord {
   // multiple clients" flow will produce. Nothing reads this yet — it has no effect on capacity,
   // KPI, or any report aggregation.
   batch_id?: string | null;
-  // "in_review is not workload" (20261112000000_in_review_not_workload.sql) — all three are
-  // owned entirely by a DB trigger; the client never writes them directly (a write is silently
-  // restored). delivered_at: when status FIRST reached in_review/completed — set once, never
+  // "in_review is not workload" (20261112000000_in_review_not_workload.sql; updated by
+  // 20270103000000_retire_in_review_add_edit_status.sql when 'in_review' was retired) — all three
+  // are owned entirely by a DB trigger; the client never writes them directly (a write is
+  // silently restored). delivered_at: when status FIRST reached completed — set once, never
   // moved by a later transition, including a later re-delivery after a revision. revision_count:
-  // how many times a delivered task (was in_review/completed/closed) has been sent back to
-  // todo/in_progress — 0 means never revised. revision_started_at: when the MOST RECENT revision
-  // began (unlike delivered_at, this one DOES move on each new revision). See
-  // isTaskOverdueForAssignee() in lib/employeeWork.ts for why revision_count, not delivered_at,
-  // is what keeps a revision out of Overdue.
+  // how many times a delivered task (was completed/closed) has been sent back to todo/in_progress
+  // — 0 means never revised. revision_started_at: when the MOST RECENT revision began (unlike
+  // delivered_at, this one DOES move on each new revision). See isTaskOverdueForAssignee() in
+  // lib/employeeWork.ts for why revision_count, not delivered_at, is what keeps a revision out of
+  // Overdue. 'edit' is deliberately NOT part of any of this — reaching it is never a delivery and
+  // leaving it is never a revision (it was never delivered in the first place).
   delivered_at?: string | null;
   revision_count?: number;
   revision_started_at?: string | null;

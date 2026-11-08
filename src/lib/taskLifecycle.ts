@@ -2,10 +2,11 @@ import { ClientRecord, TaskAssigneeRecord, TaskRecord, TaskStatus, UserRecord } 
 
 // Single source of truth for the task lifecycle's linear "Advance Status" progression — shared by
 // MyWorkHub.tsx and DailyOperationsModule.tsx, which previously each hardcoded their own copy of
-// this array (the same drift risk this project has hit and fixed before). 'blocked' is
-// deliberately excluded: it's a side-branch reachable separately (Report Blocker / a direct status
-// pick), not a step in this forward progression.
-export const TASK_STATUS_ORDER: TaskStatus[] = ['todo', 'in_progress', 'in_review', 'completed', 'closed'];
+// this array (the same drift risk this project has hit and fixed before). 'blocked' and 'edit' are
+// deliberately excluded: both are side-branches reachable separately (Report Blocker / a direct
+// status pick, or task duplication into the Edit column), not steps in this forward progression.
+// In Progress advances straight to Completed — 'in_review' ("Reviewing") was retired, 2026-11-08.
+export const TASK_STATUS_ORDER: TaskStatus[] = ['todo', 'in_progress', 'completed', 'closed'];
 
 // 'closed' is a manual confirmation step on top of 'completed', not a distinct kind of done —
 // functionally identical for every downstream calculation (capacity load, overdue/due-today,
@@ -46,10 +47,12 @@ export const canSubmitTaskForClosing = (task: Pick<TaskRecord, 'status'>): boole
 // whatever its current status (e.g. the backfill migration can set one on a task that's since
 // moved back to 'todo'/'blocked'; that value must never become invisible/unreachable). Single
 // source of truth for that stage gate, shared by CrossTeamTaskBoard.tsx and
-// DailyOperationsModule.tsx so the two surfaces can't drift.
+// DailyOperationsModule.tsx so the two surfaces can't drift. 'in_review' used to appear in this
+// condition too; retired along with the status itself (2026-11-08) — 'edit' is deliberately NOT
+// added here, since a fresh Edit-column duplicate starts with nothing to link to yet, same as 'todo'.
 export const canShowDoneLink = (task: Pick<TaskRecord, 'status' | 'done_link'>): boolean =>
   !!task.done_link?.trim() ||
-  task.status === 'in_progress' || task.status === 'in_review' || isTaskDone(task.status);
+  task.status === 'in_progress' || isTaskDone(task.status);
 
 // done_link stays a single text column (no schema change needed) — more than one finished-work
 // link is just stored as one-per-line text in that same column, and this splits it back out for

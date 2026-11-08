@@ -155,10 +155,10 @@ const TASK_DERIVED_CLIENT_ROLES: UserRole[] = ['graphic_designer', 'video_editor
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: 'To Do',
   in_progress: 'In Progress',
-  in_review: 'Reviewing',
   completed: 'Completed',
   blocked: 'Blocked',
   closed: 'Closed',
+  edit: 'Edit',
 };
 
 export const MyWorkHub: React.FC<MyWorkHubProps> = ({

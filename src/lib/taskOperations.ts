@@ -1,4 +1,4 @@
-import { ActivityRecord, TaskAssigneeLogRecord, TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord, TeamTaskActivityFeedRow } from '../types/database';
+import { ActivityRecord, TaskAssigneeLogRecord, TaskAttachmentRecord, TaskAssigneeRecord, TaskCommentRecord, TaskEventRecord, TaskPlatformLinkRecord, TaskPriority, TaskRecord, TaskStatus, TeamTaskActivityFeedRow } from '../types/database';
 import { buildAttachmentStoragePath, fetchAllRows, supabaseRaw } from './supabase';
 import { sha256ForBlob } from './taskCreateRecovery';
 
@@ -99,6 +99,12 @@ export interface CreateTaskCopiesInput {
   parentTaskId?: string | null;
   batchId?: string | null;
   platformIds?: string[];
+  // Initial status for the new copy/copies. Omitted (or 'todo') is the ordinary case; 'edit' is
+  // the only other value create_task_copy's p_status accepts (enforced server-side too, see
+  // 20270103000000_retire_in_review_add_edit_status.sql) — used by both the "duplicate an
+  // existing task into the Edit column" flow (handleDuplicateTask) and the Create Task form's own
+  // "create directly in Edit" option.
+  status?: TaskStatus;
 }
 
 export interface CreateTaskFormInput extends CreateTaskCopiesInput {
@@ -257,6 +263,7 @@ export const createTaskCopies = async (input: CreateTaskCopiesInput): Promise<Cr
       p_parent_task_id: input.parentTaskId ?? null,
       p_batch_id: input.batchId ?? null,
       p_assignee_ids: input.assigneeIds,
+      p_status: input.status ?? 'todo',
     });
     if (error) {
       failures.push({

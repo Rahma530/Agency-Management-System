@@ -1,9 +1,12 @@
 // Regression check for the "in_review is not workload" owner decisions — see
 // supabase/migrations/20261112000000_in_review_not_workload.sql's own header comment for the
-// full list. Covers the pure-JS mirrors of those decisions: isTaskWorkloadOpen/
-// isTaskOverdueForAssignee (src/lib/employeeWork.ts) and resolveDailyWorkCapacityLimit
-// (src/lib/capacity.ts). The DB trigger/function side (delivered_at/revision_count tracking,
-// get_user_schedule_load's status filters) is covered separately by
+// full list, and supabase/migrations/20270103000000_retire_in_review_add_edit_status.sql for how
+// 'in_review' was later retired and 'edit' added (isTaskWorkloadOpen now also covers 'edit' — a
+// duplicated task is new, open workload, the opposite of "delivered, waiting on the client").
+// Covers the pure-JS mirrors of those decisions: isTaskWorkloadOpen/isTaskOverdueForAssignee
+// (src/lib/employeeWork.ts) and resolveDailyWorkCapacityLimit (src/lib/capacity.ts). The DB
+// trigger/function side (delivered_at/revision_count tracking, get_user_schedule_load's status
+// filters) is covered separately by
 // supabase/verification/20261112000000_in_review_not_workload_tests.sql — nothing in this file
 // touches a database.
 import { isTaskWorkloadOpen, isTaskOverdueForAssignee } from '../src/lib/employeeWork';
@@ -35,12 +38,12 @@ function makeUser(overrides: Partial<UserRecord>): UserRecord {
 
 function main(): void {
   // ------------------------------------------------------------------------
-  // isTaskWorkloadOpen — todo/in_progress/blocked only; in_review/completed/closed are NOT.
+  // isTaskWorkloadOpen — todo/in_progress/blocked/edit; completed/closed are NOT.
   // ------------------------------------------------------------------------
   assertEqual(isTaskWorkloadOpen('todo'), true, 'todo is workload-open');
   assertEqual(isTaskWorkloadOpen('in_progress'), true, 'in_progress is workload-open');
   assertEqual(isTaskWorkloadOpen('blocked'), true, 'blocked is workload-open');
-  assertEqual(isTaskWorkloadOpen('in_review'), false, 'in_review is NOT workload-open (delivered, waiting on the client)');
+  assertEqual(isTaskWorkloadOpen('edit'), true, 'edit is workload-open — a duplicated task is new, open work');
   assertEqual(isTaskWorkloadOpen('completed'), false, 'completed is NOT workload-open');
   assertEqual(isTaskWorkloadOpen('closed'), false, 'closed is NOT workload-open');
 
@@ -56,11 +59,12 @@ function main(): void {
     'an overdue todo task with no revisions is Overdue'
   );
 
-  // in_review, however overdue its due_date, is never Overdue — decision 1.
+  // An overdue 'edit' task IS Overdue — it's workload-open, new work, not "delivered, waiting on
+  // the client" the way in_review used to be before it was retired.
   assertEqual(
-    isTaskOverdueForAssignee({ status: 'in_review', due_date: '2026-10-10', revision_count: 0 }, today),
-    false,
-    'an overdue in_review task is never Overdue — delivered, waiting on the client'
+    isTaskOverdueForAssignee({ status: 'edit', due_date: '2026-10-10', revision_count: 0 }, today),
+    true,
+    'an overdue edit-column task is Overdue, same as any other open task'
   );
 
   // A revision (revision_count > 0) is workload again, but never Overdue even past its due_date
@@ -140,7 +144,7 @@ function main(): void {
     failures.forEach((failure) => console.error(`  ${failure}`));
     process.exit(1);
   }
-  console.log('OK: in_review is never workload/Overdue, a revision is workload but never Overdue, and the creative-role daily capacity default is 6.');
+  console.log('OK: completed/closed are never workload/Overdue while edit is, a revision is workload but never Overdue, and the creative-role daily capacity default is 6.');
 }
 
 main();
