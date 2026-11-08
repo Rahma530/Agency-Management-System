@@ -2,7 +2,7 @@ import React from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Building2, UserCheck, Eye } from 'lucide-react';
 import { ClientRecord, UserRecord } from '../types/database';
-import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { getDisplayableClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 
 interface ClientKanbanCardProps {
   client: ClientRecord;
@@ -35,7 +35,9 @@ export const ClientKanbanCard: React.FC<ClientKanbanCardProps> = ({
     disabled: !canDrag,
   });
   const { setNodeRef: setDropRef, isOver } = useDroppable({ id: client.id, disabled: !canDrag });
-  const services = getClientServices(client);
+  // Graphic Design is a baseline service every client has (2026-11-07 owner decision) — excluded
+  // from this badge row since showing it on every single card carries no information.
+  const services = getDisplayableClientServices(client);
 
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,

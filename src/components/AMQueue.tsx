@@ -62,7 +62,7 @@ import { AppModuleId } from '../data/roles';
 import { getUserCapacityData, getCapacityIndicator } from '../lib/capacity';
 import { isActiveEmployee, canSeeContractValue, canAccessClientOnboarding, canMergeClients } from '../lib/permissions';
 import { matchesClientQuery } from '../lib/clientSearch';
-import { getClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { getClientServices, getDisplayableClientServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import { CLIENT_STATUS_META, compareClientsForPortfolio, isExternalClient } from '../lib/clientStatus';
 import { ClientCompanyId, CLIENT_COMPANY_OPTIONS, getClientCompanyLabel } from '../lib/clientCompany';
 import {
@@ -1294,7 +1294,12 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                     amAgents.find((u) => u.id === client.am_agent_id) ||
                     amTeamLeaders.find((u) => u.id === client.am_agent_id);
                   const lifecycle = getClientLifecycleStatus(client);
-                  const services = getClientServices(client);
+                  // Graphic Design is a baseline service every client has (2026-11-07 owner
+                  // decision) — excluded from this row's badge list since showing it on every
+                  // single client carries no information. getClientLifecycleStatus() above has its
+                  // own, separate getClientServices() call for the "all briefs submitted" check,
+                  // which must keep including it — left untouched.
+                  const services = getDisplayableClientServices(client);
 
                   return (
                     <SortableClientRow

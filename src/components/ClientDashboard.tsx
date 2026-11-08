@@ -107,7 +107,7 @@ import { MergeClientsModal } from './MergeClientsModal';
 import { CLIENT_STATUS_META, formatClientLifecycleDuration, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
-import { getClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import { getClientServices, getDisplayableClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
 import {
   AssignableServiceType,
   getEligibleServiceAssignees,
@@ -454,7 +454,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const maskSecret = (value: string) => '•'.repeat(Math.min(Math.max(value.length, 8), 32));
 
   // Module 13 Phase 5: services lives directly on the client row — no more package lookup.
+  // `services` drives real functional behavior below (brief sub-tabs, agent assignment, briefs
+  // progress count) and must keep including Graphic Design, same as getClientServices() everywhere
+  // else. `displayServices` is a separate, display-only view used ONLY by the read-only
+  // "Contracted Services" badge row in the Overview tab — Graphic Design is baseline for every
+  // client (2026-11-07 owner decision), so listing it there says nothing and was asked to be
+  // dropped from that one purely decorative spot.
   const services: ServiceType[] = useMemo(() => getClientServices(client), [client]);
+  const displayServices: ServiceType[] = useMemo(() => getDisplayableClientServices(client), [client]);
   const customServices: string[] = useMemo(() => getClientCustomServices(client), [client]);
 
   // Assignment dropdowns represent a new choice, never the persisted assignment. Reset all
@@ -1593,7 +1600,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 <div className="p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
                   <span className="text-xs text-stone-400 block mb-2">Contracted Services</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {services.map((s) => (
+                    {displayServices.map((s) => (
                       <span
                         key={s}
                         className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
