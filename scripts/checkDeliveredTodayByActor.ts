@@ -1,9 +1,10 @@
 // Regression check for countDeliveredTodayByActor() (src/lib/employeeWork.ts) — the Delivered-today
-// card's current rule. It counts task_events transitions INTO in_review/completed, dated today in
+// card's current rule. It counts task_events transitions INTO completed ('in_review' was retired,
+// 2026-11-08 — see 20270103000000_retire_in_review_add_edit_status.sql), dated today in
 // Africa/Cairo, performed by the user. Covers: a re-delivery on a later day still counts (the case
 // tasks.delivered_at-based counting misses), a task moved between assignees counts for whoever
-// performed the transition, an in_review <-> completed move is not a new delivery, a bulk change
-// by someone else is not counted for the assignee, the Cairo midnight boundary, and the
+// performed the transition, a redundant completed->completed resave is not a new delivery, a bulk
+// change by someone else is not counted for the assignee, the Cairo midnight boundary, and the
 // assignee fallback when actor_id is null.
 //
 // Run via `npm run lint` or directly: `npx tsx scripts/checkDeliveredTodayByActor.ts`.
@@ -30,7 +31,7 @@ function main(): void {
   // Scenario 1: re-delivery on a later day counts for the actor on that day.
   {
     const events = [
-      event('t1', '2026-10-24T13:37:00Z', 'in_progress', 'in_review', 'u1'),
+      event('t1', '2026-10-24T13:37:00Z', 'in_progress', 'completed', 'u1'),
       event('t1', '2026-10-29T08:00:00Z', 'todo', 'in_progress', 'u1'),
       event('t1', '2026-10-29T09:00:00Z', 'in_progress', 'completed', 'u1'),
     ];
@@ -42,7 +43,7 @@ function main(): void {
   // counts for this user only on the day this user delivered it.
   {
     const events = [
-      event('t2', '2026-10-24T13:37:00Z', 'in_progress', 'in_review', 'designer_a'),
+      event('t2', '2026-10-24T13:37:00Z', 'in_progress', 'completed', 'designer_a'),
       event('t2', '2026-10-29T08:11:00Z', 'in_progress', 'completed', 'designer_b'),
     ];
     const assignees = [assignee('t2', 'designer_b')];
@@ -50,13 +51,14 @@ function main(): void {
     assertEqual(countDeliveredTodayByActor('designer_a', events, assignees, '2026-10-29'), 0, 'handoff: the earlier deliverer gets nothing today');
   }
 
-  // Scenario 3: in_review -> completed on the same day is one delivery, not two.
+  // Scenario 3: a redundant completed->completed resave (e.g. a full-row re-save) is not a
+  // second delivery.
   {
     const events = [
-      event('t3', '2026-10-29T07:00:00Z', 'in_progress', 'in_review', 'u3'),
-      event('t3', '2026-10-29T09:00:00Z', 'in_review', 'completed', 'u3'),
+      event('t3', '2026-10-29T07:00:00Z', 'in_progress', 'completed', 'u3'),
+      event('t3', '2026-10-29T09:00:00Z', 'completed', 'completed', 'u3'),
     ];
-    assertEqual(countDeliveredTodayByActor('u3', events, [assignee('t3', 'u3')], '2026-10-29'), 1, 'in_review -> completed is not a second delivery');
+    assertEqual(countDeliveredTodayByActor('u3', events, [assignee('t3', 'u3')], '2026-10-29'), 1, 'a redundant completed resave is not a second delivery');
   }
 
   // Scenario 4: a bulk status change done by someone else is not counted for the assignee.
@@ -84,8 +86,8 @@ function main(): void {
   {
     const events = [
       event('t7a', '2026-10-29T08:00:00Z', 'in_progress', 'completed', 'u7'),
-      event('t7b', '2026-10-29T09:00:00Z', 'in_progress', 'in_review', 'u7'),
-      event('t7b', '2026-10-29T11:00:00Z', 'todo', 'in_review', 'u7'),
+      event('t7b', '2026-10-29T09:00:00Z', 'in_progress', 'completed', 'u7'),
+      event('t7b', '2026-10-29T11:00:00Z', 'todo', 'completed', 'u7'),
     ];
     assertEqual(countDeliveredTodayByActor('u7', events, [], '2026-10-29'), 2, 'two tasks, one of them twice, counts as 2');
   }

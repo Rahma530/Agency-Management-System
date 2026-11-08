@@ -180,15 +180,17 @@ export const KanbanTaskCardContent: React.FC<KanbanTaskCardContentProps> = ({
               Due Soon
             </span>
           )}
-          {/* in_review is delivered, waiting on the client — a management board shows this
-              badge, never Overdue (overdue is already false for in_review — see the parent's
-              isOverdue — this is purely the positive "what state is it in" signal). */}
-          {task.status === 'in_review' && (
+          {/* A duplicated, edit-column task — deliberately NOT amber (that's reserved for the
+              Revision badge below, a different concept: same row sent back vs. a brand-new
+              separate row). Indigo everywhere this app marks 'edit' — the column header, this
+              badge, the status dropdowns — so it's visually distinctive, per the owner's request. */}
+          {task.status === 'edit' && (
             <span
-              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/80 text-amber-400 border border-amber-500/40"
-              title="Delivered, waiting on the client"
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold border"
+              style={{ background: 'var(--indigo-tint)', color: 'var(--indigo-ink)', borderColor: 'var(--border-indigo)' }}
+              title="A new, separate copy created for editing"
             >
-              Waiting for review
+              Edit copy
             </span>
           )}
           {/* Revision: a previously-delivered task the client sent back — real workload, never

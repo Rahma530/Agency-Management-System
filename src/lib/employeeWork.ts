@@ -35,7 +35,7 @@ export const toCairoDateStr = (isoTimestamp: string): string => CAIRO_DATE_FORMA
 // Delivered today: every task this user is a current assignee of (resolveTaskAssigneeIds — every
 // row in task_assignees, not just the legacy single assigned_to column, so a co-assignee who
 // isn't the "primary" one still counts) whose delivered_at falls on today's Africa/Cairo calendar
-// date. No cap — a task delivered more than once (in_review -> revision -> in_review again) still
+// date. No cap — a task delivered more than once (completed -> revision -> completed again) still
 // only has ONE delivered_at (it is set once, never moved — see that migration's own header), so
 // this never double-counts a single task; a genuinely prolific day with more deliveries than the
 // assignee's target is reported as-is, over target, never clamped down to it.
@@ -55,13 +55,19 @@ export const countDeliveredToday = (
 // Delivered today, by ACTOR (the Delivered-today card's current rule). countDeliveredToday above
 // counts the FIRST delivery only (tasks.delivered_at is set once), so a task that was delivered
 // before, sent back for revision and delivered again today never counts today. This version reads
-// task_events instead: every status_changed event that moved a task INTO in_review or completed
-// from a non-delivered status, dated today in Africa/Cairo, and performed by this user. A task is
+// task_events instead: every status_changed event that moved a task INTO completed from a
+// non-delivered status, dated today in Africa/Cairo, and performed by this user. A task is
 // counted at most once per day, even if it was delivered more than once that day. When an event
-// has no actor_id, it falls back to the task's current assignees.
+// has no actor_id, it falls back to the task's current assignees. 'in_review' used to be in
+// DELIVERED_STATUSES too, before it was retired (2026-11-08) — a historical event whose new_value
+// was 'in_review' simply no longer matches, so an old in_review->completed pair (now both read as
+// "completed" after the data migration, but the EVENT ROW itself still literally says 'in_review'
+// since task_events is a log, never rewritten) is undercounted for that one historical day. Judged
+// not worth a backfill — this card is same-day-only in practice, and no one asks "how many did I
+// deliver on this specific past day" through it.
 export type DeliveryEventRow = Pick<TaskEventRecord, 'task_id' | 'actor_id' | 'old_value' | 'new_value' | 'created_at'>;
 
-const DELIVERED_STATUSES: ReadonlySet<string> = new Set(['in_review', 'completed']);
+const DELIVERED_STATUSES: ReadonlySet<string> = new Set(['completed']);
 
 export const countDeliveredTodayByActor = (
   userId: string,
@@ -72,7 +78,8 @@ export const countDeliveredTodayByActor = (
   const counted = new Set<string>();
   for (const event of events) {
     if (!event.new_value || !DELIVERED_STATUSES.has(event.new_value)) continue;
-    // in_review <-> completed is not a new delivery; only a move from a non-delivered status is.
+    // A no-op re-save of the same status is not a new delivery; only a move from a non-delivered
+    // status is.
     if (event.old_value && DELIVERED_STATUSES.has(event.old_value)) continue;
     if (toCairoDateStr(event.created_at) !== todayStr) continue;
     const doneByUser = event.actor_id
@@ -95,20 +102,22 @@ export const isTaskDueToday = (task: TaskRecord, todayStr: string): boolean => {
   return task.due_date === todayStr;
 };
 
-// Workload-open (owner decision): the three statuses that count as real, outstanding work.
-// in_review is deliberately excluded — it's delivered, waiting on the client, not workload (see
-// isTaskOverdueForAssignee's own comment) — and completed/closed are done, not open. A revision
-// (a previously-delivered task sent back to todo/in_progress, tasks.revision_count > 0) IS in
-// this set, by construction: it's just a todo/in_progress task like any other.
+// Workload-open (owner decision): the statuses that count as real, outstanding work. 'in_review'
+// was deliberately excluded before it was retired (2026-11-08) — it was delivered, waiting on the
+// client, not workload — and completed/closed are done, not open. A revision (a previously-
+// delivered task sent back to todo/in_progress, tasks.revision_count > 0) IS in this set, by
+// construction: it's just a todo/in_progress task like any other. 'edit' is included too — the
+// owner's explicit decision was that a task duplicated into the Edit column counts as new work
+// for BOTH Daily Operations workload and Employee Performance/KPI counts (not display-only).
 export const isTaskWorkloadOpen = (status: TaskStatus): boolean =>
-  status === 'todo' || status === 'in_progress' || status === 'blocked';
+  status === 'todo' || status === 'in_progress' || status === 'blocked' || status === 'edit';
 
 // The one Overdue determination every surface in this app must use (DailyOperationsModule,
 // MyWorkHub, CrossTeamTaskBoard/KanbanTaskCard, get_user_schedule_load's carried_over_count on
-// the SQL side — see 20261112000000_in_review_not_workload.sql). Two owner decisions in one
-// function:
-//   1. in_review is NOT workload and therefore can never be Overdue, whatever its due_date —
-//      it's delivered, waiting on the client, not late work sitting with the assignee.
+// the SQL side — see 20261112000000_in_review_not_workload.sql and
+// 20270103000000_retire_in_review_add_edit_status.sql). Two owner decisions in one function:
+//   1. Only Workload-open statuses (isTaskWorkloadOpen above) can ever be Overdue — a 'completed'/
+//      'closed' task can't, whatever its due_date.
 //   2. A REVISION (tasks.revision_count > 0 — a previously-delivered task the client sent back)
 //      IS workload again, but must never show as Overdue even if its due_date has passed: the
 //      assignee didn't sit on it for N days, the client's review cycle did, and `due_date` is

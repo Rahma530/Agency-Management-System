@@ -45,7 +45,7 @@ function checkStatusChange(): void {
   // Any non-'closed' target is unrestricted — visibility alone (already guaranteed by the task
   // being in the viewer's own list) is enough, no matter who's asking or the task's own status.
   assertEqual(
-    checkBulkStatusChange(openTask, 'in_review', user('bystander', 'seo_agent'), taskAssignees),
+    checkBulkStatusChange(openTask, 'edit', user('bystander', 'seo_agent'), taskAssignees),
     { allowed: true },
     'non-closed target is unrestricted for an unrelated employee'
   );

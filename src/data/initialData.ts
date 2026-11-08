@@ -351,7 +351,7 @@ export const INITIAL_TASKS: TaskRecord[] = [
     assigned_to: 'usr-social-agent-1',
     created_by: 'usr-social-lead',
     team: 'Social Media',
-    status: 'in_review',
+    status: 'completed',
     due_date: '2026-09-04',
     priority: 'high',
     estimated_hours: 14,

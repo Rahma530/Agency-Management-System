@@ -25,10 +25,10 @@ const statusBadge = (status: TaskStatus) => {
       return { label: 'Closed', bg: 'rgba(169, 245, 193, 0.2)', text: 'var(--roas-good)' };
     case 'in_progress':
       return { label: 'In Progress', bg: 'rgba(123, 47, 247, 0.25)', text: 'var(--purple-light)' };
-    case 'in_review':
-      return { label: 'Reviewing', bg: 'rgba(245, 226, 154, 0.2)', text: 'var(--roas-mid)' };
     case 'blocked':
       return { label: 'Blocked', bg: 'rgba(245, 163, 163, 0.2)', text: 'var(--roas-bad)' };
+    case 'edit':
+      return { label: 'Edit', bg: 'var(--indigo-tint)', text: 'var(--indigo-ink)' };
     default:
       return { label: 'To Do', bg: 'rgba(168, 155, 184, 0.2)', text: 'var(--grey)' };
   }
