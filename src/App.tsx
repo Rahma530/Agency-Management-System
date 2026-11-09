@@ -8319,6 +8319,7 @@ export default function App() {
               <div className="space-y-6">
                 <HeadOfSalesPortalView
                   clients={clients}
+                  users={users}
                   onOpenClientDashboard={setHeadOfSalesDashboardClientId}
                   onOpenRegisterModal={canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
                   onOpenBulkUploadModal={canRegisterClients ? () => setIsBulkClientUploadOpen(true) : undefined}
