@@ -33,17 +33,21 @@ export type BuiltInRole =
   // read-only capacity visibility for the same two roles. No employee-management rights
   // (edit/deactivate/role-change) anywhere.
   | 'marketing_manager'          // Marketing Manager
-  // Narrow, read-only oversight role (owner's explicit request, 2026-11-09): sees every client in
-  // the agency (not owner-scoped like 'sales'), limited to a status/renewal/contract overview —
-  // Overview & Contract, Assigned Team, and the Service Briefs tab (content-restricted exactly
-  // like 'sales' today, via ClientDashboard's existing hasBriefViewAccess allow-list, which this
-  // role is deliberately NOT added to). Explicitly excluded from Tasks & Deliverables and Activity
-  // Logs (ClientDashboard.tsx's new canViewTasksAndLogs gate) and, by simply never being added to
-  // their allow-lists, from Campaigns, Team Activity, Reports & Comparisons, Meetings, and
-  // Integrations too. No Tasks/Capacity/Reports/Employees module access elsewhere in the app — see
-  // its own 'client_overview' AppModuleId in data/roles.ts, its only allowedModule. Backing RLS
-  // branch: supabase/migrations/20270104000000_head_of_sales_role.sql (authored for manual
-  // application, not applied from this session).
+  // Sales-leadership oversight role (owner's explicit request, 2026-11-09, scope widened same
+  // day): sees every client in the agency (not owner-scoped like 'sales'), with full view access
+  // to Overview & Contract, Assigned Team, and Service Briefs (view-only — ClientDashboard.tsx's
+  // hasBriefViewAccess, same as every non-AM role already in that list; canEditServiceBrief stays
+  // AM-only). Can also register new clients exactly like 'sales' (added to
+  // CLIENT_REGISTRATION_ROLES in lib/permissions.ts — App.tsx's handleRegisterClient/
+  // handleBulkAddClient already treat any non-AM/non-management role as sales-shaped, so no
+  // frontend logic change was needed there beyond the allow-list). Explicitly excluded from Tasks
+  // & Deliverables and Activity Logs (ClientDashboard.tsx's canViewTasksAndLogs gate) and, by
+  // simply never being added to their allow-lists, from Campaigns, Team Activity, Reports &
+  // Comparisons, Meetings, and Integrations too. No Tasks/Capacity/Reports/Employees module access
+  // elsewhere in the app — see its own 'client_overview' AppModuleId in data/roles.ts, its only
+  // allowedModule. Backing RLS: supabase/migrations/20270104000000_head_of_sales_role.sql (the
+  // role itself + client visibility) and 20270105000000_head_of_sales_client_registration.sql
+  // (client registration) — both authored for manual application, not applied from this session.
   | 'head_of_sales';             // Head of Sales
 
 

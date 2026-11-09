@@ -747,7 +747,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     currentUser.role === 'social_media_agent' ||
     currentUser.role === 'ui_ux_designer' ||
     currentUser.role === 'graphic_designer' ||
-    currentUser.role === 'video_editor';
+    currentUser.role === 'video_editor' ||
+    // Added 2026-11-09 (owner's explicit request, follow-up to head_of_sales's own original
+    // scope — "تفضل الصلاحيات الحالية (Sales بدون Brief)" — now reversed for this role only;
+    // `sales` itself is deliberately untouched): view-only, same as every other role in this
+    // list — canEditServiceBrief (this role is not added there) still keeps authoring/publishing
+    // AM-only.
+    currentUser.role === 'head_of_sales';
 
   // Per spec, the brief feature only becomes available once an AM Agent has actually been
   // assigned to run the discovery meeting — before that there's nothing to document yet.

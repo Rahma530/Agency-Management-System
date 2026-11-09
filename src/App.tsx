@@ -8311,12 +8311,17 @@ export default function App() {
             {/* head_of_sales's own module: agency-wide client status overview, no owner scoping
                 (unlike SalesPortalView), click-through to the same full ClientDashboard, scoped
                 down by ClientDashboard's own role gates (Overview & Contract / Assigned Team /
-                Service Briefs only — owner's explicit request, 2026-11-09). */}
+                Service Briefs, the latter view-only — owner's explicit request, 2026-11-09, scope
+                widened the same day to include full Team/Brief viewing and Sales-style client
+                registration). canRegisterClients below is the same CLIENT_REGISTRATION_ROLES check
+                AMQueue.tsx's own Register/Bulk-Upload buttons already use. */}
             {activeTab === 'client_overview' && (
               <div className="space-y-6">
                 <HeadOfSalesPortalView
                   clients={clients}
                   onOpenClientDashboard={setHeadOfSalesDashboardClientId}
+                  onOpenRegisterModal={canRegisterClients ? () => setIsRegisterModalOpen(true) : undefined}
+                  onOpenBulkUploadModal={canRegisterClients ? () => setIsBulkClientUploadOpen(true) : undefined}
                 />
                 {headOfSalesDashboardClient && (
                   <ClientDashboard

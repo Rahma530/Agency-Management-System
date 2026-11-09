@@ -19,6 +19,15 @@ const CLIENT_REGISTRATION_ROLES: UserRole[] = [
   'sales',
   'am_team_lead',
   'am_agent',
+  // Added 2026-11-09 (owner's explicit request, follow-up to the head_of_sales role itself):
+  // registers exactly like `sales` — App.tsx's handleRegisterClient/handleBulkAddClient already
+  // fall into the sales-shaped branch for any role that is neither AM nor management (which
+  // head_of_sales is), so sales_owner_id = self and status starts at 'onboarding' automatically,
+  // no change needed there. Backing RLS: supabase/migrations/20270105000000_head_of_sales_client_
+  // registration.sql's new clients_insert_head_of_sales_rls policy (authored for manual
+  // application, not applied from this session) — without it this role could still open the
+  // Register/Bulk Upload modals but every insert would be rejected by RLS.
+  'head_of_sales',
 ];
 
 export const canRegisterClient = (role: UserRole): boolean => CLIENT_REGISTRATION_ROLES.includes(role);
