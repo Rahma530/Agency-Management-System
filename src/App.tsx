@@ -186,6 +186,7 @@ import { CampaignManagementModule } from './components/CampaignManagementModule'
 import { MentorshipTrackerModule } from './components/MentorshipTrackerModule';
 import { ServiceBriefsRoutingView } from './components/ServiceBriefsRoutingView';
 import { MyWorkHub } from './components/MyWorkHub';
+import { HeadOfSalesPortalView } from './components/HeadOfSalesPortalView';
 import { ClientDashboard } from './components/ClientDashboard';
 import { SalesPortalView } from './components/SalesPortalView';
 import { AccessDenied } from './components/AccessDenied';
@@ -604,6 +605,13 @@ export default function App() {
   const myWorkHubDashboardClient = useMemo(
     () => (myWorkHubDashboardClientId ? clients.find((c) => c.id === myWorkHubDashboardClientId) || null : null),
     [myWorkHubDashboardClientId, clients]
+  );
+  // Same pattern, for head_of_sales's Client Status Overview screen (HeadOfSalesPortalView) —
+  // its own independent state, same reasoning as myWorkHubDashboardClientId above.
+  const [headOfSalesDashboardClientId, setHeadOfSalesDashboardClientId] = useState<string | null>(null);
+  const headOfSalesDashboardClient = useMemo(
+    () => (headOfSalesDashboardClientId ? clients.find((c) => c.id === headOfSalesDashboardClientId) || null : null),
+    [headOfSalesDashboardClientId, clients]
   );
   const [notifications, setNotifications] = useState<NotificationRecord[]>([
     {
@@ -7848,6 +7856,23 @@ export default function App() {
               </button>
             )}
 
+            {/* head_of_sales's own module — a dedicated nav item rather than reusing Onboarding,
+                since its screen (HeadOfSalesPortalView) is an agency-wide status overview, not
+                the onboarding queue. See data/roles.ts's 'client_overview' AppModuleId comment. */}
+            {userRoleInfo.allowedModules.includes('client_overview') && (
+              <button
+                onClick={() => handleTabChange('client_overview')}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
+                  activeTab === 'client_overview'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
+                }`}
+              >
+                <Building2 className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">Clients Overview</span>
+              </button>
+            )}
+
             {/* Tab 0: Leadership Dashboard */}
             {userRoleInfo.allowedModules.includes('dashboard') && (
               <button
@@ -8232,6 +8257,87 @@ export default function App() {
                     seoInsights={seoInsights}
                     clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === myWorkHubDashboardClient.id) || null}
                     onClose={() => setMyWorkHubDashboardClientId(null)}
+                    onSaveBrief={handleSaveBrief}
+                    onSubmitBrief={handleSubmitBrief}
+                    briefFieldSchemas={briefFieldSchemas}
+                    briefFieldSchemaRows={briefFieldSchemaRows}
+                    onCreateBriefFieldSchema={handleCreateBriefFieldSchema}
+                    onUpdateBriefFieldSchema={handleUpdateBriefFieldSchema}
+                    onDeleteBriefFieldSchema={handleDeleteBriefFieldSchema}
+                    onDeleteClient={handleDeleteClient}
+                    onForceDeleteClient={handleHardDeleteClient}
+                    onAssignAMAgent={handleAssignAMAgent}
+                    onAssignAMTeamLead={handleAssignAMTeamLead}
+                    onAssignServiceAgent={handleAssignServiceAgent}
+                    onUpdateTaskStatus={handleUpdateTaskStatus}
+                    onUpdateClientStatus={handleUpdateClientStatus}
+                    onConfirmClientRenewal={handleConfirmClientRenewal}
+                    onReopenClient={handleReopenClient}
+                    onMarkClientViewed={handleMarkClientViewedByAMLead}
+                    onGenerateComparison={handleGenerateComparison}
+                    onGenerateReport={handleGenerateReport}
+                    onGenerateAiSummary={handleGenerateCampaignSummary}
+                    onGenerateUnifiedReport={handleGenerateUnifiedReport}
+                    onGenerateMonthlyReportDraft={handleGenerateMonthlyReportDraft}
+                    onApproveReport={handleApproveReport}
+                    meetings={meetings}
+                    onUploadMeetingRecording={handleUploadMeetingRecording}
+                    onSaveMeetingNotes={handleSaveMeetingNotes}
+                    platformConnections={platformConnections}
+                    onSetPlatformConnectionStatus={handleSetPlatformConnectionStatus}
+                    onCreatePortalLogin={handleCreatePortalLogin}
+                    clientContracts={clientContracts}
+                    onUploadClientContract={handleUploadClientContract}
+                    onDeleteClientContract={handleDeleteClientContract}
+                    onUpdatePaymentTracking={handleUpdatePaymentTracking}
+                    onUpdateClientDates={handleUpdateClientDates}
+                    onUpdateClientDetails={handleUpdateClientDetails}
+                    onUpdateClientAccess={handleUpdateClientAccess}
+                    onFetchClientAccess={handleFetchClientAccess}
+                    briefAttachments={briefAttachments}
+                    onUploadBriefAttachment={handleUploadBriefAttachment}
+                    onDeleteBriefAttachment={handleDeleteBriefAttachment}
+                    onFetchClientAccessAttachments={handleFetchClientAccessAttachments}
+                    onUploadClientAccessAttachment={handleUploadClientAccessAttachment}
+                    onDeleteClientAccessAttachment={handleDeleteClientAccessAttachment}
+                    allClients={clients}
+                    onPreviewMergeClients={handlePreviewMergeClients}
+                    onMergeClients={handleMergeClients}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* head_of_sales's own module: agency-wide client status overview, no owner scoping
+                (unlike SalesPortalView), click-through to the same full ClientDashboard, scoped
+                down by ClientDashboard's own role gates (Overview & Contract / Assigned Team /
+                Service Briefs only — owner's explicit request, 2026-11-09). */}
+            {activeTab === 'client_overview' && (
+              <div className="space-y-6">
+                <HeadOfSalesPortalView
+                  clients={clients}
+                  onOpenClientDashboard={setHeadOfSalesDashboardClientId}
+                />
+                {headOfSalesDashboardClient && (
+                  <ClientDashboard
+                    client={headOfSalesDashboardClient}
+                    lifecyclePeriods={clientLifecyclePeriodsByClientId[headOfSalesDashboardClient.id] || []}
+                    users={users}
+                    currentUser={currentUser}
+                    briefs={briefs}
+                    briefRevisions={briefRevisions}
+                    campaigns={campaigns}
+                    tasks={tasks}
+                    dailyLogs={dailyLogs}
+                    extraNotes={extraNotes}
+                    assignments={assignments}
+                    onRefreshAssignments={refreshAssignments}
+                    reports={reports}
+                    clientComparisons={clientComparisons}
+                    socialInsights={socialInsights}
+                    seoInsights={seoInsights}
+                    clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === headOfSalesDashboardClient.id) || null}
+                    onClose={() => setHeadOfSalesDashboardClientId(null)}
                     onSaveBrief={handleSaveBrief}
                     onSubmitBrief={handleSubmitBrief}
                     briefFieldSchemas={briefFieldSchemas}

@@ -149,6 +149,8 @@
   --role-ai-engineer-ink: #2dd4bf;
   --role-marketing-manager-tint: rgba(217, 70, 239, 0.2);
   --role-marketing-manager-ink: #e879f9;
+  --role-head-of-sales-tint: rgba(217, 119, 6, 0.2);
+  --role-head-of-sales-ink: #f59e0b;
 
   /* ---- Task-status badge colors (CrossTeamTaskBoard.tsx's columns array) ----
      Same reasoning as the role tokens above: dark values equal today's literals exactly, one
@@ -432,6 +434,8 @@
   --role-ai-engineer-ink: #0f766e;
   --role-marketing-manager-tint: #fae8ff;
   --role-marketing-manager-ink: #a21caf;
+  --role-head-of-sales-tint: #fef3c7;
+  --role-head-of-sales-ink: #92400e;
 
   /* ---- Task-status badge colors — light values ---- */
   --status-todo-tint: #eeecf5;

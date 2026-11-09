@@ -32,7 +32,20 @@ export type BuiltInRole =
   // into and task-assignment rights over ONLY graphic_designer/video_editor's tasks, plus
   // read-only capacity visibility for the same two roles. No employee-management rights
   // (edit/deactivate/role-change) anywhere.
-  | 'marketing_manager';         // Marketing Manager
+  | 'marketing_manager'          // Marketing Manager
+  // Narrow, read-only oversight role (owner's explicit request, 2026-11-09): sees every client in
+  // the agency (not owner-scoped like 'sales'), limited to a status/renewal/contract overview —
+  // Overview & Contract, Assigned Team, and the Service Briefs tab (content-restricted exactly
+  // like 'sales' today, via ClientDashboard's existing hasBriefViewAccess allow-list, which this
+  // role is deliberately NOT added to). Explicitly excluded from Tasks & Deliverables and Activity
+  // Logs (ClientDashboard.tsx's new canViewTasksAndLogs gate) and, by simply never being added to
+  // their allow-lists, from Campaigns, Team Activity, Reports & Comparisons, Meetings, and
+  // Integrations too. No Tasks/Capacity/Reports/Employees module access elsewhere in the app — see
+  // its own 'client_overview' AppModuleId in data/roles.ts, its only allowedModule. Backing RLS
+  // branch: supabase/migrations/20270104000000_head_of_sales_role.sql (authored for manual
+  // application, not applied from this session).
+  | 'head_of_sales';             // Head of Sales
+
 
 // users.role may also hold an admin-created custom role (public.custom_roles.id) — validated at
 // the DB layer by users_role_valid_guard (20261101500000_users_role_validation_trigger.sql), not
