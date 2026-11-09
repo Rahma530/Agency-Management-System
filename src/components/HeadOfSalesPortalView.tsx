@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Building2, Search, DollarSign, AlertTriangle, CheckCircle2, Eye, Users } from 'lucide-react';
+import { Building2, Search, DollarSign, AlertTriangle, CheckCircle2, Eye, Users, Plus, UploadCloud } from 'lucide-react';
 import { ClientRecord } from '../types/database';
 import { CLIENT_STATUS_META, isCurrentlyActiveClient, isRenewalApproaching } from '../lib/clientStatus';
 import { matchesClientQuery } from '../lib/clientSearch';
@@ -9,17 +9,27 @@ import { matchesClientQuery } from '../lib/clientSearch';
 // sales_owner_id filter), with status/renewal-soon/contract value visible here, and a click-
 // through to the same full ClientDashboard every other "open a client" screen uses (rendered by
 // App.tsx, same minimal-callback-prop pattern as MyWorkHub's onOpenClientDashboard) — scoped down
-// to Overview & Contract / Assigned Team / Service Briefs (content-restricted, same as 'sales')
-// by ClientDashboard's own role gates. No Register/Bulk-Upload actions here — registering clients
-// stays Sales's job, not Head of Sales's.
+// to Overview & Contract / Assigned Team / Service Briefs (view-only, same as every non-AM role
+// with hasBriefViewAccess) by ClientDashboard's own role gates.
+//
+// Register New Client / Bulk Upload (added 2026-11-09, same follow-up request): same two actions
+// SalesPortalView.tsx offers, same handlers (App.tsx's handleRegisterClient/handleBulkAddClient
+// already fall into the sales-shaped branch — sales_owner_id = self, status starts at
+// 'onboarding' — for any role that is neither AM nor management, which head_of_sales is), gated
+// the same way AMQueue.tsx's own copy of these two buttons already is: only rendered when the
+// caller actually passed a handler (App.tsx only does when canRegisterClients is true).
 interface HeadOfSalesPortalViewProps {
   clients: ClientRecord[];
   onOpenClientDashboard: (clientId: string) => void;
+  onOpenRegisterModal?: () => void;
+  onOpenBulkUploadModal?: () => void;
 }
 
 export const HeadOfSalesPortalView: React.FC<HeadOfSalesPortalViewProps> = ({
   clients,
   onOpenClientDashboard,
+  onOpenRegisterModal,
+  onOpenBulkUploadModal,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -41,11 +51,36 @@ export const HeadOfSalesPortalView: React.FC<HeadOfSalesPortalViewProps> = ({
         className="rounded-2xl p-6 relative overflow-hidden border"
         style={{ background: 'var(--gradient-card)', borderColor: 'var(--border-medium)' }}
       >
-        <div className="space-y-1.5 relative z-10">
-          <h2 className="text-xl md:text-2xl font-bold text-white">Client Status Overview</h2>
-          <p className="text-xs text-stone-400">
-            Every client in the agency, at a glance — status, upcoming renewals, and contract value.
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+          <div className="space-y-1.5">
+            <h2 className="text-xl md:text-2xl font-bold text-white">Client Status Overview</h2>
+            <p className="text-xs text-stone-400">
+              Every client in the agency, at a glance — status, upcoming renewals, and contract value.
+            </p>
+          </div>
+
+          {(onOpenRegisterModal || onOpenBulkUploadModal) && (
+            <div className="flex items-center gap-2 shrink-0">
+              {onOpenRegisterModal && (
+                <button
+                  onClick={onOpenRegisterModal}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg active:scale-98 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Register New Client</span>
+                </button>
+              )}
+              {onOpenBulkUploadModal && (
+                <button
+                  onClick={onOpenBulkUploadModal}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-98 text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-700/40"
+                >
+                  <UploadCloud className="w-4 h-4" />
+                  <span>Bulk Upload</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
