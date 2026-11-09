@@ -113,6 +113,13 @@ export const canAccessClientSensitiveInfo = (role: UserRole): boolean =>
 export const canSeeContractValue = (role: UserRole, isOwnClient: boolean): boolean => {
   if (canAccessClientSensitiveInfo(role)) return true;
   if (role === 'sales' && isOwnClient) return true;
+  // head_of_sales sees every client's contract value unconditionally (not an "own client"
+  // concept for this role — it has agency-wide, not owner-scoped, visibility) as part of the
+  // Overview & Contract tab it's explicitly allowed to see; owner's explicit request, 2026-11-09.
+  // Deliberately NOT added to canAccessClientSensitiveInfo/CLIENT_SENSITIVE_INFO_ROLES above —
+  // that would also open Payment Tracking and the Client Access (platform/ad-account login,
+  // payment card) tab, neither of which was asked for.
+  if (role === 'head_of_sales') return true;
   return false;
 };
 

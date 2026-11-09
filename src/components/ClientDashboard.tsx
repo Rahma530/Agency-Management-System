@@ -753,6 +753,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // assigned to run the discovery meeting — before that there's nothing to document yet.
   const isAMAgentAssigned = !!client.am_agent_id;
 
+  // head_of_sales is explicitly excluded from Tasks & Deliverables and Activity Logs (owner's
+  // explicit request, 2026-11-09: "everything to do with employee work, Tasks, and Daily
+  // Operations — no") — unlike every other tab on this dashboard, those two buttons/sections have
+  // no existing role gate of their own (they're unconditionally rendered), so this is a dedicated
+  // negative gate rather than reusing hasReportsAccess/hasCampaignViewAccess etc. (which already
+  // exclude head_of_sales simply by never listing it).
+  const canViewTasksAndLogs = currentUser.role !== 'head_of_sales';
+
   // Mirrors reports_select_rls / client_comparisons_select_rls in the migrations: Executive,
   // Head of Technical, AM Team Lead, or the client's own assigned AM Agent. Deliberately UNCHANGED
   // by the combined-scope widening below — this still gates Team Activity, Meetings, Integrations,
@@ -1509,6 +1517,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             </button>
           )}
 
+          {canViewTasksAndLogs && (
           <button
             onClick={() => setActiveTab('tasks')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
@@ -1520,7 +1529,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             <CheckSquare className="w-3.5 h-3.5" />
             <span>Tasks & Deliverables ({clientTasks.length})</span>
           </button>
+          )}
 
+          {canViewTasksAndLogs && (
           <button
             onClick={() => setActiveTab('logs')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
@@ -1532,6 +1543,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             <Activity className="w-3.5 h-3.5" />
             <span>Activity Logs ({clientLogs.length})</span>
           </button>
+          )}
 
           {hasReportsAccess && (
             <button
@@ -3127,7 +3139,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           )}
 
           {/* 5. TASKS & DEADLINES */}
-          {activeTab === 'tasks' && (
+          {activeTab === 'tasks' && canViewTasksAndLogs && (
             <div className="space-y-3">
               <div className="flex items-center justify-end mb-2">
                 <span className="text-xs text-purple-300 font-bold">{clientTasks.length} Total Tasks</span>
@@ -3194,7 +3206,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           )}
 
           {/* 6. LOGS & NOTES */}
-          {activeTab === 'logs' && (
+          {activeTab === 'logs' && canViewTasksAndLogs && (
             <div className="space-y-3">
               <div className="space-y-2">
                 {clientLogs.map((log) => {

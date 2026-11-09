@@ -1,7 +1,12 @@
 import { BuiltInRole, UserRole } from '../types/database';
 import { getActiveCustomRole, getCustomRoleModules, isCustomRoleCacheLoaded } from './customRoles';
 
-export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship' | 'inhouse';
+// 'client_overview' added for head_of_sales only (2026-11-09): a dedicated module/tab distinct
+// from 'onboarding' on purpose — reusing 'onboarding' would have inherited its "Client Onboarding"
+// label/badge count (App.tsx's canAccessClientOnboarding-gated nav item, scoped to onboarding-
+// stage clients only), which is the wrong screen for a role whose job is an agency-wide status
+// overview across every lifecycle stage, not managing the onboarding queue.
+export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship' | 'inhouse' | 'client_overview';
 
 export interface RoleMetadata {
   role: UserRole;
@@ -391,6 +396,26 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     canManageCapacity: false,
     canAssignAM: false,
     description: 'Cross-cutting oversight of the shared Creative pool (Graphic Design & Video Production) — task assignment, capacity visibility, and day-to-day operating modules (no employee management, mentorship, or brief templates).',
+  },
+  head_of_sales: {
+    role: 'head_of_sales',
+    englishTitle: 'Head of Sales',
+    portalTitleEn: 'Head of Sales Portal',
+    portalSlug: 'head-of-sales',
+    team: 'Sales',
+    department: 'Sales & Business Development',
+    badgeBg: 'var(--role-head-of-sales-tint)',
+    badgeText: 'var(--role-head-of-sales-ink)',
+    defaultModule: 'client_overview',
+    // Its own single module (owner's explicit request, 2026-11-09): a read-mostly overview of
+    // every client's status/renewal/contract — never Tasks/Capacity/Daily Operations/Employees/
+    // Reports/Campaigns. See HeadOfSalesPortalView.tsx and ClientDashboard.tsx's new
+    // canViewTasksAndLogs gate for the rest of this role's scope.
+    allowedModules: ['client_overview'],
+    canCreateCampaign: false,
+    canManageCapacity: false,
+    canAssignAM: false,
+    description: 'Agency-wide client status overview — active, paused, and upcoming renewals — for sales leadership.',
   },
 };
 

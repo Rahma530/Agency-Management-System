@@ -257,6 +257,7 @@ export function getAllowedEmployeeRolesUnderRLS(viewerRole: UserRole): UserRole[
       'ui_ux_designer',
       'ai_engineer',
       'marketing_manager',
+      'head_of_sales',
     ];
   }
 

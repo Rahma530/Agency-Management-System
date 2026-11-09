@@ -52,6 +52,22 @@ export const isCurrentlyActiveClient = (client: ClientRecord): boolean =>
 // capacity/workload load, but still counts toward MRR (still a paying, contracted client).
 export const isPausedClient = (client: ClientRecord): boolean => client.status === 'paused';
 
+// Date-based "renewal coming up soon" flag — independent of the manual 'renewal' status (an AM
+// moves a client into that status by hand; this is purely renewal_date vs. today). Mirrors the
+// exact window App.tsx's automated renewal-alert notification effect already uses (within the
+// next `days` days, never a past-due date, never a closed client), so this reads as the same
+// signal that already drives that in-app notification — just surfaced as a visible badge too
+// (added for head_of_sales's client-overview screen, 2026-11-09).
+export const isRenewalApproaching = (client: ClientRecord, days = 7): boolean => {
+  if (!client.renewal_date || client.status === 'closed') return false;
+  const renewal = new Date(client.renewal_date);
+  if (Number.isNaN(renewal.getTime())) return false;
+  const now = new Date();
+  const windowEnd = new Date(now);
+  windowEnd.setDate(windowEnd.getDate() + days);
+  return renewal >= now && renewal <= windowEnd;
+};
+
 // Single shared ordering for "clients, sorted by how much attention they need right now" — new
 // onboarding clients first (still being set up), established active/renewal clients next, wound-
 // down ones (paused/closed) last. Used both for the Client Portfolio table (AMQueue.tsx) and for
