@@ -81,6 +81,12 @@ interface ReportsHubProps {
   taskAssignees?: TaskAssigneeRecord[];
   // Comparison section's media_buying/social_media gating — see unconnectedServices below.
   platformConnections?: PlatformConnectionRecord[];
+  // On-demand backfill for dailyLogs/extraNotes beyond App.tsx's default recent window — see the
+  // useEffect calling these below. Optional so a caller that hasn't wired windowed loading still
+  // renders (it would just never see rows older than whatever it already passed in dailyLogs).
+  onEnsureDailyLogsSince?: (sinceIso: string) => void;
+  onEnsureAllDailyLogsLoaded?: () => void;
+  onEnsureExtraNotesSince?: (sinceIso: string) => void;
   onGenerateComparison: (
     scope: ReportScope,
     mode: ReportMode,
@@ -140,6 +146,9 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
   tasks = [],
   taskAssignees = [],
   platformConnections = [],
+  onEnsureDailyLogsSince,
+  onEnsureAllDailyLogsLoaded,
+  onEnsureExtraNotesSince,
   onGenerateComparison,
   onGenerateReport,
   onGenerateAiSummary,
@@ -470,6 +479,25 @@ export const ReportsHub: React.FC<ReportsHubProps> = ({
     const prevStart = addDaysIso(prevEnd, -(lengthDays - 1));
     setCustomPreviousRange({ start: prevStart, end: prevEnd });
   }, [periodStart, periodEnd, periodShortcut]);
+
+  // App.tsx only keeps a recent rolling window of dailyLogs/extraNotes in memory by default (see
+  // RECENT_DATA_WINDOW_DAYS in App.tsx) to cut the Egress/Log Ingestion that fetching these
+  // ever-growing tables in full, on every load, was driving up. This hub is the one place that can
+  // legitimately need older rows — a custom report period starting before the window, or the
+  // Activity tab's "all dates" toggle — so it backfills exactly that gap on demand instead of
+  // assuming everything is already loaded. A no-op once the relevant range/table is already covered
+  // (checked inside the ensure* callbacks themselves against App.tsx's own bookkeeping), so this is
+  // safe to fire on every periodStart/dailyLogAllDates change rather than only the first time.
+  useEffect(() => {
+    onEnsureDailyLogsSince?.(periodStart);
+    onEnsureExtraNotesSince?.(periodStart);
+  }, [periodStart, onEnsureDailyLogsSince, onEnsureExtraNotesSince]);
+
+  useEffect(() => {
+    if (dailyLogAllDates) {
+      onEnsureAllDailyLogsLoaded?.();
+    }
+  }, [dailyLogAllDates, onEnsureAllDailyLogsLoaded]);
 
   // Weekly/Monthly/Quarterly/Yearly shortcut (point 4): fills top-bar period A from
   // resolveComparisonPeriods (same reportingEngine.ts logic PeriodSelector.tsx already uses), and

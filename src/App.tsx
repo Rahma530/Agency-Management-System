@@ -39,6 +39,8 @@ import {
   buildClientAccessAttachmentStoragePath,
   buildDailyLogAttachmentStoragePath,
   fetchAllRows,
+  fetchRowsSince,
+  fetchRowsInRange,
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isInhouseClient, isInhouseTask } from './lib/clientStatus';
@@ -209,6 +211,31 @@ export type AppModule = AppModuleId;
 // build mode can make this reachable again by accident. Kept unreachable, not deleted: this flag,
 // the UI trigger below, EmployeeTestingMode.tsx, the employee-test-account Edge Function, and its
 // migration history are all still in the repo for a dedicated future removal task, not this one.
+// daily_logs/capacity_logs/extra_notes are fetched in full on every load — on a growing agency
+// history that's a standing, ever-increasing drag on Supabase Egress/Log Ingestion (confirmed the
+// direct cause of the 2026-11-14 free-plan-quota incident: both metrics were over 100% of the
+// free tier, and the resulting throttling is what surfaced as "canceling statement due to
+// statement timeout" on daily_logs specifically). Almost every screen that reads these three
+// tables only ever shows recent/current activity (MyWorkHub, ClientDashboard,
+// DailyOperationsModule, CampaignManagementModule, EmployeePerformancePage, CapacityManagement,
+// etc. — confirmed none of these expose a date picker reaching further back), so the initial load
+// below is capped to this rolling window instead of the whole table's history. The one place that
+// legitimately needs older rows, ReportsHub (a free-form period picker plus an explicit "all
+// dates" toggle for its Activity tab), backfills exactly the gap it needs on demand — see
+// ensureDailyLogsSince/ensureAllDailyLogsLoaded and their extra_notes equivalents below — so
+// nothing a report or the activity log depends on is silently missing, it's just not pulled until
+// something actually asks for it.
+const RECENT_DATA_WINDOW_DAYS = 60;
+
+function isoDateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const EMPLOYEE_TESTING_MODE_ENABLED = false;
 const TEST_SESSION_KEY = 'agency_employee_test_handoff';
 type TestHandoff = { employeeId: string; authId: string; email: string };
@@ -580,6 +607,17 @@ export default function App() {
   const [capacityLogs, setCapacityLogs] = useState<CapacityLogRecord[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLogRecord[]>([]);
   const [extraNotes, setExtraNotes] = useState<ExtraNoteRecord[]>([]);
+  // Bookkeeping for the windowed-load-plus-on-demand-backfill scheme above RECENT_DATA_WINDOW_DAYS
+  // implements. *WindowStartRef holds the earliest 'YYYY-MM-DD' date currently covered in state
+  // (extended backward, never forward, every time a backfill succeeds); *FullyLoadedRef flips once
+  // every row the table has is in state, so a repeat "all dates" toggle is a no-op instead of
+  // re-fetching the whole table again. Refs, not state: purely internal to the ensure*
+  // callbacks below, never read during render, so they shouldn't trigger one.
+  const capacityLogsWindowStartRef = useRef<string>('');
+  const dailyLogsWindowStartRef = useRef<string>('');
+  const dailyLogsFullyLoadedRef = useRef(false);
+  const extraNotesWindowStartRef = useRef<string>('');
+  const extraNotesFullyLoadedRef = useRef(false);
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
   const [socialInsights, setSocialInsights] = useState<SocialInsightRecord[]>([]);
@@ -1934,6 +1972,67 @@ export default function App() {
     }
 
     setTasks(data || []);
+  }, []);
+
+  // On-demand backfill for daily_logs: called by ReportsHub whenever it needs a date older than
+  // dailyLogsWindowStartRef.current (today - RECENT_DATA_WINDOW_DAYS by default) — a custom report
+  // period starting before the window, for instance. Only fetches the gap between the requested
+  // date and the currently-loaded window (fetchRowsInRange with an exclusive-feeling upper bound:
+  // addDaysIso-style '< currentWindowStart' isn't available here, so this uses the day immediately
+  // before the current window start as the inclusive upper bound), then merges it in and moves the
+  // window start back — so asking for an even-older date later only fetches the new, smaller gap,
+  // never the same rows twice. A no-op once the whole table is already loaded (dailyLogsFullyLoadedRef).
+  const ensureDailyLogsSince = useCallback(async (sinceIso: string): Promise<void> => {
+    if (!isSupabaseConfigured() || dailyLogsFullyLoadedRef.current) return;
+    if (!sinceIso || sinceIso >= dailyLogsWindowStartRef.current) return; // already covered
+
+    const gapEnd = new Date(dailyLogsWindowStartRef.current);
+    gapEnd.setDate(gapEnd.getDate() - 1);
+    const gapEndIso = gapEnd.toISOString().slice(0, 10);
+
+    const { data, error } = await fetchRowsInRange<DailyLogRecord>(
+      supabase, 'daily_logs', 'date', sinceIso, gapEndIso
+    );
+    if (error) {
+      console.error('Failed to backfill older daily logs from Supabase:', error);
+      return;
+    }
+    setDailyLogs((current) => [...(data || []), ...current]);
+    dailyLogsWindowStartRef.current = sinceIso;
+  }, []);
+
+  // Loads the rest of daily_logs once (for the Activity tab's explicit "all dates" toggle), then
+  // flags it so a second toggle never re-fetches.
+  const ensureAllDailyLogsLoaded = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured() || dailyLogsFullyLoadedRef.current) return;
+    const { data, error } = await fetchAllRows<DailyLogRecord>(supabase, 'daily_logs');
+    if (error) {
+      console.error('Failed to load full daily log history from Supabase:', error);
+      return;
+    }
+    setDailyLogs(data || []);
+    dailyLogsFullyLoadedRef.current = true;
+  }, []);
+
+  // Same two helpers, for extra_notes — ReportsHub's Draft section pulls both dailyLogs and
+  // extraNotes for the selected period, so a custom-period backfill needs both.
+  const ensureExtraNotesSince = useCallback(async (sinceIso: string): Promise<void> => {
+    if (!isSupabaseConfigured() || extraNotesFullyLoadedRef.current) return;
+    if (!sinceIso || sinceIso >= extraNotesWindowStartRef.current) return;
+
+    const gapEnd = new Date(extraNotesWindowStartRef.current);
+    gapEnd.setDate(gapEnd.getDate() - 1);
+    const gapEndIso = gapEnd.toISOString().slice(0, 10);
+
+    const { data, error } = await fetchRowsInRange<ExtraNoteRecord>(
+      supabase, 'extra_notes', 'date', sinceIso, gapEndIso
+    );
+    if (error) {
+      console.error('Failed to backfill older extra notes from Supabase:', error);
+      return;
+    }
+    setExtraNotes((current) => [...(data || []), ...current]);
+    extraNotesWindowStartRef.current = sinceIso;
   }, []);
 
   // Targeted Realtime handler for 'tasks' (2026-11-03 — owner's report: at ~1000+ tasks and a
@@ -3361,31 +3460,45 @@ export default function App() {
           setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
         }
 
-        // Fetch capacity_logs
-        const { data: capData, error: capErr } = await supabase.from('capacity_logs').select('*');
+        // Fetch capacity_logs — windowed to the last RECENT_DATA_WINDOW_DAYS (see that constant's
+        // comment above): every current consumer (CapacityManagement, etc.) only ever shows
+        // recent/current capacity, never a custom historical range.
+        const recentWindowStart = isoDateDaysAgo(RECENT_DATA_WINDOW_DAYS);
+        const { data: capData, error: capErr } = await fetchRowsSince<CapacityLogRecord>(
+          supabase, 'capacity_logs', 'date', recentWindowStart
+        );
         if (capErr) {
           console.error('Failed to load capacity logs from Supabase:', capErr);
           showNotification(`Failed to load capacity logs from the server: ${capErr.message}`, 'info');
         } else {
-          setCapacityLogs((capData as CapacityLogRecord[]) || []);
+          setCapacityLogs(capData || []);
+          capacityLogsWindowStartRef.current = recentWindowStart;
         }
 
-        // Fetch daily_logs
-        const { data: logData, error: logErr } = await supabase.from('daily_logs').select('*');
+        // Fetch daily_logs — same windowed load. ReportsHub backfills whatever falls outside this
+        // window on demand (ensureDailyLogsSince/ensureAllDailyLogsLoaded below) when a report's
+        // period or the Activity tab's "all dates" toggle actually needs it.
+        const { data: logData, error: logErr } = await fetchRowsSince<DailyLogRecord>(
+          supabase, 'daily_logs', 'date', recentWindowStart
+        );
         if (logErr) {
           console.error('Failed to load daily logs from Supabase:', logErr);
           showNotification(`Failed to load daily logs from the server: ${logErr.message}`, 'info');
         } else {
-          setDailyLogs((logData as DailyLogRecord[]) || []);
+          setDailyLogs(logData || []);
+          dailyLogsWindowStartRef.current = recentWindowStart;
         }
 
-        // Fetch extra_notes
-        const { data: noteData, error: noteErr } = await supabase.from('extra_notes').select('*');
+        // Fetch extra_notes — same windowed load, same ReportsHub backfill-on-demand treatment.
+        const { data: noteData, error: noteErr } = await fetchRowsSince<ExtraNoteRecord>(
+          supabase, 'extra_notes', 'date', recentWindowStart
+        );
         if (noteErr) {
           console.error('Failed to load extra notes from Supabase:', noteErr);
           showNotification(`Failed to load extra notes from the server: ${noteErr.message}`, 'info');
         } else {
-          setExtraNotes((noteData as ExtraNoteRecord[]) || []);
+          setExtraNotes(noteData || []);
+          extraNotesWindowStartRef.current = recentWindowStart;
         }
 
         // Fetch campaigns directly from Postgres (bypassing the legacy client-side campaigns
@@ -8803,6 +8916,9 @@ export default function App() {
                   tasks={tasks}
                   taskAssignees={taskAssignees}
                   platformConnections={platformConnections}
+                  onEnsureDailyLogsSince={ensureDailyLogsSince}
+                  onEnsureAllDailyLogsLoaded={ensureAllDailyLogsLoaded}
+                  onEnsureExtraNotesSince={ensureExtraNotesSince}
                   onGenerateComparison={handleGenerateComparison}
                   onGenerateReport={handleGenerateReport}
                   onGenerateAiSummary={handleGenerateCampaignSummary}
