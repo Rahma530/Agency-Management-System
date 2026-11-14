@@ -1374,6 +1374,91 @@ export async function fetchAllRows<T>(
   return { data: allRows, error: null };
 }
 
+// Same silent-1000-row-cap problem fetchAllRows solves, but for the opposite case: a handful of
+// date-stamped activity tables (daily_logs, capacity_logs, extra_notes) that are fetched in full
+// on every app load/refresh even though most screens that read them only ever look at recent
+// data. That's not a correctness bug like fetchAllRows's — a bare `.select('*')` on these still
+// returns every row, no silent truncation — but is a standing drag on Supabase's Egress/Log
+// Ingestion usage that grows every day as these tables grow, independent of how much of that
+// history anyone is actually looking at right now.
+//
+// fetchRowsSince narrows the initial load to rows on/after `sinceIso` (an inclusive 'YYYY-MM-DD'
+// cutoff, matching these tables' own `date` column format) while still paging past the 1000-row
+// cap within that window, so a page is never silently dropped if the window itself is large. Any
+// screen that genuinely needs an older row (a custom report period, "all dates") fetches that
+// specific gap on demand instead — see ensureDailyLogsSince/ensureAllDailyLogsLoaded and their
+// extra_notes equivalents in App.tsx — rather than this helper ever being asked to load more than
+// one bounded window at a time.
+export async function fetchRowsSince<T>(
+  client: SupabaseClient,
+  table: string,
+  dateColumn: string,
+  sinceIso: string,
+  select: string = '*',
+  orderColumns: string[] = ['id']
+): Promise<{ data: T[] | null; error: { message?: string } | null }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let query = client.from(table).select(select).gte(dateColumn, sinceIso);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+
+    if (error) return { data: null, error };
+
+    const rows = (data as T[] | null) || [];
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
+// The on-demand counterpart to fetchRowsSince above: a narrow backfill for exactly the gap a
+// screen needs (a custom report period's start/end), not another full-table or full-window fetch.
+// Both bounds are inclusive, matching the 'YYYY-MM-DD' string comparison these date columns
+// already support. Kept separate from fetchRowsSince (rather than an optional `toIso` on it) so
+// the common "just give me recent rows" call site stays a 2-bound-free call.
+export async function fetchRowsInRange<T>(
+  client: SupabaseClient,
+  table: string,
+  dateColumn: string,
+  fromIso: string,
+  toIso: string,
+  select: string = '*',
+  orderColumns: string[] = ['id']
+): Promise<{ data: T[] | null; error: { message?: string } | null }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let query = client.from(table).select(select).gte(dateColumn, fromIso).lte(dateColumn, toIso);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+
+    if (error) return { data: null, error };
+
+    const rows = (data as T[] | null) || [];
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
 // Dev-only: expose supabase globally for browser verification and direct security testing
 if (viteEnv.DEV && typeof window !== 'undefined') {
   (window as any).supabase = supabase;
