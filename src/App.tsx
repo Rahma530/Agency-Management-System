@@ -751,6 +751,17 @@ export default function App() {
     return null;
   });
 
+  // Mirrors authenticatedUser for the few useCallbacks below (notifications/activities polling,
+  // folded into useConsolidatedRealtimeSync — see that hook's entries array further down) that
+  // need the CURRENT id/role at call time but, like every other entry's refresh function, must
+  // stay a stable (empty-deps) useCallback so the consolidated channel never tears down and
+  // reopens over an identity change that carries no real difference (see that hook's own comment
+  // on why `entries` itself is excluded from its effect's dependency array).
+  const authenticatedUserRef = useRef<UserRecord | null>(authenticatedUser);
+  useEffect(() => {
+    authenticatedUserRef.current = authenticatedUser;
+  }, [authenticatedUser]);
+
   // True while the current session is a Supabase PASSWORD_RECOVERY session
   // (a provisioning or password-reset link was just clicked) — gates
   // rendering to SetPasswordScreen instead of logging straight into the
@@ -1939,6 +1950,51 @@ export default function App() {
     setAssignments((data as AssignmentRecord[]) || []);
   }, []);
 
+  // Lifted out of their old standalone-polling useEffects (notifications/activities/users were
+  // each their own `setInterval(..., 20000)` running unconditionally for every open tab, all day —
+  // confirmed the dominant driver of the 2026-11-14 Log Ingestion overage, since the request COUNT
+  // scales with employees x hours open regardless of whether anything actually changed) so they can
+  // be registered as entries in useConsolidatedRealtimeSync below instead: event-driven refresh on
+  // a real change, with the shared channel's own poll only as a true fallback. chat_messages is
+  // deliberately NOT included here — see that polling effect's own comment on the confirmed silent
+  // Realtime delivery failure that made polling the considered choice there, not an oversight.
+  const refreshNotifications = useCallback(async (): Promise<void> => {
+    const userId = authenticatedUserRef.current?.id;
+    if (!userId || !isSupabaseConfigured()) return;
+    const { data, error } = await supabaseRaw
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (!error) {
+      setNotifications((prev) => mergeNotificationsPreservingLocalReads(prev, (data as NotificationRecord[]) || []));
+    }
+  }, []);
+
+  // Admin-only (executive/head_of_technical) — mirrors the old effect's own role gate. Safe to
+  // leave this unconditionally in the shared channel's entries for every role: a non-admin's call
+  // just no-ops instead of the effect never having existed for them, same end result.
+  const refreshActivities = useCallback(async (): Promise<void> => {
+    const role = authenticatedUserRef.current?.role;
+    if (!role || !['executive', 'head_of_technical'].includes(role) || !isSupabaseConfigured()) return;
+    const { data, error } = await supabaseRaw
+      .from('activities')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (!error) {
+      setActivities((data as ActivityRecord[]) || []);
+    }
+  }, []);
+
+  const refreshUsersTable = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    const { data, error } = await supabaseRaw.from('users').select('*');
+    if (!error) {
+      setUsers((data as UserRecord[]) || []);
+    }
+  }, []);
+
   // Real-time pilot (Task Board) — invalidate-then-refetch, same shape as refreshAssignments
   // above: the realtime effect below only ever calls this to re-run the exact same RLS-scoped
   // select() loadData() already uses, rather than trying to reconstruct tasks_visible_v2's own
@@ -2242,16 +2298,24 @@ export default function App() {
     [refreshCampaigns]
   );
 
+  // Poll-fallback path only (the live channel uses applyCapacityLogRealtimeChange's single-row
+  // fast path instead — see RealtimeSyncEntry's onPayload). Windowed, same as the initial bootstrap
+  // load above: a bare select('*') here would silently re-inflate capacityLogs back to the full
+  // table every time the consolidated channel drops to its poll fallback (reconnects happen
+  // routinely — network blips, laptop sleep/wake, a backgrounded tab regaining focus — so this
+  // path runs far more often than "rarely").
   const refreshCapacityLogs = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
-    const { data, error } = await supabase.from('capacity_logs').select('*');
+    const { data, error } = await fetchRowsSince<CapacityLogRecord>(
+      supabase, 'capacity_logs', 'date', capacityLogsWindowStartRef.current || isoDateDaysAgo(RECENT_DATA_WINDOW_DAYS)
+    );
     if (error) {
       console.error('Failed to refresh capacity logs from Supabase:', error);
       return;
     }
 
-    setCapacityLogs((data as CapacityLogRecord[]) || []);
+    setCapacityLogs(data || []);
   }, []);
 
   const applyCapacityLogRealtimeChange = useCallback(
@@ -2283,16 +2347,32 @@ export default function App() {
     [refreshCapacityLogs]
   );
 
+  // Poll-fallback path only — same windowing reasoning as refreshCapacityLogs above. Respects
+  // whatever window ReportsHub's on-demand backfill (ensureDailyLogsSince/ensureAllDailyLogsLoaded)
+  // has already widened dailyLogsWindowStartRef/dailyLogsFullyLoadedRef to, instead of resetting
+  // back to the default 60-day window and silently dropping an older period someone just backfilled.
   const refreshDailyLogs = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
-    const { data, error } = await supabase.from('daily_logs').select('*');
+    if (dailyLogsFullyLoadedRef.current) {
+      const { data, error } = await fetchAllRows<DailyLogRecord>(supabase, 'daily_logs');
+      if (error) {
+        console.error('Failed to refresh daily logs from Supabase:', error);
+        return;
+      }
+      setDailyLogs(data || []);
+      return;
+    }
+
+    const { data, error } = await fetchRowsSince<DailyLogRecord>(
+      supabase, 'daily_logs', 'date', dailyLogsWindowStartRef.current || isoDateDaysAgo(RECENT_DATA_WINDOW_DAYS)
+    );
     if (error) {
       console.error('Failed to refresh daily logs from Supabase:', error);
       return;
     }
 
-    setDailyLogs((data as DailyLogRecord[]) || []);
+    setDailyLogs(data || []);
   }, []);
 
   const applyDailyLogRealtimeChange = useCallback(
@@ -2324,16 +2404,21 @@ export default function App() {
     [refreshDailyLogs]
   );
 
+  // Poll-fallback path only — same windowing reasoning as refreshCapacityLogs/refreshDailyLogs
+  // above, respecting whatever window ReportsHub's ensureExtraNotesSince backfill has widened
+  // extraNotesWindowStartRef to.
   const refreshExtraNotes = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
 
-    const { data, error } = await supabase.from('extra_notes').select('*');
+    const { data, error } = await fetchRowsSince<ExtraNoteRecord>(
+      supabase, 'extra_notes', 'date', extraNotesWindowStartRef.current || isoDateDaysAgo(RECENT_DATA_WINDOW_DAYS)
+    );
     if (error) {
       console.error('Failed to refresh extra notes from Supabase:', error);
       return;
     }
 
-    setExtraNotes((data as ExtraNoteRecord[]) || []);
+    setExtraNotes(data || []);
   }, []);
 
   const applyExtraNoteRealtimeChange = useCallback(
@@ -3912,134 +3997,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticatedUser?.id, supabaseActive]);
 
-  // Notification delivery — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above).
-  useEffect(() => {
-    const userId = authenticatedUser?.id;
-    if (!userId || !supabaseActive) return;
-
-    let cancelled = false;
-
-    const refetchNotifications = async () => {
-      const { data, error } = await supabaseRaw
-        .from('notifications')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-      if (!cancelled && !error) {
-        setNotifications((prev) =>
-          mergeNotificationsPreservingLocalReads(prev, (data as NotificationRecord[]) || [])
-        );
-      }
-    };
-
-    const stopPolling = startVisibilityAwarePoll(() => void refetchNotifications(), POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticatedUser?.id, supabaseActive]);
-
-  // Activities feed — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above). Same admin-only
-  // gate as the initial fetch above (and the Live Activity Feed buttons themselves) — this whole
-  // effect simply never runs for anyone else, so a task participant's own
-  // activities_select_task_participants-visible rows
-  // (20261117000000_activities_task_participants_select.sql) never reach this system-wide feed.
-  useEffect(() => {
-    const userId = authenticatedUser?.id;
-    if (!userId || !supabaseActive) return;
-    if (!['executive', 'head_of_technical'].includes(currentUser.role)) return;
-
-    let cancelled = false;
-
-    const refetchActivities = async () => {
-      const { data, error } = await supabaseRaw
-        .from('activities')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (!cancelled && !error) {
-        setActivities((data as ActivityRecord[]) || []);
-      }
-    };
-
-    const stopPolling = startVisibilityAwarePoll(() => void refetchActivities(), POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [authenticatedUser?.id, supabaseActive]);
-
-  // Users table sync — polls (visibility-aware, see startVisibilityAwarePoll), no Realtime
-  // WebSocket channel (removed; see useConsolidatedRealtimeSync's own comment above). Keeps
-  // EmployeeAdminHub's "Awaiting Setup" view (and anything else reading `users`) from staying
-  // frozen at whatever loadData() fetched once at this session's own login — e.g. another
-  // employee's last_seen_at update, from completing setup via either the admin-invitation link or
-  // the self-service "Forgot Password" flow, now reaches an already-open admin tab without a
-  // manual reload.
-  useEffect(() => {
-    const userId = authenticatedUser?.id;
-    if (!userId || !supabaseActive) return;
-
-    let cancelled = false;
-
-    const refetchUsers = async () => {
-      const { data, error } = await supabaseRaw.from('users').select('*');
-      if (!cancelled && !error) {
-        setUsers((data as UserRecord[]) || []);
-      }
-    };
-
-    const stopPolling = startVisibilityAwarePoll(() => void refetchUsers(), POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [authenticatedUser?.id, supabaseActive]);
-
-  // Keep the shared assignments snapshot synchronized across employee sessions — polls
-  // (visibility-aware, see startVisibilityAwarePoll), no Realtime WebSocket channel (removed; see
-  // useConsolidatedRealtimeSync's own comment above). The RLS-filtered SELECT in refreshAssignments
-  // remains the source of truth either way.
-  useEffect(() => {
-    const userId = authenticatedUser?.id;
-    if (!userId || !supabaseActive) return;
-
-    let cancelled = false;
-    let refreshInFlight = false;
-    let refreshQueued = false;
-
-    const runCoalescedRefresh = async (): Promise<void> => {
-      if (cancelled) return;
-      if (refreshInFlight) {
-        refreshQueued = true;
-        return;
-      }
-
-      refreshInFlight = true;
-      try {
-        await refreshAssignments();
-      } finally {
-        refreshInFlight = false;
-        if (!cancelled && refreshQueued) {
-          refreshQueued = false;
-          void runCoalescedRefresh();
-        }
-      }
-    };
-
-    const stopPolling = startVisibilityAwarePoll(() => void runCoalescedRefresh(), POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [authenticatedUser?.id, supabaseActive, refreshAssignments]);
+  // Notification/Activities/Users/Assignments sync: 2026-11-14 — these four used to be their own
+  // standalone `startVisibilityAwarePoll(..., POLL_INTERVAL_MS)` effects here, each polling
+  // unconditionally (every 20s, for every open tab, all day, regardless of whether anything
+  // changed). Folded into useConsolidatedRealtimeSync's entries array below instead — event-driven
+  // on a real postgres_changes event, with that hook's own shared poll only as a fallback while its
+  // one channel isn't SUBSCRIBED. See refreshNotifications/refreshActivities/refreshUsersTable
+  // above (lifted out of these effects unchanged) and the 'assignments' entry below (reusing
+  // refreshAssignments, already a stable useCallback). chat_messages is the one table deliberately
+  // NOT folded in here — see that polling effect's own comment just above for why.
 
   // Table-by-table sync — the Task Board pilot (tasks) proved the invalidate-then-coalesced-
   // refetch approach out; this is that same approach rolled out to the rest of the day-to-day
@@ -4100,6 +4066,14 @@ export default function App() {
       { table: 'custom_role_permissions', refresh: loadCustomRolesAndDepartments },
       { table: 'department_permissions', refresh: loadCustomRolesAndDepartments },
       { table: 'department_member_teams', refresh: loadCustomRolesAndDepartments },
+      // 2026-11-14 — migrated off their own unconditional 20s polls (see this hook's call-site
+      // comment above and refreshNotifications/refreshActivities/refreshUsersTable's own comment).
+      { table: 'notifications', refresh: refreshNotifications },
+      { table: 'users', refresh: refreshUsersTable },
+      { table: 'assignments', refresh: refreshAssignments },
+      // Admin-only table (executive/head_of_technical) — refreshActivities itself no-ops for every
+      // other role, same effective behavior as the old effect simply never running for them.
+      { table: 'activities', refresh: refreshActivities },
     ],
     realtimeEnabled
   );
