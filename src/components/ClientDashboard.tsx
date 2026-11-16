@@ -37,6 +37,7 @@ import {
 import {
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientAccessFields,
   ClientStatus,
   UserRecord,
@@ -131,6 +132,7 @@ const getLocalCalendarDate = (): string => {
 interface ClientDashboardProps {
   client: ClientRecord;
   lifecyclePeriods: ClientLifecyclePeriodRecord[];
+  renewalEvents: ClientRenewalEventRecord[];
   users: UserRecord[];
   currentUser: UserRecord;
   briefs: BriefRecord[];
@@ -196,7 +198,9 @@ interface ClientDashboardProps {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
-  onConfirmClientRenewal?: (clientId: string) => Promise<void>;
+  // newRenewalDate: required 'YYYY-MM-DD' — there is no implicit default anymore. See
+  // handleConfirmRenewal below, which collects it inline before calling this.
+  onConfirmClientRenewal?: (clientId: string, newRenewalDate: string) => Promise<void>;
   onReopenClient?: (clientId: string, reopenDate: string) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
@@ -296,6 +300,7 @@ type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'lo
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   client,
   lifecyclePeriods,
+  renewalEvents,
   users,
   currentUser,
   briefs,
@@ -423,6 +428,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [isSavingDates, setIsSavingDates] = useState(false);
   const [datesSaveError, setDatesSaveError] = useState('');
   const [showRenewalDateMissingMessage, setShowRenewalDateMissingMessage] = useState(false);
+  // 2026-11-16: confirm_client_renewal used to always set the new renewal_date to exactly
+  // (old renewal_date + 1 year) with no way to say otherwise. isConfirmingRenewal switches the
+  // "Confirm Renewal" button into an inline mini-form (see the renewal panel further down) that
+  // requires the actual agreed-on new renewal date to be entered — no default is pre-filled, and
+  // there is no implicit +1-year assumption anymore (a 6-month renewal, 2 years, etc. are all
+  // entered the same way).
+  const [isConfirmingRenewal, setIsConfirmingRenewal] = useState(false);
+  const [newRenewalDateDraft, setNewRenewalDateDraft] = useState('');
+  const [renewalConfirmError, setRenewalConfirmError] = useState('');
   const [isEditClientModalOpen, setIsEditClientModalOpen] = useState(false);
   const [isEditingClientAccess, setIsEditingClientAccess] = useState(false);
   const [isClientAccessSelected, setIsClientAccessSelected] = useState(false);
@@ -1358,17 +1372,38 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     }
   };
 
-  const handleConfirmRenewal = async () => {
+  // Opens the inline date-collection mini-form (see isConfirmingRenewal above) instead of
+  // confirming immediately. Deliberately opens blank — there is no +1-year (or any other)
+  // default pre-filled, since the renewal period can genuinely differ each time and silently
+  // assuming one year was the exact problem this flow replaced. The user must pick a date
+  // themselves before Confirm becomes usable.
+  const handleStartConfirmRenewal = () => {
     if (!onConfirmClientRenewal) return;
     if (!client.renewal_date) {
       setShowRenewalDateMissingMessage(true);
       return;
     }
-
     setShowRenewalDateMissingMessage(false);
+    setNewRenewalDateDraft('');
+    setIsConfirmingRenewal(true);
+  };
+
+  const handleConfirmRenewal = async () => {
+    if (!onConfirmClientRenewal || !client.renewal_date) return;
+    if (!newRenewalDateDraft) {
+      setRenewalConfirmError('Enter the new renewal date before confirming.');
+      return;
+    }
+    if (newRenewalDateDraft <= client.renewal_date) {
+      setRenewalConfirmError('The new renewal date must be after the current renewal date.');
+      return;
+    }
+
+    setRenewalConfirmError('');
     setIsUpdatingStatus(true);
     try {
-      await onConfirmClientRenewal(client.id);
+      await onConfirmClientRenewal(client.id, newRenewalDateDraft);
+      setIsConfirmingRenewal(false);
     } catch (error) {
       console.error('Client renewal confirmation failed:', error);
     } finally {
@@ -1917,6 +1952,31 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                     </div>
                   </div>
                 )}
+
+                {/* Renewal History (2026-11-16) — every renewal that was ever confirmed via
+                    Confirm Renewal, in order, each with the target date that was reached and the
+                    date it was actually confirmed. Onboarding (Start Date above) is the period
+                    before Renewal #1; the client's current Renewal Date above is the period after
+                    the last row here. Read-only — rows are written only by confirm_client_renewal
+                    and are never edited or deleted from the UI. */}
+                {renewalEvents.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-stone-700/40">
+                    <span className="text-[11px] text-stone-400 block mb-2">Renewal History</span>
+                    <div className="space-y-1.5">
+                      {renewalEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className="flex items-center justify-between gap-3 text-xs bg-black/20 rounded-lg px-2.5 py-1.5"
+                        >
+                          <span className="text-stone-300 font-semibold">Renewal #{event.renewal_sequence}</span>
+                          <span className="text-stone-400 font-mono">
+                            Target {event.completed_target_date} · Confirmed {event.actual_renewal_date}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Sales Brief (Module 16; named `sales_brief`, was `notes`) — collected at
@@ -2090,9 +2150,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       </button>
                     )}
 
-                    {client.status === 'renewal' && canManageLifecycle && onConfirmClientRenewal && (
+                    {client.status === 'renewal' && canManageLifecycle && onConfirmClientRenewal && !isConfirmingRenewal && (
                       <button
-                        onClick={handleConfirmRenewal}
+                        onClick={handleStartConfirmRenewal}
                         disabled={isUpdatingStatus}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 hover:text-white border border-emerald-700/40 transition-all"
                       >
@@ -2103,6 +2163,49 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       <p className="text-[11px] text-amber-400 w-full">
                         This client has no renewal date set. Set one in Client Dates above before confirming renewal.
                       </p>
+                    )}
+
+                    {/* Inline new-renewal-date mini-form (2026-11-16) — opens blank, no default
+                        date pre-filled. The new renewal period must always be entered by hand;
+                        there is no implicit +1-year assumption. */}
+                    {client.status === 'renewal' && canManageLifecycle && onConfirmClientRenewal && isConfirmingRenewal && (
+                      <div className="w-full p-3 rounded-xl border border-emerald-700/40 bg-emerald-950/20 space-y-2">
+                        <label className="text-[11px] text-stone-300 space-y-1 block">
+                          <span className="font-bold">New Renewal Date</span>
+                          <input
+                            type="date"
+                            value={newRenewalDateDraft}
+                            onChange={(e) => setNewRenewalDateDraft(e.target.value)}
+                            min={client.renewal_date || undefined}
+                            className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-[#100c1c] border border-emerald-700/40 text-white focus:outline-none"
+                          />
+                        </label>
+                        <p className="text-[10px] text-stone-500">
+                          Enter the new agreed renewal date (the period can differ each time — e.g. 6 months or 2 years, not necessarily one year).
+                        </p>
+                        {renewalConfirmError && (
+                          <p className="text-[11px] text-red-400">{renewalConfirmError}</p>
+                        )}
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={handleConfirmRenewal}
+                            disabled={isUpdatingStatus || !newRenewalDateDraft}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 hover:text-white border border-emerald-700/40 transition-all disabled:opacity-50"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => {
+                              setIsConfirmingRenewal(false);
+                              setRenewalConfirmError('');
+                            }}
+                            disabled={isUpdatingStatus}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold text-stone-300 bg-stone-800/60 hover:bg-stone-700/60 hover:text-white border border-stone-600/40 transition-all"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
                     )}
 
                     {(client.status === 'onboarding' ||

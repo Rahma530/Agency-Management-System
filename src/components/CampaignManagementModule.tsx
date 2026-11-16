@@ -31,6 +31,7 @@ import {
   CampaignStatus,
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientAccessFields,
   UserRecord,
   BriefRecord,
@@ -65,6 +66,7 @@ interface CampaignManagementModuleProps {
   campaigns: CampaignRecord[];
   clients: ClientRecord[];
   clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
+  clientRenewalEventsByClientId: Record<string, ClientRenewalEventRecord[]>;
   users: UserRecord[];
   currentUser: UserRecord;
   briefs: BriefRecord[];
@@ -261,6 +263,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
   campaigns,
   clients,
   clientLifecyclePeriodsByClientId,
+  clientRenewalEventsByClientId,
   users,
   currentUser,
   briefs,
@@ -1889,6 +1892,7 @@ export const CampaignManagementModule: React.FC<CampaignManagementModuleProps> =
           client={activeDashboardClient}
           allClients={clients}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
+          renewalEvents={clientRenewalEventsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}

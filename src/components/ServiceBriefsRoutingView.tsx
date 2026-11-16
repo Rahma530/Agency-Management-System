@@ -26,6 +26,7 @@ import {
 import {
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientAccessFields,
   UserRecord,
   BriefRecord,
@@ -71,6 +72,7 @@ interface ServiceBriefsRoutingViewProps {
   currentUser: UserRecord;
   clients: ClientRecord[];
   clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
+  clientRenewalEventsByClientId: Record<string, ClientRenewalEventRecord[]>;
   briefs: BriefRecord[];
   briefRevisions?: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
@@ -168,6 +170,7 @@ const AMServiceBriefsPanel: React.FC<{
   currentUser: UserRecord;
   clients: ClientRecord[];
   clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
+  clientRenewalEventsByClientId: Record<string, ClientRenewalEventRecord[]>;
   briefs: BriefRecord[];
   briefRevisions: BriefRevisionRecord[];
   assignments: AssignmentRecord[];
@@ -233,6 +236,7 @@ const AMServiceBriefsPanel: React.FC<{
   currentUser,
   clients,
   clientLifecyclePeriodsByClientId,
+  clientRenewalEventsByClientId,
   briefs,
   briefRevisions,
   assignments,
@@ -371,6 +375,7 @@ const AMServiceBriefsPanel: React.FC<{
           client={activeDashboardClient}
           allClients={clients}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
+          renewalEvents={clientRenewalEventsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}
@@ -421,6 +426,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
   currentUser,
   clients,
   clientLifecyclePeriodsByClientId,
+  clientRenewalEventsByClientId,
   briefs,
   briefRevisions = [],
   assignments,
@@ -477,6 +483,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
         currentUser={currentUser}
         clients={clients}
         clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
+        clientRenewalEventsByClientId={clientRenewalEventsByClientId}
         briefs={briefs}
         briefRevisions={briefRevisions}
         assignments={assignments}
@@ -1208,6 +1215,7 @@ export const ServiceBriefsRoutingView: React.FC<ServiceBriefsRoutingViewProps> =
           client={activeDashboardClient}
           allClients={clients}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
+          renewalEvents={clientRenewalEventsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}

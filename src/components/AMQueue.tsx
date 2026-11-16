@@ -30,6 +30,7 @@ import {
 import {
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientAccessFields,
   ClientStatus,
   UserRecord,
@@ -85,6 +86,7 @@ import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportG
 interface AMQueueProps {
   clients: ClientRecord[];
   clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
+  clientRenewalEventsByClientId: Record<string, ClientRenewalEventRecord[]>;
   users: UserRecord[];
   briefs: BriefRecord[];
   briefRevisions?: BriefRevisionRecord[];
@@ -135,7 +137,7 @@ interface AMQueueProps {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
-  onConfirmClientRenewal?: (clientId: string) => Promise<void>;
+  onConfirmClientRenewal?: (clientId: string, newRenewalDate: string) => Promise<void>;
   // Manual drag-and-drop reorder of the Client Portfolio table (2026-11-02). Receives the full
   // set of {id, sort_order} pairs that actually changed after a drag (not the whole list) — see
   // handleReorderClients below for why the drag handle only shows with no filter/search active.
@@ -447,6 +449,7 @@ const ClientStatusQuickMenu: React.FC<{
 export const AMQueue: React.FC<AMQueueProps> = ({
   clients,
   clientLifecyclePeriodsByClientId,
+  clientRenewalEventsByClientId,
   users,
   briefs,
   briefRevisions = [],
@@ -738,13 +741,13 @@ export const AMQueue: React.FC<AMQueueProps> = ({
   };
 
   // Board view (2026-11-02): dragging a card onto another status column's area, or onto a card
-  // that already belongs to a different column, changes status — reusing the exact same
-  // handlers the quick-status dropdown already uses (handleQuickStatusChange/
-  // handleQuickConfirmRenewal), so the set of allowed transitions never drifts out of sync
-  // between the two UIs. Closing (needs a required reason + stop date) and reopening (needs a
-  // reopen date) can't complete from a drag alone — both open the full Client Dashboard instead,
-  // same as the quick-status dropdown's "Close Client…"/"Reopen Client…" items; the card stays
-  // in its current column until that form is actually submitted there.
+  // that already belongs to a different column, changes status — reusing the exact same handler
+  // the quick-status dropdown already uses (handleQuickStatusChange), so the set of allowed
+  // transitions never drifts out of sync between the two UIs. Closing (needs a required reason +
+  // stop date), reopening (needs a reopen date), and confirming a renewal (needs a hand-entered
+  // new renewal date) can't complete from a drag alone — all three open the full Client Dashboard
+  // instead, same as the quick-status dropdown's own items; the card stays in its current column
+  // until that form is actually submitted there.
   const CLIENT_STATUS_VALUES: ClientStatus[] = ['onboarding', 'active', 'renewal', 'paused', 'closed'];
 
   const handleClientStatusDrop = (client: ClientRecord, targetStatus: ClientStatus) => {
@@ -754,7 +757,10 @@ export const AMQueue: React.FC<AMQueueProps> = ({
       return;
     }
     if (client.status === 'renewal' && targetStatus === 'active') {
-      void handleQuickConfirmRenewal(client.id);
+      // Confirming a renewal now always needs a new renewal date entered by hand (no more
+      // silent +1 year assumption), so a drag drop can't complete it either — open the full
+      // Client Dashboard's Confirm Renewal form instead, same as the quick-status menu does.
+      setDashboardClientId(client.id);
       return;
     }
     const allowed =
@@ -840,27 +846,16 @@ export const AMQueue: React.FC<AMQueueProps> = ({
     currentRole === 'head_of_technical' ||
     (currentRole === 'am_agent' && client.am_agent_id === effectiveUserId);
 
-  // Quick, single-click transitions only (no extra required fields) — Active/Paused/Renewal.
-  // Closing (needs a required reason + stop date) and Reopening (needs a reopen date) stay behind
-  // the full Client Dashboard form below, same validation ClientDashboard.tsx already enforces —
-  // deliberately not duplicated here.
+  // Quick, single-click transitions only (no extra required fields) — Onboarding→Active,
+  // Active→Renewal/Paused, Paused→Active. Closing (needs a required reason + stop date), Reopening
+  // (needs a reopen date), and confirming a Renewal (needs a hand-entered new renewal date) all
+  // stay behind the full Client Dashboard form below, same validation ClientDashboard.tsx already
+  // enforces — deliberately not duplicated here.
   const handleQuickStatusChange = async (clientId: string, newStatus: ClientStatus) => {
     if (!onUpdateClientStatus) return;
     setQuickStatusUpdatingId(clientId);
     try {
       await onUpdateClientStatus(clientId, newStatus);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setQuickStatusUpdatingId(null);
-    }
-  };
-
-  const handleQuickConfirmRenewal = async (clientId: string) => {
-    if (!onConfirmClientRenewal) return;
-    setQuickStatusUpdatingId(clientId);
-    try {
-      await onConfirmClientRenewal(clientId);
     } catch (err) {
       console.error(err);
     } finally {
@@ -1451,7 +1446,11 @@ export const AMQueue: React.FC<AMQueueProps> = ({
                           isUpdating={quickStatusUpdatingId === client.id}
                           canConfirmRenewal={!!onConfirmClientRenewal}
                           onStatusChange={(status) => handleQuickStatusChange(client.id, status)}
-                          onConfirmRenewal={() => handleQuickConfirmRenewal(client.id)}
+                          // Confirming a renewal always needs a hand-entered new renewal date now
+                          // (no more silent +1 year default), so this opens the full Client
+                          // Dashboard's Confirm Renewal form instead of confirming in one click —
+                          // same pattern Close/Reopen already use for required-field actions.
+                          onConfirmRenewal={() => setDashboardClientId(client.id)}
                           onOpenDashboard={() => setDashboardClientId(client.id)}
                         />
                       </td>
@@ -1537,6 +1536,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         <ClientDashboard
           client={activeDashboardClient}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
+          renewalEvents={clientRenewalEventsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={resolvedUser}
           briefs={briefs}

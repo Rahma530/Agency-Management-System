@@ -125,6 +125,7 @@ import {
   PlatformConnectionStatus,
   ClientAccessFields,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   NON_SENSITIVE_CLIENT_COLUMNS,
   DepartmentRecord,
   CustomRoleRecord,
@@ -569,6 +570,15 @@ export default function App() {
         return lookup;
       }, {}),
     [clientLifecyclePeriods]
+  );
+  const [clientRenewalEvents, setClientRenewalEvents] = useState<ClientRenewalEventRecord[]>([]);
+  const clientRenewalEventsByClientId = useMemo(
+    () =>
+      clientRenewalEvents.reduce<Record<string, ClientRenewalEventRecord[]>>((lookup, event) => {
+        (lookup[event.client_id] ||= []).push(event);
+        return lookup;
+      }, {}),
+    [clientRenewalEvents]
   );
   const [briefs, setBriefs] = useState<BriefRecord[]>([]);
   const [briefRevisions, setBriefRevisions] = useState<BriefRevisionRecord[]>([]);
@@ -3329,6 +3339,67 @@ export default function App() {
     [refreshClientLifecyclePeriods]
   );
 
+  const refreshClientRenewalEvents = useCallback(async (): Promise<void> => {
+    if (!isSupabaseConfigured()) {
+      setClientRenewalEvents([]);
+      return;
+    }
+
+    // Same visibility model as client_lifecycle_periods: the table's SELECT policy reuses
+    // public.clients visibility, so RLS is the security boundary, not frontend filtering.
+    const { data, error } = await supabaseRaw
+      .from('client_renewal_events')
+      .select('*')
+      .order('renewal_sequence', { ascending: true });
+    if (error) {
+      console.error('Failed to refresh client renewal events from Supabase:', error);
+      return;
+    }
+
+    setClientRenewalEvents((data as ClientRenewalEventRecord[]) || []);
+  }, []);
+
+  // client_renewal_events keeps its array sorted by renewal_sequence ascending
+  // (refreshClientRenewalEvents orders it server-side) — an inserted row is spliced back in at
+  // the right position rather than just appended, so a realtime insert can't silently scramble
+  // the renewal history's display order. Rows are otherwise immutable once inserted (only
+  // confirm_client_renewal ever writes this table, and never updates an existing row), so in
+  // practice this only ever handles INSERT.
+  const applyClientRenewalEventRealtimeChange = useCallback(
+    async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>): Promise<void> => {
+      if (!isSupabaseConfigured()) return;
+      const deletedId = (payload.old as { id?: string } | null)?.id;
+      const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+      if (!changedId) return;
+      if (payload.eventType === 'DELETE') {
+        setClientRenewalEvents((prev) => (prev.some((r) => r.id === deletedId) ? prev.filter((r) => r.id !== deletedId) : prev));
+        return;
+      }
+      const { data, error } = await supabaseRaw
+        .from('client_renewal_events')
+        .select('*')
+        .eq('id', changedId)
+        .maybeSingle();
+      if (error) {
+        console.error('Failed to fetch the changed client renewal event; falling back to a full refresh:', error);
+        void refreshClientRenewalEvents();
+        return;
+      }
+      setClientRenewalEvents((prev) => {
+        const idx = prev.findIndex((r) => r.id === changedId);
+        const withoutRow = idx === -1 ? prev : prev.slice(0, idx).concat(prev.slice(idx + 1));
+        if (!data) return withoutRow;
+        const row = data as ClientRenewalEventRecord;
+        const insertAt = withoutRow.findIndex((r) => r.renewal_sequence > row.renewal_sequence);
+        const next = withoutRow.slice();
+        if (insertAt === -1) next.push(row);
+        else next.splice(insertAt, 0, row);
+        return next;
+      });
+    },
+    [refreshClientRenewalEvents]
+  );
+
   // Fetch initial data directly from Supabase (or fallback to initial state)
   //
   // Does NOT clear `clients` to [] before refetching (it used to) — that premature wipe
@@ -3459,6 +3530,9 @@ export default function App() {
         // A single RLS-scoped read supplies lifecycle history for every visible client; this
         // intentionally avoids a per-client query loop.
         await refreshClientLifecyclePeriods();
+
+        // Same pattern for renewal history (Client Dashboard's "Renewal History" section).
+        await refreshClientRenewalEvents();
 
         // Fetch briefs
         const { data: briefData, error: briefErr } = await supabase.from('briefs').select('*');
@@ -4056,6 +4130,7 @@ export default function App() {
       { table: 'daily_log_attachments', refresh: refreshDailyLogAttachments, onPayload: applyDailyLogAttachmentRealtimeChange },
       { table: 'platform_connections', refresh: refreshPlatformConnections, onPayload: applyPlatformConnectionRealtimeChange },
       { table: 'client_lifecycle_periods', refresh: refreshClientLifecyclePeriods, onPayload: applyClientLifecyclePeriodRealtimeChange },
+      { table: 'client_renewal_events', refresh: refreshClientRenewalEvents, onPayload: applyClientRenewalEventRealtimeChange },
       // Custom roles & departments — the five tables feeding registerCustomRoleData()'s in-memory
       // permissions cache. Any change to any of them re-runs the SAME combined fetch
       // loadCustomRolesAndDepartments() already does on login, rather than patching the cache
@@ -4624,14 +4699,19 @@ export default function App() {
     showNotification(`Client "${client?.name || clientId}" status updated to ${newStatus}.`);
   };
 
-  const handleConfirmClientRenewal = async (clientId: string) => {
+  // newRenewalDate ('YYYY-MM-DD') is required — confirm_client_renewal no longer has an implicit
+  // +1 year default (see that RPC's migration, 20270109000000_client_renewal_custom_date.sql):
+  // every caller (Client Dashboard's Confirm Renewal form; AMQueue's quick-action menu now opens
+  // that same form instead of confirming directly) must collect the date from the user first.
+  const handleConfirmClientRenewal = async (clientId: string, newRenewalDate: string) => {
     try {
       if (!supabaseActive) throw new Error('Supabase is not configured; the renewal was not confirmed.');
       const { error } = await supabaseRaw.rpc('confirm_client_renewal', {
         p_client_id: clientId,
+        p_new_renewal_date: newRenewalDate,
       });
       if (error) throw error;
-      await refreshPersistedClient(clientId);
+      await Promise.all([refreshPersistedClient(clientId), refreshClientRenewalEvents()]);
     } catch (err) {
       console.error('Supabase confirm client renewal error:', err);
       showNotification('Unable to confirm this client renewal.', 'info');
@@ -8328,6 +8408,7 @@ export default function App() {
                   <ClientDashboard
                     client={myWorkHubDashboardClient}
                     lifecyclePeriods={clientLifecyclePeriodsByClientId[myWorkHubDashboardClient.id] || []}
+                    renewalEvents={clientRenewalEventsByClientId[myWorkHubDashboardClient.id] || []}
                     users={users}
                     currentUser={currentUser}
                     briefs={briefs}
@@ -8415,6 +8496,7 @@ export default function App() {
                   <ClientDashboard
                     client={headOfSalesDashboardClient}
                     lifecyclePeriods={clientLifecyclePeriodsByClientId[headOfSalesDashboardClient.id] || []}
+                    renewalEvents={clientRenewalEventsByClientId[headOfSalesDashboardClient.id] || []}
                     users={users}
                     currentUser={currentUser}
                     briefs={briefs}
@@ -8490,6 +8572,7 @@ export default function App() {
                     currentUser={currentUser}
                     clients={clients}
                     clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
+                    clientRenewalEventsByClientId={clientRenewalEventsByClientId}
                     users={users}
                     assignments={assignments}
                     onRefreshAssignments={refreshAssignments}
@@ -8509,6 +8592,7 @@ export default function App() {
                   <AMQueue
                     clients={clients}
                     clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
+                    clientRenewalEventsByClientId={clientRenewalEventsByClientId}
                     users={users}
                     briefs={briefs}
                     briefRevisions={briefRevisions}
@@ -8584,6 +8668,7 @@ export default function App() {
                   currentUser={currentUser}
                   clients={clients}
                   clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
+                  clientRenewalEventsByClientId={clientRenewalEventsByClientId}
                   briefs={briefs}
                   briefRevisions={briefRevisions}
                   assignments={assignments}
@@ -8826,6 +8911,7 @@ export default function App() {
                   campaigns={campaigns}
                   clients={clients}
                   clientLifecyclePeriodsByClientId={clientLifecyclePeriodsByClientId}
+                  clientRenewalEventsByClientId={clientRenewalEventsByClientId}
                   users={users}
                   currentUser={currentUser}
                   briefs={briefs}

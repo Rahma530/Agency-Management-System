@@ -661,6 +661,22 @@ export interface ClientContractRecord {
   uploaded_at: string;
 }
 
+// client_renewal_events — one row per confirmed renewal (see
+// 20261031300000_client_lifecycle_renewal_history.sql / confirm_client_renewal RPC).
+// completed_target_date is the renewal_date that was being confirmed; actual_renewal_date is the
+// calendar date the confirmation actually happened; renewal_sequence numbers them 1, 2, 3...
+// per client. The client's own start_date (ClientRecord) is the onboarding date that precedes
+// renewal_sequence 1.
+export interface ClientRenewalEventRecord {
+  id: string;
+  client_id: string;
+  completed_target_date: string;
+  actual_renewal_date: string;
+  renewal_sequence: number;
+  created_at: string;
+  recorded_by: string;
+}
+
 // 6d. brief_attachments — same shape as ClientContractRecord/TaskAttachmentRecord, one level up
 // (brief instead of client/task). RLS mirrors briefs_select_rls/briefs_update_rls exactly (see
 // 20261130000000_brief_attachments.sql) — who can see/edit the brief can see/edit its attachments.
