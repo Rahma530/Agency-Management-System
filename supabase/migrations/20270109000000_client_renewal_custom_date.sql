@@ -1,11 +1,12 @@
 -- confirm_client_renewal previously always set the new renewal_date to exactly
 -- (old renewal_date + 1 year), with no way to record a different agreed renewal period (e.g. a
--- 6-month renewal). Adds an optional p_new_renewal_date parameter: when provided, it's used as
--- the new renewal_date (after validating it's strictly after the renewal being confirmed, so a
--- stale/past date can't be recorded by mistake); when omitted (the default), behavior is
--- unchanged — the existing +1 year calculation — so the one existing caller
--- (App.tsx's handleConfirmClientRenewal, called with just a client id from AMQueue's quick-action
--- menu) keeps working exactly as before unless it opts in to passing a date.
+-- 6-month renewal) — and no way to even know a different period was agreed, since the +1 year
+-- jump happened silently. Adds a required p_new_renewal_date parameter: the caller must always
+-- supply the new renewal date explicitly (validated to be strictly after the renewal being
+-- confirmed, so a stale/past date can't be recorded by mistake) — there is no default/implicit
+-- +1 year fallback anymore. Every caller (ClientDashboard.tsx's inline Confirm Renewal form, and
+-- AMQueue.tsx's quick-action menu, which now opens that same form instead of confirming in one
+-- click) must collect the date from the user before calling this RPC.
 begin;
 
 -- Must drop the old single-argument signature first: `create or replace` with a different
@@ -14,8 +15,9 @@ begin;
 -- PostgREST's RPC call with only p_client_id ambiguous between "the old signature" and "the new
 -- signature using its default" — a real "function is not unique" error, not a theoretical one.
 drop function if exists public.confirm_client_renewal(text);
+drop function if exists public.confirm_client_renewal(text, date);
 
-create function public.confirm_client_renewal(p_client_id text, p_new_renewal_date date default null)
+create function public.confirm_client_renewal(p_client_id text, p_new_renewal_date date)
 returns void
 language plpgsql
 security definer
@@ -75,14 +77,15 @@ begin
 
   v_completed_target_date := v_client.renewal_date;
 
-  if p_new_renewal_date is not null then
-    if p_new_renewal_date <= v_completed_target_date then
-      raise exception 'The new renewal date must be after the renewal date being confirmed (%).', v_completed_target_date;
-    end if;
-    v_next_renewal_date := p_new_renewal_date;
-  else
-    v_next_renewal_date := (v_completed_target_date + interval '1 year')::date;
+  if p_new_renewal_date is null then
+    raise exception 'A new renewal date is required to confirm this renewal.';
   end if;
+
+  if p_new_renewal_date <= v_completed_target_date then
+    raise exception 'The new renewal date must be after the renewal date being confirmed (%).', v_completed_target_date;
+  end if;
+
+  v_next_renewal_date := p_new_renewal_date;
 
   select max(renewal_sequence)
   into v_max_sequence

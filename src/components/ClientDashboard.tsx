@@ -196,9 +196,9 @@ interface ClientDashboardProps {
     newStatus: ClientStatus,
     options?: { churn_reason?: string; churned_at?: string; renewal_date?: string }
   ) => Promise<void>;
-  // newRenewalDate: optional 'YYYY-MM-DD' override for the auto (+1 year) default — see
+  // newRenewalDate: required 'YYYY-MM-DD' — there is no implicit default anymore. See
   // handleConfirmRenewal below, which collects it inline before calling this.
-  onConfirmClientRenewal?: (clientId: string, newRenewalDate?: string) => Promise<void>;
+  onConfirmClientRenewal?: (clientId: string, newRenewalDate: string) => Promise<void>;
   onReopenClient?: (clientId: string, reopenDate: string) => Promise<void>;
   onMarkClientViewed?: (clientId: string) => Promise<void> | void;
   onMarkAssignmentViewed?: (assignmentId: string) => Promise<void> | void;
@@ -428,8 +428,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   // 2026-11-16: confirm_client_renewal used to always set the new renewal_date to exactly
   // (old renewal_date + 1 year) with no way to say otherwise. isConfirmingRenewal switches the
   // "Confirm Renewal" button into an inline mini-form (see the renewal panel further down) that
-  // collects the actual agreed-on new renewal date — pre-filled with the +1-year default so the
-  // common case is still a single click, but editable for a 6-month renewal or any other period.
+  // requires the actual agreed-on new renewal date to be entered — no default is pre-filled, and
+  // there is no implicit +1-year assumption anymore (a 6-month renewal, 2 years, etc. are all
+  // entered the same way).
   const [isConfirmingRenewal, setIsConfirmingRenewal] = useState(false);
   const [newRenewalDateDraft, setNewRenewalDateDraft] = useState('');
   const [renewalConfirmError, setRenewalConfirmError] = useState('');
@@ -1369,9 +1370,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   };
 
   // Opens the inline date-collection mini-form (see isConfirmingRenewal above) instead of
-  // confirming immediately. Pre-fills newRenewalDateDraft with the old +1-year default so staying
-  // with a standard yearly renewal is still just "open panel, click Confirm" — only a genuinely
-  // different period needs the date actually changed.
+  // confirming immediately. Deliberately opens blank — there is no +1-year (or any other)
+  // default pre-filled, since the renewal period can genuinely differ each time and silently
+  // assuming one year was the exact problem this flow replaced. The user must pick a date
+  // themselves before Confirm becomes usable.
   const handleStartConfirmRenewal = () => {
     if (!onConfirmClientRenewal) return;
     if (!client.renewal_date) {
@@ -1379,15 +1381,17 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       return;
     }
     setShowRenewalDateMissingMessage(false);
-    const oldDate = new Date(`${client.renewal_date}T00:00:00`);
-    oldDate.setFullYear(oldDate.getFullYear() + 1);
-    setNewRenewalDateDraft(oldDate.toISOString().slice(0, 10));
+    setNewRenewalDateDraft('');
     setIsConfirmingRenewal(true);
   };
 
   const handleConfirmRenewal = async () => {
     if (!onConfirmClientRenewal || !client.renewal_date) return;
-    if (!newRenewalDateDraft || newRenewalDateDraft <= client.renewal_date) {
+    if (!newRenewalDateDraft) {
+      setRenewalConfirmError('Enter the new renewal date before confirming.');
+      return;
+    }
+    if (newRenewalDateDraft <= client.renewal_date) {
       setRenewalConfirmError('The new renewal date must be after the current renewal date.');
       return;
     }
@@ -2133,9 +2137,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       </p>
                     )}
 
-                    {/* Inline new-renewal-date mini-form (2026-11-16) — pre-filled with the old
-                        +1-year default (handleStartConfirmRenewal), editable for a different
-                        agreed period before actually confirming. */}
+                    {/* Inline new-renewal-date mini-form (2026-11-16) — opens blank, no default
+                        date pre-filled. The new renewal period must always be entered by hand;
+                        there is no implicit +1-year assumption. */}
                     {client.status === 'renewal' && canManageLifecycle && onConfirmClientRenewal && isConfirmingRenewal && (
                       <div className="w-full p-3 rounded-xl border border-emerald-700/40 bg-emerald-950/20 space-y-2">
                         <label className="text-[11px] text-stone-300 space-y-1 block">
@@ -2149,7 +2153,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           />
                         </label>
                         <p className="text-[10px] text-stone-500">
-                          Defaults to one year after the current renewal date — change it for a different agreed renewal period (e.g. 6 months).
+                          Enter the new agreed renewal date (the period can differ each time — e.g. 6 months or 2 years, not necessarily one year).
                         </p>
                         {renewalConfirmError && (
                           <p className="text-[11px] text-red-400">{renewalConfirmError}</p>
@@ -2157,7 +2161,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         <div className="flex items-center gap-2 pt-1">
                           <button
                             onClick={handleConfirmRenewal}
-                            disabled={isUpdatingStatus}
+                            disabled={isUpdatingStatus || !newRenewalDateDraft}
                             className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 hover:text-white border border-emerald-700/40 transition-all disabled:opacity-50"
                           >
                             Confirm

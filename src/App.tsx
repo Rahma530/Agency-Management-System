@@ -4624,18 +4624,16 @@ export default function App() {
     showNotification(`Client "${client?.name || clientId}" status updated to ${newStatus}.`);
   };
 
-  // newRenewalDate is optional ('YYYY-MM-DD'): when omitted, confirm_client_renewal falls back to
-  // its own default of (old renewal_date + 1 year) — see that RPC's migration
-  // (20270109000000_client_renewal_custom_date.sql) for why that default exists (AMQueue's
-  // quick-action "Confirm Renewal" menu item calls this with no date, for the common case; the
-  // Client Dashboard's own Confirm Renewal flow is the one that collects a specific date and
-  // passes it here).
-  const handleConfirmClientRenewal = async (clientId: string, newRenewalDate?: string) => {
+  // newRenewalDate ('YYYY-MM-DD') is required — confirm_client_renewal no longer has an implicit
+  // +1 year default (see that RPC's migration, 20270109000000_client_renewal_custom_date.sql):
+  // every caller (Client Dashboard's Confirm Renewal form; AMQueue's quick-action menu now opens
+  // that same form instead of confirming directly) must collect the date from the user first.
+  const handleConfirmClientRenewal = async (clientId: string, newRenewalDate: string) => {
     try {
       if (!supabaseActive) throw new Error('Supabase is not configured; the renewal was not confirmed.');
       const { error } = await supabaseRaw.rpc('confirm_client_renewal', {
         p_client_id: clientId,
-        p_new_renewal_date: newRenewalDate || null,
+        p_new_renewal_date: newRenewalDate,
       });
       if (error) throw error;
       await refreshPersistedClient(clientId);
