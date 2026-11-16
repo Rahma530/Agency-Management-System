@@ -16,6 +16,7 @@ import {
 import {
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientStatus,
   UserRecord,
   BriefRecord,
@@ -38,6 +39,7 @@ interface SalesPortalViewProps {
   currentUser: UserRecord;
   clients: ClientRecord[];
   clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
+  clientRenewalEventsByClientId: Record<string, ClientRenewalEventRecord[]>;
   users: UserRecord[];
   briefs?: BriefRecord[];
   campaigns?: CampaignRecord[];
@@ -70,6 +72,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
   currentUser,
   clients,
   clientLifecyclePeriodsByClientId,
+  clientRenewalEventsByClientId,
   users,
   briefs = [],
   campaigns = [],
@@ -349,6 +352,7 @@ export const SalesPortalView: React.FC<SalesPortalViewProps> = ({
         <ClientDashboard
           client={activeDashboardClient}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
+          renewalEvents={clientRenewalEventsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={currentUser}
           briefs={briefs}

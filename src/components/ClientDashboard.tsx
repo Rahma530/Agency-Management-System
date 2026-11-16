@@ -37,6 +37,7 @@ import {
 import {
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientAccessFields,
   ClientStatus,
   UserRecord,
@@ -131,6 +132,7 @@ const getLocalCalendarDate = (): string => {
 interface ClientDashboardProps {
   client: ClientRecord;
   lifecyclePeriods: ClientLifecyclePeriodRecord[];
+  renewalEvents: ClientRenewalEventRecord[];
   users: UserRecord[];
   currentUser: UserRecord;
   briefs: BriefRecord[];
@@ -298,6 +300,7 @@ type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'lo
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   client,
   lifecyclePeriods,
+  renewalEvents,
   users,
   currentUser,
   briefs,
@@ -1946,6 +1949,31 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                     <div>
                       <span className="text-[11px] text-stone-400 block">Renewal Date</span>
                       <p className="text-sm font-bold text-white font-mono">{client.renewal_date || 'Not set'}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Renewal History (2026-11-16) — every renewal that was ever confirmed via
+                    Confirm Renewal, in order, each with the target date that was reached and the
+                    date it was actually confirmed. Onboarding (Start Date above) is the period
+                    before Renewal #1; the client's current Renewal Date above is the period after
+                    the last row here. Read-only — rows are written only by confirm_client_renewal
+                    and are never edited or deleted from the UI. */}
+                {renewalEvents.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-stone-700/40">
+                    <span className="text-[11px] text-stone-400 block mb-2">Renewal History</span>
+                    <div className="space-y-1.5">
+                      {renewalEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className="flex items-center justify-between gap-3 text-xs bg-black/20 rounded-lg px-2.5 py-1.5"
+                        >
+                          <span className="text-stone-300 font-semibold">Renewal #{event.renewal_sequence}</span>
+                          <span className="text-stone-400 font-mono">
+                            Target {event.completed_target_date} · Confirmed {event.actual_renewal_date}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

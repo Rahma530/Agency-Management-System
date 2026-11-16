@@ -30,6 +30,7 @@ import {
 import {
   ClientRecord,
   ClientLifecyclePeriodRecord,
+  ClientRenewalEventRecord,
   ClientAccessFields,
   ClientStatus,
   UserRecord,
@@ -85,6 +86,7 @@ import { CampaignSummaryPayload, CampaignSummaryGenerationResult, UnifiedReportG
 interface AMQueueProps {
   clients: ClientRecord[];
   clientLifecyclePeriodsByClientId: Record<string, ClientLifecyclePeriodRecord[]>;
+  clientRenewalEventsByClientId: Record<string, ClientRenewalEventRecord[]>;
   users: UserRecord[];
   briefs: BriefRecord[];
   briefRevisions?: BriefRevisionRecord[];
@@ -447,6 +449,7 @@ const ClientStatusQuickMenu: React.FC<{
 export const AMQueue: React.FC<AMQueueProps> = ({
   clients,
   clientLifecyclePeriodsByClientId,
+  clientRenewalEventsByClientId,
   users,
   briefs,
   briefRevisions = [],
@@ -1533,6 +1536,7 @@ export const AMQueue: React.FC<AMQueueProps> = ({
         <ClientDashboard
           client={activeDashboardClient}
           lifecyclePeriods={clientLifecyclePeriodsByClientId[activeDashboardClient.id] || []}
+          renewalEvents={clientRenewalEventsByClientId[activeDashboardClient.id] || []}
           users={users}
           currentUser={resolvedUser}
           briefs={briefs}
