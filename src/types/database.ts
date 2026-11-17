@@ -209,6 +209,10 @@ export interface ClientRecord {
   // client without a website yet may only have the latter. No format enforcement, same
   // convention as phone_number.
   website_or_social_link?: string | null;
+  // Owner request (2026-11-17): one Drive folder per client for design/creative assets, set once
+  // by the AM. Resolved live by client_id wherever a creative task needs it (never copied onto
+  // individual tasks) — see 20270110000000_client_design_drive_link.sql.
+  design_drive_link?: string | null;
   // Module 13 Phase 5: which services this client is directly subscribed to — SEO, Social Media,
   // Media Buying, interface design, any combination. Social Media includes designs and videos.
   // (package_id -> packages.services); no "package" concept exists in this schema anymore.

@@ -35,6 +35,7 @@ import {
   Settings,
   Trash2,
   GripVertical,
+  FolderOpen,
 } from 'lucide-react';
 import {
   TaskRecord,
@@ -284,16 +285,40 @@ function resolveCreativeBriefsForAssignees(
 // creative assignees — rendered in the New/Edit Task forms (while picking client+assignee) and in
 // Task Details (for an already-saved task). Renders nothing when there's no creative assignee with
 // a resolvable service_type, so it never crowds a non-creative task.
+//
+// Also shows the client's Design Drive link (owner request, 2026-11-17), resolved live from
+// clients by clientId — same "resolve live, never copy onto the task" approach as the brief itself
+// — right above the brief card(s), so it's the first thing a designer sees. Shown whenever there's
+// at least one resolvable creative assignee, even if the client hasn't set a link yet (an explicit
+// "not set" message, same convention as a missing brief, rather than silently hiding it).
 const TaskCreativeBriefPreview: React.FC<{
   clientId: string | null | undefined;
   assigneeRoles: (string | undefined)[];
   briefs: BriefRecord[];
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
-}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas }) => {
+  clients: ClientRecord[];
+}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas, clients }) => {
   const entries = resolveCreativeBriefsForAssignees(clientId, assigneeRoles, briefs);
   if (entries.length === 0) return null;
+  const client = clients.find((c) => c.id === clientId);
+  const driveLink = client?.design_drive_link?.trim() || null;
   return (
     <>
+      <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800 flex items-center gap-2">
+        <FolderOpen className="w-4 h-4 text-purple-300 shrink-0" />
+        {driveLink ? (
+          <a
+            href={driveLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-bold text-purple-300 hover:text-purple-200 underline truncate"
+          >
+            Open Client Drive
+          </a>
+        ) : (
+          <p className="text-xs text-stone-500">No Design Drive link has been set for this client yet.</p>
+        )}
+      </div>
       {entries.map(({ serviceType, brief }) => (
         <div key={serviceType} className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
           <label className="text-[10px] text-stone-400 block mb-2">
@@ -3727,6 +3752,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 ).map((id) => taskDirectoryUsers.find((user) => user.id === id)?.role)}
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
+              clients={clients}
               />
 
               {/* Platforms — read-only display; edited only via the Edit Task form. */}
@@ -4250,6 +4276,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 assigneeRoles={newAssigneeOptions.filter((u) => newAssigneeIds.includes(u.id)).map((u) => u.role)}
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
+              clients={clients}
               />
 
               {/* Priority & Due Date */}
@@ -4663,6 +4690,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 assigneeRoles={editAssigneeOptions.filter((u) => editAssigneeIds.includes(u.id)).map((u) => u.role)}
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
+              clients={clients}
               />
 
               {/* Priority & Due Date */}
