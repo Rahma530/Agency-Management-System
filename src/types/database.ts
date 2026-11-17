@@ -330,8 +330,15 @@ export interface ClientAccessFields {
 // Supabase client's generated types parse this exact literal to infer the returned row shape;
 // built from pieces, it widens to plain `string` and every .select(...) call site below falls back
 // to an untyped `GenericStringError` result instead.
+// HOTFIX (2026-11-17): design_drive_link (added by 20270110000000_client_design_drive_link.sql) was
+// missed from this list when it was introduced — it never reached this app's `clients` state at
+// all, so EditClientModal always showed the field blank (even for a client that already had a link
+// saved) and every live preview of a client's current link (New Task form) always showed "not set".
+// Also missed from the matching column-level SELECT grant — see
+// 20270112000000_fix_design_drive_link_select_grant.sql, which fixed create_task_copy() failing
+// outright for any client-linked task (a separate, more serious symptom of the same oversight).
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order' as const;
+  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order, design_drive_link' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
