@@ -35,6 +35,7 @@ import {
   Settings,
   Trash2,
   GripVertical,
+  FolderOpen,
 } from 'lucide-react';
 import {
   TaskRecord,
@@ -284,16 +285,95 @@ function resolveCreativeBriefsForAssignees(
 // creative assignees — rendered in the New/Edit Task forms (while picking client+assignee) and in
 // Task Details (for an already-saved task). Renders nothing when there's no creative assignee with
 // a resolvable service_type, so it never crowds a non-creative task.
+//
+// Also shows the Design Drive link (owner request, 2026-11-17; corrected same day) — right above
+// the brief card(s), so it's the first thing a designer sees. Owner explicitly rejected resolving
+// this live from the client on every render: for an EXISTING saved task (Task Details, Edit Task),
+// `task` is passed and its own fixed, snapshotted `task.design_drive_link` is shown — never
+// re-derived from the client, so it can't silently change under a designer's feet. Only the New
+// Task form (no task row exists yet to read from) omits `task`, and falls back to a live preview
+// of the selected client's current design_drive_link, since there is nothing else to show yet —
+// the real, fixed value gets snapshotted onto the task by create_task_copy() once it's created.
+// Shown whenever there's at least one resolvable creative assignee, even if the link isn't set yet
+// (an explicit "not set" message, same convention as a missing brief, rather than silently hiding it).
+//
+// Stale-link banner (owner decision, 2026-11-17): when `onAcceptNewDriveLink` is passed (Task
+// Details only — never Edit Task or New Task), this also compares the task's fixed link against
+// the client's CURRENT one. A mismatch is surfaced as an explicit "apply it" choice, never applied
+// automatically — a plain overwrite (owner's choice "أ"), no separate history of past links kept.
 const TaskCreativeBriefPreview: React.FC<{
   clientId: string | null | undefined;
   assigneeRoles: (string | undefined)[];
   briefs: BriefRecord[];
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
-}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas }) => {
+  clients: ClientRecord[];
+  // Omit only in the New Task form, where no task row exists yet — see comment above.
+  task?: TaskRecord | null;
+  // Task Details only — lets the viewer accept the client's current link onto this task, replacing
+  // the old one. Omitted in Edit Task and New Task, where this comparison doesn't apply.
+  onAcceptNewDriveLink?: (newLink: string | null) => Promise<void>;
+}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas, clients, task, onAcceptNewDriveLink }) => {
+  const [isAcceptingNewDriveLink, setIsAcceptingNewDriveLink] = useState(false);
   const entries = resolveCreativeBriefsForAssignees(clientId, assigneeRoles, briefs);
   if (entries.length === 0) return null;
+  const driveLink = task
+    ? task.design_drive_link?.trim() || null
+    : clients.find((c) => c.id === clientId)?.design_drive_link?.trim() || null;
+  const currentClientLink = clients.find((c) => c.id === clientId)?.design_drive_link?.trim() || null;
+  const hasNewerClientLink = Boolean(onAcceptNewDriveLink) && task && currentClientLink !== driveLink;
+
+  const handleAccept = async () => {
+    if (!onAcceptNewDriveLink) return;
+    setIsAcceptingNewDriveLink(true);
+    try {
+      await onAcceptNewDriveLink(currentClientLink);
+    } finally {
+      setIsAcceptingNewDriveLink(false);
+    }
+  };
+
   return (
     <>
+      <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800 flex items-center gap-2">
+        <FolderOpen className="w-4 h-4 text-purple-300 shrink-0" />
+        {driveLink ? (
+          <a
+            href={driveLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-bold text-purple-300 hover:text-purple-200 underline truncate"
+          >
+            Open Client Drive
+          </a>
+        ) : (
+          <p className="text-xs text-stone-500">No Design Drive link has been set for this client yet.</p>
+        )}
+      </div>
+      {hasNewerClientLink && (
+        <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-700/40 space-y-2">
+          <p className="text-xs font-bold text-amber-300">The client's Design Drive link has changed.</p>
+          {currentClientLink ? (
+            <a
+              href={currentClientLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-amber-200 hover:text-amber-100 underline truncate block"
+            >
+              New link: {currentClientLink}
+            </a>
+          ) : (
+            <p className="text-xs text-amber-200">The client no longer has a Design Drive link set.</p>
+          )}
+          <button
+            type="button"
+            onClick={handleAccept}
+            disabled={isAcceptingNewDriveLink}
+            className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-50"
+          >
+            {isAcceptingNewDriveLink ? 'Applying…' : 'Accept new link for this task'}
+          </button>
+        </div>
+      )}
       {entries.map(({ serviceType, brief }) => (
         <div key={serviceType} className="p-3 rounded-xl bg-stone-900/60 border border-stone-800">
           <label className="text-[10px] text-stone-400 block mb-2">
@@ -2108,6 +2188,17 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     }
   };
 
+  // Stale Design Drive link banner (Task Details only, owner decision 2026-11-17): a plain
+  // overwrite onto this task's own fixed field — no separate history of past links kept (owner's
+  // choice "أ"). TaskCreativeBriefPreview only renders the "Accept new link" button at all when the
+  // client's current link actually differs from this task's stored one, so there's nothing to
+  // guard against here beyond the ordinary onUpdateTask/selectedTaskDetails preconditions.
+  const handleAcceptNewDriveLink = async (newLink: string | null) => {
+    if (!selectedTaskDetails || !onUpdateTask) return;
+    await onUpdateTask(selectedTaskDetails.id, { design_drive_link: newLink });
+    setSelectedTaskDetails({ ...selectedTaskDetails, design_drive_link: newLink });
+  };
+
   // Kanban drag-and-drop. A minimum drag distance keeps a plain click still
   // opening Task Details (the existing behavior) instead of every pointer
   // press being swallowed as a drag start.
@@ -3727,6 +3818,9 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 ).map((id) => taskDirectoryUsers.find((user) => user.id === id)?.role)}
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
+              clients={clients}
+              task={selectedTaskDetails}
+              onAcceptNewDriveLink={onUpdateTask ? handleAcceptNewDriveLink : undefined}
               />
 
               {/* Platforms — read-only display; edited only via the Edit Task form. */}
@@ -4250,6 +4344,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 assigneeRoles={newAssigneeOptions.filter((u) => newAssigneeIds.includes(u.id)).map((u) => u.role)}
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
+              clients={clients}
               />
 
               {/* Priority & Due Date */}
@@ -4663,6 +4758,8 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 assigneeRoles={editAssigneeOptions.filter((u) => editAssigneeIds.includes(u.id)).map((u) => u.role)}
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
+              clients={clients}
+              task={editingTask}
               />
 
               {/* Priority & Due Date */}

@@ -209,6 +209,10 @@ export interface ClientRecord {
   // client without a website yet may only have the latter. No format enforcement, same
   // convention as phone_number.
   website_or_social_link?: string | null;
+  // Owner request (2026-11-17): one Drive folder per client for design/creative assets, set once
+  // by the AM. Resolved live by client_id wherever a creative task needs it (never copied onto
+  // individual tasks) — see 20270110000000_client_design_drive_link.sql.
+  design_drive_link?: string | null;
   // Module 13 Phase 5: which services this client is directly subscribed to — SEO, Social Media,
   // Media Buying, interface design, any combination. Social Media includes designs and videos.
   // (package_id -> packages.services); no "package" concept exists in this schema anymore.
@@ -488,6 +492,12 @@ export interface TaskRecord {
   // required to close one (see canSubmitTaskForClosing() in lib/taskLifecycle.ts). Shown from
   // 'in_progress' onward — see canShowDoneLink() in lib/taskLifecycle.ts.
   done_link?: string | null;
+  // Snapshot of the client's design_drive_link, taken once by create_task_copy() at task-creation
+  // time — see 20270111000000_task_design_drive_link.sql. Fixed on this task from then on; editing
+  // the client's own design_drive_link afterward does not change already-created tasks. Not the
+  // same thing as the deprecated drive_link above (task-scoped manual link, phased out for
+  // done_link) — this one is client-folder-scoped and set automatically, never edited by hand.
+  design_drive_link?: string | null;
   // Optional, admin-editable task type tag. task_type is a task_types.id (or null if untagged);
   // task_type_other holds the free-text value when that row's is_other flag is set. See
   // TaskTypeRecord below.

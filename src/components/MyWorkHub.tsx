@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import type { DashboardTab } from './ClientDashboard';
 import {
   Building2,
   CheckSquare,
@@ -108,10 +109,13 @@ interface MyWorkHubProps {
   // or wrong role, the delete affordance simply never renders — never a silent no-op button.
   onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
   // Opens the full ClientDashboard (same one AMQueue/CampaignManagementModule already use) for a
-  // specific client, from a My Clients card — App.tsx owns the actual modal/state, this is just
-  // the trigger. Optional and re-checked at the render site below: absent, a My Clients card is
-  // plain, non-clickable info, same as before this feature existed.
-  onOpenClientDashboard?: (clientId: string) => void;
+  // specific client, from a My Clients card or a task card's client name — App.tsx owns the actual
+  // modal/state, this is just the trigger. The optional tab argument (2026-11-17, owner request)
+  // jumps straight to that tab (used by the task card's client name to open Briefs directly) —
+  // omitted, it falls back to Overview, same as the My Clients cards always have. Optional and
+  // re-checked at each render site below: absent, the affected element is plain, non-clickable
+  // info, same as before this feature existed.
+  onOpenClientDashboard?: (clientId: string, tab?: DashboardTab) => void;
 }
 
 // Ordering only, not section presence: am_agent/am_team_lead/sales lead with
@@ -798,10 +802,25 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
                     )}
                   </div>
                   <div className="flex items-center gap-2.5 text-[11px] text-stone-400">
-                    <span className="flex items-center gap-1">
-                      <Building2 className="w-3 h-3 text-purple-400" />
-                      {client ? client.name : 'Unassigned client'}
-                    </span>
+                    {/* Owner request (2026-11-17): one click on the client's name opens that
+                        client's Briefs tab directly (brief + Design Drive link together), with
+                        Tasks & Deliverables one tab away for this client's past work — instead of
+                        designers having no way to reach either from their own task card. */}
+                    {client && onOpenClientDashboard ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenClientDashboard(client.id, 'briefs')}
+                        className="flex items-center gap-1 hover:text-purple-300 hover:underline transition-colors"
+                      >
+                        <Building2 className="w-3 h-3 text-purple-400" />
+                        {client.name}
+                      </button>
+                    ) : (
+                      <span className="flex items-center gap-1">
+                        <Building2 className="w-3 h-3 text-purple-400" />
+                        {client ? client.name : 'Unassigned client'}
+                      </span>
+                    )}
                     <span className="flex items-center gap-1 font-mono">
                       <Clock className="w-3 h-3" />
                       {STATUS_LABELS[task.status]}

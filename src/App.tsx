@@ -190,7 +190,7 @@ import { MentorshipTrackerModule } from './components/MentorshipTrackerModule';
 import { ServiceBriefsRoutingView } from './components/ServiceBriefsRoutingView';
 import { MyWorkHub } from './components/MyWorkHub';
 import { HeadOfSalesPortalView } from './components/HeadOfSalesPortalView';
-import { ClientDashboard } from './components/ClientDashboard';
+import { ClientDashboard, DashboardTab } from './components/ClientDashboard';
 import { SalesPortalView } from './components/SalesPortalView';
 import { AccessDenied } from './components/AccessDenied';
 import { RolePortalHeader } from './components/RolePortalHeader';
@@ -650,6 +650,15 @@ export default function App() {
   // Clients cards — independent of AMQueue's own dashboardClientId (its own local state), since
   // My Work Hub has no client-queue table of its own to host that state in.
   const [myWorkHubDashboardClientId, setMyWorkHubDashboardClientId] = useState<string | null>(null);
+  // Owner request (2026-11-17): a task card's client name opens straight into that client's Briefs
+  // tab (brief + Design Drive link in one click), with Tasks & Deliverables one tab away — instead
+  // of always landing on Overview. undefined (the My Clients cards' plain open) keeps the old
+  // Overview default.
+  const [myWorkHubDashboardInitialTab, setMyWorkHubDashboardInitialTab] = useState<DashboardTab | undefined>(undefined);
+  const openMyWorkHubClientDashboard = useCallback((clientId: string, tab?: DashboardTab) => {
+    setMyWorkHubDashboardClientId(clientId);
+    setMyWorkHubDashboardInitialTab(tab);
+  }, []);
   const myWorkHubDashboardClient = useMemo(
     () => (myWorkHubDashboardClientId ? clients.find((c) => c.id === myWorkHubDashboardClientId) || null : null),
     [myWorkHubDashboardClientId, clients]
@@ -8402,11 +8411,12 @@ export default function App() {
                   onNavigateToModule={handleNavigateToModule}
                   onMarkTaskViewed={handleMarkTaskViewed}
                   onHardDeleteTasks={handleHardDeleteTasks}
-                  onOpenClientDashboard={setMyWorkHubDashboardClientId}
+                  onOpenClientDashboard={openMyWorkHubClientDashboard}
                 />
                 {myWorkHubDashboardClient && (
                   <ClientDashboard
                     client={myWorkHubDashboardClient}
+                    initialTab={myWorkHubDashboardInitialTab}
                     lifecyclePeriods={clientLifecyclePeriodsByClientId[myWorkHubDashboardClient.id] || []}
                     renewalEvents={clientRenewalEventsByClientId[myWorkHubDashboardClient.id] || []}
                     users={users}
@@ -8424,7 +8434,10 @@ export default function App() {
                     socialInsights={socialInsights}
                     seoInsights={seoInsights}
                     clientPortalUser={clientPortalUsers.find((cpu) => cpu.client_id === myWorkHubDashboardClient.id) || null}
-                    onClose={() => setMyWorkHubDashboardClientId(null)}
+                    onClose={() => {
+                      setMyWorkHubDashboardClientId(null);
+                      setMyWorkHubDashboardInitialTab(undefined);
+                    }}
                     onSaveBrief={handleSaveBrief}
                     onSubmitBrief={handleSubmitBrief}
                     briefFieldSchemas={briefFieldSchemas}

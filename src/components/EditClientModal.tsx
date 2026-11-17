@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Building2, UserCheck, Globe, Briefcase, Phone, Layers, Plus, StickyNote, ChevronDown, Save, DollarSign, Calendar, Percent } from 'lucide-react';
+import { X, Building2, UserCheck, Globe, Briefcase, Phone, Layers, Plus, StickyNote, ChevronDown, Save, DollarSign, Calendar, Percent, FolderOpen } from 'lucide-react';
 import { ClientRecord, ClientSector, ServiceType } from '../types/database';
 import {
   CLIENT_SERVICE_OPTIONS,
@@ -27,6 +27,10 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
   const [contactName, setContactName] = useState(client.client_contact_name || '');
   const [phoneNumber, setPhoneNumber] = useState(client.phone_number || '');
   const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState(client.website_or_social_link || '');
+  // Owner request (2026-11-17): one Drive folder per client for design/creative assets — set once
+  // here by the AM, resolved live everywhere a creative task needs it (TaskCreativeBriefPreview in
+  // CrossTeamTaskBoard.tsx), never copied onto individual tasks.
+  const [designDriveLink, setDesignDriveLink] = useState(client.design_drive_link || '');
   const [sector, setSector] = useState<ClientSector | ''>(client.sector || '');
   const [company, setCompany] = useState<ClientCompanyId | ''>((client.company as ClientCompanyId | null) || '');
   const [industry, setIndustry] = useState(client.industry || '');
@@ -129,6 +133,9 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
     }
     if ((phoneNumber.trim() || null) !== (client.phone_number || null)) {
       patch.phone_number = phoneNumber.trim() || null;
+    }
+    if ((designDriveLink.trim() || null) !== (client.design_drive_link || null)) {
+      patch.design_drive_link = designDriveLink.trim() || null;
     }
     if ((websiteOrSocialLink.trim() || null) !== (client.website_or_social_link || null)) {
       patch.website_or_social_link = websiteOrSocialLink.trim() || null;
@@ -269,6 +276,26 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({ isOpen, onClos
                   style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--lilac)' }}>
+                Design Drive Link (optional)
+              </label>
+              <div className="relative">
+                <FolderOpen className="w-4 h-4 absolute left-3 top-3 text-stone-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={designDriveLink}
+                  onChange={(e) => setDesignDriveLink(e.target.value)}
+                  placeholder="https://drive.google.com/..."
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  style={{ background: 'rgba(10, 10, 13, 0.8)', border: '1px solid var(--border-soft)', color: 'var(--white)' }}
+                />
+              </div>
+              <p className="text-[10px] text-stone-500 mt-1">
+                Shown automatically on every creative task for this client, so designers always upload to the right folder.
+              </p>
             </div>
           </div>
 

@@ -295,7 +295,7 @@ interface ClientDashboardProps {
   ) => Promise<void>;
 }
 
-type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
+export type DashboardTab = 'overview' | 'team' | 'briefs' | 'campaigns' | 'tasks' | 'logs' | 'reports' | 'meetings' | 'integrations' | 'team_activity';
 
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   client,
