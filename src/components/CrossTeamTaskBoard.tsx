@@ -969,10 +969,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // newTaskTypeOther only applies when the selected row's is_other flag is set.
   const [newTaskType, setNewTaskType] = useState<string>('');
   const [newTaskTypeOther, setNewTaskTypeOther] = useState('');
-  // "Create directly in Edit" — the second of the two owner-requested ways to get a task into the
-  // Edit column (the other is dragging an EXISTING task onto it, see handleDragEnd/
-  // duplicateIntoEditColumn above). This path needs no duplication machinery at all: the task
-  // simply starts life with status 'edit' instead of the usual 'todo'.
+  // "Create directly in Edit" — starts a brand-new task with status 'edit' instead of the usual
+  // 'todo'. Unaffected by the 2026-11-17 reversal of the drag-an-existing-task-into-Edit
+  // duplication behavior (see handleMoveStatus) — this is a separate, still-current path that was
+  // never about duplicating anything.
   const [newCreateAsEdit, setNewCreateAsEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -2131,16 +2131,13 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   };
 
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
-    // 'edit' is never a plain status change, from ANY caller of handleMoveStatus (the Kanban
-    // drag handlers below, the Task Details "Update Status" quick-pick grid, the Stage arrow
-    // buttons) — reaching it always means duplicating this task into a new, separate row instead
-    // (the owner's explicit decision), handled centrally here so every caller gets the same
-    // behavior without having to special-case it individually. See duplicateIntoEditColumn below.
-    if (targetStatus === 'edit') {
-      const task = tasks.find((t) => t.id === taskId);
-      if (task) duplicateIntoEditColumn(task);
-      return;
-    }
+    // Owner reversal (2026-11-17): moving a task to 'edit' is a plain in-place status change
+    // again, same as every other column — NOT a duplication into a new, separate row. The
+    // duplicate-into-Edit behavior (previously handled here via duplicateIntoEditColumn) caused
+    // confusion and is reverted pending a different proposal for the original goal (preserving a
+    // task's historical KPI/workload data across an edit pass). 'edit' is still a valid status on
+    // `tasks` (see 20270103000000_retire_in_review_add_edit_status.sql) — only this duplication
+    // shortcut is reverted.
     // 'closed' is the one transition every other status change here is deliberately NOT gated
     // for: the task must have reached 'completed' first, and the mover must be the task's
     // creator, any current assignee, or an admin role (canCloseTask/canSubmitTaskForClosing in
@@ -2253,29 +2250,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       });
     if (updates.length === 0) return;
     await onReorderTasks(updates);
-  };
-
-  // Dropping a card onto the Edit column is NOT a status change of the dragged card — the
-  // owner's explicit decision is that it must create a genuinely separate, new task row (status
-  // 'edit'), leaving the original card exactly where it was. handleMoveStatus above redirects
-  // here centrally for every caller, so handleDragEnd below needs no special-casing of its own —
-  // it just calls handleMoveStatus the same way it always did.
-  const duplicateIntoEditColumn = (task: TaskRecord) => {
-    if (!onDuplicateTask) {
-      setNotification({ text: 'Duplicating into Edit is not available right now.', type: 'error' });
-      setTimeout(() => setNotification(null), 3500);
-      return;
-    }
-    onDuplicateTask(task.id, false, 'edit')
-      .then(() => {
-        setNotification({ text: `"${task.title}" was copied into Edit as a new task.`, type: 'success' });
-        setTimeout(() => setNotification(null), 3500);
-      })
-      .catch((err) => {
-        console.error(err);
-        setNotification({ text: 'Unable to copy the task into Edit. Please try again.', type: 'error' });
-        setTimeout(() => setNotification(null), 3500);
-      });
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -3301,11 +3275,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   onChange={(e) => setBulkStatusDraft(e.target.value as TaskStatus)}
                   className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
                 >
-                  {/* 'edit' excluded — this bulk action is a plain status write
-                      (onUpdateTaskStatus) with no duplication semantics, and reaching 'edit' is
-                      only ever supposed to happen by duplicating a task (see handleMoveStatus's
-                      own redirect for the single-task paths), never a bulk relabel. */}
-                  {columns.filter((col) => col.id !== 'edit').map((col) => (
+                  {columns.map((col) => (
                     <option key={col.id} value={col.id}>{col.label}</option>
                   ))}
                 </select>
@@ -4406,7 +4376,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   <span>Create directly in Edit</span>
                 </label>
                 <p className="text-[10px] text-stone-500 mt-1">
-                  Starts this task in the Edit column instead of To Do — it counts as new work right away, same as duplicating an existing task into Edit.
+                  Starts this task in the Edit column instead of To Do.
                 </p>
               </div>
 
@@ -4633,16 +4603,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
                     <option value="completed" className="bg-stone-900 text-white">Completed</option>
                     <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
-                    {/* 'edit' is disabled here on purpose — reaching it is only ever supposed to
-                        happen by duplicating a task into the Edit column, never by relabeling an
-                        existing row through this dropdown. Still rendered (not omitted) so a task
-                        that's already 'edit' (a duplicate someone is now editing through this same
-                        modal) displays correctly instead of silently mismatching the controlled
-                        value; a disabled option can be the pre-set selected one without being
-                        user-selectable, so this can't be used to turn ANOTHER task into 'edit'. */}
-                    {editStatus === 'edit' && (
-                      <option value="edit" disabled className="bg-stone-900 text-white">Edit</option>
-                    )}
+                    <option value="edit" className="bg-stone-900 text-white">Edit</option>
                   </select>
                 </div>
               </div>

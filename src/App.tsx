@@ -6268,10 +6268,11 @@ export default function App() {
   // at its OWN duplicated parent (idMap), processed in collectDescendantTaskIds()'s own walk
   // order (parent before its children) so that mapping is always already known.
   // targetStatus defaults to 'todo' (the ordinary Duplicate action, Table view bulk toolbar).
-  // CrossTeamTaskBoard.tsx's handleDragEnd passes 'edit' when an existing task is dragged onto
-  // the Edit column — per the owner's explicit decision, that must create a genuinely separate
-  // new row (not just relabel the dragged task), which is exactly what this function already
-  // does; only the new copy's starting status changes.
+  // Owner reversal (2026-11-17): dragging/moving an existing task onto the Edit column no longer
+  // routes through here at all — it's a plain in-place status change again (see
+  // CrossTeamTaskBoard.tsx's handleMoveStatus), pending a separate proposal for the original goal
+  // (preserving historical KPI/workload data across an edit pass). This function's own 'edit'
+  // targetStatus option is unused for now but left in place since it's harmless and generic.
   const handleDuplicateTask = async (taskId: string, includeSubtasks: boolean, targetStatus: TaskStatus = 'todo'): Promise<void> => {
     if (!supabaseActive) throw new Error('Supabase is not configured; the task was not duplicated.');
     const sourceTask = tasks.find((t) => t.id === taskId);
