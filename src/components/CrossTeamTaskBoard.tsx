@@ -286,22 +286,30 @@ function resolveCreativeBriefsForAssignees(
 // Task Details (for an already-saved task). Renders nothing when there's no creative assignee with
 // a resolvable service_type, so it never crowds a non-creative task.
 //
-// Also shows the client's Design Drive link (owner request, 2026-11-17), resolved live from
-// clients by clientId — same "resolve live, never copy onto the task" approach as the brief itself
-// — right above the brief card(s), so it's the first thing a designer sees. Shown whenever there's
-// at least one resolvable creative assignee, even if the client hasn't set a link yet (an explicit
-// "not set" message, same convention as a missing brief, rather than silently hiding it).
+// Also shows the Design Drive link (owner request, 2026-11-17; corrected same day) — right above
+// the brief card(s), so it's the first thing a designer sees. Owner explicitly rejected resolving
+// this live from the client on every render: for an EXISTING saved task (Task Details, Edit Task),
+// `task` is passed and its own fixed, snapshotted `task.design_drive_link` is shown — never
+// re-derived from the client, so it can't silently change under a designer's feet. Only the New
+// Task form (no task row exists yet to read from) omits `task`, and falls back to a live preview
+// of the selected client's current design_drive_link, since there is nothing else to show yet —
+// the real, fixed value gets snapshotted onto the task by create_task_copy() once it's created.
+// Shown whenever there's at least one resolvable creative assignee, even if the link isn't set yet
+// (an explicit "not set" message, same convention as a missing brief, rather than silently hiding it).
 const TaskCreativeBriefPreview: React.FC<{
   clientId: string | null | undefined;
   assigneeRoles: (string | undefined)[];
   briefs: BriefRecord[];
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
   clients: ClientRecord[];
-}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas, clients }) => {
+  // Omit only in the New Task form, where no task row exists yet — see comment above.
+  task?: TaskRecord | null;
+}> = ({ clientId, assigneeRoles, briefs, briefFieldSchemas, clients, task }) => {
   const entries = resolveCreativeBriefsForAssignees(clientId, assigneeRoles, briefs);
   if (entries.length === 0) return null;
-  const client = clients.find((c) => c.id === clientId);
-  const driveLink = client?.design_drive_link?.trim() || null;
+  const driveLink = task
+    ? task.design_drive_link?.trim() || null
+    : clients.find((c) => c.id === clientId)?.design_drive_link?.trim() || null;
   return (
     <>
       <div className="p-3 rounded-xl bg-stone-900/60 border border-stone-800 flex items-center gap-2">
@@ -3753,6 +3761,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
               clients={clients}
+              task={selectedTaskDetails}
               />
 
               {/* Platforms — read-only display; edited only via the Edit Task form. */}
@@ -4691,6 +4700,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                 briefs={briefs}
                 briefFieldSchemas={briefFieldSchemas}
               clients={clients}
+              task={editingTask}
               />
 
               {/* Priority & Due Date */}
