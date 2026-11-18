@@ -1779,18 +1779,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       const time = value ? new Date(value).getTime() : NaN;
       return Number.isNaN(time) ? 0 : time;
     };
-    // Manual drag-and-drop position (2026-11-02) wins over the newest/oldest toggle whenever
-    // it's set — same precedence rule as AMQueue.tsx's compareClientsForPortfolio: every
-    // manually-positioned task sorts as one contiguous sort_order-ordered block, strictly before
-    // any task never dragged, and those keep falling back to the existing date sort among
-    // themselves. Affects both the Kanban board (reorder happens per-column, see handleDragEnd)
-    // and the Table view, which share this same list.
+    // Owner fix (2026-11-18): a never-dragged task now ALWAYS sorts above every manually-
+    // positioned one — flipped from this block's original precedence (manual position always won
+    // over the date toggle, 2026-11-02), which had an unintended side effect: reorderTaskList
+    // reindexes every task visible in a status column the moment ANY one of them is dragged once,
+    // so from that point on every brand-new task in that column (sort_order still null) was
+    // permanently stuck below all of them, however recent. This fix touches ONLY the comparison
+    // rule, not any stored data — manually-positioned tasks keep their exact relative order among
+    // themselves (aOrder - bOrder below, unchanged); never-dragged tasks keep sorting among
+    // themselves by the existing newest/oldest toggle, unchanged; the only change is which of
+    // those two groups is shown first. Affects both the Kanban board (reorder happens per-column,
+    // see handleDragEnd) and the Table view, which share this same list.
     return [...filteredTasks].sort((a, b) => {
       const aOrder = a.sort_order;
       const bOrder = b.sort_order;
       if (aOrder != null && bOrder != null) return aOrder - bOrder;
-      if (aOrder != null) return -1;
-      if (bOrder != null) return 1;
+      if (aOrder != null) return 1;
+      if (bOrder != null) return -1;
       return taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b);
     });
   }, [filteredTasks, taskSortOrder, columnSort, clients, taskAssigneeIdsByTask, taskDirectoryUsers]);
