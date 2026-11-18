@@ -108,7 +108,15 @@ import { MergeClientsModal } from './MergeClientsModal';
 import { CLIENT_STATUS_META, formatClientLifecycleDuration, isPausedClient } from '../lib/clientStatus';
 import { reviewBrief, briefCompletenessScore } from '../lib/briefReview';
 import { getClientActivitySummary, ClientActivitySummaryRow } from '../lib/clientDeletion';
-import { getClientServices, getDisplayableClientServices, getClientCustomServices, SERVICE_LABELS, SERVICE_BADGE_COLORS } from '../lib/clientServices';
+import {
+  getClientServices,
+  getDisplayableClientServices,
+  getClientCustomServices,
+  SERVICE_LABELS,
+  SERVICE_BADGE_COLORS,
+  CLIENT_SERVICE_OPTIONS,
+  splitClientServices,
+} from '../lib/clientServices';
 import {
   AssignableServiceType,
   getEligibleServiceAssignees,
@@ -438,6 +446,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [newRenewalDateDraft, setNewRenewalDateDraft] = useState('');
   const [renewalConfirmError, setRenewalConfirmError] = useState('');
   const [isEditClientModalOpen, setIsEditClientModalOpen] = useState(false);
+  // Upsell (Client Renewals, 2026-11-18): a quick way to add ONE extra service to this client
+  // mid-cycle, without opening the full Edit Client modal. Submitting merges the picked service
+  // into the client's existing services/other_services via the same onUpdateClientDetails patch
+  // path EditClientModal already uses — no new RPC, no separate "upsell" storage: once added, it
+  // IS just a normal part of the client's package from then on (owner's explicit request).
+  const [upsellSelection, setUpsellSelection] = useState<ServiceType | ''>('');
+  const [isSavingUpsell, setIsSavingUpsell] = useState(false);
+  const [upsellError, setUpsellError] = useState('');
   const [isEditingClientAccess, setIsEditingClientAccess] = useState(false);
   const [isClientAccessSelected, setIsClientAccessSelected] = useState(false);
   // public.clients no longer carries these 10 columns in `client` (the app's shared select no
@@ -974,6 +990,29 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
       setIsEditingPaymentTracking(false);
     } finally {
       setIsSavingPaymentTracking(false);
+    }
+  };
+
+  const handleAddUpsellService = async () => {
+    if (!onUpdateClientDetails || !upsellSelection) return;
+    if (services.includes(upsellSelection)) {
+      setUpsellError('This client already has this service.');
+      return;
+    }
+    setUpsellError('');
+    setIsSavingUpsell(true);
+    try {
+      const { services: nextServices, other_services: nextOtherServices } = splitClientServices([
+        ...services,
+        ...customServices,
+        upsellSelection,
+      ]);
+      await onUpdateClientDetails(client.id, { services: nextServices, other_services: nextOtherServices });
+      setUpsellSelection('');
+    } catch (err) {
+      setUpsellError(err instanceof Error ? err.message : 'Could not add this service. Please try again.');
+    } finally {
+      setIsSavingUpsell(false);
     }
   };
 
@@ -1676,6 +1715,39 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       </span>
                     ))}
                   </div>
+
+                  {/* Upsell (Client Renewals, 2026-11-18): add one extra service to this client's
+                      package right now — once added it becomes a normal part of the package
+                      above, not a separate tracked thing. */}
+                  {canEditThisClient && onUpdateClientDetails && (
+                    <div className="mt-3 pt-3 border-t border-purple-900/20 flex items-center gap-2">
+                      <select
+                        value={upsellSelection}
+                        onChange={(e) => {
+                          setUpsellSelection(e.target.value as ServiceType | '');
+                          setUpsellError('');
+                        }}
+                        className="flex-1 px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+                      >
+                        <option value="">Upsell — add a service...</option>
+                        {CLIENT_SERVICE_OPTIONS.filter(
+                          (opt) => opt.value !== 'comprehensive' && !services.includes(opt.value as ServiceType)
+                        ).map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={handleAddUpsellService}
+                        disabled={!upsellSelection || isSavingUpsell}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 disabled:opacity-50 transition-all"
+                      >
+                        {isSavingUpsell ? '...' : 'Add'}
+                      </button>
+                    </div>
+                  )}
+                  {upsellError && <p className="text-[11px] text-rose-400 mt-1.5">{upsellError}</p>}
                 </div>
 
                 {showContractValue && (
