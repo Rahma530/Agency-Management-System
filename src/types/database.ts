@@ -234,6 +234,12 @@ export interface ClientRecord {
   start_date?: string | null;
   renewal_date?: string | null;
   renewal_history_count?: number | null;
+  // Agreed value for the CURRENT/upcoming renewal cycle — distinct from contract_value (the
+  // original signed-contract figure). Set by record_client_renewal_payment on every payment
+  // logged for the open cycle; "paid"/"remaining" for that cycle are never stored here, always
+  // derived by summing client_renewal_payments for the client's current renewal_sequence. See
+  // 20270113000000_client_renewal_payments.sql.
+  renewal_value?: number | null;
   am_team_lead_viewed_at?: string | null;
   // Field names kept as-is (Module 13 only renamed the status VALUE 'churned' -> 'closed', not
   // these columns) — set automatically by handleUpdateClientStatus (App.tsx) the moment status
@@ -338,7 +344,7 @@ export interface ClientAccessFields {
 // 20270112000000_fix_design_drive_link_select_grant.sql, which fixed create_task_copy() failing
 // outright for any client-linked task (a separate, more serious symptom of the same oversight).
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order, design_drive_link' as const;
+  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order, design_drive_link, renewal_value' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
@@ -692,6 +698,27 @@ export interface ClientRenewalEventRecord {
   renewal_sequence: number;
   created_at: string;
   recorded_by: string;
+}
+
+// client_renewal_payments — one row per payment collected toward a client's CURRENT renewal
+// cycle (see 20270113000000_client_renewal_payments.sql). "Paid so far"/"remaining" for a
+// client's open cycle are always derived by summing these rows for that client's current
+// renewal_sequence (clients.renewal_history_count + 1) — never a separately stored number.
+export type RenewalPaymentChannel = 'mahdy' | 'masry' | 'tabby' | 'tamara' | 'kesra';
+
+export interface ClientRenewalPaymentRecord {
+  id: string;
+  client_id: string;
+  renewal_sequence: number;
+  renewal_value: number;
+  amount_paid: number;
+  payment_channel: RenewalPaymentChannel;
+  payment_date: string;
+  renewal_duration_months: 1 | 3 | 6 | 12;
+  transfer_screenshot_path: string;
+  new_contract_path?: string | null;
+  recorded_by: string;
+  created_at: string;
 }
 
 // 6d. brief_attachments — same shape as ClientContractRecord/TaskAttachmentRecord, one level up
