@@ -608,6 +608,19 @@ export function buildClientContractStoragePath(
   return `${clientId}/${contractId}-${sanitizeAttachmentFilename(rawFilename)}`;
 }
 
+// Same convention as buildClientContractStoragePath, for the 'client-renewal-payments' bucket
+// (Client Renewals, 2026-11-18). kind distinguishes the two files a single payment can carry
+// (transfer screenshot vs an optional new contract) so they never collide under the same
+// paymentId prefix.
+export function buildClientRenewalPaymentStoragePath(
+  clientId: string,
+  paymentId: string,
+  kind: 'screenshot' | 'contract',
+  rawFilename: string
+): string {
+  return `${clientId}/${paymentId}-${kind}-${sanitizeAttachmentFilename(rawFilename)}`;
+}
+
 // Same convention, for the 'brief-attachments' bucket. First path segment MUST be the brief's own
 // id — the storage.objects RLS policies (20261130000000_brief_attachments.sql) read
 // (storage.foldername(name))[1] as the brief_id to re-derive visibility from public.briefs.

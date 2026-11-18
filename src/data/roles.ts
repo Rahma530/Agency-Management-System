@@ -6,7 +6,7 @@ import { getActiveCustomRole, getCustomRoleModules, isCustomRoleCacheLoaded } fr
 // label/badge count (App.tsx's canAccessClientOnboarding-gated nav item, scoped to onboarding-
 // stage clients only), which is the wrong screen for a role whose job is an agency-wide status
 // overview across every lifecycle stage, not managing the onboarding queue.
-export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship' | 'inhouse' | 'client_overview';
+export type AppModuleId = 'onboarding' | 'service_briefs' | 'capacity' | 'tasks' | 'daily_operations' | 'campaigns' | 'reports' | 'dashboard' | 'my_work' | 'employees' | 'brief_templates' | 'mentorship' | 'inhouse' | 'client_overview' | 'renewals';
 
 export interface RoleMetadata {
   role: UserRole;
@@ -41,7 +41,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     // marketing_manager are the only three roles that may see the Inhouse (Kesraa/Fast Growth)
     // task board — see also task_visible_v2's inhouse guard, which is the DB-level half of this
     // same restriction (allowedModules alone would only hide the nav tab, not the data).
-    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'inhouse', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
+    allowedModules: ['dashboard', 'onboarding', 'capacity', 'tasks', 'inhouse', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship', 'renewals'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -58,7 +58,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeText: 'var(--role-head-of-technical-ink)',
     defaultModule: 'dashboard',
     // See executive's own comment above — same Inhouse-module exception, same reasoning.
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'inhouse', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship'],
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'capacity', 'tasks', 'inhouse', 'daily_operations', 'campaigns', 'reports', 'employees', 'brief_templates', 'mentorship', 'renewals'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -97,7 +97,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-am-team-lead-tint)',
     badgeText: 'var(--role-am-team-lead-ink)',
     defaultModule: 'dashboard',
-    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees'],
+    allowedModules: ['dashboard', 'my_work', 'onboarding', 'service_briefs', 'capacity', 'tasks', 'daily_operations', 'campaigns', 'reports', 'employees', 'renewals'],
     canCreateCampaign: false,
     canManageCapacity: true,
     canAssignAM: true,
@@ -113,7 +113,7 @@ export const AGENCY_ROLES: Record<BuiltInRole, RoleMetadata> = {
     badgeBg: 'var(--role-am-agent-tint)',
     badgeText: 'var(--role-am-agent-ink)',
     defaultModule: 'my_work',
-    allowedModules: ['my_work', 'dashboard', 'onboarding', 'service_briefs', 'tasks', 'campaigns', 'reports', 'brief_templates'],
+    allowedModules: ['my_work', 'dashboard', 'onboarding', 'service_briefs', 'tasks', 'campaigns', 'reports', 'brief_templates', 'renewals'],
     canCreateCampaign: false,
     canManageCapacity: false,
     canAssignAM: false,

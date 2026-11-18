@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { X, UserCheck, Sparkles, Building2, Briefcase, DollarSign, Calendar, Phone, Layers, Globe, ChevronDown, FileSignature, StickyNote, Plus } from 'lucide-react';
-import { ClientSector, ServiceType, UserRecord } from '../types/database';
+import { ClientRecord, ClientSector, ServiceType, UserRecord } from '../types/database';
+import { getClientServices, getClientCustomServices } from '../lib/clientServices';
 import { COMPREHENSIVE_SERVICES, CLIENT_SERVICE_OPTIONS, ClientServiceOption, splitClientServices } from '../lib/clientServices';
 import { CONTRACT_ALLOWED_MIME_TYPES, CONTRACT_MAX_FILE_SIZE_BYTES, formatContractFileSize } from '../lib/clientContracts';
 import { ClientCompanyId, CLIENT_COMPANY_OPTIONS } from '../lib/clientCompany';
@@ -11,6 +12,13 @@ interface ClientRegistrationModalProps {
   currentUser: UserRecord;
   amTeamLeaders?: UserRecord[];
   amAgents?: UserRecord[];
+  // Client Renewals page's "Add a new client with the same data" quick action (2026-11-18).
+  // Pre-fills the identity/classification/services fields from an existing client — NOT its
+  // contract value, dates, or renewal date, which belong to a distinct engagement and must be
+  // entered fresh for the new row. Render this modal with key={prefillFrom?.id || 'new'} from the
+  // caller so each open starts from the right initial state (this component's fields are plain
+  // local useState, uncontrolled by the parent after mount).
+  prefillFrom?: ClientRecord | null;
   onSubmit: (
     clientData: {
       name: string;
@@ -59,6 +67,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   currentUser,
   amTeamLeaders = [],
   amAgents = [],
+  prefillFrom = null,
   onSubmit,
 }) => {
   // Management assignments start empty; Sales and AM Agent retain their lead picker default.
@@ -66,17 +75,24 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const isLeadershipForm = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
   const isManagementForm = isLeadershipForm || currentUser.role === 'am_team_lead';
 
-  const [name, setName] = useState('');
-  const [contactName, setContactName] = useState('');
-  const [sector, setSector] = useState<ClientSector | ''>('');
-  const [company, setCompany] = useState<ClientCompanyId | ''>('');
-  const [industry, setIndustry] = useState('');
+  // "نفس البيانات" (same data) copies identity/classification/services/AM — NOT contract_value,
+  // due/remaining, start_date, contract_duration_months, or renewal_date, which are specific to a
+  // distinct engagement and must be entered fresh for this new client row.
+  const [name, setName] = useState(prefillFrom ? `${prefillFrom.name} (نسخة)` : '');
+  const [contactName, setContactName] = useState(prefillFrom?.client_contact_name || '');
+  const [sector, setSector] = useState<ClientSector | ''>(prefillFrom?.sector || '');
+  const [company, setCompany] = useState<ClientCompanyId | ''>((prefillFrom?.company as ClientCompanyId | null) || '');
+  const [industry, setIndustry] = useState(prefillFrom?.industry || '');
   const [isIndustryOpen, setIsIndustryOpen] = useState(false);
   const [activeIndustryIndex, setActiveIndustryIndex] = useState(-1);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState('');
-  const [selectedServices, setSelectedServices] = useState<ServiceType[]>([]);
-  const [customServices, setCustomServices] = useState<string[]>([]);
+  const [phoneNumber, setPhoneNumber] = useState(prefillFrom?.phone_number || '');
+  const [websiteOrSocialLink, setWebsiteOrSocialLink] = useState(prefillFrom?.website_or_social_link || '');
+  const [selectedServices, setSelectedServices] = useState<ServiceType[]>(
+    prefillFrom ? getClientServices(prefillFrom) : []
+  );
+  const [customServices, setCustomServices] = useState<string[]>(
+    prefillFrom ? getClientCustomServices(prefillFrom) : []
+  );
   const [customServiceInput, setCustomServiceInput] = useState('');
   const [contractValue, setContractValue] = useState<number | ''>('');
   const [dueValue, setDueValue] = useState<number | ''>('');
@@ -85,8 +101,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [contractDurationMonths, setContractDurationMonths] = useState<number | ''>('');
   const [renewalDate, setRenewalDate] = useState(addOneYear(new Date().toISOString().split('T')[0]));
   const [renewalDateTouched, setRenewalDateTouched] = useState(false);
-  const [amAgentId, setAmAgentId] = useState('');
-  const [salesBrief, setSalesBrief] = useState('');
+  const [amAgentId, setAmAgentId] = useState(prefillFrom?.am_agent_id || '');
+  const [salesBrief, setSalesBrief] = useState(prefillFrom?.sales_brief || '');
   const [contractFile, setContractFile] = useState<File | null>(null);
   const [contractFileError, setContractFileError] = useState('');
   const contractFileInputRef = useRef<HTMLInputElement>(null);
