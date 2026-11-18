@@ -721,6 +721,20 @@ export interface ClientRenewalPaymentRecord {
   created_at: string;
 }
 
+// renewal_employee_targets — one row per employee per month, set by that employee's manager or
+// team lead (never by the employee themselves). "Achieved" is never stored: the Renewals page
+// derives it by summing client_renewal_payments.amount_paid for that employee/month. See
+// 20270114000000_renewal_employee_targets.sql.
+export interface RenewalEmployeeTargetRecord {
+  id: string;
+  employee_id: string;
+  month: string; // first-of-month date, e.g. "2026-11-01"
+  target_value: number;
+  set_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // 6d. brief_attachments — same shape as ClientContractRecord/TaskAttachmentRecord, one level up
 // (brief instead of client/task). RLS mirrors briefs_select_rls/briefs_update_rls exactly (see
 // 20261130000000_brief_attachments.sql) — who can see/edit the brief can see/edit its attachments.
