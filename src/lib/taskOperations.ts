@@ -105,6 +105,13 @@ export interface CreateTaskCopiesInput {
   // existing task into the Edit column" flow (handleDuplicateTask) and the Create Task form's own
   // "create directly in Edit" option.
   status?: TaskStatus;
+  // HOTFIX (2026-11-18, 20270113000000_task_create_sort_order.sql): pins the new task above every
+  // already-manually-ordered task in its destination status column (see that migration's own
+  // comment for the full "newest task showed at the bottom" story). App.tsx's call sites compute
+  // this as (lowest existing sort_order among tasks already in that status) - 1 only when that
+  // status actually has any manually-ordered tasks; otherwise omitted, leaving sort_order null —
+  // exactly as before this fix, relying on the ordinary date-sort fallback.
+  sortOrder?: number;
 }
 
 export interface CreateTaskFormInput extends CreateTaskCopiesInput {
@@ -264,6 +271,7 @@ export const createTaskCopies = async (input: CreateTaskCopiesInput): Promise<Cr
       p_batch_id: input.batchId ?? null,
       p_assignee_ids: input.assigneeIds,
       p_status: input.status ?? 'todo',
+      p_sort_order: input.sortOrder ?? null,
     });
     if (error) {
       failures.push({

@@ -5964,6 +5964,19 @@ export default function App() {
     }
   };
 
+  // HOTFIX (2026-11-18, 20270113000000_task_create_sort_order.sql): see that migration's comment
+  // for the full story. Pins a brand-new top-level task above every already-manually-ordered task
+  // in the SAME status column, so it isn't permanently stuck below them just for having no
+  // sort_order of its own. Returns undefined (sort_order stays null) when that status has no
+  // manually-ordered tasks yet — the common case, where the ordinary date-sort already puts the
+  // newest task first with no extra data needed.
+  const computeNewTaskSortOrder = (status: TaskStatus): number | undefined => {
+    const existingOrders = tasks
+      .filter((t) => t.status === status && t.sort_order != null)
+      .map((t) => t.sort_order as number);
+    return existingOrders.length > 0 ? Math.min(...existingOrders) - 1 : undefined;
+  };
+
   // 6. Create one task copy per selected client. create_task_copy owns assignee notifications and
   // idempotency; the UI must not duplicate either behavior.
   const handleCreateTask = async (taskData: CreateTaskFormInput) => {
@@ -5982,7 +5995,10 @@ export default function App() {
       throw new Error('This batch payload differs from the locked recovery record. Resume the original operation or explicitly discard it before starting a different task.');
     }
 
-    const batchResult = await createTaskCopies(taskData);
+    const batchResult = await createTaskCopies({
+      ...taskData,
+      sortOrder: computeNewTaskSortOrder(taskData.status ?? 'todo'),
+    });
     const persistedTasks = batchResult.tasks;
     if (persistedTasks.length > 0) {
       setTasks((previous) => [
@@ -6305,6 +6321,10 @@ export default function App() {
         // (includeSubtasks) always starts 'todo' like any other fresh subtask, since dragging a
         // parent into Edit doesn't mean every descendant is also "ready for editing."
         status: sourceId === taskId ? targetStatus : 'todo',
+        // Only the top-level duplicate needs this (see computeNewTaskSortOrder's own comment) —
+        // a duplicated subtask never appears as its own Kanban card (topLevelTasks filters those
+        // out), so pinning its position would be pointless.
+        sortOrder: sourceId === taskId ? computeNewTaskSortOrder(targetStatus) : undefined,
       });
 
       if (result.tasks.length === 0) {

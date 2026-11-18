@@ -933,15 +933,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // New task form state
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [newClientIds, setNewClientIds] = useState<string[]>(clients[0]?.id ? [clients[0].id] : []);
+  // HOTFIX (2026-11-18): this used to default to clients[0]?.id — the first client in the RAW,
+  // UNFILTERED `clients` prop — and the validity-check effect below used to re-validate against
+  // that same raw list instead of sortedClientsForPicker (the client list actually OFFERED on
+  // THIS board/tab, e.g. Inhouse-only here). A client id that was valid in the raw list but not
+  // an option sortedClientsForPicker actually renders (so no chip for it ever appeared, nothing
+  // visible to deselect) could sit in newClientIds completely invisibly, then get submitted
+  // alongside whatever the AM actually picked on-screen — silently creating one extra,
+  // unintended task copy for that invisible leftover client every time. Root cause of "an extra
+  // Duplicate Task for [some other client] every time I create one for Kesra on the Inhouse tab."
+  // Now starts empty and is validated against sortedClientsForPicker, so nothing can ever be
+  // selected that isn't a visible, removable chip in the picker itself.
+  const [newClientIds, setNewClientIds] = useState<string[]>([]);
   useEffect(() => {
     if (!addSubtaskParent) {
-      setNewClientIds((current) => {
-        const valid = current.filter((id) => clients.some((client) => client.id === id));
-        return valid.length > 0 ? valid : (clients[0]?.id ? [clients[0].id] : []);
-      });
+      setNewClientIds((current) => current.filter((id) => sortedClientsForPicker.some((client) => client.id === id)));
     }
-  }, [clients, addSubtaskParent]);
+  }, [sortedClientsForPicker, addSubtaskParent]);
   const [newTeam, setNewTeam] = useState('SEO');
   const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>([]);
   const [newPlatformIds, setNewPlatformIds] = useState<string[]>([]);
