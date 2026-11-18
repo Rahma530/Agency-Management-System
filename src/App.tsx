@@ -35,6 +35,7 @@ import {
   setSupabaseSessionUser,
   buildMeetingRecordingStoragePath,
   buildClientContractStoragePath,
+  buildClientRenewalPaymentStoragePath,
   buildBriefAttachmentStoragePath,
   buildClientAccessAttachmentStoragePath,
   buildDailyLogAttachmentStoragePath,
@@ -116,6 +117,9 @@ import {
   ClientPortalUserRecord,
   MeetingRecord,
   ClientContractRecord,
+  ClientRenewalPaymentRecord,
+  RenewalEmployeeTargetRecord,
+  RenewalPaymentChannel,
   BriefAttachmentRecord,
   DailyLogAttachmentRecord,
   ClientAccessAttachmentRecord,
@@ -180,6 +184,7 @@ import { SetPasswordScreen } from './components/SetPasswordScreen';
 import { ClientRegistrationModal } from './components/ClientRegistrationModal';
 import { BulkClientUploadModal } from './components/BulkClientUploadModal';
 import { AMQueue } from './components/AMQueue';
+import { ClientRenewalsPage } from './components/ClientRenewalsPage';
 import { CapacityManagement } from './components/CapacityManagement';
 import { CrossTeamTaskBoard } from './components/CrossTeamTaskBoard';
 import { InhouseClientsPanel } from './components/InhouseClientsPanel';
@@ -637,6 +642,8 @@ export default function App() {
   const [clientPortalUsers, setClientPortalUsers] = useState<ClientPortalUserRecord[]>([]);
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [clientContracts, setClientContracts] = useState<ClientContractRecord[]>([]);
+  const [clientRenewalPayments, setClientRenewalPayments] = useState<ClientRenewalPaymentRecord[]>([]);
+  const [renewalEmployeeTargets, setRenewalEmployeeTargets] = useState<RenewalEmployeeTargetRecord[]>([]);
   const [briefAttachments, setBriefAttachments] = useState<BriefAttachmentRecord[]>([]);
   const [dailyLogAttachments, setDailyLogAttachments] = useState<DailyLogAttachmentRecord[]>([]);
   const [platformConnections, setPlatformConnections] = useState<PlatformConnectionRecord[]>([]);
@@ -3732,6 +3739,23 @@ export default function App() {
         const { data: contractData, error: contractErr } = await supabase.from('client_contracts').select('*');
         if (!contractErr && contractData) {
           setClientContracts(contractData as ClientContractRecord[]);
+        }
+
+        // Fetch client_renewal_payments + renewal_employee_targets (Client Renewals page,
+        // 2026-11-18). RLS already scopes both to what the caller can see, same convention as
+        // client_contracts above.
+        const { data: renewalPaymentData, error: renewalPaymentErr } = await supabase
+          .from('client_renewal_payments')
+          .select('*');
+        if (!renewalPaymentErr && renewalPaymentData) {
+          setClientRenewalPayments(renewalPaymentData as ClientRenewalPaymentRecord[]);
+        }
+
+        const { data: renewalTargetData, error: renewalTargetErr } = await supabase
+          .from('renewal_employee_targets')
+          .select('*');
+        if (!renewalTargetErr && renewalTargetData) {
+          setRenewalEmployeeTargets(renewalTargetData as RenewalEmployeeTargetRecord[]);
         }
 
         // Fetch brief_attachments — RLS already scopes this to whatever briefs the caller can see
@@ -7066,6 +7090,133 @@ export default function App() {
     showNotification(`"${file.name}" uploaded successfully.`);
   };
 
+  // Client Renewals page: uploads the required transfer screenshot (and optional new contract)
+  // to the client-renewal-payments bucket, then calls record_client_renewal_payment, which writes
+  // the payment row and keeps clients.renewal_value in sync in one transaction. The RPC — not a
+  // direct table insert — is the only write path here (same reasoning as confirm_client_renewal):
+  // renewal_sequence must be computed server-side from the client's current row under `for update`,
+  // never trusted from the client.
+  const handleRecordRenewalPayment = async (
+    clientId: string,
+    input: {
+      renewalValue: number;
+      amountPaid: number;
+      paymentChannel: RenewalPaymentChannel;
+      renewalDurationMonths: 1 | 3 | 6 | 12;
+      transferScreenshot: File;
+      newContract?: File | null;
+    }
+  ) => {
+    if (!supabaseActive) {
+      showNotification('Recording a renewal payment requires a connected Supabase backend.', 'info');
+      return;
+    }
+
+    const paymentId = `rpay-${Date.now().toString().slice(-6)}`;
+    const screenshotPath = buildClientRenewalPaymentStoragePath(
+      clientId,
+      paymentId,
+      'screenshot',
+      input.transferScreenshot.name
+    );
+
+    const { error: screenshotUploadError } = await supabase.storage
+      .from('client-renewal-payments')
+      .upload(screenshotPath, input.transferScreenshot, { contentType: input.transferScreenshot.type });
+    if (screenshotUploadError) {
+      console.error('Supabase renewal-payment screenshot upload error:', screenshotUploadError);
+      throw screenshotUploadError;
+    }
+
+    let contractPath: string | null = null;
+    if (input.newContract) {
+      contractPath = buildClientRenewalPaymentStoragePath(clientId, paymentId, 'contract', input.newContract.name);
+      const { error: contractUploadError } = await supabase.storage
+        .from('client-renewal-payments')
+        .upload(contractPath, input.newContract, { contentType: input.newContract.type });
+      if (contractUploadError) {
+        console.error('Supabase renewal-payment contract upload error:', contractUploadError);
+        // Clean up the screenshot already uploaded above rather than leaving an orphaned object
+        // with no payment row to reference it.
+        await supabase.storage.from('client-renewal-payments').remove([screenshotPath]);
+        throw contractUploadError;
+      }
+    }
+
+    const { data: newPaymentId, error: rpcError } = await supabase.rpc('record_client_renewal_payment', {
+      p_client_id: clientId,
+      p_renewal_value: input.renewalValue,
+      p_amount_paid: input.amountPaid,
+      p_payment_channel: input.paymentChannel,
+      p_renewal_duration_months: input.renewalDurationMonths,
+      p_transfer_screenshot_path: screenshotPath,
+      p_new_contract_path: contractPath,
+    });
+    if (rpcError) {
+      console.error('record_client_renewal_payment error:', rpcError);
+      const pathsToClean = contractPath ? [screenshotPath, contractPath] : [screenshotPath];
+      await supabase.storage.from('client-renewal-payments').remove(pathsToClean);
+      throw rpcError;
+    }
+
+    const newPayment: ClientRenewalPaymentRecord = {
+      id: (newPaymentId as string) || paymentId,
+      client_id: clientId,
+      renewal_sequence:
+        (clients.find((c) => c.id === clientId)?.renewal_history_count ?? 0) + 1,
+      renewal_value: input.renewalValue,
+      amount_paid: input.amountPaid,
+      payment_channel: input.paymentChannel,
+      payment_date: new Date().toISOString().slice(0, 10),
+      renewal_duration_months: input.renewalDurationMonths,
+      transfer_screenshot_path: screenshotPath,
+      new_contract_path: contractPath,
+      recorded_by: currentUser.id,
+      created_at: new Date().toISOString(),
+    };
+    setClientRenewalPayments((prev) => [...prev, newPayment]);
+    setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, renewal_value: input.renewalValue } : c)));
+    showNotification('Renewal payment recorded.');
+  };
+
+  // Client Renewals page, employee panel: only a manager/team lead may call this (enforced
+  // server-side too — upsert_renewal_employee_target checks users.manager_id itself). month is
+  // passed as any date within the target month; the RPC normalizes it to the 1st.
+  const handleSetRenewalEmployeeTarget = async (employeeId: string, month: string, targetValue: number) => {
+    if (!supabaseActive) {
+      showNotification('Setting a renewal target requires a connected Supabase backend.', 'info');
+      return;
+    }
+
+    const { error } = await supabase.rpc('upsert_renewal_employee_target', {
+      p_employee_id: employeeId,
+      p_month: month,
+      p_target_value: targetValue,
+    });
+    if (error) {
+      console.error('upsert_renewal_employee_target error:', error);
+      throw error;
+    }
+
+    const normalizedMonth = `${month.slice(0, 7)}-01`;
+    setRenewalEmployeeTargets((prev) => {
+      const idx = prev.findIndex((t) => t.employee_id === employeeId && t.month === normalizedMonth);
+      const row: RenewalEmployeeTargetRecord = {
+        id: idx === -1 ? `ret-${Date.now().toString().slice(-6)}` : prev[idx].id,
+        employee_id: employeeId,
+        month: normalizedMonth,
+        target_value: targetValue,
+        set_by: currentUser.id,
+        created_at: idx === -1 ? new Date().toISOString() : prev[idx].created_at,
+        updated_at: new Date().toISOString(),
+      };
+      if (idx === -1) return [...prev, row];
+      const next = prev.slice();
+      next[idx] = row;
+      return next;
+    });
+  };
+
   // Delete your own contract upload — removes both the Storage object and its metadata row.
   // ClientContractsPanel's onDelete is a fire-and-forget onClick, never awaited or caught — a
   // thrown error here would only surface as an unhandled promise rejection, so a real failure is
@@ -8184,6 +8335,22 @@ export default function App() {
               </button>
             )}
 
+            {/* Client Renewals (2026-11-18): a dedicated collections view, separate from
+                AMQueue's status-based Renewal Queue — see ClientRenewalsPage.tsx. */}
+            {userRoleInfo.allowedModules.includes('renewals') && (
+              <button
+                onClick={() => handleTabChange('renewals')}
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 sidebar-nav-item ${
+                  activeTab === 'renewals'
+                  ? 'sidebar-nav-item--active ring-1 ring-purple-400 shadow-md'
+                  : 'sidebar-nav-item--inactive'
+                }`}
+              >
+                <RefreshCw className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">Client Renewals</span>
+              </button>
+            )}
+
             {/* Tab 3: Cross-Team Tasks */}
             {userRoleInfo.allowedModules.includes('tasks') && (
               <button
@@ -8717,6 +8884,23 @@ export default function App() {
                     onMergeClients={handleMergeClients}
                   />
                 )}
+              </div>
+            )}
+
+            {/* Client Renewals page (2026-11-18) — see ClientRenewalsPage.tsx's own notes on how
+                this differs from AMQueue's existing status-based Renewal Queue. */}
+            {activeTab === 'renewals' && (
+              <div className="space-y-6">
+                <ClientRenewalsPage
+                  clients={clients}
+                  clientRenewalPayments={clientRenewalPayments}
+                  renewalEmployeeTargets={renewalEmployeeTargets}
+                  users={users}
+                  currentUser={currentUser}
+                  canManageTargets={['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)}
+                  onRecordRenewalPayment={handleRecordRenewalPayment}
+                  onSetEmployeeTarget={handleSetRenewalEmployeeTarget}
+                />
               </div>
             )}
 
