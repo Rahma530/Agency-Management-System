@@ -208,13 +208,21 @@ interface CrossTeamTaskBoardProps {
   // canManageTaskTypes/canManagePlatforms above. Optional: absent entirely (e.g. no currentUser),
   // the delete controls simply never render.
   onHardDeleteTasks?: (taskIds: string[]) => Promise<void>;
-  // Duplicate (bulk-action toolbar, Table view, AND dragging an existing Kanban card onto the
-  // Edit column — see handleDragEnd below). Single-task shaped, same as onUpdateTaskStatus above
-  // — the bulk toolbar calls this once per selected task via runBulkTaskAction(). targetStatus
-  // defaults to 'todo' server-side when omitted; handleDragEnd passes 'edit' explicitly. Optional
-  // for the same reason onHardDeleteTasks is: absent entirely, the Duplicate control (and the
-  // drag-into-Edit behavior) don't render/activate.
+  // Duplicate (bulk-action toolbar, Table view only now — see onCreateEditSubtask below for the
+  // Edit column's own, different mechanism). Single-task shaped, same as onUpdateTaskStatus above
+  // — the bulk toolbar calls this once per selected task via runBulkTaskAction(). Optional for the
+  // same reason onHardDeleteTasks is: absent entirely, the Duplicate control doesn't render.
   onDuplicateTask?: (taskId: string, includeSubtasks: boolean, targetStatus?: TaskStatus) => Promise<void>;
+  // Moving an EXISTING task onto the Edit column (drag, Task Details quick-pick, Edit Task Stage
+  // dropdown, bulk status change — all routed through handleMoveStatus below) — owner's final
+  // design (2026-11-18) for the Designer Tasks point 3 rework: creates ONE new copy, status
+  // 'edit', parented to the task passed in (via the already-existing Subtasks system, not a new
+  // relationship) — the original task itself is never touched (status, KPI/workload history
+  // stay exactly as they were). Deliberately not reusing onDuplicateTask, whose targetStatus
+  // param made a SIBLING copy (same parent as the source) — this makes the source itself the
+  // parent. Optional for the same reason onDuplicateTask is: absent, 'edit' is unreachable from
+  // any of those paths (see handleMoveStatus).
+  onCreateEditSubtask?: (task: TaskRecord) => Promise<void>;
   // Inhouse module (2026-11-02): a second, independent instance of this same component, rendered
   // only for executive/head_of_technical/marketing_manager (App.tsx's 'inhouse' tab), scoped to
   // Kesraa/Fast Growth's own Creative & Design/Video Production/Programming work. `tasks` is
@@ -535,6 +543,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   onMarkTaskViewed,
   onHardDeleteTasks,
   onDuplicateTask,
+  onCreateEditSubtask,
   inhouseOnly = false,
   briefs,
   briefFieldSchemas,
@@ -2131,13 +2140,32 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   };
 
   const handleMoveStatus = async (taskId: string, targetStatus: TaskStatus) => {
-    // Owner reversal (2026-11-17): moving a task to 'edit' is a plain in-place status change
-    // again, same as every other column — NOT a duplication into a new, separate row. The
-    // duplicate-into-Edit behavior (previously handled here via duplicateIntoEditColumn) caused
-    // confusion and is reverted pending a different proposal for the original goal (preserving a
-    // task's historical KPI/workload data across an edit pass). 'edit' is still a valid status on
-    // `tasks` (see 20270103000000_retire_in_review_add_edit_status.sql) — only this duplication
-    // shortcut is reverted.
+    // Owner's final design (2026-11-18), replacing the 2026-11-17 revert: 'edit' is never a plain
+    // status change again, from ANY caller of handleMoveStatus (Kanban drag, Task Details
+    // quick-pick grid, the Edit Task Stage dropdown). Reaching it now creates a new Edit-status
+    // copy PARENTED to this task (via the existing Subtasks system) instead — the original task's
+    // own status/history is never touched. See onCreateEditSubtask's own comment for why this
+    // differs from the first draft (an unrelated-looking independent copy, confusing, reverted
+    // 2026-11-17) and from onDuplicateTask (a sibling copy, wrong relationship for this).
+    if (targetStatus === 'edit') {
+      if (!onCreateEditSubtask) {
+        setNotification({ text: 'Moving to Edit is not available right now.', type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+        return;
+      }
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      try {
+        await onCreateEditSubtask(task);
+        setNotification({ text: `An Edit copy of "${task.title}" was created as its subtask.`, type: 'success' });
+        setTimeout(() => setNotification(null), 3500);
+      } catch (err) {
+        console.error(err);
+        setNotification({ text: 'Unable to create the Edit subtask. Please try again.', type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+      }
+      return;
+    }
     // 'closed' is the one transition every other status change here is deliberately NOT gated
     // for: the task must have reached 'completed' first, and the mover must be the task's
     // creator, any current assignee, or an admin role (canCloseTask/canSubmitTaskForClosing in
@@ -3275,7 +3303,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   onChange={(e) => setBulkStatusDraft(e.target.value as TaskStatus)}
                   className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900 border border-stone-800 text-white"
                 >
-                  {columns.map((col) => (
+                  {/* 'edit' excluded — this bulk action is a plain status write
+                      (onUpdateTaskStatus) with no subtask-creation semantics, and reaching 'edit'
+                      is only ever supposed to happen through onCreateEditSubtask's own one-task-
+                      at-a-time flow (handleMoveStatus), never a bulk relabel. */}
+                  {columns.filter((col) => col.id !== 'edit').map((col) => (
                     <option key={col.id} value={col.id}>{col.label}</option>
                   ))}
                 </select>
@@ -4603,7 +4635,15 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                     <option value="in_progress" className="bg-stone-900 text-white">In Progress</option>
                     <option value="completed" className="bg-stone-900 text-white">Completed</option>
                     <option value="blocked" className="bg-stone-900 text-white">Blocked</option>
-                    <option value="edit" className="bg-stone-900 text-white">Edit</option>
+                    {/* 'edit' is disabled here on purpose — reaching it is only ever supposed to
+                        happen via onCreateEditSubtask (handleMoveStatus), which creates a new
+                        Edit-status subtask rather than relabeling THIS task. Still rendered (not
+                        omitted) so a task that's already 'edit' displays correctly instead of
+                        silently mismatching the controlled value; disabled means it can be the
+                        pre-set selected option without being user-selectable. */}
+                    {editStatus === 'edit' && (
+                      <option value="edit" disabled className="bg-stone-900 text-white">Edit</option>
+                    )}
                   </select>
                 </div>
               </div>

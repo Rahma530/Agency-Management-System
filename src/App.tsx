@@ -6268,11 +6268,10 @@ export default function App() {
   // at its OWN duplicated parent (idMap), processed in collectDescendantTaskIds()'s own walk
   // order (parent before its children) so that mapping is always already known.
   // targetStatus defaults to 'todo' (the ordinary Duplicate action, Table view bulk toolbar).
-  // Owner reversal (2026-11-17): dragging/moving an existing task onto the Edit column no longer
-  // routes through here at all — it's a plain in-place status change again (see
-  // CrossTeamTaskBoard.tsx's handleMoveStatus), pending a separate proposal for the original goal
-  // (preserving historical KPI/workload data across an edit pass). This function's own 'edit'
-  // targetStatus option is unused for now but left in place since it's harmless and generic.
+  // Moving an existing task onto the Edit column never routes through here — see
+  // handleCreateEditSubtask below, which makes the copy a SUBTASK of the original (owner's final
+  // design, 2026-11-18) rather than a sibling duplicate. This function's own 'edit' targetStatus
+  // option is unused for now but left in place since it's harmless and generic.
   const handleDuplicateTask = async (taskId: string, includeSubtasks: boolean, targetStatus: TaskStatus = 'todo'): Promise<void> => {
     if (!supabaseActive) throw new Error('Supabase is not configured; the task was not duplicated.');
     const sourceTask = tasks.find((t) => t.id === taskId);
@@ -6322,6 +6321,52 @@ export default function App() {
     setTaskPlatformLinks(await fetchTaskPlatformLinks());
     markSelfWrite('task_platform_links');
     await logActivity('create', 'task', idMap.get(taskId) || taskId, `Duplicate of: ${sourceTask.title}`);
+  };
+
+  // Owner decision (2026-11-18, final design for Designer Tasks point 3): moving an EXISTING task
+  // into the Edit column creates a new copy, status 'edit' — but unlike the first draft (shipped
+  // 2026-11-16, reverted 2026-11-17 for being confusing: an independent, unrelated-looking row),
+  // this copy is parented to the ORIGINAL task itself (parent_task_id = task.id), using the
+  // already-existing Subtasks system (SubtaskList, up to 3 levels deep) rather than inventing a
+  // new relationship. The original task's own row — status, KPI/workload history — is untouched;
+  // only the new subtask gets created. This is deliberately NOT handleDuplicateTask (which copies
+  // the SOURCE's own parent_task_id, i.e. makes a sibling) — here the source becomes the parent.
+  // The existing "Subtasks: done/total" counter (already shown on every card and in Task Details)
+  // is the intended visibility for a Head of Technical to judge, case by case, whether a given
+  // task's edit history has piled up enough to warrant being counted as separate new work — no
+  // separate automated threshold/metric is introduced for that judgment call.
+  const handleCreateEditSubtask = async (task: TaskRecord): Promise<void> => {
+    if (!supabaseActive) throw new Error('Supabase is not configured; the task was not duplicated.');
+    const assigneeIds = resolveTaskAssigneeIds(task.id, taskAssignees, task.assigned_to);
+    const platformIds = taskPlatformLinks.filter((link) => link.task_id === task.id).map((link) => link.platform_id);
+
+    const result = await createTaskCopies({
+      clientIds: [task.client_id],
+      assigneeIds,
+      title: task.title,
+      description: task.description,
+      team: task.team || '',
+      dueDate: task.due_date,
+      priority: task.priority,
+      estimatedHours: task.estimated_hours ?? undefined,
+      taskType: task.task_type ?? undefined,
+      taskTypeOther: task.task_type_other ?? undefined,
+      parentTaskId: task.id,
+      platformIds,
+      status: 'edit',
+    });
+
+    if (result.tasks.length === 0) {
+      throw new Error(result.failures[0]?.message || `Unable to create an Edit subtask for "${task.title}".`);
+    }
+    const newTask = result.tasks[0];
+    setTasks((prev) => [newTask, ...prev]);
+    markSelfWrite('tasks');
+    setTaskAssignees(await fetchTaskAssignees());
+    markSelfWrite('task_assignees');
+    setTaskPlatformLinks(await fetchTaskPlatformLinks());
+    markSelfWrite('task_platform_links');
+    await logActivity('create', 'task', newTask.id, `Edit subtask of: ${task.title}`);
   };
 
   // Client merge (merge_clients() RPC, 20261114000000_merge_clients.sql) — executive/
@@ -8790,6 +8835,7 @@ export default function App() {
                   onMarkTaskViewed={handleMarkTaskViewed}
                   onHardDeleteTasks={handleHardDeleteTasks}
                   onDuplicateTask={handleDuplicateTask}
+                  onCreateEditSubtask={handleCreateEditSubtask}
                   briefs={briefs}
                   briefFieldSchemas={briefFieldSchemas}
                 />
@@ -8869,6 +8915,7 @@ export default function App() {
                     onMarkTaskViewed={handleMarkTaskViewed}
                     onHardDeleteTasks={handleHardDeleteTasks}
                     onDuplicateTask={handleDuplicateTask}
+                    onCreateEditSubtask={handleCreateEditSubtask}
                     briefs={briefs}
                     briefFieldSchemas={briefFieldSchemas}
                   />
