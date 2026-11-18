@@ -812,6 +812,10 @@ export default function App() {
   const [authLinkError, setAuthLinkError] = useState<string | null>(null);
 
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  // Client Renewals page's "Add a new client with the same data" quick action (2026-11-18) —
+  // opens the normal registration modal pre-filled from this client. null means a plain, empty
+  // registration (the usual "Register Client" button).
+  const [registerModalPrefillFrom, setRegisterModalPrefillFrom] = useState<ClientRecord | null>(null);
   const [isBulkClientUploadOpen, setIsBulkClientUploadOpen] = useState(false);
   const [verifiedTesterId, setVerifiedTesterId] = useState<string | null>(null);
   const [isTestingSelectorOpen, setIsTestingSelectorOpen] = useState(false);
@@ -8900,6 +8904,14 @@ export default function App() {
                   canManageTargets={['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)}
                   onRecordRenewalPayment={handleRecordRenewalPayment}
                   onSetEmployeeTarget={handleSetRenewalEmployeeTarget}
+                  onAddClientWithSameData={
+                    canRegisterClients
+                      ? (sourceClient) => {
+                          setRegisterModalPrefillFrom(sourceClient);
+                          setIsRegisterModalOpen(true);
+                        }
+                      : undefined
+                  }
                 />
               </div>
             )}
@@ -9295,12 +9307,17 @@ export default function App() {
         />
       )}
       <ClientRegistrationModal
+        key={registerModalPrefillFrom?.id || 'new'}
         isOpen={canRegisterClients && isRegisterModalOpen}
-        onClose={() => setIsRegisterModalOpen(false)}
+        onClose={() => {
+          setIsRegisterModalOpen(false);
+          setRegisterModalPrefillFrom(null);
+        }}
         currentUser={currentUser}
         amTeamLeaders={(currentUser.role === 'sales' || currentUser.role === 'am_agent' || usersLoadedFromSupabase)
           ? users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u)) : []}
         amAgents={usersLoadedFromSupabase ? users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u)) : []}
+        prefillFrom={registerModalPrefillFrom}
         onSubmit={handleRegisterClient}
       />
 
