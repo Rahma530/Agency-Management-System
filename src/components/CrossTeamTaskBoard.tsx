@@ -933,15 +933,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // New task form state
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [newClientIds, setNewClientIds] = useState<string[]>(clients[0]?.id ? [clients[0].id] : []);
+  // HOTFIX (2026-11-18): this used to default to clients[0]?.id — the first client in the RAW,
+  // UNFILTERED `clients` prop — and the validity-check effect below used to re-validate against
+  // that same raw list instead of sortedClientsForPicker (the client list actually OFFERED on
+  // THIS board/tab, e.g. Inhouse-only here). A client id that was valid in the raw list but not
+  // an option sortedClientsForPicker actually renders (so no chip for it ever appeared, nothing
+  // visible to deselect) could sit in newClientIds completely invisibly, then get submitted
+  // alongside whatever the AM actually picked on-screen — silently creating one extra,
+  // unintended task copy for that invisible leftover client every time. Root cause of "an extra
+  // Duplicate Task for [some other client] every time I create one for Kesra on the Inhouse tab."
+  // Now starts empty and is validated against sortedClientsForPicker, so nothing can ever be
+  // selected that isn't a visible, removable chip in the picker itself.
+  const [newClientIds, setNewClientIds] = useState<string[]>([]);
   useEffect(() => {
     if (!addSubtaskParent) {
-      setNewClientIds((current) => {
-        const valid = current.filter((id) => clients.some((client) => client.id === id));
-        return valid.length > 0 ? valid : (clients[0]?.id ? [clients[0].id] : []);
-      });
+      setNewClientIds((current) => current.filter((id) => sortedClientsForPicker.some((client) => client.id === id)));
     }
-  }, [clients, addSubtaskParent]);
+  }, [sortedClientsForPicker, addSubtaskParent]);
   const [newTeam, setNewTeam] = useState('SEO');
   const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>([]);
   const [newPlatformIds, setNewPlatformIds] = useState<string[]>([]);
@@ -1771,18 +1779,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       const time = value ? new Date(value).getTime() : NaN;
       return Number.isNaN(time) ? 0 : time;
     };
-    // Manual drag-and-drop position (2026-11-02) wins over the newest/oldest toggle whenever
-    // it's set — same precedence rule as AMQueue.tsx's compareClientsForPortfolio: every
-    // manually-positioned task sorts as one contiguous sort_order-ordered block, strictly before
-    // any task never dragged, and those keep falling back to the existing date sort among
-    // themselves. Affects both the Kanban board (reorder happens per-column, see handleDragEnd)
-    // and the Table view, which share this same list.
+    // Owner fix (2026-11-18): a never-dragged task now ALWAYS sorts above every manually-
+    // positioned one — flipped from this block's original precedence (manual position always won
+    // over the date toggle, 2026-11-02), which had an unintended side effect: reorderTaskList
+    // reindexes every task visible in a status column the moment ANY one of them is dragged once,
+    // so from that point on every brand-new task in that column (sort_order still null) was
+    // permanently stuck below all of them, however recent. This fix touches ONLY the comparison
+    // rule, not any stored data — manually-positioned tasks keep their exact relative order among
+    // themselves (aOrder - bOrder below, unchanged); never-dragged tasks keep sorting among
+    // themselves by the existing newest/oldest toggle, unchanged; the only change is which of
+    // those two groups is shown first. Affects both the Kanban board (reorder happens per-column,
+    // see handleDragEnd) and the Table view, which share this same list.
     return [...filteredTasks].sort((a, b) => {
       const aOrder = a.sort_order;
       const bOrder = b.sort_order;
       if (aOrder != null && bOrder != null) return aOrder - bOrder;
-      if (aOrder != null) return -1;
-      if (bOrder != null) return 1;
+      if (aOrder != null) return 1;
+      if (bOrder != null) return -1;
       return taskSortOrder === 'newest' ? withDate(b) - withDate(a) : withDate(a) - withDate(b);
     });
   }, [filteredTasks, taskSortOrder, columnSort, clients, taskAssigneeIdsByTask, taskDirectoryUsers]);
