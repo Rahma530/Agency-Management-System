@@ -1,20 +1,27 @@
-// Client Renewals page (new, 2026-11-18 — see PR #327 and follow-ups).
+// AM Renewal page (reworked 2026-11-19 — see PR #327 and this follow-up).
 //
-// A dedicated financial/collections view, separate from AMQueue's existing status-based Renewal
-// Queue: this page lists every client whose renewal_date falls within the next 7 days (the
-// agreed advance-notice window), shows the value/paid/remaining for the CURRENT renewal cycle
-// (clients.renewal_value vs the sum of client_renewal_payments for that cycle — never a
-// separately-edited number), and is where a payment toward that renewal actually gets logged
-// (channel, screenshot, optional new contract). Clients with money still owed are visually
-// flagged; a client with nothing owed renders like any other row again, automatically, the
-// moment a payment covers it.
+// Purpose (owner's own words): track which clients each AM personally brought in and renewed —
+// NOT clients Sales registered, even if assigned to the same AM. A client only counts here when
+// it carries am_renewal_registered_by (set exclusively by this page's own "New Client" event,
+// never inferred from role/sales_owner_id — see 20270115000000_am_renewal_scope.sql).
 //
-// Deliberately reuses existing infrastructure rather than re-deriving it: clients.renewal_date/
-// renewal_history_count, client_renewal_events (confirm_client_renewal's own history), and
-// getClientServices/getRenewalTeamSize for the team-size column.
+// Visibility: an am_agent sees only clients they personally registered here. An am_team_lead sees
+// their own plus every client registered here by an agent who reports to them (users.manager_id).
+// executive/head_of_technical see everyone, with an "Agent" filter to narrow by one AM.
+//
+// Structure: a single "Register Event" button opens one of three flows (owner's own naming):
+//   Event 1 — Renewal: search ANY of the AM's own clients (not just what's currently listed —
+//     a renewal can be early or late) and log a payment against the client's current cycle.
+//   Event 2 — New Client: the ordinary, full client-registration form, tagged so the result shows
+//     up here from now on.
+//   Event 3 — Upsell: search a client and add a service to their package, optionally raising
+//     renewal_value — not a payment, so it never touches client_renewal_payments.
+// Two tabs replace the old fixed "due within a week" window: "Due This Month" (renewal_date
+// falls in the current calendar month, no payment logged yet for the open cycle) and "Already
+// Renewed" (at least one payment logged for the open cycle, full or partial — owner's own rule).
 
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Calendar, Filter, Upload, Users as UsersIcon } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Search, Upload, Users as UsersIcon } from 'lucide-react';
 import {
   ClientRecord,
   ClientRenewalPaymentRecord,
@@ -23,22 +30,22 @@ import {
   ServiceType,
   UserRecord,
 } from '../types/database';
-import { getClientServices, SERVICE_LABELS } from '../lib/clientServices';
-import { getRenewalTeamSize } from '../lib/renewalTeamSizes';
+import { getClientServices, getClientCustomServices, SERVICE_LABELS, CLIENT_SERVICE_OPTIONS } from '../lib/clientServices';
+import { splitClientServices } from '../lib/clientServices';
 
 const PAYMENT_CHANNEL_LABELS: Record<RenewalPaymentChannel, string> = {
-  mahdy: 'مهدي',
-  masry: 'مصري',
-  tabby: 'تابي',
-  tamara: 'تمارا',
-  kesra: 'كسرة',
+  mahdy: 'Mahdy',
+  masry: 'Masry',
+  tabby: 'Tabby',
+  tamara: 'Tamara',
+  kesra: 'Kesra',
 };
 
 const DURATION_OPTIONS: { value: 1 | 3 | 6 | 12; label: string }[] = [
-  { value: 1, label: 'شهر' },
-  { value: 3, label: '3 شهور' },
-  { value: 6, label: '6 شهور' },
-  { value: 12, label: 'سنة' },
+  { value: 1, label: '1 month' },
+  { value: 3, label: '3 months' },
+  { value: 6, label: '6 months' },
+  { value: 12, label: '1 year' },
 ];
 
 const CORE_SERVICE_FILTERS: ServiceType[] = ['seo', 'social_media', 'media_buying', 'interface', 'creation'];
@@ -58,15 +65,19 @@ interface ClientRenewalsPageProps {
       paymentChannel: RenewalPaymentChannel;
       renewalDurationMonths: 1 | 3 | 6 | 12;
       transferScreenshot: File;
+      nextRenewalDate: string;
       newContract?: File | null;
     }
   ) => Promise<void>;
   onSetEmployeeTarget: (employeeId: string, month: string, targetValue: number) => Promise<void>;
-  onAddClientWithSameData?: (sourceClient: ClientRecord) => void;
+  onRecordUpsell: (
+    clientId: string,
+    patch: { services: ServiceType[]; other_services: string[]; renewal_value?: number }
+  ) => Promise<void>;
+  onOpenNewClientEvent?: () => void;
 }
 
 const currentMonthKey = () => new Date().toISOString().slice(0, 7); // "2026-11"
-
 const cycleSequence = (client: ClientRecord) => (client.renewal_history_count ?? 0) + 1;
 
 export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
@@ -78,40 +89,49 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   canManageTargets,
   onRecordRenewalPayment,
   onSetEmployeeTarget,
-  onAddClientWithSameData,
+  onRecordUpsell,
+  onOpenNewClientEvent,
 }) => {
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const isManagement = currentUser.role === 'executive' || currentUser.role === 'head_of_technical';
+  const isTeamLead = currentUser.role === 'am_team_lead';
+
+  const [agentFilter, setAgentFilter] = useState<string>('');
   const [serviceFilter, setServiceFilter] = useState<ServiceType | ''>('');
+  const [durationFilter, setDurationFilter] = useState<1 | 3 | 6 | 12 | ''>('');
+  const [activeSubTab, setActiveSubTab] = useState<'due' | 'renewed'>('due');
+  const [isEventMenuOpen, setIsEventMenuOpen] = useState(false);
+  const [renewalSearchOpen, setRenewalSearchOpen] = useState(false);
+  const [upsellSearchOpen, setUpsellSearchOpen] = useState(false);
   const [paymentClientId, setPaymentClientId] = useState<string | null>(null);
+  const [upsellClientId, setUpsellClientId] = useState<string | null>(null);
 
-  const in7Days = useMemo(() => {
-    const now = new Date();
-    const end = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return { now, end };
-  }, []);
+  // Agents this viewer may act on behalf of / see: themselves, or (team lead) their direct
+  // reports, or (management) everyone.
+  const visibleAgentIds = useMemo(() => {
+    if (isManagement) return null; // null = no restriction
+    if (isTeamLead) {
+      const reportIds = users.filter((u) => u.role === 'am_agent' && u.manager_id === currentUser.id).map((u) => u.id);
+      return new Set([currentUser.id, ...reportIds]);
+    }
+    return new Set([currentUser.id]);
+  }, [isManagement, isTeamLead, users, currentUser.id]);
 
-  const dueClients = useMemo(() => {
+  const agentOptions = useMemo(() => {
+    if (isManagement) return users.filter((u) => u.role === 'am_agent' || u.role === 'am_team_lead');
+    if (isTeamLead) return users.filter((u) => u.role === 'am_agent' && u.manager_id === currentUser.id);
+    return [];
+  }, [isManagement, isTeamLead, users, currentUser.id]);
+
+  // The AM Renewal client pool: only clients registered through THIS page's own "New Client"
+  // event, scoped to who this viewer may see, then narrowed by the explicit Agent filter if set.
+  const amRenewalClients = useMemo(() => {
     return clients.filter((c) => {
-      if (!c.renewal_date || c.status === 'closed') return false;
-      const renewal = new Date(c.renewal_date);
-      if (Number.isNaN(renewal.getTime())) return false;
-
-      // Default window: within the next 7 days (the agreed advance-notice period). An explicit
-      // date filter from the bar above replaces this default rather than narrowing it further —
-      // the user is deliberately looking outside the usual 7-day window at that point.
-      if (dateFrom || dateTo) {
-        if (dateFrom && renewal < new Date(dateFrom)) return false;
-        if (dateTo && renewal > new Date(dateTo)) return false;
-      } else if (renewal < in7Days.now || renewal > in7Days.end) {
-        return false;
-      }
-
-      if (serviceFilter && !getClientServices(c).includes(serviceFilter)) return false;
-
+      if (!c.am_renewal_registered_by) return false;
+      if (visibleAgentIds && !visibleAgentIds.has(c.am_renewal_registered_by)) return false;
+      if (agentFilter && c.am_renewal_registered_by !== agentFilter) return false;
       return true;
     });
-  }, [clients, dateFrom, dateTo, serviceFilter, in7Days]);
+  }, [clients, visibleAgentIds, agentFilter]);
 
   const paidForCycle = (client: ClientRecord) => {
     const seq = cycleSequence(client);
@@ -120,29 +140,75 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
       .reduce((sum, p) => sum + p.amount_paid, 0);
   };
 
+  const hasCyclePayment = (client: ClientRecord) => {
+    const seq = cycleSequence(client);
+    return clientRenewalPayments.some((p) => p.client_id === client.id && p.renewal_sequence === seq);
+  };
+
+  const latestDuration = (client: ClientRecord): 1 | 3 | 6 | 12 | null => {
+    const payments = clientRenewalPayments
+      .filter((p) => p.client_id === client.id)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return payments[0]?.renewal_duration_months ?? null;
+  };
+
   const remainingForCycle = (client: ClientRecord) => {
     if (client.renewal_value == null) return null;
     return Math.max(0, client.renewal_value - paidForCycle(client));
   };
 
-  // Employee totals/target for the current calendar month — achieved is always derived from the
-  // payment ledger (never stored), summing every payment THAT employee recorded this month
-  // regardless of which client/cycle it belongs to.
+  const matchesServiceFilter = (client: ClientRecord) =>
+    !serviceFilter || getClientServices(client).includes(serviceFilter);
+
+  const matchesDurationFilter = (client: ClientRecord) =>
+    !durationFilter || latestDuration(client) === durationFilter;
+
+  const now = new Date();
+  const dueThisMonth = useMemo(() => {
+    return amRenewalClients.filter((c) => {
+      if (hasCyclePayment(c)) return false;
+      if (!c.renewal_date) return false;
+      const d = new Date(c.renewal_date);
+      if (Number.isNaN(d.getTime())) return false;
+      if (d.getFullYear() !== now.getFullYear() || d.getMonth() !== now.getMonth()) return false;
+      return matchesServiceFilter(c) && matchesDurationFilter(c);
+    });
+  }, [amRenewalClients, clientRenewalPayments, serviceFilter, durationFilter]);
+
+  const alreadyRenewed = useMemo(() => {
+    return amRenewalClients.filter((c) => hasCyclePayment(c) && matchesServiceFilter(c) && matchesDurationFilter(c));
+  }, [amRenewalClients, clientRenewalPayments, serviceFilter, durationFilter]);
+
+  const rows = activeSubTab === 'due' ? dueThisMonth : alreadyRenewed;
+
+  // Service filter stats: of every AM-Renewal client this viewer can see, how many currently
+  // carry the selected service (whether they started with it or an Upsell event added it) —
+  // getClientServices already reflects any Upsell merge, so this needs no separate tracking.
+  const serviceStats = useMemo(() => {
+    if (!serviceFilter) return null;
+    const total = amRenewalClients.length;
+    const count = amRenewalClients.filter((c) => getClientServices(c).includes(serviceFilter)).length;
+    return { count, total, pct: total === 0 ? 0 : Math.round((count / total) * 100) };
+  }, [amRenewalClients, serviceFilter]);
+
   const month = currentMonthKey();
   const employeeStats = useMemo(() => {
+    const scopedIds = visibleAgentIds ? Array.from(visibleAgentIds) : agentOptions.map((u) => u.id);
     const achievedByEmployee = new Map<string, number>();
     clientRenewalPayments
-      .filter((p) => p.payment_date.slice(0, 7) === month)
+      .filter((p) => p.payment_date.slice(0, 7) === month && (!visibleAgentIds || visibleAgentIds.has(p.recorded_by)))
       .forEach((p) => {
         achievedByEmployee.set(p.recorded_by, (achievedByEmployee.get(p.recorded_by) || 0) + p.amount_paid);
       });
 
-    const employeeIds = new Set([
-      ...achievedByEmployee.keys(),
-      ...renewalEmployeeTargets.filter((t) => t.month.slice(0, 7) === month).map((t) => t.employee_id),
+    const ids = new Set([
+      ...(agentFilter ? [agentFilter] : scopedIds),
+      ...renewalEmployeeTargets
+        .filter((t) => t.month.slice(0, 7) === month && (!visibleAgentIds || visibleAgentIds.has(t.employee_id)))
+        .map((t) => t.employee_id),
     ]);
 
-    return Array.from(employeeIds).map((employeeId) => {
+    return Array.from(ids).map((employeeId) => {
       const user = users.find((u) => u.id === employeeId);
       const target = renewalEmployeeTargets.find((t) => t.employee_id === employeeId && t.month.slice(0, 7) === month);
       return {
@@ -152,85 +218,151 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         target: target?.target_value ?? null,
       };
     });
-  }, [clientRenewalPayments, renewalEmployeeTargets, users, month]);
+  }, [clientRenewalPayments, renewalEmployeeTargets, users, month, visibleAgentIds, agentOptions, agentFilter]);
 
   const paymentClient = paymentClientId ? clients.find((c) => c.id === paymentClientId) : null;
+  const upsellClient = upsellClientId ? clients.find((c) => c.id === upsellClientId) : null;
 
   return (
-    <div className="space-y-6" dir="rtl">
-      {/* الفلاتر */}
-      <div className="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-        <Filter className="w-4 h-4 text-stone-400" />
-        <label className="flex items-center gap-1.5 text-xs text-stone-400">
-          من
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="px-2 py-1 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
-          />
-        </label>
-        <label className="flex items-center gap-1.5 text-xs text-stone-400">
-          إلى
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="px-2 py-1 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
-          />
-        </label>
-        <select
-          value={serviceFilter}
-          onChange={(e) => setServiceFilter(e.target.value as ServiceType | '')}
-          className="px-2 py-1 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
-        >
-          <option value="">كل الخدمات</option>
-          {CORE_SERVICE_FILTERS.map((s) => (
-            <option key={s} value={s}>
-              {SERVICE_LABELS[s]}
-            </option>
-          ))}
-        </select>
-        {!dateFrom && !dateTo && (
-          <span className="text-[11px] text-stone-500 flex items-center gap-1">
-            <Calendar className="w-3 h-3" /> افتراضيًا: تجديدات خلال أسبوع
-          </span>
-        )}
+    <div className="space-y-6">
+      {/* Top bar: filters + Register Event */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
+        <div className="flex flex-wrap items-center gap-2">
+          {(isManagement || isTeamLead) && (
+            <select
+              value={agentFilter}
+              onChange={(e) => setAgentFilter(e.target.value)}
+              className="px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+            >
+              <option value="">All Agents</option>
+              {agentOptions.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <select
+            value={serviceFilter}
+            onChange={(e) => setServiceFilter(e.target.value as ServiceType | '')}
+            className="px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+          >
+            <option value="">All Services</option>
+            {CORE_SERVICE_FILTERS.map((s) => (
+              <option key={s} value={s}>
+                {SERVICE_LABELS[s]}
+              </option>
+            ))}
+          </select>
+          <select
+            value={durationFilter}
+            onChange={(e) => setDurationFilter((e.target.value ? Number(e.target.value) : '') as 1 | 3 | 6 | 12 | '')}
+            className="px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+          >
+            <option value="">All Durations</option>
+            {DURATION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {serviceStats && (
+            <span className="text-[11px] text-purple-300">
+              {SERVICE_LABELS[serviceFilter as ServiceType]}: {serviceStats.count}/{serviceStats.total} ({serviceStats.pct}%)
+            </span>
+          )}
+        </div>
+
+        <div className="relative">
+          <button
+            onClick={() => setIsEventMenuOpen((v) => !v)}
+            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-purple-700 hover:bg-purple-600 flex items-center gap-1.5"
+          >
+            Register Event <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+          {isEventMenuOpen && (
+            <div className="absolute left-0 mt-1 w-56 rounded-xl border border-purple-900/40 bg-[#1a1530] shadow-xl z-20 overflow-hidden">
+              <button
+                onClick={() => {
+                  setIsEventMenuOpen(false);
+                  setRenewalSearchOpen(true);
+                }}
+                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+              >
+                Renewal — log a payment for an existing client
+              </button>
+              <button
+                onClick={() => {
+                  setIsEventMenuOpen(false);
+                  onOpenNewClientEvent?.();
+                }}
+                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+              >
+                New Client — register a client you brought in
+              </button>
+              <button
+                onClick={() => {
+                  setIsEventMenuOpen(false);
+                  setUpsellSearchOpen(true);
+                }}
+                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+              >
+                Upsell — add a service to a client's package
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* لستة العملاء */}
+      {/* Sub-tabs */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setActiveSubTab('due')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
+            activeSubTab === 'due' ? 'bg-purple-700 text-white' : 'bg-stone-900/50 text-stone-400'
+          }`}
+        >
+          Due This Month ({dueThisMonth.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab('renewed')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
+            activeSubTab === 'renewed' ? 'bg-purple-700 text-white' : 'bg-stone-900/50 text-stone-400'
+          }`}
+        >
+          Already Renewed ({alreadyRenewed.length})
+        </button>
+      </div>
+
+      {/* Client list */}
       <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-right text-xs text-stone-400 border-b border-purple-900/30">
-              <th className="p-3">العميل</th>
-              <th className="p-3">تاريخ التجديد</th>
-              <th className="p-3">قيمة التجديد</th>
-              <th className="p-3">المدفوع</th>
-              <th className="p-3">المتبقي</th>
-              <th className="p-3">عدد الموظفين</th>
-              <th className="p-3"></th>
+            <tr className="text-left text-xs text-stone-400 border-b border-purple-900/30">
+              <th className="p-3">Client</th>
+              <th className="p-3">Renewal Date</th>
+              <th className="p-3">Duration</th>
+              <th className="p-3">Renewal Value</th>
+              <th className="p-3">Paid</th>
+              <th className="p-3">Remaining</th>
+              <th className="p-3">Team Size</th>
             </tr>
           </thead>
           <tbody>
-            {dueClients.map((client) => {
+            {rows.map((client) => {
               const remaining = remainingForCycle(client);
               const hasRemaining = remaining != null && remaining > 0;
-              const teamSize = getRenewalTeamSize(client);
+              const duration = latestDuration(client);
               return (
-                <tr
-                  key={client.id}
-                  className={`border-b border-purple-900/10 ${
-                    hasRemaining ? 'bg-amber-950/20' : ''
-                  }`}
-                >
+                <tr key={client.id} className={`border-b border-purple-900/10 ${hasRemaining ? 'bg-amber-950/20' : ''}`}>
                   <td className="p-3 font-bold text-stone-200">
                     {client.name}
-                    {hasRemaining && (
-                      <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 mr-1.5" />
-                    )}
+                    {hasRemaining && <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 ml-1.5" />}
                   </td>
-                  <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date}</td>
+                  <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
+                  <td className="p-3 text-stone-300 text-xs">
+                    {duration ? DURATION_OPTIONS.find((d) => d.value === duration)?.label : '—'}
+                  </td>
                   <td className="p-3 text-stone-200 font-mono">
                     {client.renewal_value != null ? client.renewal_value.toLocaleString() : '—'}
                   </td>
@@ -239,37 +371,24 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                     {remaining != null ? remaining.toLocaleString() : '—'}
                   </td>
                   <td className="p-3 text-stone-300">
-                    {teamSize != null ? (
-                      <span className="inline-flex items-center gap-1 text-xs">
-                        <UsersIcon className="w-3 h-3" /> {teamSize}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="p-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setPaymentClientId(client.id)}
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60"
-                    >
-                      تسجيل دفعة
-                    </button>
-                    {onAddClientWithSameData && (
-                      <button
-                        onClick={() => onAddClientWithSameData(client)}
-                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-stone-300 bg-stone-800/60 hover:bg-stone-700/60"
-                      >
-                        + عميل بنفس البيانات
-                      </button>
-                    )}
+                    {(() => {
+                      const size = getRenewalTeamSizeSafe(client);
+                      return size != null ? (
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          <UsersIcon className="w-3 h-3" /> {size}
+                        </span>
+                      ) : (
+                        '—'
+                      );
+                    })()}
                   </td>
                 </tr>
               );
             })}
-            {dueClients.length === 0 && (
+            {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="p-6 text-center text-stone-500 text-xs">
-                  لا يوجد عملاء مستحقين للتجديد في الفترة المحددة.
+                  No clients in this view.
                 </td>
               </tr>
             )}
@@ -277,16 +396,16 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         </table>
       </div>
 
-      {/* أداء الموظفين */}
+      {/* Employee performance panel */}
       <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 p-4">
-        <h3 className="text-sm font-bold text-stone-200 mb-3">أداء الموظفين هذا الشهر</h3>
+        <h3 className="text-sm font-bold text-stone-200 mb-3">Team Performance This Month</h3>
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-right text-xs text-stone-400 border-b border-purple-900/20">
-              <th className="p-2">الموظف</th>
-              <th className="p-2">الإجمالي المحقق</th>
-              <th className="p-2">التارجت</th>
-              {canManageTargets && <th className="p-2">تعديل التارجت</th>}
+            <tr className="text-left text-xs text-stone-400 border-b border-purple-900/20">
+              <th className="p-2">Employee</th>
+              <th className="p-2">Achieved</th>
+              <th className="p-2">Target</th>
+              {canManageTargets && <th className="p-2">Edit Target</th>}
             </tr>
           </thead>
           <tbody>
@@ -302,13 +421,37 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
             {employeeStats.length === 0 && (
               <tr>
                 <td colSpan={canManageTargets ? 4 : 3} className="p-4 text-center text-stone-500 text-xs">
-                  لا يوجد بيانات لهذا الشهر بعد.
+                  No data for this month yet.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {renewalSearchOpen && (
+        <ClientSearchModal
+          title="Select a client to log a renewal for"
+          clients={amRenewalClients}
+          onClose={() => setRenewalSearchOpen(false)}
+          onSelect={(id) => {
+            setRenewalSearchOpen(false);
+            setPaymentClientId(id);
+          }}
+        />
+      )}
+
+      {upsellSearchOpen && (
+        <ClientSearchModal
+          title="Select a client to upsell"
+          clients={amRenewalClients}
+          onClose={() => setUpsellSearchOpen(false)}
+          onSelect={(id) => {
+            setUpsellSearchOpen(false);
+            setUpsellClientId(id);
+          }}
+        />
+      )}
 
       {paymentClient && (
         <RecordPaymentModal
@@ -320,6 +463,66 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           }}
         />
       )}
+
+      {upsellClient && (
+        <UpsellModal
+          client={upsellClient}
+          onClose={() => setUpsellClientId(null)}
+          onSubmit={async (patch) => {
+            await onRecordUpsell(upsellClient.id, patch);
+            setUpsellClientId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// getRenewalTeamSize lives in its own module (renewalTeamSizes.ts); imported lazily here via a
+// thin wrapper purely to keep this file's top import list shorter — no behavior difference.
+import { getRenewalTeamSize as getRenewalTeamSizeSafe } from '../lib/renewalTeamSizes';
+
+const ClientSearchModal: React.FC<{
+  title: string;
+  clients: ClientRecord[];
+  onClose: () => void;
+  onSelect: (clientId: string) => void;
+}> = ({ title, clients, onClose, onSelect }) => {
+  const [query, setQuery] = useState('');
+  const filtered = clients.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
+        <h3 className="text-sm font-bold text-stone-200">{title}</h3>
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-stone-900/60 border border-stone-700/50">
+          <Search className="w-3.5 h-3.5 text-stone-500" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search your clients..."
+            className="flex-1 bg-transparent text-sm text-stone-200 outline-none"
+          />
+        </div>
+        <div className="max-h-64 overflow-y-auto divide-y divide-stone-800/60">
+          {filtered.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => onSelect(c.id)}
+              className="w-full text-left px-2 py-2 text-sm text-stone-200 hover:bg-purple-900/20 rounded-lg"
+            >
+              {c.name}
+            </button>
+          ))}
+          {filtered.length === 0 && <p className="text-xs text-stone-500 py-3 text-center">No clients found.</p>}
+        </div>
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-stone-300 bg-stone-800/60">
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -362,7 +565,7 @@ const EmployeeTargetRow: React.FC<{
             disabled={isSaving}
             className="px-2 py-1 rounded-lg text-[11px] font-bold text-emerald-200 bg-emerald-900/40 hover:bg-emerald-800/60 disabled:opacity-50"
           >
-            {isSaving ? '...' : 'حفظ'}
+            {isSaving ? '...' : 'Save'}
           </button>
         </td>
       )}
@@ -379,6 +582,7 @@ const RecordPaymentModal: React.FC<{
     paymentChannel: RenewalPaymentChannel;
     renewalDurationMonths: 1 | 3 | 6 | 12;
     transferScreenshot: File;
+    nextRenewalDate: string;
     newContract?: File | null;
   }) => Promise<void>;
 }> = ({ client, onClose, onSubmit }) => {
@@ -386,7 +590,11 @@ const RecordPaymentModal: React.FC<{
   const [amountPaid, setAmountPaid] = useState('');
   const [paymentChannel, setPaymentChannel] = useState<RenewalPaymentChannel>('kesra');
   const [duration, setDuration] = useState<1 | 3 | 6 | 12>(1);
+  // Next renewal date is deliberately left blank — never pre-filled/auto-calculated (owner's
+  // explicit decision: the real date can slip from what duration-math would predict).
+  const [nextRenewalDate, setNextRenewalDate] = useState('');
   const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [contractChoice, setContractChoice] = useState<'keep' | 'new'>('keep');
   const [newContract, setNewContract] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -395,15 +603,23 @@ const RecordPaymentModal: React.FC<{
     const valueNum = Number(renewalValue);
     const paidNum = Number(amountPaid);
     if (!renewalValue || Number.isNaN(valueNum) || valueNum <= 0) {
-      setError('قيمة التجديد مطلوبة.');
+      setError('Renewal value is required.');
       return;
     }
     if (!amountPaid || Number.isNaN(paidNum) || paidNum <= 0) {
-      setError('المبلغ المدفوع مطلوب.');
+      setError('Amount paid is required.');
       return;
     }
     if (!screenshot) {
-      setError('صورة التحويل مطلوبة.');
+      setError('A transfer screenshot is required.');
+      return;
+    }
+    if (!nextRenewalDate) {
+      setError('The next renewal date is required.');
+      return;
+    }
+    if (contractChoice === 'new' && !newContract) {
+      setError('Please choose a new contract file, or switch back to "Keep existing contract".');
       return;
     }
     setError('');
@@ -415,22 +631,23 @@ const RecordPaymentModal: React.FC<{
         paymentChannel,
         renewalDurationMonths: duration,
         transferScreenshot: screenshot,
-        newContract,
+        nextRenewalDate,
+        newContract: contractChoice === 'new' ? newContract : null,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ أثناء تسجيل الدفعة.');
+      setError(err instanceof Error ? err.message : 'Something went wrong while recording this payment.');
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" dir="rtl">
-      <div className="w-full max-w-md rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
-        <h3 className="text-sm font-bold text-stone-200">تسجيل دفعة تجديد — {client.name}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
+        <h3 className="text-sm font-bold text-stone-200">Record Renewal Payment — {client.name}</h3>
 
         <label className="block text-xs text-stone-400">
-          قيمة التجديد
+          Renewal Value
           <input
             type="number"
             value={renewalValue}
@@ -440,7 +657,7 @@ const RecordPaymentModal: React.FC<{
         </label>
 
         <label className="block text-xs text-stone-400">
-          المبلغ المدفوع الآن
+          Amount Paid Now
           <input
             type="number"
             value={amountPaid}
@@ -450,7 +667,7 @@ const RecordPaymentModal: React.FC<{
         </label>
 
         <label className="block text-xs text-stone-400">
-          الجهة المدفوع لها
+          Paid To
           <select
             value={paymentChannel}
             onChange={(e) => setPaymentChannel(e.target.value as RenewalPaymentChannel)}
@@ -465,7 +682,7 @@ const RecordPaymentModal: React.FC<{
         </label>
 
         <label className="block text-xs text-stone-400">
-          مدة التجديد
+          Renewal Duration
           <select
             value={duration}
             onChange={(e) => setDuration(Number(e.target.value) as 1 | 3 | 6 | 12)}
@@ -480,7 +697,17 @@ const RecordPaymentModal: React.FC<{
         </label>
 
         <label className="block text-xs text-stone-400">
-          صورة التحويل (مطلوبة)
+          Next Renewal Date (type the actual date — never auto-filled)
+          <input
+            type="date"
+            value={nextRenewalDate}
+            onChange={(e) => setNextRenewalDate(e.target.value)}
+            className="w-full mt-1 px-2 py-1.5 rounded-lg text-sm bg-stone-900/60 border border-stone-700/50 text-stone-200"
+          />
+        </label>
+
+        <label className="block text-xs text-stone-400">
+          Transfer Screenshot (required)
           <input
             type="file"
             accept="image/*,application/pdf"
@@ -489,13 +716,122 @@ const RecordPaymentModal: React.FC<{
           />
         </label>
 
+        <div>
+          <p className="text-xs text-stone-400 mb-1">Contract</p>
+          <div className="flex items-center gap-4 text-xs text-stone-300">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                checked={contractChoice === 'keep'}
+                onChange={() => setContractChoice('keep')}
+              />
+              Keep existing contract
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                checked={contractChoice === 'new'}
+                onChange={() => setContractChoice('new')}
+              />
+              Upload a new contract
+            </label>
+          </div>
+          {contractChoice === 'new' && (
+            <input
+              type="file"
+              accept="image/*,application/pdf,.doc,.docx"
+              onChange={(e) => setNewContract(e.target.files?.[0] || null)}
+              className="w-full mt-2 text-xs text-stone-300"
+            />
+          )}
+        </div>
+
+        {error && <p className="text-xs text-rose-400">{error}</p>}
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-stone-300 bg-stone-800/60">
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={isSaving}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-purple-700 hover:bg-purple-600 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {isSaving ? '...' : <><Upload className="w-3.5 h-3.5" /> Record Payment</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const UpsellModal: React.FC<{
+  client: ClientRecord;
+  onClose: () => void;
+  onSubmit: (patch: { services: ServiceType[]; other_services: string[]; renewal_value?: number }) => Promise<void>;
+}> = ({ client, onClose, onSubmit }) => {
+  const existingServices = getClientServices(client);
+  const existingCustom = getClientCustomServices(client);
+  const [serviceToAdd, setServiceToAdd] = useState<ServiceType | ''>('');
+  const [newRenewalValue, setNewRenewalValue] = useState(client.renewal_value != null ? String(client.renewal_value) : '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async () => {
+    if (!serviceToAdd) {
+      setError('Select a service to add.');
+      return;
+    }
+    setError('');
+    setIsSaving(true);
+    try {
+      const { services, other_services } = splitClientServices([
+        ...existingServices,
+        ...existingCustom,
+        serviceToAdd,
+      ]);
+      await onSubmit({
+        services,
+        other_services,
+        renewal_value: newRenewalValue ? Number(newRenewalValue) : undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong while recording this upsell.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
+        <h3 className="text-sm font-bold text-stone-200">Upsell — {client.name}</h3>
+
         <label className="block text-xs text-stone-400">
-          عقد جديد (إن وجد)
+          Add Service
+          <select
+            value={serviceToAdd}
+            onChange={(e) => setServiceToAdd(e.target.value as ServiceType | '')}
+            className="w-full mt-1 px-2 py-1.5 rounded-lg text-sm bg-stone-900/60 border border-stone-700/50 text-stone-200"
+          >
+            <option value="">Select a service...</option>
+            {CLIENT_SERVICE_OPTIONS.filter(
+              (opt) => opt.value !== 'comprehensive' && !existingServices.includes(opt.value as ServiceType)
+            ).map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-xs text-stone-400">
+          New Renewal Value (optional — updates what this renewal is worth)
           <input
-            type="file"
-            accept="image/*,application/pdf,.doc,.docx"
-            onChange={(e) => setNewContract(e.target.files?.[0] || null)}
-            className="w-full mt-1 text-xs text-stone-300"
+            type="number"
+            value={newRenewalValue}
+            onChange={(e) => setNewRenewalValue(e.target.value)}
+            className="w-full mt-1 px-2 py-1.5 rounded-lg text-sm bg-stone-900/60 border border-stone-700/50 text-stone-200"
           />
         </label>
 
@@ -503,14 +839,14 @@ const RecordPaymentModal: React.FC<{
 
         <div className="flex items-center justify-end gap-2 pt-2">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-stone-300 bg-stone-800/60">
-            إلغاء
+            Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={isSaving}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-purple-700 hover:bg-purple-600 disabled:opacity-50 flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-purple-700 hover:bg-purple-600 disabled:opacity-50"
           >
-            {isSaving ? '...' : <><Upload className="w-3.5 h-3.5" /> تسجيل الدفعة</>}
+            {isSaving ? '...' : 'Add Upsell'}
           </button>
         </div>
       </div>

@@ -816,6 +816,10 @@ export default function App() {
   // opens the normal registration modal pre-filled from this client. null means a plain, empty
   // registration (the usual "Register Client" button).
   const [registerModalPrefillFrom, setRegisterModalPrefillFrom] = useState<ClientRecord | null>(null);
+  // AM Renewal page's "Register Event" -> "New Client" event (2026-11-19): true only when the
+  // registration modal was opened from that specific action, so the resulting client gets
+  // am_renewal_registered_by set and shows up on that AM's AM Renewal page.
+  const [isRegisterModalAmRenewalEvent, setIsRegisterModalAmRenewalEvent] = useState(false);
   const [isBulkClientUploadOpen, setIsBulkClientUploadOpen] = useState(false);
   const [verifiedTesterId, setVerifiedTesterId] = useState<string | null>(null);
   const [isTestingSelectorOpen, setIsTestingSelectorOpen] = useState(false);
@@ -4389,7 +4393,7 @@ export default function App() {
     am_team_lead_id?: string;
     am_agent_id?: string;
     sales_brief?: string;
-  }, contractFile: File | null) => {
+  }, contractFile: File | null, amRenewalEvent?: boolean) => {
     if (!canRegisterClients) throw new Error('You do not have permission to register clients.');
     const isAmRegistration = currentUser.role === 'am_team_lead' || currentUser.role === 'am_agent';
     const isManagementRegistration = currentUser.role === 'executive' || currentUser.role === 'head_of_technical' || currentUser.role === 'am_team_lead';
@@ -4428,6 +4432,11 @@ export default function App() {
       renewal_date: clientData.renewal_date || null,
       sales_brief: clientData.sales_brief || null,
       created_at: new Date().toISOString(),
+      // Only ever set via the AM Renewal page's own "New Client" event (see
+      // 20270115000000_am_renewal_scope.sql) — never inferred from role/sales_owner_id, which
+      // can't tell "AM added this themselves" apart from "management registered it and assigned
+      // this AM".
+      am_renewal_registered_by: amRenewalEvent ? currentUser.id : null,
     };
 
     let persistedClient: ClientRecord;
@@ -7108,6 +7117,10 @@ export default function App() {
       paymentChannel: RenewalPaymentChannel;
       renewalDurationMonths: 1 | 3 | 6 | 12;
       transferScreenshot: File;
+      // Next renewal date is always hand-typed by the AM (2026-11-19 rework) — never computed
+      // from renewalDurationMonths, since the real-world renewal can slip from what the math
+      // would predict.
+      nextRenewalDate: string;
       newContract?: File | null;
     }
   ) => {
@@ -7154,6 +7167,7 @@ export default function App() {
       p_payment_channel: input.paymentChannel,
       p_renewal_duration_months: input.renewalDurationMonths,
       p_transfer_screenshot_path: screenshotPath,
+      p_next_renewal_date: input.nextRenewalDate,
       p_new_contract_path: contractPath,
     });
     if (rpcError) {
@@ -7179,8 +7193,24 @@ export default function App() {
       created_at: new Date().toISOString(),
     };
     setClientRenewalPayments((prev) => [...prev, newPayment]);
-    setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, renewal_value: input.renewalValue } : c)));
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === clientId ? { ...c, renewal_value: input.renewalValue, renewal_date: input.nextRenewalDate } : c
+      )
+    );
     showNotification('Renewal payment recorded.');
+  };
+
+  // AM Renewal page's "Upsell" event (2026-11-19): adds a service to a client's package AND
+  // optionally bumps renewal_value — both through update_client_details (see
+  // 20270115100000_update_client_details_add_renewal_value.sql), the same generic patch path
+  // EditClientModal/ClientDashboard's own Upsell control already use. Not a payment, so it never
+  // touches client_renewal_payments.
+  const handleRecordRenewalUpsell = async (
+    clientId: string,
+    patch: { services: ServiceType[]; other_services: string[]; renewal_value?: number }
+  ) => {
+    await handleUpdateClientDetails(clientId, patch);
   };
 
   // Client Renewals page, employee panel: only a manager/team lead may call this (enforced
@@ -8891,8 +8921,9 @@ export default function App() {
               </div>
             )}
 
-            {/* Client Renewals page (2026-11-18) — see ClientRenewalsPage.tsx's own notes on how
-                this differs from AMQueue's existing status-based Renewal Queue. */}
+            {/* AM Renewal page (reworked 2026-11-19, PR #327 follow-up) — see
+                ClientRenewalsPage.tsx's own notes on how this differs from AMQueue's existing
+                status-based Renewal Queue. */}
             {activeTab === 'renewals' && (
               <div className="space-y-6">
                 <ClientRenewalsPage
@@ -8904,10 +8935,12 @@ export default function App() {
                   canManageTargets={['executive', 'head_of_technical', 'am_team_lead'].includes(currentUser.role)}
                   onRecordRenewalPayment={handleRecordRenewalPayment}
                   onSetEmployeeTarget={handleSetRenewalEmployeeTarget}
-                  onAddClientWithSameData={
+                  onRecordUpsell={handleRecordRenewalUpsell}
+                  onOpenNewClientEvent={
                     canRegisterClients
-                      ? (sourceClient) => {
-                          setRegisterModalPrefillFrom(sourceClient);
+                      ? () => {
+                          setRegisterModalPrefillFrom(null);
+                          setIsRegisterModalAmRenewalEvent(true);
                           setIsRegisterModalOpen(true);
                         }
                       : undefined
@@ -9312,12 +9345,14 @@ export default function App() {
         onClose={() => {
           setIsRegisterModalOpen(false);
           setRegisterModalPrefillFrom(null);
+          setIsRegisterModalAmRenewalEvent(false);
         }}
         currentUser={currentUser}
         amTeamLeaders={(currentUser.role === 'sales' || currentUser.role === 'am_agent' || usersLoadedFromSupabase)
           ? users.filter((u) => u.role === 'am_team_lead' && isActiveEmployee(u)) : []}
         amAgents={usersLoadedFromSupabase ? users.filter((u) => u.role === 'am_agent' && isActiveEmployee(u)) : []}
         prefillFrom={registerModalPrefillFrom}
+        isAmRenewalEvent={isRegisterModalAmRenewalEvent}
         onSubmit={handleRegisterClient}
       />
 
