@@ -16,9 +16,18 @@
 //     up here from now on.
 //   Event 3 — Upsell: search a client and add a service to their package, optionally raising
 //     renewal_value — not a payment, so it never touches client_renewal_payments.
-// Two tabs replace the old fixed "due within a week" window: "Due This Month" (renewal_date
-// falls in the current calendar month, no payment logged yet for the open cycle) and "Already
-// Renewed" (at least one payment logged for the open cycle, full or partial — owner's own rule).
+//
+// Tabs (2026-11-19 rework): "Achievements" comes first — every client with a payment logged for
+// the open cycle, full or partial, the completed side of the page. "Due" comes second — clients
+// not yet renewed this cycle, filtered by a manually-picked date range rather than a hardcoded
+// "this calendar month" window, since the AM (not a fixed rule) decides the period they're
+// working. "Team Performance" is its own third tab.
+//
+// Light/dark theme: this file intentionally uses only the Tailwind classes the app's light-mode
+// compatibility layer (src/index.css, the `[data-theme='light']` block) already knows how to
+// re-theme — bg-stone-900/800 family, border-stone-700/800 family, text-stone-200..500, and solid
+// bg-purple-600/700 + text-white for buttons/badges — rather than one-off hex literals, so this
+// page needs no page-specific CSS to look right in both themes.
 
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, ChevronDown, Search, Upload, Users as UsersIcon } from 'lucide-react';
@@ -80,6 +89,18 @@ interface ClientRenewalsPageProps {
 const currentMonthKey = () => new Date().toISOString().slice(0, 7); // "2026-11"
 const cycleSequence = (client: ClientRecord) => (client.renewal_history_count ?? 0) + 1;
 
+// First/last day of the current month, in the same yyyy-mm-dd shape as client.renewal_date — only
+// the STARTING values for the manual date-range pickers below, never recomputed after that; the
+// AM can move them to any period they're actually working.
+const firstDayOfThisMonth = () => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+};
+const lastDayOfThisMonth = () => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+};
+
 export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   clients,
   clientRenewalPayments,
@@ -98,7 +119,12 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   const [agentFilter, setAgentFilter] = useState<string>('');
   const [serviceFilter, setServiceFilter] = useState<ServiceType | ''>('');
   const [durationFilter, setDurationFilter] = useState<1 | 3 | 6 | 12 | ''>('');
-  const [activeSubTab, setActiveSubTab] = useState<'due' | 'renewed' | 'performance'>('due');
+  // "Due" no longer means "this calendar month" — the AM picks the period by hand (owner's
+  // 2026-11-19 request: "we're the ones who decide the period"). Starts pre-filled to the current
+  // month purely as a convenient default, never re-derived after that.
+  const [dueDateFrom, setDueDateFrom] = useState(firstDayOfThisMonth());
+  const [dueDateTo, setDueDateTo] = useState(lastDayOfThisMonth());
+  const [activeSubTab, setActiveSubTab] = useState<'achievements' | 'due' | 'performance'>('due');
   const [isEventMenuOpen, setIsEventMenuOpen] = useState(false);
   const [renewalSearchOpen, setRenewalSearchOpen] = useState(false);
   const [upsellSearchOpen, setUpsellSearchOpen] = useState(false);
@@ -191,23 +217,25 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   const matchesDurationFilter = (client: ClientRecord) =>
     !durationFilter || effectiveDurationMonths(client) === durationFilter;
 
-  const now = new Date();
-  const dueThisMonth = useMemo(() => {
+  // "Due": not yet renewed this cycle, and (when the AM has set one) within the manually-picked
+  // date range — an empty bound means that side is unrestricted.
+  const dueClients = useMemo(() => {
     return amRenewalClients.filter((c) => {
       if (hasCyclePayment(c)) return false;
       if (!c.renewal_date) return false;
-      const d = new Date(c.renewal_date);
-      if (Number.isNaN(d.getTime())) return false;
-      if (d.getFullYear() !== now.getFullYear() || d.getMonth() !== now.getMonth()) return false;
+      if (dueDateFrom && c.renewal_date < dueDateFrom) return false;
+      if (dueDateTo && c.renewal_date > dueDateTo) return false;
       return matchesServiceFilter(c) && matchesDurationFilter(c);
     });
-  }, [amRenewalClients, clientRenewalPayments, serviceFilter, durationFilter]);
+  }, [amRenewalClients, clientRenewalPayments, serviceFilter, durationFilter, dueDateFrom, dueDateTo]);
 
-  const alreadyRenewed = useMemo(() => {
+  // "Achievements": everything already renewed this cycle — full or partial payment, owner's own
+  // rule — with no date restriction, since this tab is the completed record, not a working queue.
+  const achievedClients = useMemo(() => {
     return amRenewalClients.filter((c) => hasCyclePayment(c) && matchesServiceFilter(c) && matchesDurationFilter(c));
   }, [amRenewalClients, clientRenewalPayments, serviceFilter, durationFilter]);
 
-  const rows = activeSubTab === 'due' ? dueThisMonth : alreadyRenewed;
+  const rows = activeSubTab === 'due' ? dueClients : activeSubTab === 'achievements' ? achievedClients : [];
 
   // Service filter stats: of every AM-Renewal client this viewer can see, how many currently
   // carry the selected service (whether they started with it or an Upsell event added it) —
@@ -248,6 +276,16 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
     });
   }, [clientRenewalPayments, renewalEmployeeTargets, users, month, visibleAgentIds, agentOptions, agentFilter]);
 
+  // Quick Target/Achieved summary shown on the Due and Achievements tabs (not just buried inside
+  // the separate Team Performance tab) — owner's 2026-11-19 request. Sums every employee this
+  // viewer can currently see (a single row when an Agent filter is set, the viewer's own row plus
+  // reports for a Team Lead, everyone for management).
+  const targetAchievedSummary = useMemo(() => {
+    const totalAchieved = employeeStats.reduce((sum, row) => sum + row.achieved, 0);
+    const totalTarget = employeeStats.reduce((sum, row) => sum + (row.target ?? 0), 0);
+    return { totalAchieved, totalTarget };
+  }, [employeeStats]);
+
   const paymentClient = paymentClientId ? clients.find((c) => c.id === paymentClientId) : null;
   const upsellClient = upsellClientId ? clients.find((c) => c.id === upsellClientId) : null;
 
@@ -261,13 +299,13 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   return (
     <div className="space-y-6">
       {/* Top bar: filters + Register Event */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl border border-purple-900/20 bg-gradient-to-b from-[#171229] to-[#14101f] shadow-lg">
-        <div className="flex flex-wrap items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl border border-stone-800/60 bg-stone-900/60 shadow-lg">
+        <div className="flex flex-wrap items-end gap-2.5">
           {(isManagement || isTeamLead) && (
             <select
               value={agentFilter}
               onChange={(e) => setAgentFilter(e.target.value)}
-              className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-white/10 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+              className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-stone-700/50 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
             >
               <option value="">All Agents</option>
               {agentOptions.map((u) => (
@@ -280,7 +318,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           <select
             value={serviceFilter}
             onChange={(e) => setServiceFilter(e.target.value as ServiceType | '')}
-            className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-white/10 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-stone-700/50 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
           >
             <option value="">All Services</option>
             {CORE_SERVICE_FILTERS.map((s) => (
@@ -292,7 +330,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           <select
             value={durationFilter}
             onChange={(e) => setDurationFilter((e.target.value ? Number(e.target.value) : '') as 1 | 3 | 6 | 12 | '')}
-            className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-white/10 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-stone-700/50 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
           >
             <option value="">All Durations</option>
             {DURATION_OPTIONS.map((opt) => (
@@ -301,8 +339,30 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
               </option>
             ))}
           </select>
+          {activeSubTab === 'due' && (
+            <>
+              <label className="flex flex-col text-[10px] text-stone-500">
+                Due from
+                <input
+                  type="date"
+                  value={dueDateFrom}
+                  onChange={(e) => setDueDateFrom(e.target.value)}
+                  className="mt-0.5 px-2 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-stone-700/50 text-stone-200"
+                />
+              </label>
+              <label className="flex flex-col text-[10px] text-stone-500">
+                Due to
+                <input
+                  type="date"
+                  value={dueDateTo}
+                  onChange={(e) => setDueDateTo(e.target.value)}
+                  className="mt-0.5 px-2 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-stone-700/50 text-stone-200"
+                />
+              </label>
+            </>
+          )}
           {serviceStats && (
-            <span className="text-[11px] px-2 py-1 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/20">
+            <span className="text-[11px] px-2 py-1.5 rounded-full bg-purple-700 text-white">
               {SERVICE_LABELS[serviceFilter as ServiceType]}: {serviceStats.count}/{serviceStats.total} ({serviceStats.pct}%)
             </span>
           )}
@@ -311,7 +371,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         <div className="relative">
           <button
             onClick={() => setIsEventMenuOpen((v) => !v)}
-            className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+            className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-purple-700 hover:bg-purple-600 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
           >
             Register Event <ChevronDown className="w-3.5 h-3.5" />
           </button>
@@ -319,13 +379,13 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
             // Anchored to the right edge of the button (not the left) and capped to the viewport
             // width, so it never runs off-screen when the button sits near the right edge of a
             // narrow or zoomed-in layout — the earlier left-0/w-56 version did exactly that.
-            <div className="absolute right-0 mt-1.5 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-purple-900/40 bg-[#1a1530] shadow-2xl z-20 overflow-hidden">
+            <div className="absolute right-0 mt-1.5 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-stone-700/50 bg-stone-900 shadow-2xl z-20 overflow-hidden">
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   setRenewalSearchOpen(true);
                 }}
-                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30 transition-colors"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/20 transition-colors"
               >
                 <span className="block text-xs font-bold text-stone-100">Renewal</span>
                 <span className="block text-[11px] text-stone-400">Log a payment for an existing client</span>
@@ -335,7 +395,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                   setIsEventMenuOpen(false);
                   onOpenNewClientEvent?.();
                 }}
-                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30 transition-colors"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/20 transition-colors"
               >
                 <span className="block text-xs font-bold text-stone-100">New Client</span>
                 <span className="block text-[11px] text-stone-400">Register a client you brought in</span>
@@ -345,7 +405,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                   setIsEventMenuOpen(false);
                   setUpsellSearchOpen(true);
                 }}
-                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30 transition-colors"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/20 transition-colors"
               >
                 <span className="block text-xs font-bold text-stone-100">Upsell</span>
                 <span className="block text-[11px] text-stone-400">Add a service to a client's package</span>
@@ -355,40 +415,54 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         </div>
       </div>
 
-      {/* Sub-tabs — segmented control */}
-      <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-stone-900/40 border border-white/5">
-        <button
-          onClick={() => setActiveSubTab('due')}
-          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-            activeSubTab === 'due' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
-          }`}
-        >
-          Due This Month ({dueThisMonth.length})
-        </button>
-        <button
-          onClick={() => setActiveSubTab('renewed')}
-          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-            activeSubTab === 'renewed' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
-          }`}
-        >
-          Already Renewed ({alreadyRenewed.length})
-        </button>
-        <button
-          onClick={() => setActiveSubTab('performance')}
-          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-            activeSubTab === 'performance' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
-          }`}
-        >
-          Team Performance
-        </button>
+      {/* Sub-tabs — segmented control. Achievements first, then Due, then Team Performance
+          (owner's 2026-11-19 ordering request). */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-stone-900/40 border border-stone-800/60">
+          <button
+            onClick={() => setActiveSubTab('achievements')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              activeSubTab === 'achievements' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            Achievements ({achievedClients.length})
+          </button>
+          <button
+            onClick={() => setActiveSubTab('due')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              activeSubTab === 'due' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            Due ({dueClients.length})
+          </button>
+          <button
+            onClick={() => setActiveSubTab('performance')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              activeSubTab === 'performance' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            Team Performance
+          </button>
+        </div>
+
+        {activeSubTab !== 'performance' && (
+          <div className="flex items-center gap-2 text-[11px]">
+            <span className="px-2.5 py-1 rounded-full bg-stone-900/50 border border-stone-700/50 text-stone-300">
+              Target: <span className="font-bold text-stone-100">{targetAchievedSummary.totalTarget.toLocaleString()}</span>
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-stone-900/50 border border-stone-700/50 text-emerald-400">
+              Achieved: <span className="font-bold">{targetAchievedSummary.totalAchieved.toLocaleString()}</span>
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Client list — Due This Month / Already Renewed */}
+      {/* Client list — Due / Achievements */}
       {activeSubTab !== 'performance' && (
-        <div className="rounded-2xl border border-purple-900/20 bg-gradient-to-b from-[#171229] to-[#14101f] shadow-lg overflow-hidden">
+        <div className="rounded-2xl border border-stone-800/60 bg-stone-900/60 shadow-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-purple-300/70 border-b border-purple-900/30 bg-[#1b1530]/60">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-stone-400 border-b border-stone-800/60 bg-stone-900/40">
                 <th className="p-3.5">Client</th>
                 <th className="p-3.5">Renewal Date</th>
                 <th className="p-3.5">Duration</th>
@@ -407,15 +481,15 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                 return (
                   <tr
                     key={client.id}
-                    className={`border-b border-white/5 hover:bg-white/[0.03] transition-colors ${
-                      hasRemaining ? 'bg-amber-500/[0.06]' : ''
+                    className={`border-b border-stone-800/40 hover:bg-stone-800/20 transition-colors ${
+                      hasRemaining ? 'bg-amber-500/[0.08]' : ''
                     }`}
                   >
                     <td className="p-3.5 font-bold text-stone-200">
                       {client.name}
                       {hasRemaining && <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 ml-1.5" />}
                       {client.am_renewal_registered_by && (
-                        <span className="ml-1.5 align-middle px-1.5 py-0.5 rounded-full text-[10px] font-normal bg-purple-900/40 text-purple-300">
+                        <span className="ml-1.5 align-middle px-1.5 py-0.5 rounded-full text-[10px] font-normal bg-purple-700 text-white">
                           Self-added
                         </span>
                       )}
@@ -448,7 +522,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                           setPopoverAnchor({ x: rect.left, y: rect.bottom + 6 });
                           setPaymentClientId(client.id);
                         }}
-                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-500/15 border border-purple-500/20 hover:bg-purple-500/25 transition-colors whitespace-nowrap"
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 transition-colors whitespace-nowrap"
                       >
                         Record Payment
                       </button>
@@ -470,11 +544,11 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
 
       {/* Team Performance — its own tab, not shown alongside the client list */}
       {activeSubTab === 'performance' && (
-        <div className="rounded-2xl border border-purple-900/20 bg-gradient-to-b from-[#171229] to-[#14101f] shadow-lg p-4">
+        <div className="rounded-2xl border border-stone-800/60 bg-stone-900/60 shadow-lg p-4">
           <h3 className="text-sm font-bold text-stone-200 mb-3">Team Performance This Month</h3>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-purple-300/70 border-b border-purple-900/30">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-stone-400 border-b border-stone-800/60">
                 <th className="p-2.5">Employee</th>
                 <th className="p-2.5">Achieved</th>
                 <th className="p-2.5">Target</th>
@@ -571,9 +645,9 @@ const ClientSearchModal: React.FC<{
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-purple-900/40 bg-[#1a1530] shadow-2xl p-5 space-y-3">
+      <div className="w-full max-w-md rounded-2xl border border-stone-700/50 bg-stone-900 shadow-2xl p-5 space-y-3">
         <h3 className="text-sm font-bold text-stone-200">{title}</h3>
-        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-stone-900/50 border border-white/10">
+        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-stone-900/50 border border-stone-700/50">
           <Search className="w-3.5 h-3.5 text-stone-500" />
           <input
             autoFocus
@@ -626,7 +700,7 @@ const EmployeeTargetRow: React.FC<{
   };
 
   return (
-    <tr className="border-b border-purple-900/10">
+    <tr className="border-b border-stone-800/40">
       <td className="p-2 text-stone-200">{row.name}</td>
       <td className="p-2 text-emerald-400 font-mono">{row.achieved.toLocaleString()}</td>
       <td className="p-2 text-stone-300 font-mono">{row.target != null ? row.target.toLocaleString() : '—'}</td>
@@ -673,7 +747,7 @@ const AnchoredPopover: React.FC<{
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
-        className="fixed z-50 rounded-2xl border border-purple-900/40 bg-[#1a1530] shadow-2xl p-4 space-y-3 max-h-[75vh] overflow-y-auto"
+        className="fixed z-50 rounded-2xl border border-stone-700/50 bg-stone-900 shadow-2xl p-4 space-y-3 max-h-[75vh] overflow-y-auto"
         style={{ left, top, width: effectiveWidth }}
         onClick={(e) => e.stopPropagation()}
       >
