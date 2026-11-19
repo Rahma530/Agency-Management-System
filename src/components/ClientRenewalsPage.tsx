@@ -435,14 +435,16 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           >
             Due ({dueClients.length})
           </button>
-          <button
-            onClick={() => setActiveSubTab('performance')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-              activeSubTab === 'performance' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
-            }`}
-          >
-            Team Performance
-          </button>
+          {(isManagement || isTeamLead) && (
+            <button
+              onClick={() => setActiveSubTab('performance')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                activeSubTab === 'performance' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
+              }`}
+            >
+              Team Performance
+            </button>
+          )}
         </div>
 
         {activeSubTab !== 'performance' && (
@@ -542,8 +544,9 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         </div>
       )}
 
-      {/* Team Performance — its own tab, not shown alongside the client list */}
-      {activeSubTab === 'performance' && (
+      {/* Team Performance — its own tab, not shown alongside the client list, and visible only to
+          management/Team Lead (an am_agent never sees or can land on this tab). */}
+      {activeSubTab === 'performance' && (isManagement || isTeamLead) && (
         <div className="rounded-2xl border border-stone-800/60 bg-stone-900/60 shadow-lg p-4">
           <h3 className="text-sm font-bold text-stone-200 mb-3">Team Performance This Month</h3>
           <table className="w-full text-sm">
