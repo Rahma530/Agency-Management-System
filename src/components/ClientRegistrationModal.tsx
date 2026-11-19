@@ -19,6 +19,12 @@ interface ClientRegistrationModalProps {
   // caller so each open starts from the right initial state (this component's fields are plain
   // local useState, uncontrolled by the parent after mount).
   prefillFrom?: ClientRecord | null;
+  // AM Renewal page's "New Client" event (2026-11-19): when true, onSubmit's 3rd argument is
+  // passed as true so App.tsx's handleRegisterClient marks the new row
+  // am_renewal_registered_by — the explicit, unambiguous signal the AM Renewal page filters on
+  // (see 20270115000000_am_renewal_scope.sql). Never inferred from role alone, since the same
+  // am_agent role also uses this exact modal from the ordinary Client Onboarding flow.
+  isAmRenewalEvent?: boolean;
   onSubmit: (
     clientData: {
       name: string;
@@ -40,7 +46,8 @@ interface ClientRegistrationModalProps {
       am_agent_id?: string;
       sales_brief?: string;
     },
-    contractFile: File | null
+    contractFile: File | null,
+    isAmRenewalEvent?: boolean
   ) => Promise<void>;
 }
 
@@ -68,6 +75,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   amTeamLeaders = [],
   amAgents = [],
   prefillFrom = null,
+  isAmRenewalEvent = false,
   onSubmit,
 }) => {
   // Management assignments start empty; Sales and AM Agent retain their lead picker default.
@@ -179,7 +187,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
           ...(isManagementForm ? { am_agent_id: amAgentId || undefined } : {}),
           sales_brief: salesBrief.trim() || undefined,
         },
-        contractFile
+        contractFile,
+        isAmRenewalEvent
       );
       // reset
       setName('');

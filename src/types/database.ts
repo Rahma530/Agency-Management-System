@@ -240,6 +240,11 @@ export interface ClientRecord {
   // derived by summing client_renewal_payments for the client's current renewal_sequence. See
   // 20270113000000_client_renewal_payments.sql.
   renewal_value?: number | null;
+  // Set ONLY when this client was created through the AM Renewal page's own "New Client" event
+  // (never by the general Client Onboarding flow, even for the same am_agent role) — see
+  // 20270115000000_am_renewal_scope.sql. This, not sales_owner_id being null, is what the AM
+  // Renewal page filters on.
+  am_renewal_registered_by?: string | null;
   am_team_lead_viewed_at?: string | null;
   // Field names kept as-is (Module 13 only renamed the status VALUE 'churned' -> 'closed', not
   // these columns) — set automatically by handleUpdateClientStatus (App.tsx) the moment status
@@ -344,7 +349,7 @@ export interface ClientAccessFields {
 // 20270112000000_fix_design_drive_link_select_grant.sql, which fixed create_task_copy() failing
 // outright for any client-linked task (a separate, more serious symptom of the same oversight).
 export const NON_SENSITIVE_CLIENT_COLUMNS =
-  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order, design_drive_link, renewal_value' as const;
+  'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order, design_drive_link, renewal_value, am_renewal_registered_by' as const;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the
