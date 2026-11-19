@@ -8381,7 +8381,7 @@ export default function App() {
                 }`}
               >
                 <RefreshCw className="w-4 h-4 shrink-0" />
-                <span className="flex-1 text-left">Client Renewals</span>
+                <span className="flex-1 text-left">AM Renewal</span>
               </button>
             )}
 
