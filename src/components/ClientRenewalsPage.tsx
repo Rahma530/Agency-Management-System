@@ -98,7 +98,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   const [agentFilter, setAgentFilter] = useState<string>('');
   const [serviceFilter, setServiceFilter] = useState<ServiceType | ''>('');
   const [durationFilter, setDurationFilter] = useState<1 | 3 | 6 | 12 | ''>('');
-  const [activeSubTab, setActiveSubTab] = useState<'due' | 'renewed'>('due');
+  const [activeSubTab, setActiveSubTab] = useState<'due' | 'renewed' | 'performance'>('due');
   const [isEventMenuOpen, setIsEventMenuOpen] = useState(false);
   const [renewalSearchOpen, setRenewalSearchOpen] = useState(false);
   const [upsellSearchOpen, setUpsellSearchOpen] = useState(false);
@@ -332,102 +332,114 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         >
           Already Renewed ({alreadyRenewed.length})
         </button>
+        <button
+          onClick={() => setActiveSubTab('performance')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
+            activeSubTab === 'performance' ? 'bg-purple-700 text-white' : 'bg-stone-900/50 text-stone-400'
+          }`}
+        >
+          Team Performance
+        </button>
       </div>
 
-      {/* Client list */}
-      <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-stone-400 border-b border-purple-900/30">
-              <th className="p-3">Client</th>
-              <th className="p-3">Renewal Date</th>
-              <th className="p-3">Duration</th>
-              <th className="p-3">Renewal Value</th>
-              <th className="p-3">Paid</th>
-              <th className="p-3">Remaining</th>
-              <th className="p-3">Team Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((client) => {
-              const remaining = remainingForCycle(client);
-              const hasRemaining = remaining != null && remaining > 0;
-              const duration = latestDuration(client);
-              return (
-                <tr key={client.id} className={`border-b border-purple-900/10 ${hasRemaining ? 'bg-amber-950/20' : ''}`}>
-                  <td className="p-3 font-bold text-stone-200">
-                    {client.name}
-                    {hasRemaining && <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 ml-1.5" />}
-                  </td>
-                  <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
-                  <td className="p-3 text-stone-300 text-xs">
-                    {duration ? DURATION_OPTIONS.find((d) => d.value === duration)?.label : '—'}
-                  </td>
-                  <td className="p-3 text-stone-200 font-mono">
-                    {client.renewal_value != null ? client.renewal_value.toLocaleString() : '—'}
-                  </td>
-                  <td className="p-3 text-emerald-400 font-mono">{paidForCycle(client).toLocaleString()}</td>
-                  <td className={`p-3 font-mono ${hasRemaining ? 'text-amber-400 font-bold' : 'text-stone-400'}`}>
-                    {remaining != null ? remaining.toLocaleString() : '—'}
-                  </td>
-                  <td className="p-3 text-stone-300">
-                    {(() => {
-                      const size = getRenewalTeamSizeSafe(client);
-                      return size != null ? (
-                        <span className="inline-flex items-center gap-1 text-xs">
-                          <UsersIcon className="w-3 h-3" /> {size}
-                        </span>
-                      ) : (
-                        '—'
-                      );
-                    })()}
+      {/* Client list — Due This Month / Already Renewed */}
+      {activeSubTab !== 'performance' && (
+        <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-stone-400 border-b border-purple-900/30">
+                <th className="p-3">Client</th>
+                <th className="p-3">Renewal Date</th>
+                <th className="p-3">Duration</th>
+                <th className="p-3">Renewal Value</th>
+                <th className="p-3">Paid</th>
+                <th className="p-3">Remaining</th>
+                <th className="p-3">Team Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((client) => {
+                const remaining = remainingForCycle(client);
+                const hasRemaining = remaining != null && remaining > 0;
+                const duration = latestDuration(client);
+                return (
+                  <tr key={client.id} className={`border-b border-purple-900/10 ${hasRemaining ? 'bg-amber-950/20' : ''}`}>
+                    <td className="p-3 font-bold text-stone-200">
+                      {client.name}
+                      {hasRemaining && <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 ml-1.5" />}
+                    </td>
+                    <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
+                    <td className="p-3 text-stone-300 text-xs">
+                      {duration ? DURATION_OPTIONS.find((d) => d.value === duration)?.label : '—'}
+                    </td>
+                    <td className="p-3 text-stone-200 font-mono">
+                      {client.renewal_value != null ? client.renewal_value.toLocaleString() : '—'}
+                    </td>
+                    <td className="p-3 text-emerald-400 font-mono">{paidForCycle(client).toLocaleString()}</td>
+                    <td className={`p-3 font-mono ${hasRemaining ? 'text-amber-400 font-bold' : 'text-stone-400'}`}>
+                      {remaining != null ? remaining.toLocaleString() : '—'}
+                    </td>
+                    <td className="p-3 text-stone-300">
+                      {(() => {
+                        const size = getRenewalTeamSizeSafe(client);
+                        return size != null ? (
+                          <span className="inline-flex items-center gap-1 text-xs">
+                            <UsersIcon className="w-3 h-3" /> {size}
+                          </span>
+                        ) : (
+                          '—'
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-6 text-center text-stone-500 text-xs">
+                    No clients in this view.
                   </td>
                 </tr>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={7} className="p-6 text-center text-stone-500 text-xs">
-                  No clients in this view.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {/* Employee performance panel */}
-      <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 p-4">
-        <h3 className="text-sm font-bold text-stone-200 mb-3">Team Performance This Month</h3>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-stone-400 border-b border-purple-900/20">
-              <th className="p-2">Employee</th>
-              <th className="p-2">Achieved</th>
-              <th className="p-2">Target</th>
-              {canManageTargets && <th className="p-2">Edit Target</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {employeeStats.map((row) => (
-              <EmployeeTargetRow
-                key={row.employeeId}
-                row={row}
-                month={month}
-                canManageTargets={canManageTargets}
-                onSetEmployeeTarget={onSetEmployeeTarget}
-              />
-            ))}
-            {employeeStats.length === 0 && (
-              <tr>
-                <td colSpan={canManageTargets ? 4 : 3} className="p-4 text-center text-stone-500 text-xs">
-                  No data for this month yet.
-                </td>
+      {/* Team Performance — its own tab, not shown alongside the client list */}
+      {activeSubTab === 'performance' && (
+        <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 p-4">
+          <h3 className="text-sm font-bold text-stone-200 mb-3">Team Performance This Month</h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-stone-400 border-b border-purple-900/20">
+                <th className="p-2">Employee</th>
+                <th className="p-2">Achieved</th>
+                <th className="p-2">Target</th>
+                {canManageTargets && <th className="p-2">Edit Target</th>}
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {employeeStats.map((row) => (
+                <EmployeeTargetRow
+                  key={row.employeeId}
+                  row={row}
+                  month={month}
+                  canManageTargets={canManageTargets}
+                  onSetEmployeeTarget={onSetEmployeeTarget}
+                />
+              ))}
+              {employeeStats.length === 0 && (
+                <tr>
+                  <td colSpan={canManageTargets ? 4 : 3} className="p-4 text-center text-stone-500 text-xs">
+                    No data for this month yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {renewalSearchOpen && (
         <ClientSearchModal
