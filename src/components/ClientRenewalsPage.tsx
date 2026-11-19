@@ -104,6 +104,12 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   const [upsellSearchOpen, setUpsellSearchOpen] = useState(false);
   const [paymentClientId, setPaymentClientId] = useState<string | null>(null);
   const [upsellClientId, setUpsellClientId] = useState<string | null>(null);
+  // Anchor point for the Record Payment / Upsell popovers — set to the triggering button's
+  // position so the popover opens right where the AM clicked, in place of a centered modal
+  // (owner's 2026-11-19 request: "no need for a form in the middle of the screen, let me record
+  // it right where the cell is"). Falls back to a fixed point for the search-first Renewal/Upsell
+  // Events, which have no specific row to anchor to.
+  const [popoverAnchor, setPopoverAnchor] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Agents this viewer may act on behalf of / see: themselves, or (team lead) their direct
   // reports, or (management) everyone.
@@ -156,16 +162,34 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
     return payments[0]?.renewal_duration_months ?? null;
   };
 
+  // Most clients have no client_renewal_payments row yet (renewal_value/duration only get set
+  // once a payment is logged through this page), so fall back to the client's existing contract
+  // fields — the real figures already on record for them — instead of showing a blank dash for
+  // every client who hasn't been through a Renewal event here yet.
+  const effectiveRenewalValue = (client: ClientRecord): number | null =>
+    client.renewal_value ?? client.contract_value ?? null;
+
+  const effectiveDurationMonths = (client: ClientRecord): number | null =>
+    latestDuration(client) ?? client.contract_duration_months ?? null;
+
+  const formatDuration = (months: number | null): string => {
+    if (months == null) return '—';
+    const standard = DURATION_OPTIONS.find((d) => d.value === months);
+    if (standard) return standard.label;
+    return months === 1 ? '1 month' : `${months} months`;
+  };
+
   const remainingForCycle = (client: ClientRecord) => {
-    if (client.renewal_value == null) return null;
-    return Math.max(0, client.renewal_value - paidForCycle(client));
+    const value = effectiveRenewalValue(client);
+    if (value == null) return null;
+    return Math.max(0, value - paidForCycle(client));
   };
 
   const matchesServiceFilter = (client: ClientRecord) =>
     !serviceFilter || getClientServices(client).includes(serviceFilter);
 
   const matchesDurationFilter = (client: ClientRecord) =>
-    !durationFilter || latestDuration(client) === durationFilter;
+    !durationFilter || effectiveDurationMonths(client) === durationFilter;
 
   const now = new Date();
   const dueThisMonth = useMemo(() => {
@@ -227,16 +251,23 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
   const paymentClient = paymentClientId ? clients.find((c) => c.id === paymentClientId) : null;
   const upsellClient = upsellClientId ? clients.find((c) => c.id === upsellClientId) : null;
 
+  // Default anchor for popovers triggered from the search-first flows (Renewal/Upsell Events),
+  // which have no specific row to anchor to — placed just under the top bar, roughly centered.
+  const defaultPopoverAnchor = () => ({
+    x: typeof window !== 'undefined' ? Math.max(16, window.innerWidth / 2 - 170) : 0,
+    y: 180,
+  });
+
   return (
     <div className="space-y-6">
       {/* Top bar: filters + Register Event */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border border-purple-900/30 bg-[#161224]/80">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl border border-purple-900/20 bg-gradient-to-b from-[#171229] to-[#14101f] shadow-lg">
+        <div className="flex flex-wrap items-center gap-2.5">
           {(isManagement || isTeamLead) && (
             <select
               value={agentFilter}
               onChange={(e) => setAgentFilter(e.target.value)}
-              className="px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+              className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-white/10 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
             >
               <option value="">All Agents</option>
               {agentOptions.map((u) => (
@@ -249,7 +280,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           <select
             value={serviceFilter}
             onChange={(e) => setServiceFilter(e.target.value as ServiceType | '')}
-            className="px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-white/10 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
           >
             <option value="">All Services</option>
             {CORE_SERVICE_FILTERS.map((s) => (
@@ -261,7 +292,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           <select
             value={durationFilter}
             onChange={(e) => setDurationFilter((e.target.value ? Number(e.target.value) : '') as 1 | 3 | 6 | 12 | '')}
-            className="px-2 py-1.5 rounded-lg text-xs bg-stone-900/60 border border-stone-700/50 text-stone-200"
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-stone-900/50 border border-white/10 text-stone-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
           >
             <option value="">All Durations</option>
             {DURATION_OPTIONS.map((opt) => (
@@ -271,7 +302,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
             ))}
           </select>
           {serviceStats && (
-            <span className="text-[11px] text-purple-300">
+            <span className="text-[11px] px-2 py-1 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/20">
               {SERVICE_LABELS[serviceFilter as ServiceType]}: {serviceStats.count}/{serviceStats.total} ({serviceStats.pct}%)
             </span>
           )}
@@ -280,66 +311,72 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         <div className="relative">
           <button
             onClick={() => setIsEventMenuOpen((v) => !v)}
-            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-purple-700 hover:bg-purple-600 flex items-center gap-1.5"
+            className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
           >
             Register Event <ChevronDown className="w-3.5 h-3.5" />
           </button>
           {isEventMenuOpen && (
-            <div className="absolute left-0 mt-1 w-56 rounded-xl border border-purple-900/40 bg-[#1a1530] shadow-xl z-20 overflow-hidden">
+            // Anchored to the right edge of the button (not the left) and capped to the viewport
+            // width, so it never runs off-screen when the button sits near the right edge of a
+            // narrow or zoomed-in layout — the earlier left-0/w-56 version did exactly that.
+            <div className="absolute right-0 mt-1.5 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-purple-900/40 bg-[#1a1530] shadow-2xl z-20 overflow-hidden">
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   setRenewalSearchOpen(true);
                 }}
-                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30 transition-colors"
               >
-                Renewal — log a payment for an existing client
+                <span className="block text-xs font-bold text-stone-100">Renewal</span>
+                <span className="block text-[11px] text-stone-400">Log a payment for an existing client</span>
               </button>
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   onOpenNewClientEvent?.();
                 }}
-                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30 transition-colors"
               >
-                New Client — register a client you brought in
+                <span className="block text-xs font-bold text-stone-100">New Client</span>
+                <span className="block text-[11px] text-stone-400">Register a client you brought in</span>
               </button>
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   setUpsellSearchOpen(true);
                 }}
-                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30 transition-colors"
               >
-                Upsell — add a service to a client's package
+                <span className="block text-xs font-bold text-stone-100">Upsell</span>
+                <span className="block text-[11px] text-stone-400">Add a service to a client's package</span>
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Sub-tabs */}
-      <div className="flex items-center gap-2">
+      {/* Sub-tabs — segmented control */}
+      <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-stone-900/40 border border-white/5">
         <button
           onClick={() => setActiveSubTab('due')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
-            activeSubTab === 'due' ? 'bg-purple-700 text-white' : 'bg-stone-900/50 text-stone-400'
+          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+            activeSubTab === 'due' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
           }`}
         >
           Due This Month ({dueThisMonth.length})
         </button>
         <button
           onClick={() => setActiveSubTab('renewed')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
-            activeSubTab === 'renewed' ? 'bg-purple-700 text-white' : 'bg-stone-900/50 text-stone-400'
+          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+            activeSubTab === 'renewed' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
           }`}
         >
           Already Renewed ({alreadyRenewed.length})
         </button>
         <button
           onClick={() => setActiveSubTab('performance')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold ${
-            activeSubTab === 'performance' ? 'bg-purple-700 text-white' : 'bg-stone-900/50 text-stone-400'
+          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+            activeSubTab === 'performance' ? 'bg-purple-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
           }`}
         >
           Team Performance
@@ -348,27 +385,33 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
 
       {/* Client list — Due This Month / Already Renewed */}
       {activeSubTab !== 'performance' && (
-        <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 overflow-hidden">
+        <div className="rounded-2xl border border-purple-900/20 bg-gradient-to-b from-[#171229] to-[#14101f] shadow-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-stone-400 border-b border-purple-900/30">
-                <th className="p-3">Client</th>
-                <th className="p-3">Renewal Date</th>
-                <th className="p-3">Duration</th>
-                <th className="p-3">Renewal Value</th>
-                <th className="p-3">Paid</th>
-                <th className="p-3">Remaining</th>
-                <th className="p-3">Team Size</th>
+              <tr className="text-left text-[11px] uppercase tracking-wider text-purple-300/70 border-b border-purple-900/30 bg-[#1b1530]/60">
+                <th className="p-3.5">Client</th>
+                <th className="p-3.5">Renewal Date</th>
+                <th className="p-3.5">Duration</th>
+                <th className="p-3.5">Renewal Value</th>
+                <th className="p-3.5">Paid</th>
+                <th className="p-3.5">Remaining</th>
+                <th className="p-3.5">Team Size</th>
+                <th className="p-3.5">Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((client) => {
                 const remaining = remainingForCycle(client);
                 const hasRemaining = remaining != null && remaining > 0;
-                const duration = latestDuration(client);
+                const renewalValue = effectiveRenewalValue(client);
                 return (
-                  <tr key={client.id} className={`border-b border-purple-900/10 ${hasRemaining ? 'bg-amber-950/20' : ''}`}>
-                    <td className="p-3 font-bold text-stone-200">
+                  <tr
+                    key={client.id}
+                    className={`border-b border-white/5 hover:bg-white/[0.03] transition-colors ${
+                      hasRemaining ? 'bg-amber-500/[0.06]' : ''
+                    }`}
+                  >
+                    <td className="p-3.5 font-bold text-stone-200">
                       {client.name}
                       {hasRemaining && <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 ml-1.5" />}
                       {client.am_renewal_registered_by && (
@@ -377,18 +420,16 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                         </span>
                       )}
                     </td>
-                    <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
-                    <td className="p-3 text-stone-300 text-xs">
-                      {duration ? DURATION_OPTIONS.find((d) => d.value === duration)?.label : '—'}
+                    <td className="p-3.5 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
+                    <td className="p-3.5 text-stone-300 text-xs">{formatDuration(effectiveDurationMonths(client))}</td>
+                    <td className="p-3.5 text-stone-200 font-mono">
+                      {renewalValue != null ? renewalValue.toLocaleString() : '—'}
                     </td>
-                    <td className="p-3 text-stone-200 font-mono">
-                      {client.renewal_value != null ? client.renewal_value.toLocaleString() : '—'}
-                    </td>
-                    <td className="p-3 text-emerald-400 font-mono">{paidForCycle(client).toLocaleString()}</td>
-                    <td className={`p-3 font-mono ${hasRemaining ? 'text-amber-400 font-bold' : 'text-stone-400'}`}>
+                    <td className="p-3.5 text-emerald-400 font-mono">{paidForCycle(client).toLocaleString()}</td>
+                    <td className={`p-3.5 font-mono ${hasRemaining ? 'text-amber-400 font-bold' : 'text-stone-400'}`}>
                       {remaining != null ? remaining.toLocaleString() : '—'}
                     </td>
-                    <td className="p-3 text-stone-300">
+                    <td className="p-3.5 text-stone-300">
                       {(() => {
                         const size = getRenewalTeamSizeSafe(client);
                         return size != null ? (
@@ -400,12 +441,24 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                         );
                       })()}
                     </td>
+                    <td className="p-3.5">
+                      <button
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setPopoverAnchor({ x: rect.left, y: rect.bottom + 6 });
+                          setPaymentClientId(client.id);
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-500/15 border border-purple-500/20 hover:bg-purple-500/25 transition-colors whitespace-nowrap"
+                      >
+                        Record Payment
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-stone-500 text-xs">
+                  <td colSpan={8} className="p-6 text-center text-stone-500 text-xs">
                     No clients in this view.
                   </td>
                 </tr>
@@ -417,15 +470,15 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
 
       {/* Team Performance — its own tab, not shown alongside the client list */}
       {activeSubTab === 'performance' && (
-        <div className="rounded-xl border border-purple-900/30 bg-[#161224]/80 p-4">
+        <div className="rounded-2xl border border-purple-900/20 bg-gradient-to-b from-[#171229] to-[#14101f] shadow-lg p-4">
           <h3 className="text-sm font-bold text-stone-200 mb-3">Team Performance This Month</h3>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-stone-400 border-b border-purple-900/20">
-                <th className="p-2">Employee</th>
-                <th className="p-2">Achieved</th>
-                <th className="p-2">Target</th>
-                {canManageTargets && <th className="p-2">Edit Target</th>}
+              <tr className="text-left text-[11px] uppercase tracking-wider text-purple-300/70 border-b border-purple-900/30">
+                <th className="p-2.5">Employee</th>
+                <th className="p-2.5">Achieved</th>
+                <th className="p-2.5">Target</th>
+                {canManageTargets && <th className="p-2.5">Edit Target</th>}
               </tr>
             </thead>
             <tbody>
@@ -457,6 +510,7 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           onClose={() => setRenewalSearchOpen(false)}
           onSelect={(id) => {
             setRenewalSearchOpen(false);
+            setPopoverAnchor(defaultPopoverAnchor());
             setPaymentClientId(id);
           }}
         />
@@ -469,14 +523,16 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
           onClose={() => setUpsellSearchOpen(false)}
           onSelect={(id) => {
             setUpsellSearchOpen(false);
+            setPopoverAnchor(defaultPopoverAnchor());
             setUpsellClientId(id);
           }}
         />
       )}
 
       {paymentClient && (
-        <RecordPaymentModal
+        <RecordPaymentPopover
           client={paymentClient}
+          anchor={popoverAnchor}
           onClose={() => setPaymentClientId(null)}
           onSubmit={async (input) => {
             await onRecordRenewalPayment(paymentClient.id, input);
@@ -486,8 +542,9 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
       )}
 
       {upsellClient && (
-        <UpsellModal
+        <UpsellPopover
           client={upsellClient}
+          anchor={popoverAnchor}
           onClose={() => setUpsellClientId(null)}
           onSubmit={async (patch) => {
             await onRecordUpsell(upsellClient.id, patch);
@@ -513,10 +570,10 @@ const ClientSearchModal: React.FC<{
   const filtered = clients.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-purple-900/40 bg-[#1a1530] shadow-2xl p-5 space-y-3">
         <h3 className="text-sm font-bold text-stone-200">{title}</h3>
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-stone-900/60 border border-stone-700/50">
+        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-stone-900/50 border border-white/10">
           <Search className="w-3.5 h-3.5 text-stone-500" />
           <input
             autoFocus
@@ -594,8 +651,42 @@ const EmployeeTargetRow: React.FC<{
   );
 };
 
-const RecordPaymentModal: React.FC<{
+// Small floating panel anchored near wherever it was triggered from (a row's button, or a fixed
+// point for the search-first flows) instead of a centered modal with a dark full-screen overlay —
+// owner's 2026-11-19 request: record it right in place, not in a form in the middle of the
+// screen. The backdrop stays transparent so the rest of the table is still visible and clicking
+// outside the panel closes it.
+const AnchoredPopover: React.FC<{
+  anchor: { x: number; y: number };
+  width?: number;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}> = ({ anchor, width = 340, title, onClose, children }) => {
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768;
+  const effectiveWidth = Math.min(width, viewportWidth - 32);
+  const left = Math.max(16, Math.min(anchor.x, viewportWidth - effectiveWidth - 16));
+  const top = Math.max(16, Math.min(anchor.y, viewportHeight - 120));
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        className="fixed z-50 rounded-2xl border border-purple-900/40 bg-[#1a1530] shadow-2xl p-4 space-y-3 max-h-[75vh] overflow-y-auto"
+        style={{ left, top, width: effectiveWidth }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-bold text-stone-200">{title}</h3>
+        {children}
+      </div>
+    </>
+  );
+};
+
+const RecordPaymentPopover: React.FC<{
   client: ClientRecord;
+  anchor: { x: number; y: number };
   onClose: () => void;
   onSubmit: (input: {
     renewalValue: number;
@@ -606,8 +697,10 @@ const RecordPaymentModal: React.FC<{
     nextRenewalDate: string;
     newContract?: File | null;
   }) => Promise<void>;
-}> = ({ client, onClose, onSubmit }) => {
-  const [renewalValue, setRenewalValue] = useState(client.renewal_value != null ? String(client.renewal_value) : '');
+}> = ({ client, anchor, onClose, onSubmit }) => {
+  const [renewalValue, setRenewalValue] = useState(
+    client.renewal_value != null ? String(client.renewal_value) : client.contract_value != null ? String(client.contract_value) : ''
+  );
   const [amountPaid, setAmountPaid] = useState('');
   const [paymentChannel, setPaymentChannel] = useState<RenewalPaymentChannel>('kesra');
   const [duration, setDuration] = useState<1 | 3 | 6 | 12>(1);
@@ -663,10 +756,7 @@ const RecordPaymentModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
-        <h3 className="text-sm font-bold text-stone-200">Record Renewal Payment — {client.name}</h3>
-
+    <AnchoredPopover anchor={anchor} width={360} title={`Record Payment — ${client.name}`} onClose={onClose}>
         <label className="block text-xs text-stone-400">
           Renewal Value
           <input
@@ -781,20 +871,22 @@ const RecordPaymentModal: React.FC<{
             {isSaving ? '...' : <><Upload className="w-3.5 h-3.5" /> Record Payment</>}
           </button>
         </div>
-      </div>
-    </div>
+    </AnchoredPopover>
   );
 };
 
-const UpsellModal: React.FC<{
+const UpsellPopover: React.FC<{
   client: ClientRecord;
+  anchor: { x: number; y: number };
   onClose: () => void;
   onSubmit: (patch: { services: ServiceType[]; other_services: string[]; renewal_value?: number }) => Promise<void>;
-}> = ({ client, onClose, onSubmit }) => {
+}> = ({ client, anchor, onClose, onSubmit }) => {
   const existingServices = getClientServices(client);
   const existingCustom = getClientCustomServices(client);
   const [serviceToAdd, setServiceToAdd] = useState<ServiceType | ''>('');
-  const [newRenewalValue, setNewRenewalValue] = useState(client.renewal_value != null ? String(client.renewal_value) : '');
+  const [newRenewalValue, setNewRenewalValue] = useState(
+    client.renewal_value != null ? String(client.renewal_value) : client.contract_value != null ? String(client.contract_value) : ''
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -824,10 +916,7 @@ const UpsellModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md rounded-xl border border-purple-900/40 bg-[#1a1530] p-5 space-y-3">
-        <h3 className="text-sm font-bold text-stone-200">Upsell — {client.name}</h3>
-
+    <AnchoredPopover anchor={anchor} width={340} title={`Upsell — ${client.name}`} onClose={onClose}>
         <label className="block text-xs text-stone-400">
           Add Service
           <select
@@ -870,7 +959,6 @@ const UpsellModal: React.FC<{
             {isSaving ? '...' : 'Add Upsell'}
           </button>
         </div>
-      </div>
-    </div>
+    </AnchoredPopover>
   );
 };
