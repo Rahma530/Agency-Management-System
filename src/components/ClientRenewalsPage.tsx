@@ -122,13 +122,17 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
     return [];
   }, [isManagement, isTeamLead, users, currentUser.id]);
 
-  // The AM Renewal client pool: only clients registered through THIS page's own "New Client"
-  // event, scoped to who this viewer may see, then narrowed by the explicit Agent filter if set.
+  // The AM Renewal client pool: every client this AM is responsible for right now (am_agent_id —
+  // same scoping used everywhere else in the app, e.g. AMQueue/MyWorkHub), not only the ones they
+  // personally registered through this page's own "New Client" event. am_renewal_registered_by
+  // still tags which of those were self-added (shown as a badge below) rather than restricting
+  // the list — owner's 2026-11-19 clarification: renewal tracking covers everyone assigned to the
+  // AM, including clients Sales originally registered and simply assigned to them.
   const amRenewalClients = useMemo(() => {
     return clients.filter((c) => {
-      if (!c.am_renewal_registered_by) return false;
-      if (visibleAgentIds && !visibleAgentIds.has(c.am_renewal_registered_by)) return false;
-      if (agentFilter && c.am_renewal_registered_by !== agentFilter) return false;
+      if (!c.am_agent_id) return false;
+      if (visibleAgentIds && !visibleAgentIds.has(c.am_agent_id)) return false;
+      if (agentFilter && c.am_agent_id !== agentFilter) return false;
       return true;
     });
   }, [clients, visibleAgentIds, agentFilter]);
@@ -367,6 +371,11 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                     <td className="p-3 font-bold text-stone-200">
                       {client.name}
                       {hasRemaining && <AlertTriangle className="inline-block w-3.5 h-3.5 text-amber-400 ml-1.5" />}
+                      {client.am_renewal_registered_by && (
+                        <span className="ml-1.5 align-middle px-1.5 py-0.5 rounded-full text-[10px] font-normal bg-purple-900/40 text-purple-300">
+                          Self-added
+                        </span>
+                      )}
                     </td>
                     <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
                     <td className="p-3 text-stone-300 text-xs">
