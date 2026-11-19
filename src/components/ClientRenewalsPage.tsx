@@ -257,23 +257,34 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
         achievedByEmployee.set(p.recorded_by, (achievedByEmployee.get(p.recorded_by) || 0) + p.amount_paid);
       });
 
-    const ids = new Set([
-      ...(agentFilter ? [agentFilter] : scopedIds),
-      ...renewalEmployeeTargets
-        .filter((t) => t.month.slice(0, 7) === month && (!visibleAgentIds || visibleAgentIds.has(t.employee_id)))
-        .map((t) => t.employee_id),
-    ]);
+    // When an Agent filter is set, show ONLY that agent — not that agent plus every other
+    // employee who happens to have a target set for this month (the earlier bug: Farah kept
+    // showing up alongside Malak because the target-holder list was merged in unconditionally,
+    // regardless of the filter).
+    const ids = agentFilter
+      ? new Set([agentFilter])
+      : new Set([
+          ...scopedIds,
+          ...renewalEmployeeTargets
+            .filter((t) => t.month.slice(0, 7) === month && (!visibleAgentIds || visibleAgentIds.has(t.employee_id)))
+            .map((t) => t.employee_id),
+        ]);
 
-    return Array.from(ids).map((employeeId) => {
+    const rows = Array.from(ids).map((employeeId) => {
       const user = users.find((u) => u.id === employeeId);
       const target = renewalEmployeeTargets.find((t) => t.employee_id === employeeId && t.month.slice(0, 7) === month);
       return {
         employeeId,
         name: user?.name || employeeId,
+        isTeamLead: user?.role === 'am_team_lead',
         achieved: achievedByEmployee.get(employeeId) || 0,
         target: target?.target_value ?? null,
       };
     });
+
+    // Team Leads listed first (owner's request — e.g. Shahd, as team lead, should appear at the
+    // top with a "(TL)" tag), everyone else keeps their existing relative order after that.
+    return rows.sort((a, b) => Number(b.isTeamLead) - Number(a.isTeamLead));
   }, [clientRenewalPayments, renewalEmployeeTargets, users, month, visibleAgentIds, agentOptions, agentFilter]);
 
   // Quick Target/Achieved summary shown on the Due and Achievements tabs (not just buried inside
@@ -683,7 +694,7 @@ const ClientSearchModal: React.FC<{
 };
 
 const EmployeeTargetRow: React.FC<{
-  row: { employeeId: string; name: string; achieved: number; target: number | null };
+  row: { employeeId: string; name: string; isTeamLead: boolean; achieved: number; target: number | null };
   month: string;
   canManageTargets: boolean;
   onSetEmployeeTarget: (employeeId: string, month: string, targetValue: number) => Promise<void>;
@@ -704,7 +715,10 @@ const EmployeeTargetRow: React.FC<{
 
   return (
     <tr className="border-b border-stone-800/40">
-      <td className="p-2 text-stone-200">{row.name}</td>
+      <td className="p-2 text-stone-200">
+        {row.name}
+        {row.isTeamLead && <span className="ml-1.5 text-[10px] font-bold text-purple-400">(TL)</span>}
+      </td>
       <td className="p-2 text-emerald-400 font-mono">{row.achieved.toLocaleString()}</td>
       <td className="p-2 text-stone-300 font-mono">{row.target != null ? row.target.toLocaleString() : '—'}</td>
       {canManageTargets && (
