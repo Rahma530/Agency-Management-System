@@ -156,16 +156,34 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
     return payments[0]?.renewal_duration_months ?? null;
   };
 
+  // Most clients have no client_renewal_payments row yet (renewal_value/duration only get set
+  // once a payment is logged through this page), so fall back to the client's existing contract
+  // fields — the real figures already on record for them — instead of showing a blank dash for
+  // every client who hasn't been through a Renewal event here yet.
+  const effectiveRenewalValue = (client: ClientRecord): number | null =>
+    client.renewal_value ?? client.contract_value ?? null;
+
+  const effectiveDurationMonths = (client: ClientRecord): number | null =>
+    latestDuration(client) ?? client.contract_duration_months ?? null;
+
+  const formatDuration = (months: number | null): string => {
+    if (months == null) return '—';
+    const standard = DURATION_OPTIONS.find((d) => d.value === months);
+    if (standard) return standard.label;
+    return months === 1 ? '1 month' : `${months} months`;
+  };
+
   const remainingForCycle = (client: ClientRecord) => {
-    if (client.renewal_value == null) return null;
-    return Math.max(0, client.renewal_value - paidForCycle(client));
+    const value = effectiveRenewalValue(client);
+    if (value == null) return null;
+    return Math.max(0, value - paidForCycle(client));
   };
 
   const matchesServiceFilter = (client: ClientRecord) =>
     !serviceFilter || getClientServices(client).includes(serviceFilter);
 
   const matchesDurationFilter = (client: ClientRecord) =>
-    !durationFilter || latestDuration(client) === durationFilter;
+    !durationFilter || effectiveDurationMonths(client) === durationFilter;
 
   const now = new Date();
   const dueThisMonth = useMemo(() => {
@@ -285,33 +303,39 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
             Register Event <ChevronDown className="w-3.5 h-3.5" />
           </button>
           {isEventMenuOpen && (
-            <div className="absolute left-0 mt-1 w-56 rounded-xl border border-purple-900/40 bg-[#1a1530] shadow-xl z-20 overflow-hidden">
+            // Anchored to the right edge of the button (not the left) and capped to the viewport
+            // width, so it never runs off-screen when the button sits near the right edge of a
+            // narrow or zoomed-in layout — the earlier left-0/w-56 version did exactly that.
+            <div className="absolute right-0 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-purple-900/40 bg-[#1a1530] shadow-xl z-20 overflow-hidden">
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   setRenewalSearchOpen(true);
                 }}
-                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30"
               >
-                Renewal — log a payment for an existing client
+                <span className="block text-xs font-bold text-stone-100">Renewal</span>
+                <span className="block text-[11px] text-stone-400">Log a payment for an existing client</span>
               </button>
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   onOpenNewClientEvent?.();
                 }}
-                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30"
               >
-                New Client — register a client you brought in
+                <span className="block text-xs font-bold text-stone-100">New Client</span>
+                <span className="block text-[11px] text-stone-400">Register a client you brought in</span>
               </button>
               <button
                 onClick={() => {
                   setIsEventMenuOpen(false);
                   setUpsellSearchOpen(true);
                 }}
-                className="w-full text-left px-3.5 py-2.5 text-xs text-stone-200 hover:bg-purple-900/30"
+                className="w-full text-left px-3.5 py-2.5 hover:bg-purple-900/30"
               >
-                Upsell — add a service to a client's package
+                <span className="block text-xs font-bold text-stone-100">Upsell</span>
+                <span className="block text-[11px] text-stone-400">Add a service to a client's package</span>
               </button>
             </div>
           )}
@@ -359,13 +383,14 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                 <th className="p-3">Paid</th>
                 <th className="p-3">Remaining</th>
                 <th className="p-3">Team Size</th>
+                <th className="p-3">Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((client) => {
                 const remaining = remainingForCycle(client);
                 const hasRemaining = remaining != null && remaining > 0;
-                const duration = latestDuration(client);
+                const renewalValue = effectiveRenewalValue(client);
                 return (
                   <tr key={client.id} className={`border-b border-purple-900/10 ${hasRemaining ? 'bg-amber-950/20' : ''}`}>
                     <td className="p-3 font-bold text-stone-200">
@@ -378,11 +403,9 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                       )}
                     </td>
                     <td className="p-3 text-stone-300 font-mono text-xs">{client.renewal_date || '—'}</td>
-                    <td className="p-3 text-stone-300 text-xs">
-                      {duration ? DURATION_OPTIONS.find((d) => d.value === duration)?.label : '—'}
-                    </td>
+                    <td className="p-3 text-stone-300 text-xs">{formatDuration(effectiveDurationMonths(client))}</td>
                     <td className="p-3 text-stone-200 font-mono">
-                      {client.renewal_value != null ? client.renewal_value.toLocaleString() : '—'}
+                      {renewalValue != null ? renewalValue.toLocaleString() : '—'}
                     </td>
                     <td className="p-3 text-emerald-400 font-mono">{paidForCycle(client).toLocaleString()}</td>
                     <td className={`p-3 font-mono ${hasRemaining ? 'text-amber-400 font-bold' : 'text-stone-400'}`}>
@@ -400,12 +423,20 @@ export const ClientRenewalsPage: React.FC<ClientRenewalsPageProps> = ({
                         );
                       })()}
                     </td>
+                    <td className="p-3">
+                      <button
+                        onClick={() => setPaymentClientId(client.id)}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-200 bg-purple-900/40 hover:bg-purple-800/60 whitespace-nowrap"
+                      >
+                        Record Payment
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-stone-500 text-xs">
+                  <td colSpan={8} className="p-6 text-center text-stone-500 text-xs">
                     No clients in this view.
                   </td>
                 </tr>
@@ -607,7 +638,9 @@ const RecordPaymentModal: React.FC<{
     newContract?: File | null;
   }) => Promise<void>;
 }> = ({ client, onClose, onSubmit }) => {
-  const [renewalValue, setRenewalValue] = useState(client.renewal_value != null ? String(client.renewal_value) : '');
+  const [renewalValue, setRenewalValue] = useState(
+    client.renewal_value != null ? String(client.renewal_value) : client.contract_value != null ? String(client.contract_value) : ''
+  );
   const [amountPaid, setAmountPaid] = useState('');
   const [paymentChannel, setPaymentChannel] = useState<RenewalPaymentChannel>('kesra');
   const [duration, setDuration] = useState<1 | 3 | 6 | 12>(1);
@@ -794,7 +827,9 @@ const UpsellModal: React.FC<{
   const existingServices = getClientServices(client);
   const existingCustom = getClientCustomServices(client);
   const [serviceToAdd, setServiceToAdd] = useState<ServiceType | ''>('');
-  const [newRenewalValue, setNewRenewalValue] = useState(client.renewal_value != null ? String(client.renewal_value) : '');
+  const [newRenewalValue, setNewRenewalValue] = useState(
+    client.renewal_value != null ? String(client.renewal_value) : client.contract_value != null ? String(client.contract_value) : ''
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
