@@ -4498,26 +4498,34 @@ export default function App() {
       console.warn('Skipping client-registration team-lead notifications: users not yet loaded from Supabase.');
       return;
     }
-    for (const teamLeadRole of activeServiceLeadRoles) {
-      const recipients = users.filter((u) => u.role === teamLeadRole && isActiveEmployee(u));
-      for (const recipient of recipients) {
-        try {
-          const { error } = await supabaseRaw.from('notifications').insert({
-            id: `notif-client-registered-service-${client.id}-${teamLeadRole}-${recipient.id}`,
-            user_id: recipient.id,
-            sender_id: currentUser.id,
-            title: 'New Client Needs a Specialist',
-            message: `New client "${client.name}" subscribed to your department's service and has no specialist assigned yet.`,
-            type: 'general',
-            is_read: false,
-            link_url: 'module:service_briefs',
-            created_at: new Date().toISOString(),
-          });
-          if (error && error.code !== '23505') throw error;
-        } catch (err) {
-          console.error('Failed to create client-registration Team Lead notification:', err);
-        }
-      }
+    // One batched write for every (service team-lead role x active recipient) pair, instead of
+    // one awaited round-trip per recipient. Same deterministic ids as before, so
+    // ignoreDuplicates (ON CONFLICT DO NOTHING) keeps the existing "already notified" semantics
+    // without ever raising 23505.
+    const createdAt = new Date().toISOString();
+    const rows = activeServiceLeadRoles.flatMap((teamLeadRole) =>
+      users
+        .filter((u) => u.role === teamLeadRole && isActiveEmployee(u))
+        .map((recipient) => ({
+          id: `notif-client-registered-service-${client.id}-${teamLeadRole}-${recipient.id}`,
+          user_id: recipient.id,
+          sender_id: currentUser.id,
+          title: 'New Client Needs a Specialist',
+          message: `New client "${client.name}" subscribed to your department's service and has no specialist assigned yet.`,
+          type: 'general',
+          is_read: false,
+          link_url: 'module:service_briefs',
+          created_at: createdAt,
+        }))
+    );
+    if (rows.length === 0) return;
+    try {
+      const { error } = await supabaseRaw
+        .from('notifications')
+        .upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to create client-registration Team Lead notifications:', err);
     }
   };
 
@@ -5487,25 +5495,31 @@ export default function App() {
       console.warn('Skipping brief-submission team-lead notification: users not yet loaded from Supabase.');
     } else if (teamLeadRole && supabaseActive) {
       const client = clients.find((c) => c.id === brief.client_id);
-      const recipients = users.filter((u) => u.role === teamLeadRole && isActiveEmployee(u));
-      for (const recipient of recipients) {
+      // One batched write for all of this department's active Team Leads (same ids/content as
+      // before; ignoreDuplicates = ON CONFLICT DO NOTHING, so no 23505 on a re-submit).
+      const rows = users
+        .filter((u) => u.role === teamLeadRole && isActiveEmployee(u))
+        .map((recipient) => ({
+          id: `notif-brief-submitted-${briefId}-${recipient.id}`,
+          user_id: recipient.id,
+          sender_id: currentUser.id,
+          title: 'Service Brief Submitted',
+          message: `The ${SERVICE_LABELS[brief.service_type] || brief.service_type} brief for ${
+            client?.name || 'a client'
+          } has been submitted and is ready for review.`,
+          type: 'general',
+          is_read: false,
+          link_url: 'module:service_briefs',
+          created_at: submittedAt,
+        }));
+      if (rows.length > 0) {
         try {
-          const { error } = await supabaseRaw.from('notifications').insert({
-            id: `notif-brief-submitted-${briefId}-${recipient.id}`,
-            user_id: recipient.id,
-            sender_id: currentUser.id,
-            title: 'Service Brief Submitted',
-            message: `The ${SERVICE_LABELS[brief.service_type] || brief.service_type} brief for ${
-              client?.name || 'a client'
-            } has been submitted and is ready for review.`,
-            type: 'general',
-            is_read: false,
-            link_url: 'module:service_briefs',
-            created_at: submittedAt,
-          });
-          if (error && error.code !== '23505') throw error;
+          const { error } = await supabaseRaw
+            .from('notifications')
+            .upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+          if (error) throw error;
         } catch (err) {
-          console.error('Failed to create brief submission notification:', err);
+          console.error('Failed to create brief submission notifications:', err);
         }
       }
     }
