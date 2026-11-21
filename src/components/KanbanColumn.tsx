@@ -34,6 +34,10 @@ interface KanbanColumnProps {
   // Manual drag-and-drop reorder within this column (2026-11-02) — see KanbanTaskCard.tsx's own
   // comment for why this is separate from the always-on status-change drag.
   canReorder?: boolean;
+  // Optional extra control rendered under this column's header — currently only the Closed
+  // column's date range picker (CrossTeamTaskBoard), since that's the one column whose backing
+  // data is windowed rather than loaded in full. Any other column passes nothing.
+  headerExtra?: React.ReactNode;
 }
 
 // A useDroppable-backed column. Extracted into its own component (rather
@@ -61,6 +65,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onToggleTaskSelection,
   onToggleColumnSelection,
   canReorder,
+  headerExtra,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const columnRef = React.useRef<HTMLDivElement | null>(null);
@@ -156,6 +161,8 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
           {tasks.length}
         </span>
       </div>
+
+      {headerExtra && <div className="pt-2 pb-1 border-b border-stone-800/60">{headerExtra}</div>}
 
       {/* Column Task Cards */}
       <div className="space-y-3 flex-1 overflow-y-auto max-h-[750px] pr-0.5">

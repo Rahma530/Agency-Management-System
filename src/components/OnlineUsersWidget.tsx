@@ -9,9 +9,21 @@ interface OnlineUsersWidgetProps {
   tasks: TaskRecord[];
   clients: ClientRecord[];
   onlineUserIds: string[];
+  // `tasks` only carries each employee's own CLOSED tasks from App.tsx's recent default window
+  // (see fetchTasksWindowed in lib/supabase.ts) — EmployeeProfileModal's "Completed" count reads
+  // every closed task ever (isTaskDone), not just recent ones, so this backfills that one
+  // employee's full closed-task history (bounded by user, not date — small and safe) the moment
+  // their profile is opened. Optional so this widget still renders without it.
+  onEnsureUserDeliveredTasksLoaded?: (userId: string) => Promise<void>;
 }
 
-export const OnlineUsersWidget: React.FC<OnlineUsersWidgetProps> = ({ users, tasks, clients, onlineUserIds }) => {
+export const OnlineUsersWidget: React.FC<OnlineUsersWidgetProps> = ({
+  users,
+  tasks,
+  clients,
+  onlineUserIds,
+  onEnsureUserDeliveredTasksLoaded,
+}) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<UserRecord | null>(null);
   const onlineUsers = users.filter((u) => onlineUserIds.includes(u.id));
@@ -58,7 +70,10 @@ export const OnlineUsersWidget: React.FC<OnlineUsersWidgetProps> = ({ users, tas
           {onlineUsers.map(user => (
             <div 
               key={user.id} 
-              onClick={() => setSelectedEmployee(user)}
+              onClick={() => {
+                setSelectedEmployee(user);
+                void onEnsureUserDeliveredTasksLoaded?.(user.id);
+              }}
               className="flex gap-4 p-4 rounded-xl border border-white/5 transition-all hover:bg-white/5 hover:border-purple-500/30 group cursor-pointer" 
               style={{ background: 'rgba(28, 22, 38, 0.4)' }}
             >
