@@ -1472,6 +1472,86 @@ export async function fetchRowsInRange<T>(
   return { data: allRows, error: null };
 }
 
+// tasks-specific initial load: every task that is still open (any status other than 'closed',
+// no date bound — these are the live working set App.tsx/CrossTeamTaskBoard need in full) PLUS
+// closed tasks whose completed_at falls on/after sinceIso. 'closed' is the one status that only
+// ever accumulates (a task never leaves it), so it's the only part of this table that keeps
+// growing every day independent of current headcount/usage -- same reasoning as fetchRowsSince
+// above, narrowed to just that one status instead of the whole table. Closed tasks older than
+// sinceIso are fetched on demand instead, via fetchClosedTasksInRange below (see
+// CrossTeamTaskBoard's Closed-column date range control).
+export async function fetchTasksWindowed<T>(
+  client: SupabaseClient,
+  sinceIso: string,
+  select: string = '*',
+  orderColumns: string[] = ['id']
+): Promise<{ data: T[] | null; error: { message?: string } | null }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let query = client
+      .from('tasks')
+      .select(select)
+      .or(`status.neq.closed,completed_at.gte.${sinceIso}`);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+
+    if (error) return { data: null, error };
+
+    const rows = (data as T[] | null) || [];
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
+// On-demand backfill for fetchTasksWindowed above: closed tasks whose completed_at falls within
+// an explicit [fromIso, toIso] range the user picked (CrossTeamTaskBoard's Closed-column date
+// range control) -- not another full-table fetch. Both bounds inclusive, 'YYYY-MM-DD'.
+export async function fetchClosedTasksInRange<T>(
+  client: SupabaseClient,
+  fromIso: string,
+  toIso: string,
+  select: string = '*',
+  orderColumns: string[] = ['id']
+): Promise<{ data: T[] | null; error: { message?: string } | null }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let query = client
+      .from('tasks')
+      .select(select)
+      .eq('status', 'closed')
+      .gte('completed_at', fromIso)
+      .lte('completed_at', toIso);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+
+    if (error) return { data: null, error };
+
+    const rows = (data as T[] | null) || [];
+    allRows.push(...rows);
+
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
 // Dev-only: expose supabase globally for browser verification and direct security testing
 if (viteEnv.DEV && typeof window !== 'undefined') {
   (window as any).supabase = supabase;

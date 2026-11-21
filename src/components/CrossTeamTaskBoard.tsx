@@ -247,6 +247,15 @@ interface CrossTeamTaskBoardProps {
   // in App.tsx for the Brief Repository — passed through here unchanged, not re-fetched.
   briefs: BriefRecord[];
   briefFieldSchemas: Record<ServiceType, BriefFieldDef[]>;
+  // Closed column date range (2026-11-21, performance): `tasks` from App.tsx only ever carries
+  // CLOSED tasks from the last closedTasksDefaultWindowDays days by default — the Closed column
+  // only ever grows (a task never leaves it), so loading every closed task ever on every login
+  // was an unbounded, ever-worsening cost. onLoadClosedTasksInRange fetches closed tasks for an
+  // explicit [fromIso, toIso] the user picks here and merges them into App.tsx's `tasks` state;
+  // optional so this component still renders (just can't widen the Closed column's range) if a
+  // caller doesn't pass it.
+  onLoadClosedTasksInRange?: (fromIso: string, toIso: string) => Promise<void>;
+  closedTasksDefaultWindowDays?: number;
 }
 
 // Which brief(s) an assignee's role points to, per the owner's explicit decision (2026-11-07,
@@ -556,9 +565,33 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   inhouseOnly = false,
   briefs,
   briefFieldSchemas,
+  onLoadClosedTasksInRange,
+  closedTasksDefaultWindowDays,
 }) => {
   // View mode: Kanban board vs Table view
   const [viewMode, setViewMode] = useState<TaskViewMode>('kanban');
+
+  // Closed column date range (2026-11-21, performance) — `tasks` only arrives with the Closed
+  // column's default recent window already loaded (App.tsx); these two fields are purely the
+  // picker's own draft values, applied via onLoadClosedTasksInRange on demand. Defaulting to
+  // closedTasksDefaultWindowDays keeps the picker's shown range in sync with what's actually
+  // already loaded, so opening the board never implies more history is visible than really is.
+  const todayStrForClosedRange = useMemo(() => getTodayStr(), []);
+  const [closedRangeFrom, setClosedRangeFrom] = useState(
+    addReportDays(todayStrForClosedRange, -(closedTasksDefaultWindowDays || 10))
+  );
+  const [closedRangeTo, setClosedRangeTo] = useState(todayStrForClosedRange);
+  const [closedRangeLoading, setClosedRangeLoading] = useState(false);
+  const handleApplyClosedRange = async () => {
+    if (!onLoadClosedTasksInRange || closedRangeLoading) return;
+    if (closedRangeFrom > closedRangeTo) return;
+    setClosedRangeLoading(true);
+    try {
+      await onLoadClosedTasksInRange(closedRangeFrom, closedRangeTo);
+    } finally {
+      setClosedRangeLoading(false);
+    }
+  };
 
   // Filters
   const [quickFilter, setQuickFilter] = useState<QuickTaskFilter>('all');
@@ -2954,6 +2987,38 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
                   onToggleTaskSelection={toggleTaskSelection}
                   canReorder={canReorderTasks}
                   onToggleColumnSelection={toggleColumnSelection}
+                  headerExtra={
+                    column.id === 'closed' && onLoadClosedTasksInRange ? (
+                      <div className="flex items-center gap-1.5 text-[11px]" dir="ltr">
+                        <input
+                          type="date"
+                          value={closedRangeFrom}
+                          onChange={(e) => setClosedRangeFrom(e.target.value)}
+                          max={closedRangeTo}
+                          className="bg-transparent border border-stone-700 rounded px-1 py-0.5 text-stone-300 w-[108px]"
+                          aria-label="Closed tasks range start"
+                        />
+                        <span className="text-stone-500">–</span>
+                        <input
+                          type="date"
+                          value={closedRangeTo}
+                          onChange={(e) => setClosedRangeTo(e.target.value)}
+                          min={closedRangeFrom}
+                          max={todayStrForClosedRange}
+                          className="bg-transparent border border-stone-700 rounded px-1 py-0.5 text-stone-300 w-[108px]"
+                          aria-label="Closed tasks range end"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleApplyClosedRange}
+                          disabled={closedRangeLoading}
+                          className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 disabled:opacity-50"
+                        >
+                          {closedRangeLoading ? '...' : 'Load'}
+                        </button>
+                      </div>
+                    ) : undefined
+                  }
                 />
               );
             })}

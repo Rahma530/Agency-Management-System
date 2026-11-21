@@ -42,6 +42,8 @@ import {
   fetchAllRows,
   fetchRowsSince,
   fetchRowsInRange,
+  fetchTasksWindowed,
+  fetchClosedTasksInRange,
 } from './lib/supabase';
 import { canRegisterClient, canUseEmployeeTestingMode, canImpersonateEmployees, isActiveEmployee, canAccessClientOnboarding } from './lib/permissions';
 import { isInhouseClient, isInhouseTask } from './lib/clientStatus';
@@ -232,6 +234,13 @@ export type AppModule = AppModuleId;
 // nothing a report or the activity log depends on is silently missing, it's just not pulled until
 // something actually asks for it.
 const RECENT_DATA_WINDOW_DAYS = 60;
+
+// Default window for CLOSED tasks only (see fetchTasksWindowed in lib/supabase.ts) — every
+// non-closed task is still loaded in full regardless of date, this only bounds the
+// ever-accumulating Closed column. 10 days, not RECENT_DATA_WINDOW_DAYS's 60: the Closed column
+// is a recent-activity view by nature (Task Board, not a report), and CrossTeamTaskBoard's own
+// date range control lets anyone widen it on demand.
+const CLOSED_TASKS_DEFAULT_WINDOW_DAYS = 10;
 
 function isoDateDaysAgo(days: number): string {
   const d = new Date();
@@ -676,6 +685,11 @@ export default function App() {
   const dailyLogsFullyLoadedRef = useRef(false);
   const extraNotesWindowStartRef = useRef<string>('');
   const extraNotesFullyLoadedRef = useRef(false);
+  // Same *WindowStartRef scheme, for the Closed task-board column only (see
+  // fetchTasksWindowed/fetchClosedTasksInRange in lib/supabase.ts and ensureClosedTasksInRange
+  // below) — holds the earliest 'completed_at' date currently covered for CLOSED tasks in state.
+  // Non-closed tasks have no window; they're always loaded in full.
+  const closedTasksWindowStartRef = useRef<string>('');
   // Same scheme, keyed by task_id instead of a date (task_comments/task_attachments have no date
   // column to window by): holds every task_id whose comments/attachments are currently covered in
   // state — the still-open tasks loadData() bulk-loads at login, plus any task an ensure*Loaded
@@ -2106,13 +2120,85 @@ export default function App() {
     // .select('*') here silently dropped every row past that cutoff — see fetchAllRows's own
     // comment in supabase.ts). Newer tasks, being the ones most likely to land past row 1000, were
     // the ones most likely to silently vanish from the board.
-    const { data, error } = await fetchAllRows<TaskRecord>(supabaseRaw, 'tasks');
+    //
+    // Windowed the same way loadData() below loads initially (every open task, plus closed tasks
+    // whose completed_at is on/after closedTasksWindowStartRef.current) rather than every closed
+    // task ever — this is the realtime/poll-fallback refresh path, so it must not silently widen
+    // back out to the full table (and re-trigger task_visible_v2 over every historical closed
+    // task) on every tick. Falls back to the default window if loadData() hasn't set the ref yet.
+    const sinceIso = closedTasksWindowStartRef.current || isoDateDaysAgo(CLOSED_TASKS_DEFAULT_WINDOW_DAYS);
+    const { data, error } = await fetchTasksWindowed<TaskRecord>(supabaseRaw, sinceIso);
     if (error) {
       console.error('Failed to refresh tasks from Supabase:', error);
       return;
     }
 
     setTasks(data || []);
+  }, []);
+
+  // On-demand backfill for CLOSED tasks only (see fetchTasksWindowed's own comment above and
+  // CrossTeamTaskBoard's Closed-column date range control) — fetches exactly the
+  // [fromIso, toIso] range requested and merges it into state rather than replacing it, so an
+  // already-loaded open task or a previously-backfilled closed task is never dropped. Moves
+  // closedTasksWindowStartRef back to fromIso when it's earlier than what's already covered, so a
+  // later refreshTasks()/realtime poll keeps covering this range too instead of narrowing back.
+  const ensureClosedTasksInRange = useCallback(async (fromIso: string, toIso: string): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    const { data, error } = await fetchClosedTasksInRange<TaskRecord>(supabaseRaw, fromIso, toIso);
+    if (error) {
+      console.error('Failed to load closed tasks for the selected range:', error);
+      return;
+    }
+    const fetched = data || [];
+    setTasks((current) => {
+      const byId = new Map(current.map((t) => [t.id, t]));
+      for (const task of fetched) byId.set(task.id, task);
+      return Array.from(byId.values());
+    });
+    if (!closedTasksWindowStartRef.current || fromIso < closedTasksWindowStartRef.current) {
+      closedTasksWindowStartRef.current = fromIso;
+    }
+  }, []);
+
+  // Second on-demand backfill for CLOSED tasks, scoped by ASSIGNEE instead of date: a few views
+  // (EmployeeProfileModal's/CapacityManagement's drilldown "Delivered/Completed tasks" count)
+  // read isTaskDone() — completed OR closed — for one specific employee's lifetime history, not
+  // a recent window. Bounding that by a user instead of a date is safe regardless of how far back
+  // it goes, since it's inherently small (one person's own closed tasks), unlike the whole
+  // company's Closed column. Merges into the same `tasks` state as ensureClosedTasksInRange above
+  // (never replaces it), so neither view needs its own separate copy of task data.
+  const ensureClosedTasksForUser = useCallback(async (userId: string): Promise<void> => {
+    if (!isSupabaseConfigured() || !userId) return;
+    try {
+      const [assigneeRowsRes, directRes] = await Promise.all([
+        supabaseRaw.from('task_assignees').select('task_id').eq('user_id', userId),
+        supabaseRaw.from('tasks').select('*').eq('status', 'closed').eq('assigned_to', userId),
+      ]);
+      if (assigneeRowsRes.error) throw assigneeRowsRes.error;
+      if (directRes.error) throw directRes.error;
+
+      const viaAssigneeTaskIds = (assigneeRowsRes.data || []).map((r: { task_id: string }) => r.task_id);
+      let viaAssignee: TaskRecord[] = [];
+      if (viaAssigneeTaskIds.length > 0) {
+        const { data: viaAssigneeData, error: viaAssigneeErr } = await supabaseRaw
+          .from('tasks')
+          .select('*')
+          .eq('status', 'closed')
+          .in('id', viaAssigneeTaskIds);
+        if (viaAssigneeErr) throw viaAssigneeErr;
+        viaAssignee = (viaAssigneeData as TaskRecord[]) || [];
+      }
+
+      const fetched = [...((directRes.data as TaskRecord[]) || []), ...viaAssignee];
+      if (fetched.length === 0) return;
+      setTasks((current) => {
+        const byId = new Map(current.map((t) => [t.id, t]));
+        for (const task of fetched) byId.set(task.id, task);
+        return Array.from(byId.values());
+      });
+    } catch (err) {
+      console.error('Failed to backfill this employee\'s closed tasks from Supabase:', err);
+    }
   }, []);
 
   // On-demand backfill for daily_logs: called by ReportsHub whenever it needs a date older than
@@ -3727,17 +3813,22 @@ export default function App() {
           setBriefFieldSchemaRows(briefFieldSchemaData as BriefFieldSchemaRow[]);
         }
 
-        // Fetch tasks — paginated: tasks has already grown past Supabase's 1000-row-per-request
-        // default (a bare .select('*') here silently dropped every row past that cutoff — see
-        // fetchAllRows's own comment in supabase.ts). Newer tasks, being the ones most likely to
-        // land past row 1000, were the ones most likely to silently vanish from the board on
-        // initial load, independent of (and on top of) the realtime-sync bug fixed earlier.
-        const { data: taskData, error: taskErr } = await fetchAllRows<TaskRecord>(supabaseRaw, 'tasks');
+        // Fetch tasks — paginated (same 1000-row-per-page reasoning as fetchAllRows), and windowed:
+        // every OPEN task regardless of age (the live working set, never bounded by date) plus
+        // CLOSED tasks only from the last CLOSED_TASKS_DEFAULT_WINDOW_DAYS days. 'closed' is the
+        // one status that only accumulates — a task never leaves it — so the Closed column on the
+        // Task Board was the one part of this table growing unbounded with every day the company
+        // operates, independent of headcount, and task_visible_v2 runs once per row returned. Older
+        // closed tasks are fetched on demand via ensureClosedTasksInRange (CrossTeamTaskBoard's
+        // Closed-column date range control), never silently dropped.
+        const closedTasksSinceIso = isoDateDaysAgo(CLOSED_TASKS_DEFAULT_WINDOW_DAYS);
+        const { data: taskData, error: taskErr } = await fetchTasksWindowed<TaskRecord>(supabaseRaw, closedTasksSinceIso);
         if (taskErr) {
           console.error('Failed to load tasks from Supabase:', taskErr);
           showNotification(`Failed to load tasks from the server: ${taskErr.message}`, 'info');
         } else {
           setTasks(taskData || []);
+          closedTasksWindowStartRef.current = closedTasksSinceIso;
         }
 
         // Multi-assignee membership is independent from tasks.assigned_to. The latter remains a
@@ -8315,7 +8406,13 @@ export default function App() {
 
             {/* Online Users Widget — hidden below md, not essential mobile nav */}
             <div className="hidden md:block">
-              <OnlineUsersWidget users={users} tasks={tasks} clients={clients} onlineUserIds={onlineUserIds} />
+              <OnlineUsersWidget
+                users={users}
+                tasks={tasks}
+                clients={clients}
+                onlineUserIds={onlineUserIds}
+                onEnsureUserDeliveredTasksLoaded={ensureClosedTasksForUser}
+              />
             </div>
 
             {/* Supabase Status Indicator — hidden below md, decorative connection info */}
@@ -9231,6 +9328,7 @@ export default function App() {
                   onLogCapacity={handleLogCapacity}
                   extraNotes={extraNotes}
                   onUpdateUserDailyTaskTarget={handleUpdateUserDailyTaskTarget}
+                  onEnsureUserDeliveredTasksLoaded={ensureClosedTasksForUser}
                 />
               </div>
             )}
@@ -9277,6 +9375,8 @@ export default function App() {
                   onCreateEditSubtask={handleCreateEditSubtask}
                   briefs={briefs}
                   briefFieldSchemas={briefFieldSchemas}
+                  onLoadClosedTasksInRange={ensureClosedTasksInRange}
+                  closedTasksDefaultWindowDays={CLOSED_TASKS_DEFAULT_WINDOW_DAYS}
                 />
               </div>
             )}
@@ -9359,6 +9459,8 @@ export default function App() {
                     onCreateEditSubtask={handleCreateEditSubtask}
                     briefs={briefs}
                     briefFieldSchemas={briefFieldSchemas}
+                    onLoadClosedTasksInRange={ensureClosedTasksInRange}
+                    closedTasksDefaultWindowDays={CLOSED_TASKS_DEFAULT_WINDOW_DAYS}
                   />
                 ) : (
                   <InhouseClientsPanel

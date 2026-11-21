@@ -66,6 +66,13 @@ interface CapacityManagementProps {
   // enforce that and the gate had to move partly into a trigger). Optional: absent, the Daily
   // Target column still renders, read-only.
   onUpdateUserDailyTaskTarget?: (userId: string, target: number | null) => Promise<void>;
+  // `tasks` only carries each employee's own CLOSED tasks from App.tsx's recent default window
+  // (see fetchTasksWindowed in lib/supabase.ts) — the drilldown's "Delivered tasks" list below
+  // reads isTaskDone() (completed OR closed) for one user's full history, not just recent ones,
+  // so this backfills that one employee's complete closed-task history (bounded by user, not
+  // date — small and safe) the moment the drilldown opens. Optional, same reasoning as
+  // OnlineUsersWidget's identical prop.
+  onEnsureUserDeliveredTasksLoaded?: (userId: string) => Promise<void>;
 }
 
 export type CapacityStatus = 'all' | 'available' | 'near_capacity' | 'over_capacity' | 'target_reached';
@@ -83,6 +90,7 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
   onLogCapacity,
   extraNotes = [],
   onUpdateUserDailyTaskTarget,
+  onEnsureUserDeliveredTasksLoaded,
 }) => {
   // View mode
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -1216,7 +1224,10 @@ export const CapacityManagement: React.FC<CapacityManagementProps> = ({
                         screen, rather than navigating away to the Tasks module (see
                         drilldownUserId's own comment for why). */}
                     <button
-                      onClick={() => setDrilldownUserId(item.user.id)}
+                      onClick={() => {
+                        setDrilldownUserId(item.user.id);
+                        void onEnsureUserDeliveredTasksLoaded?.(item.user.id);
+                      }}
                       className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-purple-200 bg-purple-900/30 hover:bg-purple-800/50 hover:text-white border border-purple-700/40 transition-all"
                     >
                       <span>View {item.user.name}'s Dashboard</span>
