@@ -6,10 +6,10 @@
 -- itself is deliberately left in place... It is now unreferenced by any [policy]." No migration
 -- since has re-added a call to it, and nothing in src/ calls it via .rpc(either) — every mention
 -- left in the frontend is a code comment describing the OLD behavior it used to have, not an
--- actual call. Safe to drop: `cascade` is a no-op here since nothing depends on it, but kept for
--- safety in case something was missed.
+-- actual call. Deliberately NO `cascade`: if anything unexpected did still depend on it, the drop
+-- fails loudly with an error instead of silently dropping that dependent object (e.g. a policy).
 begin;
 
-drop function if exists public.task_visible(text, text, text) cascade;
+drop function if exists public.task_visible(text, text, text);
 
 commit;
