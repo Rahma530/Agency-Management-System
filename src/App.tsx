@@ -350,6 +350,49 @@ function startVisibilityAwarePoll(callback: () => void, intervalMs: number): () 
   };
 }
 
+// Cap for startBackoffAwarePoll below — the longest this falls back to while the Realtime
+// channel stays unsubscribed.
+const MAX_FALLBACK_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
+// Same visibility-awareness/jitter as startVisibilityAwarePoll above, but the wait between ticks
+// doubles after every tick (capped at MAX_FALLBACK_POLL_INTERVAL_MS) instead of staying fixed.
+// Used ONLY for useConsolidatedRealtimeSync's own fallback below, which refetches every one of
+// its ~38 entries on each tick — exactly the kind of poll that must not keep firing at a fixed
+// 20s cadence through a prolonged outage. The real failure mode this guards against: the DB is
+// already under CPU pressure -> the Realtime channel drops/can't (re)subscribe -> every open tab
+// falls back to polling -> that polling itself adds more load -> the channel has even less
+// chance of coming back. Backing off breaks that loop instead of feeding it. The caller resets
+// this (by tearing it down and calling startBackoffAwarePoll fresh) once the channel reports
+// SUBSCRIBED again, so a healthy connection always goes back to starting at the base interval.
+function startBackoffAwarePoll(callback: () => void, baseIntervalMs: number): () => void {
+  let cancelled = false;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let currentDelay = baseIntervalMs;
+
+  const scheduleNext = () => {
+    timeoutId = setTimeout(tick, currentDelay);
+  };
+  const tick = () => {
+    if (cancelled) return;
+    if (!document.hidden) callback();
+    currentDelay = Math.min(currentDelay * 2, MAX_FALLBACK_POLL_INTERVAL_MS);
+    scheduleNext();
+  };
+  const jitterId = setTimeout(() => {
+    if (!cancelled) scheduleNext();
+  }, Math.random() * 4000);
+  const onVisible = () => {
+    if (!document.hidden) callback();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    cancelled = true;
+    clearTimeout(jitterId);
+    if (timeoutId) clearTimeout(timeoutId);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
 interface RealtimeSyncEntry {
   table: string;
   refresh: () => Promise<void>;
@@ -411,7 +454,7 @@ function useConsolidatedRealtimeSync(entries: RealtimeSyncEntry[], enabled: bool
     let stopPolling: (() => void) | null = null;
     const startPolling = () => {
       if (stopPolling) return;
-      stopPolling = startVisibilityAwarePoll(() => {
+      stopPolling = startBackoffAwarePoll(() => {
         entries.forEach(({ table, refresh }) => invalidate(table, refresh));
       }, POLL_INTERVAL_MS);
     };
