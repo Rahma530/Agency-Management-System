@@ -4119,6 +4119,29 @@ export default function App() {
       const in7Days = new Date(now);
       in7Days.setDate(in7Days.getDate() + 7);
 
+      // Collect every (client, recipient) row across the whole scan first, then write it all in
+      // ONE request instead of one sequential awaited insert per recipient per client. Previously
+      // this ran up to clients.length * recipients.length one-row inserts back-to-back on every
+      // single login, by every logged-in user, and — since the id is deterministic precisely so a
+      // repeat run is a no-op — the overwhelming majority of those were guaranteed-duplicate
+      // (23505) after the first successful run for that renewal date. Confirmed (via Postgres
+      // Logs, 2026-11-21) as part of what was saturating the DB during the Thu-Sat peak: a flood
+      // of `duplicate key value violates unique constraint "notifications_pkey"` entries,
+      // milliseconds apart, exactly matching this loop's shape. upsert with ignoreDuplicates maps
+      // to `ON CONFLICT (id) DO NOTHING` — Postgres never raises the constraint violation at all,
+      // so this is not just fewer round-trips, it's zero wasted error-handling work per retry too.
+      const rows: {
+        id: string;
+        user_id: string;
+        sender_id: null;
+        title: string;
+        message: string;
+        type: string;
+        is_read: boolean;
+        link_url: null;
+        created_at: string;
+      }[] = [];
+
       for (const client of clients) {
         if (!client.renewal_date || client.status === 'closed') continue;
         const renewal = new Date(client.renewal_date);
@@ -4146,23 +4169,28 @@ export default function App() {
         });
 
         for (const recipient of recipients) {
-          try {
-            const { error } = await supabaseRaw.from('notifications').insert({
-              id: `notif-renewal-${client.id}-${client.renewal_date}-${recipient.id}`,
-              user_id: recipient.id,
-              sender_id: null,
-              title: 'Upcoming Client Renewal',
-              message: `${client.name}'s contract is due for renewal on ${client.renewal_date} (within 7 days).`,
-              type: 'general',
-              is_read: false,
-              link_url: null,
-              created_at: new Date().toISOString(),
-            });
-            if (error && error.code !== '23505') throw error;
-          } catch (err) {
-            console.error('Failed to create renewal alert notification:', err);
-          }
+          rows.push({
+            id: `notif-renewal-${client.id}-${client.renewal_date}-${recipient.id}`,
+            user_id: recipient.id,
+            sender_id: null,
+            title: 'Upcoming Client Renewal',
+            message: `${client.name}'s contract is due for renewal on ${client.renewal_date} (within 7 days).`,
+            type: 'general',
+            is_read: false,
+            link_url: null,
+            created_at: new Date().toISOString(),
+          });
         }
+      }
+
+      if (rows.length === 0) return;
+      try {
+        const { error } = await supabaseRaw
+          .from('notifications')
+          .upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to create renewal alert notifications:', err);
       }
     };
 
