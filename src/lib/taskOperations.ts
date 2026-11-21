@@ -20,6 +20,31 @@ export interface TaskDeletionPreview {
   attachmentCount: number;
 }
 
+// Every descendant pulled in by parent_task_id, plus the ids themselves — shared by
+// computeTaskDeletionPreview below (for its own subtree walk) and by the onEnsureTaskThreadsLoaded
+// callers in CrossTeamTaskBoard/DailyOperationsModule/MyWorkHub (so the on-demand comment/
+// attachment backfill triggered when the delete-preview modal opens covers subtasks too, not just
+// the directly-selected parent tasks — computeTaskDeletionPreview's own counts below are over this
+// same full subtree, not just the requested ids).
+export const collectTaskSubtreeIds = (taskIds: string[], tasks: TaskRecord[]): string[] => {
+  const childIdsByParent = new Map<string, string[]>();
+  tasks.forEach((t) => {
+    if (!t.parent_task_id) return;
+    childIdsByParent.set(t.parent_task_id, [...(childIdsByParent.get(t.parent_task_id) || []), t.id]);
+  });
+
+  const subtreeIds = new Set(taskIds);
+  const collectDescendants = (id: string) => {
+    for (const childId of childIdsByParent.get(id) || []) {
+      if (subtreeIds.has(childId)) continue;
+      subtreeIds.add(childId);
+      collectDescendants(childId);
+    }
+  };
+  taskIds.forEach(collectDescendants);
+  return [...subtreeIds];
+};
+
 // Pure, client-side mirror of delete_tasks()'s own subtree walk (20261113000000_task_hard_delete.sql)
 // — computed from state already held in memory (tasks/taskComments/taskAttachments), so the
 // confirm dialog can show "this will also remove N subtasks / N comments / N attachments" before
@@ -31,26 +56,12 @@ export const computeTaskDeletionPreview = (
   taskComments: TaskCommentRecord[],
   taskAttachments: TaskAttachmentRecord[]
 ): TaskDeletionPreview => {
-  const childIdsByParent = new Map<string, string[]>();
-  tasks.forEach((t) => {
-    if (!t.parent_task_id) return;
-    childIdsByParent.set(t.parent_task_id, [...(childIdsByParent.get(t.parent_task_id) || []), t.id]);
-  });
-
-  const requestedIds = new Set(taskIds);
-  const subtreeIds = new Set(taskIds);
-  const collectDescendants = (id: string) => {
-    for (const childId of childIdsByParent.get(id) || []) {
-      if (subtreeIds.has(childId)) continue;
-      subtreeIds.add(childId);
-      collectDescendants(childId);
-    }
-  };
-  requestedIds.forEach(collectDescendants);
+  const subtreeIds = new Set(collectTaskSubtreeIds(taskIds, tasks));
+  const requestedCount = new Set(taskIds).size;
 
   return {
     subtreeTaskIds: [...subtreeIds],
-    subtaskCount: subtreeIds.size - requestedIds.size,
+    subtaskCount: subtreeIds.size - requestedCount,
     commentCount: taskComments.filter((c) => subtreeIds.has(c.task_id)).length,
     attachmentCount: taskAttachments.filter((a) => subtreeIds.has(a.task_id)).length,
   };

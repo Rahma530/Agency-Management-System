@@ -633,6 +633,14 @@ export default function App() {
   const dailyLogsFullyLoadedRef = useRef(false);
   const extraNotesWindowStartRef = useRef<string>('');
   const extraNotesFullyLoadedRef = useRef(false);
+  // Same scheme, keyed by task_id instead of a date (task_comments/task_attachments have no date
+  // column to window by): holds every task_id whose comments/attachments are currently covered in
+  // state — the still-open tasks loadData() bulk-loads at login, plus any task an ensure*Loaded
+  // call below has since backfilled on demand. See loadData()'s own comment on why this exists:
+  // task_comments/task_attachments' RLS select policy runs task_visible_v2() once per row, so an
+  // unconditional full-table select here ran that check against every comment ever written, on
+  // every login, by every employee — the confirmed driver of the recurring Thu-Sat CPU saturation.
+  const loadedTaskThreadIdsRef = useRef<Set<string>>(new Set());
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
   const [socialInsights, setSocialInsights] = useState<SocialInsightRecord[]>([]);
@@ -2125,6 +2133,80 @@ export default function App() {
     extraNotesWindowStartRef.current = sinceIso;
   }, []);
 
+  // On-demand backfill for ONE task's comments/attachments — the task_id-keyed counterpart to the
+  // date-keyed ensure*Since helpers above. loadData() only bulk-loads threads for tasks still open
+  // (see its own comment); this fills in a single closed/archived task's thread the moment its
+  // details are actually opened, instead of never loading it at all. A `.eq('task_id', ...)` select
+  // is exactly the "already narrowed to a known small, bounded set" case fetchAllRows's own comment
+  // says doesn't need pagination. Marks the id as loaded BEFORE the request resolves, so a double
+  // click while the fetch is in flight can't fire it twice; merges by id rather than replacing
+  // state outright, so it never clobbers a comment/attachment a live Realtime event already applied.
+  const ensureTaskThreadLoaded = useCallback(async (taskId: string): Promise<void> => {
+    if (!taskId || !isSupabaseConfigured() || loadedTaskThreadIdsRef.current.has(taskId)) return;
+    loadedTaskThreadIdsRef.current.add(taskId);
+
+    const [commentsResult, attachmentsResult] = await Promise.all([
+      supabase.from('task_comments').select('*').eq('task_id', taskId),
+      supabase.from('task_attachments').select('*').eq('task_id', taskId),
+    ]);
+
+    if (commentsResult.error) {
+      console.error('Failed to load comments for task', taskId, commentsResult.error);
+    } else if (commentsResult.data) {
+      setTaskComments((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        const fresh = (commentsResult.data as TaskCommentRecord[]).filter((c) => !existingIds.has(c.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    }
+
+    if (attachmentsResult.error) {
+      console.error('Failed to load attachments for task', taskId, attachmentsResult.error);
+    } else if (attachmentsResult.data) {
+      setTaskAttachments((prev) => {
+        const existingIds = new Set(prev.map((a) => a.id));
+        const fresh = (attachmentsResult.data as TaskAttachmentRecord[]).filter((a) => !existingIds.has(a.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    }
+  }, []);
+
+  // Same idea, batched for a bulk-delete preview over several selected tasks at once
+  // (computeTaskDeletionPreview needs every selected task's real comment/attachment counts) — only
+  // fetches the ids not already covered, in one round trip each for comments/attachments rather than
+  // one ensureTaskThreadLoaded call per task.
+  const ensureTaskThreadsLoaded = useCallback(async (taskIds: string[]): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    const missingIds = taskIds.filter((id) => id && !loadedTaskThreadIdsRef.current.has(id));
+    if (missingIds.length === 0) return;
+    missingIds.forEach((id) => loadedTaskThreadIdsRef.current.add(id));
+
+    const [commentsResult, attachmentsResult] = await Promise.all([
+      supabase.from('task_comments').select('*').in('task_id', missingIds),
+      supabase.from('task_attachments').select('*').in('task_id', missingIds),
+    ]);
+
+    if (commentsResult.error) {
+      console.error('Failed to load comments for selected tasks:', commentsResult.error);
+    } else if (commentsResult.data) {
+      setTaskComments((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        const fresh = (commentsResult.data as TaskCommentRecord[]).filter((c) => !existingIds.has(c.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    }
+
+    if (attachmentsResult.error) {
+      console.error('Failed to load attachments for selected tasks:', attachmentsResult.error);
+    } else if (attachmentsResult.data) {
+      setTaskAttachments((prev) => {
+        const existingIds = new Set(prev.map((a) => a.id));
+        const fresh = (attachmentsResult.data as TaskAttachmentRecord[]).filter((a) => !existingIds.has(a.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    }
+  }, []);
+
   // Targeted Realtime handler for 'tasks' (2026-11-03 — owner's report: at ~1000+ tasks and a
   // growing headcount, refreshTasks() above re-running for EVERY company-wide task change, on
   // EVERY other connected session, had become the main cause of the whole app feeling slow for a
@@ -2692,10 +2774,23 @@ export default function App() {
     [refreshPlatforms]
   );
 
+  // Scoped to loadedTaskThreadIdsRef (the still-open tasks loadData() bulk-loaded, plus anything
+  // ensureTaskThreadLoaded/ensureTaskThreadsLoaded has since backfilled on demand) rather than an
+  // unconditional full-table select — this is the poll-only fallback path (used only while the
+  // shared Realtime channel isn't SUBSCRIBED), and re-running task_comments' per-row
+  // task_visible_v2() RLS check against every comment the agency has ever written, on a timer, for
+  // every connected session, was the other half of the confirmed Thu-Sat CPU driver (the other half
+  // being loadData()'s own now-fixed unconditional fetch). An empty ref means nothing is loaded yet
+  // (before loadData() finishes) — skip the request rather than sending `.in('task_id', [])`.
   const refreshTaskComments = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
+    const ids = Array.from(loadedTaskThreadIdsRef.current);
+    if (ids.length === 0) {
+      setTaskComments([]);
+      return;
+    }
 
-    const { data, error } = await supabase.from('task_comments').select('*');
+    const { data, error } = await supabase.from('task_comments').select('*').in('task_id', ids);
     if (error) {
       console.error('Failed to refresh task comments from Supabase:', error);
       return;
@@ -2746,10 +2841,16 @@ export default function App() {
     [refreshTaskComments]
   );
 
+  // Same scoping change and reasoning as refreshTaskComments above, for task_attachments.
   const refreshTaskAttachments = useCallback(async (): Promise<void> => {
     if (!isSupabaseConfigured()) return;
+    const ids = Array.from(loadedTaskThreadIdsRef.current);
+    if (ids.length === 0) {
+      setTaskAttachments([]);
+      return;
+    }
 
-    const { data, error } = await supabase.from('task_attachments').select('*');
+    const { data, error } = await supabase.from('task_attachments').select('*').in('task_id', ids);
     if (error) {
       console.error('Failed to refresh task attachments from Supabase:', error);
       return;
@@ -3627,20 +3728,41 @@ export default function App() {
           setPlatforms(platformData as PlatformRecord[]);
         }
 
-        // Fetch task comments
-        const { data: taskCommentData, error: taskCommentErr } = await supabase
-          .from('task_comments')
-          .select('*');
-        if (!taskCommentErr && taskCommentData) {
-          setTaskComments(taskCommentData as TaskCommentRecord[]);
-        }
+        // Fetch task comments/attachments — windowed-load-plus-on-demand-backfill (see
+        // loadedTaskThreadIdsRef's own comment), keyed by task_id rather than a date column: only
+        // bulk-load threads for tasks still open (not completed/closed), the overwhelming majority
+        // of real comment/attachment activity. task_comments/task_attachments' RLS select policy
+        // runs task_visible_v2() once per row (20261104100000_task_visibility_cutover.sql), so an
+        // unconditional full-table select here ran that check against every comment/attachment the
+        // agency has EVER written, on every single login, by every employee — confirmed (via the
+        // Supabase Infrastructure page showing sustained 100% CPU on the Micro compute, recurring
+        // every Thu-Sat peak-usage window) as the main driver of that saturation. A closed/archived
+        // task's thread is backfilled on demand by ensureTaskThreadLoaded the moment its details are
+        // actually opened, instead of being loaded here regardless of whether anyone looks.
+        const activeTaskIds = (taskData || [])
+          .filter((t) => t.status !== 'completed' && t.status !== 'closed')
+          .map((t) => t.id);
+        loadedTaskThreadIdsRef.current = new Set(activeTaskIds);
 
-        // Fetch task attachment metadata (the files themselves stay in Storage)
-        const { data: taskAttachmentData, error: taskAttachmentErr } = await supabase
-          .from('task_attachments')
-          .select('*');
-        if (!taskAttachmentErr && taskAttachmentData) {
-          setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
+        if (activeTaskIds.length > 0) {
+          const { data: taskCommentData, error: taskCommentErr } = await supabase
+            .from('task_comments')
+            .select('*')
+            .in('task_id', activeTaskIds);
+          if (!taskCommentErr && taskCommentData) {
+            setTaskComments(taskCommentData as TaskCommentRecord[]);
+          }
+
+          const { data: taskAttachmentData, error: taskAttachmentErr } = await supabase
+            .from('task_attachments')
+            .select('*')
+            .in('task_id', activeTaskIds);
+          if (!taskAttachmentErr && taskAttachmentData) {
+            setTaskAttachments(taskAttachmentData as TaskAttachmentRecord[]);
+          }
+        } else {
+          setTaskComments([]);
+          setTaskAttachments([]);
         }
 
         // Fetch capacity_logs — windowed to the last RECENT_DATA_WINDOW_DAYS (see that constant's
@@ -8641,6 +8763,7 @@ export default function App() {
                   taskAssignees={taskAssignees}
                   taskComments={taskComments}
                   taskAttachments={taskAttachments}
+                  onEnsureTaskThreadsLoaded={ensureTaskThreadsLoaded}
                   dailyLogs={dailyLogs}
                   dailyLogAttachments={dailyLogAttachments}
                   users={users}
@@ -9058,6 +9181,8 @@ export default function App() {
                   taskAttachments={taskAttachments}
                   onUploadTaskAttachment={handleUploadTaskAttachment}
                   onDeleteTaskAttachment={handleDeleteTaskAttachment}
+                  onEnsureTaskThreadLoaded={ensureTaskThreadLoaded}
+                  onEnsureTaskThreadsLoaded={ensureTaskThreadsLoaded}
                   onGetCapacitySnapshot={getCapacitySnapshot}
                   onGetUserScheduleLoad={getUserScheduleLoad}
                   onGetServerToday={getServerToday}
@@ -9138,6 +9263,8 @@ export default function App() {
                     taskAttachments={taskAttachments}
                     onUploadTaskAttachment={handleUploadTaskAttachment}
                     onDeleteTaskAttachment={handleDeleteTaskAttachment}
+                    onEnsureTaskThreadLoaded={ensureTaskThreadLoaded}
+                    onEnsureTaskThreadsLoaded={ensureTaskThreadsLoaded}
                     onGetCapacitySnapshot={getCapacitySnapshot}
                     onGetUserScheduleLoad={getUserScheduleLoad}
                     onGetServerToday={getServerToday}
@@ -9170,6 +9297,8 @@ export default function App() {
                   taskDeliveryEvents={taskDeliveryEvents}
                   taskAttachments={taskAttachments}
                   taskComments={taskComments}
+                  onEnsureTaskThreadLoaded={ensureTaskThreadLoaded}
+                  onEnsureTaskThreadsLoaded={ensureTaskThreadsLoaded}
                   users={users}
                   taskDirectoryUsers={taskDirectoryUsers}
                   clients={clients}
