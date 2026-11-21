@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { DashboardTab } from './ClientDashboard';
 import {
   Building2,
@@ -40,7 +40,7 @@ import { getTodayStr, isTaskDueToday, isTaskOverdueForAssignee, getSortedEmploye
 import { TASK_STATUS_ORDER, isTaskDone, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { resolveDepartmentClients, resolveComparisonPeriods } from '../lib/reportingEngine';
 import { canSeeContractValue, canAccessClientOnboarding, canHardDeleteTasks } from '../lib/permissions';
-import { computeTaskDeletionPreview, StagedTaskAttachment } from '../lib/taskOperations';
+import { computeTaskDeletionPreview, collectTaskSubtreeIds, StagedTaskAttachment } from '../lib/taskOperations';
 import { TaskAttachmentPicker } from './TaskAttachmentPicker';
 import { DailyLogAttachmentsList } from './DailyLogAttachmentsList';
 import { CLIENT_STATUS_META } from '../lib/clientStatus';
@@ -64,6 +64,11 @@ interface MyWorkHubProps {
   // same already-RLS-scoped App.tsx state CrossTeamTaskBoard.tsx uses for the exact same purpose.
   taskComments?: TaskCommentRecord[];
   taskAttachments?: TaskAttachmentRecord[];
+  // App.tsx now only bulk-loads comments/attachments for still-open tasks (see its own comment on
+  // loadedTaskThreadIdsRef) — called with the selected task ids right before the delete-preview
+  // modal needs real counts for them, so a closed/archived task among the selection still shows its
+  // actual comment/attachment count instead of 0.
+  onEnsureTaskThreadsLoaded?: (taskIds: string[]) => void;
   dailyLogs: DailyLogRecord[];
   // Optional: a parent that doesn't pass these simply never shows the attachment picker/list on
   // the daily log form (same optional-prop convention as onUpdateExtraNote/onDeleteExtraNote
@@ -178,6 +183,7 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   taskAssignees = [],
   taskComments = [],
   taskAttachments = [],
+  onEnsureTaskThreadsLoaded,
   dailyLogs,
   dailyLogAttachments = [],
   users = [],
@@ -209,6 +215,15 @@ export const MyWorkHub: React.FC<MyWorkHubProps> = ({
   const [deleteModalTaskIds, setDeleteModalTaskIds] = useState<string[] | null>(null);
   const [isDeletingTasks, setIsDeletingTasks] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // computeTaskDeletionPreview below needs real comment/attachment counts for the FULL subtree
+  // (selected tasks plus their subtasks, same walk computeTaskDeletionPreview itself does) — back-
+  // fill any of them App.tsx didn't already bulk-load (a closed/archived task or subtask).
+  useEffect(() => {
+    if (deleteModalTaskIds && deleteModalTaskIds.length > 0) {
+      onEnsureTaskThreadsLoaded?.(collectTaskSubtreeIds(deleteModalTaskIds, tasks));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteModalTaskIds, onEnsureTaskThreadsLoaded]);
   const handleConfirmDeleteTasks = async () => {
     if (!deleteModalTaskIds || !onHardDeleteTasks) return;
     setIsDeletingTasks(true);

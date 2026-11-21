@@ -54,7 +54,7 @@ import { isActiveEmployee, canHardDeleteTasks } from '../lib/permissions';
 import { TEAM_LEAD_ROLES, resolveDailyWorkCapacityLimit } from '../lib/capacity';
 import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, parseDoneLinks, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
-import { computeTaskDeletionPreview, StagedTaskAttachment } from '../lib/taskOperations';
+import { computeTaskDeletionPreview, collectTaskSubtreeIds, StagedTaskAttachment } from '../lib/taskOperations';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
@@ -78,6 +78,12 @@ interface DailyOperationsModuleProps {
   // Only read for computeTaskDeletionPreview's own count below (Task Delete confirm modal) —
   // same already-RLS-scoped App.tsx state CrossTeamTaskBoard.tsx uses for the exact same purpose.
   taskComments?: TaskCommentRecord[];
+  // App.tsx now only bulk-loads comments/attachments for still-open tasks (see its own comment on
+  // loadedTaskThreadIdsRef) — called the moment a task's Details modal opens, and again with the
+  // whole selection right before the bulk-delete preview needs real counts, so a closed/archived
+  // task still shows its actual thread/count instead of nothing or 0.
+  onEnsureTaskThreadLoaded?: (taskId: string) => void;
+  onEnsureTaskThreadsLoaded?: (taskIds: string[]) => void;
   users: UserRecord[];
   taskDirectoryUsers: UserRecord[];
   clients: ClientRecord[];
@@ -136,6 +142,8 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   taskDeliveryEvents = [],
   taskAttachments = [],
   taskComments = [],
+  onEnsureTaskThreadLoaded,
+  onEnsureTaskThreadsLoaded,
   users,
   taskDirectoryUsers,
   clients,
@@ -194,6 +202,24 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   const [deleteModalTaskIds, setDeleteModalTaskIds] = useState<string[] | null>(null);
   const [isDeletingTasks, setIsDeletingTasks] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // computeTaskDeletionPreview below needs real comment/attachment counts for the FULL subtree
+  // (selected tasks plus their subtasks, same walk computeTaskDeletionPreview itself does) — back-
+  // fill any of them App.tsx didn't already bulk-load (a closed/archived task or subtask).
+  useEffect(() => {
+    if (deleteModalTaskIds && deleteModalTaskIds.length > 0) {
+      onEnsureTaskThreadsLoaded?.(collectTaskSubtreeIds(deleteModalTaskIds, tasks));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteModalTaskIds, onEnsureTaskThreadsLoaded]);
+  // Back-fill a task's comments/attachments the moment its Details modal opens — App.tsx only
+  // bulk-loads threads for still-open tasks (see loadedTaskThreadIdsRef's own comment), so a
+  // closed/archived task's thread otherwise wouldn't be in state at all until this fires.
+  useEffect(() => {
+    if (selectedTaskDetails?.id) {
+      onEnsureTaskThreadLoaded?.(selectedTaskDetails.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTaskDetails?.id]);
   const handleConfirmDeleteTasks = async () => {
     if (!deleteModalTaskIds || !onHardDeleteTasks) return;
     setIsDeletingTasks(true);
