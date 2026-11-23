@@ -5017,17 +5017,25 @@ export default function App() {
         throw err;
       }
     } else {
-      const updatePayload: Partial<ClientRecord> = { status: newStatus };
-      if (options?.renewal_date) {
-        updatePayload.renewal_date = options.renewal_date;
-      }
-
+      // Goes through set_client_status (20270127000000_set_client_status_rpc.sql), not a direct
+      // clients UPDATE: clients_update_am_assignment_rls doesn't admit am_agent, so the direct
+      // UPDATE silently matched 0 rows for the assigned AM agent and the status never changed.
+      // The RPC applies the same role scope as close_client/reopen_client and validates the
+      // transition against the row's current DB status.
       try {
-        await updatePersistedClient(clientId, updatePayload);
+        if (!supabaseActive) throw new Error('Supabase is not configured; the client status was not updated.');
+        const { error } = await supabaseRaw.rpc('set_client_status', {
+          p_client_id: clientId,
+          p_new_status: newStatus,
+        });
+        if (error) throw error;
+        await refreshPersistedClient(clientId);
+        markSelfWrite('clients');
       } catch (err) {
         console.error('Supabase update client status error:', err);
-        showNotification('Unable to update this client status.', 'info');
-        return;
+        const detail = err instanceof Error ? err.message : (err as { message?: string })?.message;
+        showNotification(detail ? `Unable to update this client status: ${detail}` : 'Unable to update this client status.', 'info');
+        throw err;
       }
     }
 
