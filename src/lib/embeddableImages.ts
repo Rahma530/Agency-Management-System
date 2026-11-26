@@ -10,17 +10,37 @@
 // cap is simply left out of the returned map. Every caller treats "missing from the map" as "fall
 // back to a plain link," never as an error — nothing here can turn a working export into a broken
 // one.
-export const EMBEDDABLE_IMAGE_FORMATS: Record<string, 'JPEG' | 'PNG' | 'WEBP'> = {
+//
+// 2026-11-26 audit (owner-reported: "report images don't show, a long raw link shows instead"):
+// two real gaps in this allowlist, found by comparing it against what a task attachment is
+// actually allowed to BE (taskAttachmentValidation.ts's TASK_ATTACHMENT_ALLOWED_MIME_TYPES) —
+// GIF and SVG screenshots upload and attach to a task completely normally, but neither format was
+// in this map, so EVERY GIF/SVG attachment silently fell back to a link, 100% of the time, not
+// just occasionally. Both are added below. GIF/SVG are NOT added to jsPDF's own supported-format
+// set in pdfExport.ts (jsPDF's addImage has no SVG/GIF support) — see that file's own comment for
+// how the (currently unused/hidden) PDF export degrades gracefully for just those two formats
+// instead of either crashing or silently mislabeling a link as "View image" when no image was
+// actually drawn.
+export const EMBEDDABLE_IMAGE_FORMATS: Record<string, 'JPEG' | 'PNG' | 'WEBP' | 'GIF' | 'SVG'> = {
   'image/jpeg': 'JPEG',
   'image/jpg': 'JPEG',
   'image/png': 'PNG',
   'image/webp': 'WEBP',
+  'image/gif': 'GIF',
+  'image/svg+xml': 'SVG',
 };
 export const MAX_EMBEDDED_IMAGES = 30; // a generous ceiling against a pathologically image-heavy report
-export const MAX_EMBEDDED_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB — a photo this large still falls back to a link
+// 2026-11-26: raised from 8MB. Task attachments themselves are allowed up to 50MB
+// (TASK_ATTACHMENT_MAX_BYTES), so a real, un-shrunk phone-camera photo (routinely 8-20MB on a
+// modern phone) uploaded fine as a task attachment but was then silently dropped from every report
+// export — the single biggest real-world cause of "the report has no pictures" reports. 20MB
+// comfortably covers an ordinary photo/screenshot while still rejecting the rare pathological case
+// (and a genuinely 20MB+ "screenshot" is almost certainly the wrong file attached to the task in
+// the first place, not something a report should try to silently inline anyway).
+export const MAX_EMBEDDED_IMAGE_BYTES = 20 * 1024 * 1024; // 20MB
 
 export interface EmbeddedImageAsset {
-  format: 'JPEG' | 'PNG' | 'WEBP';
+  format: 'JPEG' | 'PNG' | 'WEBP' | 'GIF' | 'SVG';
   dataUrl: string;
   widthPx: number;
   heightPx: number;
