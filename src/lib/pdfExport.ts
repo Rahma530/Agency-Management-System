@@ -450,6 +450,16 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
   // If `imageAssets` (loadEmbeddableImages, above) resolved this exact link to an embeddable
   // image, the picture itself is drawn first — the link line underneath is kept either way, so
   // "open the original" still works even once the picture is visible on the page.
+  //
+  // 2026-11-26: embeddableImages.ts's format allowlist now also includes GIF/SVG (added to fix
+  // those two formats never being embeddable in the HTML export at all). jsPDF's own addImage()
+  // only understands JPEG/PNG/WEBP (checked against node_modules/jspdf's own image-compression
+  // module — there is no GIF/SVG decoder in it), so this set is jsPDF's own ceiling, independent
+  // of embeddableImages.ts's. A GIF/SVG asset is treated as "not drawable here" — same as any
+  // other unresolved link — rather than calling addImage with a format it cannot handle (which
+  // throws) or silently skipping the draw while still labeling the link "View image" below.
+  const JSPDF_DRAWABLE_FORMATS = new Set<EmbeddedImageAsset['format']>(['JPEG', 'PNG', 'WEBP']);
+
   function drawEmbeddedImage(asset: EmbeddedImageAsset, indent: number): void {
     const maxWidth = contentWidth - indent;
     const maxHeight = 220; // generous but bounded, so one photo can never eat a whole page
@@ -466,7 +476,8 @@ export function buildReportDoc(fontBundle: ArabicFontBundle, options: ReportPdfO
   function drawLinkLines(links: string[], indent = 0): void {
     const lineHeight = 14;
     links.forEach((link) => {
-      const asset = imageAssets?.get(link);
+      const resolved = imageAssets?.get(link);
+      const asset = resolved && JSPDF_DRAWABLE_FORMATS.has(resolved.format) ? resolved : undefined;
       if (asset) drawEmbeddedImage(asset, indent);
       // Printing the raw signed URL (often 150+ chars, with an embedded JWT token) as visible
       // text was confirmed confusing in practice (flagged directly by a real report reader) and

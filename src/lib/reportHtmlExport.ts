@@ -567,10 +567,15 @@ export async function buildStructuredClientReportHtml(options: StructuredClientR
   let badgeNumber = 0;
   const nextBadge = () => String(++badgeNumber).padStart(2, '0');
 
-  // Resolved ONCE across every body point in the report (sections' blocks + upcoming_work — the
-  // only two places a raw attachment link can appear in this shape; executive_summary/work_by_date
-  // are short AI-synthesized fields that in practice never carry one, but scanning them too is
-  // harmless and cheap, same reasoning buildIndividualReportHtml's own allUrls collection uses).
+  // Collected across every body point in the report: sections' blocks + upcoming_work (always
+  // rendered through renderBodyHtml/renderBodyItemHtml below, so a link there was always turned
+  // into "View image"/"View attachment") AND executive_summary/work_by_date, which — 2026-11-26
+  // audit fix — were scanned for links here (to populate imageAssets) but then rendered with a
+  // bare escapeHtml() further down, with no renderBodyItemHtml/renderPlainTextWithAttachments
+  // pass at all. That mismatch is exactly the bug the owner reported: a raw 150+ char signed URL
+  // printed as plain escaped text in the Executive Summary paragraph or a Work by Date row,
+  // instead of becoming a picture or a short "View attachment" link like everywhere else. Fixed
+  // below by routing both through renderPlainTextWithAttachments instead of escapeHtml directly.
   const allUrls = new Set<string>();
   report.sections.forEach((section) =>
     section.blocks.forEach((block) => block.body.forEach((item) => extractLinks(item).links.forEach((url) => allUrls.add(url))))
@@ -590,7 +595,7 @@ export async function buildStructuredClientReportHtml(options: StructuredClientR
     : '';
   const execSectionHtml = `<section class="kesra-section">
     <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Executive Summary</h2></div>
-    <p>${escapeHtml(report.executive_summary.paragraph)}</p>
+    ${renderPlainTextWithAttachments(report.executive_summary.paragraph, imageAssets)}
     ${kpisHtml}
     ${caveatHtml}
   </section>`;
@@ -611,7 +616,7 @@ export async function buildStructuredClientReportHtml(options: StructuredClientR
     ? `<section class="kesra-section">
         <div class="sec-head"><div class="kesra-badge">${nextBadge()}</div><h2>Work by Date</h2></div>
         <div class="tablewrap"><table><thead><tr><th>Date</th><th>Summary</th></tr></thead><tbody>${report.work_by_date
-          .map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.summary)}</td></tr>`)
+          .map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${renderPlainTextWithAttachments(row.summary, imageAssets)}</td></tr>`)
           .join('')}</tbody></table></div>
       </section>`
     : '';
