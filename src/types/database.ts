@@ -350,6 +350,39 @@ export interface ClientAccessFields {
 // outright for any client-linked task (a separate, more serious symptom of the same oversight).
 export const NON_SENSITIVE_CLIENT_COLUMNS =
   'id, name, sector, industry, company, client_contact_name, phone_number, website_or_social_link, services, other_services, status, sales_owner_id, am_agent_id, am_team_lead_id, contract_value, start_date, renewal_date, renewal_history_count, am_team_lead_viewed_at, churn_reason, churned_at, portal_slug, due_value, remaining_value, contract_duration_months, sales_brief, am_agent_assigned_at, profit_margin_pct, created_at, is_inhouse, sort_order, design_drive_link, renewal_value, am_renewal_registered_by' as const;
+// IMPORTANT: this is a STAFF-side allowlist only. It is a frontend convenience, not a security
+// boundary — Postgres RLS restricts which ROWS a session can see, never which COLUMNS, so any
+// query that reaches a `clients` row (via RLS) can request `select=*` and read every column on
+// it regardless of what the frontend asked for. Never use this constant, or any other `clients`
+// column list wider than PORTAL_CLIENT_FIELDS below, for a client-portal session. See
+// 20270128000000_portal_client_security_fix.sql.
+
+// 2026-11-26 security fix: the client portal used to read `clients` directly with
+// NON_SENSITIVE_CLIENT_COLUMNS above, which leaks commercially sensitive fields (contract_value,
+// due_value, remaining_value, renewal_value, profit_margin_pct, churn_reason, churned_at,
+// sales_brief, am_renewal_registered_by, etc.) to any client-portal session that bypasses the
+// frontend and queries the REST API directly. The portal-facing RLS policy
+// (clients_select_portal_rls) has been dropped entirely, so a client-portal session can no longer
+// read `public.clients` at all; it now goes through the `portal_get_client()` SECURITY DEFINER
+// RPC instead, whose return type is hard-coded to exactly this field list — see
+// src/ClientPortalApp.tsx and the migration above. Keep this list in sync with that function's
+// `returns table (...)` columns.
+export type PortalClientRecord = Pick<
+  ClientRecord,
+  | 'id'
+  | 'name'
+  | 'sector'
+  | 'industry'
+  | 'company'
+  | 'client_contact_name'
+  | 'phone_number'
+  | 'website_or_social_link'
+  | 'services'
+  | 'other_services'
+  | 'portal_slug'
+  | 'start_date'
+  | 'design_drive_link'
+>;
 
 // 3b. client_portal_users — the client-portal analog of `users`: one row per external client
 // login, parallel to (not merged with) the employee identity model. auth_id is null until the

@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import {
   BriefFieldDef,
   BriefFieldSchemaRow,
-  ClientRecord,
+  PortalClientRecord,
   BriefRecord,
   ClientComparisonRecord,
   ReportRecord,
@@ -16,7 +16,7 @@ import { groupBriefFieldSchemas } from '../../data/briefFieldSchemas';
 import { getClientServices } from '../../lib/clientServices';
 
 interface ClientPortalViewProps {
-  client: ClientRecord;
+  client: PortalClientRecord;
   onSignOut: () => void;
 }
 
