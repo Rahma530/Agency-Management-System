@@ -624,7 +624,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   // separate from the free-text search box above. Its option list depends on the Team filter
   // (see employeeFilterOptions below) — a real department selected there fetches that
   // department's roster via fetchAssignableEmployees(), same RPC the New/Edit Task modals use.
-  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>('all');
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
   // Platform filter — matches ANY selected platform (an empty selection means "no filter").
   const [selectedPlatformIds, setSelectedPlatformIds] = useState<string[]>([]);
   // Date sort — applied after all the filters above, never changes which tasks show, only their
@@ -1529,12 +1529,19 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
   }, [selectedTeam, teamFilterEmployees, noTeamSelectedFallbackOptions]);
 
   // Team changed out from under the current selection (or the filter just became disabled) —
-  // never leave a stale pick in place, mirroring newAssignedTo/editAssignedTo's reset effect.
+  // never leave a stale pick in place, mirroring newAssignedTo/editAssignedTo's reset effect. Only
+  // the picks that are no longer valid options are dropped, not the whole selection.
   useEffect(() => {
-    if (selectedAssigneeId === 'all') return;
-    if (employeeFilterDisabled || !employeeFilterOptions.some((u) => u.id === selectedAssigneeId)) {
-      setSelectedAssigneeId('all');
+    if (selectedAssigneeIds.length === 0) return;
+    if (employeeFilterDisabled) {
+      setSelectedAssigneeIds([]);
+      return;
     }
+    const validIds = new Set(employeeFilterOptions.map((u) => u.id));
+    setSelectedAssigneeIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
   }, [employeeFilterDisabled, employeeFilterOptions]);
 
   // Kanban Columns configuration. color already referenced a theme-aware token per status
@@ -1661,21 +1668,6 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     return topLevelTasks;
   }, [topLevelTasks, visibilityScope, currentUserId, currentUser, taskAssigneeIdsByTask, taskDirectoryUsers]);
 
-  // 2. DASHBOARD KPI METRICS (Exact 7 requested indicators):
-  // - Total Tasks
-  // - Completed
-  // - In Progress
-  // - Pending (To Do)
-  // - Overdue
-  // - Unassigned
-  // - Capacity utilization
-  const totalTasksCount = userVisibleTasks.length;
-  const completedTasksCount = userVisibleTasks.filter((t) => isTaskDone(t.status)).length;
-  const inProgressTasksCount = userVisibleTasks.filter((t) => t.status === 'in_progress').length;
-  const pendingTasksCount = userVisibleTasks.filter((t) => t.status === 'todo').length;
-  const overdueTasksCount = userVisibleTasks.filter(isOverdue).length;
-  const unassignedTasksCount = userVisibleTasks.filter((t) => (taskAssigneeIdsByTask.get(t.id) || []).length === 0).length;
-
   // Capacity utilization based on active operational users
   const capacityUtilization = useMemo(() => {
     const operational = users.filter((u) => u.capacity_limit && u.capacity_limit > 0);
@@ -1733,8 +1725,10 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       // Status filter
       if (selectedStatus !== 'all' && t.status !== selectedStatus) return false;
 
-      // Employee-name filter (role-scoped dropdown, distinct from the free-text search below)
-      if (selectedAssigneeId !== 'all' && !assigneeIds.includes(selectedAssigneeId)) return false;
+      // Employee-name filter (role-scoped dropdown, distinct from the free-text search below).
+      // Multi-select, same "matches ANY selected" semantics as the Platform filter below — an
+      // empty selection means "no filter".
+      if (selectedAssigneeIds.length > 0 && !assigneeIds.some((id) => selectedAssigneeIds.includes(id))) return false;
 
       // Platform filter — matches ANY selected platform (an empty selection means "no filter").
       if (selectedPlatformIds.length > 0) {
@@ -1765,7 +1759,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     selectedClient,
     selectedPriority,
     selectedStatus,
-    selectedAssigneeId,
+    selectedAssigneeIds,
     selectedPlatformIds,
     searchQuery,
     clients,
@@ -1775,6 +1769,26 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     currentUserId,
     todayStr,
   ]);
+
+  // 2. DASHBOARD KPI METRICS (Exact 7 requested indicators):
+  // - Total Tasks
+  // - Completed
+  // - In Progress
+  // - Pending (To Do)
+  // - Overdue
+  // - Unassigned
+  // - Capacity utilization
+  //
+  // Sourced from filteredTasks (every active filter applied — team/client/priority/status/
+  // assignee(s)/platform/search/quick filter/date), not userVisibleTasks, so picking e.g. two
+  // specific employees in the Employee filter shows the KPI cards for just those two, not the
+  // grand total across everyone the viewer can see (2026-11-26).
+  const totalTasksCount = filteredTasks.length;
+  const completedTasksCount = filteredTasks.filter((t) => isTaskDone(t.status)).length;
+  const inProgressTasksCount = filteredTasks.filter((t) => t.status === 'in_progress').length;
+  const pendingTasksCount = filteredTasks.filter((t) => t.status === 'todo').length;
+  const overdueTasksCount = filteredTasks.filter(isOverdue).length;
+  const unassignedTasksCount = filteredTasks.filter((t) => (taskAssigneeIdsByTask.get(t.id) || []).length === 0).length;
 
   // Resolves a task to the raw value its column sorts by (2026-11-02) — string | number | null,
   // never pre-formatted display text, so numeric/date columns sort numerically rather than
@@ -2324,7 +2338,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
     selectedClient === 'all' &&
     selectedPriority === 'all' &&
     selectedStatus === 'all' &&
-    selectedAssigneeId === 'all' &&
+    selectedAssigneeIds.length === 0 &&
     selectedPlatformIds.length === 0 &&
     !searchQuery.trim() &&
     !columnSort &&
@@ -2847,31 +2861,20 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
             </select>
           </div>
 
-          {/* Employee Filter — depends on the Team filter above (see employeeFilterOptions) */}
+          {/* Employee Filter — depends on the Team filter above (see employeeFilterOptions).
+              Multi-select (2026-11-26): pick several agents and every KPI card + the board below
+              reflect just their combined tasks, not the grand total across everyone. */}
           <div>
             <label className="text-[11px] font-semibold block mb-1 text-stone-400">Employee:</label>
-            {employeeFilterDisabled ? (
-              <select
-                disabled
-                value="all"
-                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/40 border border-stone-800 text-stone-500 cursor-not-allowed"
-              >
-                <option value="all">Select a team first</option>
-              </select>
-            ) : (
-              <select
-                value={selectedAssigneeId}
-                onChange={(e) => setSelectedAssigneeId(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-xl text-xs bg-stone-900/80 border border-stone-800 text-white focus:outline-none focus:border-purple-500"
-              >
-                <option value="all" className="bg-stone-900 text-white">All Employees</option>
-                {employeeFilterOptions.map((u) => (
-                  <option key={u.id} value={u.id} className="bg-stone-900 text-white">
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-            )}
+            <SearchableMultiSelect
+              options={employeeFilterOptions.map((u) => ({ id: u.id, label: u.name }))}
+              selectedIds={selectedAssigneeIds}
+              onChange={setSelectedAssigneeIds}
+              disabled={employeeFilterDisabled}
+              placeholder={employeeFilterDisabled ? 'Select a team first' : 'All Employees'}
+              searchPlaceholder="Search employees…"
+              emptyMessage="No employees available."
+            />
           </div>
 
           {/* Client Filter */}
