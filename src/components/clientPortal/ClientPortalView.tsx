@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Building2, LogOut, UserCheck, TrendingUp, FileText, ClipboardList } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Building2, LogOut, UserCheck, TrendingUp, FileText, ClipboardList, ListChecks } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import {
   BriefFieldDef,
@@ -10,10 +10,19 @@ import {
   ReportRecord,
   ServiceType,
 } from '../../types/database';
-import { ComparisonCard, FiledReportsList } from '../reporting/ComparisonDisplay';
+import { ComparisonCard, FiledReportsList, formatPeriodLabel } from '../reporting/ComparisonDisplay';
 import { BriefFieldsReadOnly } from '../BriefFieldsReadOnly';
 import { groupBriefFieldSchemas } from '../../data/briefFieldSchemas';
 import { getClientServices } from '../../lib/clientServices';
+import { ClientPortalDailyWork, DailyWorkFocusRange } from './ClientPortalDailyWork';
+
+// period_end_exclusive is, as the name says, exclusive — the daily work feed's p_to filter is
+// inclusive (dl.date <= p_to), so the report's actual last logged day is one day before it.
+function dayBefore(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 interface ClientPortalViewProps {
   client: PortalClientRecord;
@@ -47,6 +56,18 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
   });
   const [loading, setLoading] = useState(true);
   const [activeBriefService, setActiveBriefService] = useState<ServiceType | null>(null);
+  const [dailyWorkFocusRange, setDailyWorkFocusRange] = useState<DailyWorkFocusRange | null>(null);
+  const dailyWorkSectionRef = useRef<HTMLDivElement>(null);
+
+  const viewWorkForReport = (report: ReportRecord) => {
+    if (!report.period_start || !report.period_end_exclusive) return;
+    setDailyWorkFocusRange({
+      from: report.period_start,
+      to: dayBefore(report.period_end_exclusive),
+      label: formatPeriodLabel(report.period),
+    });
+    dailyWorkSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +149,19 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
           <div className="p-12 text-center text-xs text-stone-500">Loading your portal...</div>
         ) : (
           <>
+            {/* Daily work, grouped by department — the client's day-by-day feed of everything
+                logged for them, each department/day group ratable individually. */}
+            <div className="space-y-3" ref={dailyWorkSectionRef}>
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <ListChecks className="w-4 h-4 text-amber-400" />
+                Your Daily Work
+              </h2>
+              <ClientPortalDailyWork
+                focusRange={dailyWorkFocusRange}
+                onClearFocusRange={() => setDailyWorkFocusRange(null)}
+              />
+            </div>
+
             {/* Comparisons */}
             <div className="space-y-3">
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -149,7 +183,13 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ client, onSi
                 <FileText className="w-4 h-4 text-purple-400" />
                 Reports
               </h2>
-              <FiledReportsList reports={reports} comparisons={comparisons} clients={[client]} users={[]} />
+              <FiledReportsList
+                reports={reports}
+                comparisons={comparisons}
+                clients={[client]}
+                users={[]}
+                onSelectReport={viewWorkForReport}
+              />
             </div>
 
             {/* Briefs */}
