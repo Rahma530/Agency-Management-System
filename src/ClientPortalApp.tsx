@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { supabase, supabaseRaw } from './lib/supabase';
-import { ClientRecord, ClientPortalUserRecord, NON_SENSITIVE_CLIENT_COLUMNS } from './types/database';
+import { supabase } from './lib/supabase';
+import { PortalClientRecord, ClientPortalUserRecord } from './types/database';
 import { ClientPortalLogin } from './components/clientPortal/ClientPortalLogin';
 import { ClientPortalView } from './components/clientPortal/ClientPortalView';
 
@@ -11,12 +11,14 @@ import { ClientPortalView } from './components/clientPortal/ClientPortalView';
 // nothing. Keeping this as its own tree means that code path never runs for a client at all.
 export default function ClientPortalApp() {
   const [portalUser, setPortalUser] = useState<ClientPortalUserRecord | null>(null);
-  const [client, setClient] = useState<ClientRecord | null>(null);
+  const [client, setClient] = useState<PortalClientRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Bypasses the employee-oriented `clients` RLS-emulation proxy (see supabaseRaw's own comment
-  // in lib/supabase.ts) — this session never calls setSupabaseSessionUser, so that proxy has
-  // nothing to key off; real access control is Postgres RLS (clients_select_portal_rls) either way.
+  // 2026-11-26 security fix: a client-portal session can no longer read `public.clients` directly
+  // at all (clients_select_portal_rls was dropped — see the migration + types/database.ts's note
+  // on PortalClientRecord). It now goes through portal_get_client(), a SECURITY DEFINER RPC whose
+  // return type is hard-coded to a safe column list, so no amount of frontend bypassing can ever
+  // widen what a client session can read off its own row.
   const loadPortalSession = useCallback(async () => {
     try {
       const {
@@ -42,12 +44,8 @@ export default function ClientPortalApp() {
 
       setPortalUser(pu as ClientPortalUserRecord);
 
-      const { data: c } = await supabaseRaw
-        .from('clients')
-        .select(NON_SENSITIVE_CLIENT_COLUMNS)
-        .eq('id', pu.client_id)
-        .single();
-      setClient((c as ClientRecord) || null);
+      const { data: c } = await supabase.rpc('portal_get_client').single();
+      setClient((c as PortalClientRecord) || null);
     } catch (err) {
       console.warn('Client portal session check warning:', err);
     } finally {
