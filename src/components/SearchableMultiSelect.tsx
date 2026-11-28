@@ -151,20 +151,26 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex w-full min-h-[38px] items-center justify-between gap-2 rounded-xl border border-stone-800 bg-stone-900 px-3 py-2 text-left text-xs text-white focus:outline-none focus:border-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex w-full h-[38px] items-center justify-between gap-2 rounded-xl border border-stone-800 bg-stone-900 px-3 py-2 text-left text-xs text-white focus:outline-none focus:border-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >
         {selectedOptions.length === 0 ? (
           <span className="text-stone-500">{placeholder}</span>
         ) : (
-          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          // flex-nowrap + overflow-hidden (not flex-wrap): a narrow trigger (this sits in dense
+          // filter-bar grid columns, sometimes well under 140px) must never grow a second visual
+          // row of chips — that silently taller box used to spill into whatever sits below it.
+          // The box's height stays fixed at all times; chip count instead self-limits via
+          // maxVisibleChips (narrower callers pass a smaller value), and the "+N" badge covers
+          // anything past that, so nothing is ever truly lost, just summarized.
+          <span className="flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-hidden">
             {visibleChips.map((option) => (
               <span
                 key={option.id}
-                className="flex items-center gap-1 rounded-full bg-purple-900/40 px-2 py-0.5 text-[11px] font-semibold text-purple-200"
+                className="flex shrink-0 items-center gap-1 rounded-full bg-purple-900/40 px-2 py-0.5 text-[11px] font-semibold text-purple-200"
               >
-                <span className="max-w-[140px] truncate">{option.label}</span>
+                <span className="max-w-[90px] truncate">{option.label}</span>
                 {!disabled && !lockedIds.includes(option.id) && (
                   <span
                     role="button"
@@ -178,7 +184,7 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectProps> = ({
               </span>
             ))}
             {overflowCount > 0 && (
-              <span className="rounded-full bg-stone-800 px-2 py-0.5 text-[11px] font-semibold text-stone-300">
+              <span className="shrink-0 rounded-full bg-stone-800 px-2 py-0.5 text-[11px] font-semibold text-stone-300">
                 +{overflowCount}
               </span>
             )}
