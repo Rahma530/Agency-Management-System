@@ -56,6 +56,7 @@ import { resolveDailyTaskTarget } from '../lib/designerScheduling';
 import { TASK_STATUS_ORDER, isTaskDone, canCloseTask, canSubmitTaskForClosing, canShowDoneLink, parseDoneLinks, resolveTaskAssigneeIds } from '../lib/taskLifecycle';
 import { computeTaskDeletionPreview, collectTaskSubtreeIds, StagedTaskAttachment } from '../lib/taskOperations';
 import { canEditOwnDailyLog } from '../lib/dailyLogs';
+import { SearchableMultiSelect } from './SearchableMultiSelect';
 import { DailyLogClientPicker } from './DailyLogClientPicker';
 import { DailyLogEditModal } from './DailyLogEditModal';
 import { DailyLogAttachmentsPreview } from './DailyLogAttachmentsPreview';
@@ -184,8 +185,16 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     };
   }, [onGetServerToday]);
 
-  // Selected Employee filter (defaults to currentUser, can be changed by managers/team leads)
+  // Selected Employee filter (defaults to currentUser, can be changed by managers/team leads).
+  // This one drives every single-actor tab/action (daily_view, my_tasks, blockers, "Log Today's
+  // Activity", "Log Extra Effort") — those only ever make sense for one person at a time.
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(currentUser.id);
+
+  // Daily Logs & Standup tab only: lets a manager/team lead add MORE teammates to the feed on
+  // top of the Active Employee above, so they can review several people's logs together instead
+  // of switching one at a time. The Active Employee is always included (via lockedIds below) so
+  // toggling nobody here keeps the exact behavior from before this existed.
+  const [extraLogEmployeeIds, setExtraLogEmployeeIds] = useState<string[]>([]);
 
   // Filters for My Tasks
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -464,6 +473,18 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
     return result.filter((u) => u.role !== 'executive' && u.role !== 'head_of_technical' && isActiveEmployee(u));
   }, [users, currentUser]);
 
+  // teamMembers can shrink (a report leaves, a permission scope changes) — never leave a stale
+  // pick from extraLogEmployeeIds pointing at someone no longer selectable, mirroring the same
+  // reset pattern used for the Tasks Board's assignee/employee filters.
+  useEffect(() => {
+    if (extraLogEmployeeIds.length === 0) return;
+    const validIds = new Set(teamMembers.map((m) => m.id));
+    setExtraLogEmployeeIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [teamMembers]);
+
   // All blockers across visible tasks for Blockers Hub — a blocked task with ANY real assignee
   // (task_assignees membership, not just the legacy column) on this team is included.
   const allVisibleBlockers = useMemo(() => {
@@ -515,16 +536,23 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
   // Daily Logs filtered for current employee or team — sorted by the log's own `date` (newest
   // first), then by `created_at` as a tiebreaker for logs sharing the same date, so a backdated
   // or future-dated entry sits where its date says, not wherever it happened to be inserted.
+  // Active Employee + whoever was added via the Daily Logs tab's own multi-select — the Active
+  // Employee always stays in (see lockedIds on that control), so not touching it keeps the exact
+  // single-employee feed this showed before extraLogEmployeeIds existed.
+  const relevantLogEmployeeIds = useMemo(() => {
+    return new Set([effectiveEmployee.id, ...extraLogEmployeeIds]);
+  }, [effectiveEmployee.id, extraLogEmployeeIds]);
+
   const relevantDailyLogs = useMemo(() => {
     return dailyLogs
       .filter((log) => {
-        if (selectedEmployeeId !== 'all' && log.user_id !== effectiveEmployee.id) return false;
+        if (!relevantLogEmployeeIds.has(log.user_id)) return false;
         if (logClientFilter !== 'all' && log.client_id !== logClientFilter) return false;
         if (logDateFilter && log.date !== logDateFilter) return false;
         return true;
       })
       .sort((a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || ''));
-  }, [dailyLogs, effectiveEmployee.id, selectedEmployeeId, logClientFilter, logDateFilter]);
+  }, [dailyLogs, relevantLogEmployeeIds, logClientFilter, logDateFilter]);
 
   // Handlers for task status
   const handleAdvanceStatus = async (taskId: string, currentStatus: TaskStatus) => {
@@ -1732,6 +1760,19 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              {isManagerOrLead && (
+                <div className="w-48">
+                  <SearchableMultiSelect
+                    options={teamMembers.map((m) => ({ id: m.id, label: m.name, sublabel: m.team || m.role }))}
+                    selectedIds={[selectedEmployeeId, ...extraLogEmployeeIds.filter((id) => id !== selectedEmployeeId)]}
+                    onChange={(ids) => setExtraLogEmployeeIds(ids.filter((id) => id !== selectedEmployeeId))}
+                    lockedIds={[selectedEmployeeId]}
+                    placeholder="Active Employee"
+                    searchPlaceholder="Search employees…"
+                    emptyMessage="No team members available."
+                  />
+                </div>
+              )}
               <select
                 value={logClientFilter}
                 onChange={(e) => setLogClientFilter(e.target.value)}
@@ -1784,7 +1825,7 @@ export const DailyOperationsModule: React.FC<DailyOperationsModuleProps> = ({
               style={{ background: 'var(--gradient-card)' }}
             >
               <FileText className="w-8 h-8 text-stone-600 mx-auto mb-2" />
-              <h4 className="text-xs font-bold text-white">No previous daily activity reports recorded for the selected employee.</h4>
+              <h4 className="text-xs font-bold text-white">No previous daily activity reports recorded for the selected employee(s).</h4>
               <p className="text-xs text-stone-400 mt-1">Use the button above to add one.</p>
             </div>
           ) : (
