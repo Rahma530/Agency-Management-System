@@ -1481,26 +1481,23 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
 
   // Employee-name filter options when the Team filter is at "All Teams" (or, for
   // marketing_manager, its synthetic "Creative" value — not a real OPERATIONAL_TEAMS entry, so
-  // fetchAssignableEmployees has nothing to fetch for it). Only two roles get a real fallback list
-  // here rather than the disabled "Select a team first" state (see employeeFilterDisabled below):
-  // - executive/head_of_technical: everyone org-wide, any role (same as
-  //   getAllowedEmployeeRolesUnderRLS) — their existing capability to browse any employee without
-  //   picking a team first, preserved so it doesn't regress.
-  // - marketing_manager: ONLY graphic_designer/video_editor, matching its existing narrow
-  //   Creative-pool scope (see isAssignableForCurrentUser above) — used whenever selectedTeam is
-  //   'Creative', which for this role is functionally "no real department selected" too.
-  // Every other role (team leads included) gets no fallback list — they must pick a real
-  // department first, at which point teamFilterEmployees (below) takes over.
+  // fetchAssignableEmployees has nothing to fetch for it). "All Teams" used to fall back to a
+  // disabled "Select a team first" state for everyone except executive/head_of_technical — which
+  // made it impossible to filter by, say, one Social agent and one Media Buying agent together,
+  // since picking a single real department was mandatory first. Every role now gets a real
+  // fallback roster here via getAllowedEmployeeRolesUnderRLS — the same cross-department
+  // visibility list already audited for the Users table's own RLS — so "All Teams" always shows
+  // every employee this viewer is already allowed to see, org-wide or not, never more.
+  // marketing_manager keeps its own narrower, pre-existing Creative-pool-only scope (used whenever
+  // selectedTeam is 'Creative' too, which for this role is functionally "no real department
+  // selected"), since that's a deliberately tighter carve-out than its generic RLS role list.
   const noTeamSelectedFallbackRoles: string[] = useMemo(() => {
     const role = currentUser?.role;
     if (!role) return [];
-    if (role === 'executive' || role === 'head_of_technical') {
-      return getAllowedEmployeeRolesUnderRLS(role);
-    }
     if (role === 'marketing_manager') {
       return ['graphic_designer', 'video_editor'];
     }
-    return [];
+    return getAllowedEmployeeRolesUnderRLS(role);
   }, [currentUser?.role]);
 
   const noTeamSelectedFallbackOptions = useMemo(() => {
@@ -1510,11 +1507,11 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [users, noTeamSelectedFallbackRoles]);
 
-  // "All Teams" is disabled for everyone except executive/head_of_technical — every other role
-  // must pick a real department before the Employee filter offers anything (marketing_manager's
-  // 'Creative' counts as "picked", so it's excluded from this check too).
+  // Disabled only when this viewer genuinely has no one to offer under "All Teams" (e.g. the
+  // 'sales' role, isolated to itself and excluded from teams entirely) — not hardcoded by role, so
+  // a future role is correctly enabled or disabled by its own RLS visibility automatically.
   const employeeFilterDisabled =
-    selectedTeam === 'all' && currentUser?.role !== 'executive' && currentUser?.role !== 'head_of_technical';
+    (selectedTeam === 'all' || selectedTeam === 'Creative') && noTeamSelectedFallbackOptions.length === 0;
 
   // The Employee filter's actual rendered option list: a real department's fetched roster, or the
   // no-team-selected fallback for 'all'/'Creative'. UserRecord and AssignableEmployee both carry
@@ -2874,6 +2871,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               placeholder={employeeFilterDisabled ? 'Select a team first' : 'All Employees'}
               searchPlaceholder="Search employees…"
               emptyMessage="No employees available."
+              maxVisibleChips={1}
             />
           </div>
 
@@ -2942,6 +2940,7 @@ export const CrossTeamTaskBoard: React.FC<CrossTeamTaskBoardProps> = ({
               placeholder="All platforms"
               searchPlaceholder="Search platforms…"
               emptyMessage="No platforms available."
+              maxVisibleChips={1}
             />
           </div>
 
