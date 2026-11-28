@@ -41,20 +41,30 @@ comment on column public.users.is_test_identity   is 'true for a synthetic Testi
 comment on column public.clients.is_test           is 'true for synthetic data created for a Testing Portal session -- never a real client.';
 comment on column public.tasks.is_test             is 'true for synthetic data created for a Testing Portal session -- never a real task.';
 
--- 2. Audit table: one row per test session, from request to promotion.
+-- 2. Audit table: one row per test session. Simplified (2026-11-28, same day as the first
+-- version below in git history) from an earlier draft that had a multi-stage approval workflow
+-- (testing/approved/rejected/changes_requested/promoted) -- that workflow belonged to the full
+-- Testing Portal UI, which was dropped in favor of a single "send a direct link, test it, close
+-- it" flow (see the architecture doc). All that flow actually needs to track is: who asked for
+-- it, what synthetic rows it created (so closing it can delete exactly those rows, nothing
+-- inferred by scanning for is_test=true elsewhere), and whether it's still open. Row is never
+-- deleted on close -- closed_at is set instead -- so this table doubles as the audit trail.
 create table if not exists public.test_sessions (
-  id                text primary key default ('ts-' || replace(gen_random_uuid()::text, '-', '')),
-  requested_by      text not null references public.users(id),
-  synthetic_user_id text references public.users(id),
-  target_role       text not null,
-  department        text,
-  description       text not null,
-  status            text not null default 'testing'
-                      check (status in ('testing', 'approved', 'rejected', 'changes_requested', 'promoted')),
-  created_at        timestamptz not null default now(),
-  updated_at        timestamptz not null default now(),
-  expires_at        timestamptz not null default (now() + interval '48 hours'),
-  closed_at         timestamptz
+  id                  text primary key default ('ts-' || replace(gen_random_uuid()::text, '-', '')),
+  requested_by        text not null references public.users(id),
+  synthetic_user_id    text references public.users(id),
+  synthetic_client_id  text references public.clients(id),
+  synthetic_task_id    text references public.tasks(id),
+  target_role          text not null,
+  description          text not null,
+  created_at           timestamptz not null default now(),
+  -- Safety net only, not the normal close path: normal close is manual, immediate, and happens
+  -- the moment the requester clicks "close" (see the test-identity-service Edge Function) -- no
+  -- scheduled/cron job runs to enforce this. This is just how long a forgotten, never-closed
+  -- session is allowed to linger before a once-daily sweep (same Edge Function, a 'sweep' action)
+  -- deletes it anyway.
+  expires_at           timestamptz not null default (now() + interval '24 hours'),
+  closed_at            timestamptz
 );
 
 alter table public.test_sessions enable row level security;
